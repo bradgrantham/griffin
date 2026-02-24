@@ -71,7 +71,7 @@ int main()
 
     volatile uint8_t* debug_out = (uint8_t*) GLUE_DEBUG_OUT;
 
-    *debug_out = 0xff;
+    *debug_out = 0x01;
 
     serial_putchar(debug_out, 'H');
     serial_putchar(debug_out, 'e');
