@@ -1,4 +1,7 @@
+#include <cstdio>
 #include <cstdint>
+#include <cstdarg>
+#include <cstring>
 
 #include "griffin.h"
 
@@ -11,11 +14,15 @@ static constexpr uint32_t SYSCLK = 12'000'000;
  * Protocol: idle=high(0x01), start bit=low(0x00), 8 data bits LSB first,
  *           stop bit=high(0x01).
  *
- * @param io_addr  Address of the byte-mapped I/O register
  * @param ch       Character to transmit
  */
-inline void serial_putchar(volatile uint8_t* io_addr, uint8_t ch)
+extern "C" {
+
+void debug_serial_putchar(uint8_t ch)
 {
+    using namespace Griffin;
+    volatile uint8_t* debug_out = (uint8_t*) GLUE_DEBUG_OUT;
+
     static constexpr uint32_t CYCLES_PER_BIT = SYSCLK / 9600;
     static constexpr uint32_t DBRA_CYCLES = 10;
     static constexpr uint32_t DELAY_LOOP_COUNT = (CYCLES_PER_BIT - 20) / DBRA_CYCLES; // subtract overhead
@@ -58,36 +65,39 @@ inline void serial_putchar(volatile uint8_t* io_addr, uint8_t ch)
         "    move.b   #0x01, (%[io])    \n"
 
         : [frame] "+d" (frame)          // input/output: frame gets destroyed
-        : [io]  "a" (io_addr),
+        : [io]  "a" (debug_out),
           [dly]  "i" (DELAY_LOOP_COUNT)
         : "d1", "d2", "cc", "memory"
     );
 }
 
+void debug_printf(const char *fmt, ...)
+{
+    va_list args;
+    char dummy[512];
+
+    va_start(args, fmt);
+    vsprintf(dummy, fmt, args);
+    va_end(args);
+
+    for(const char* s = dummy; *s; s++)
+    {
+        debug_serial_putchar(*s);
+    }
+}
+
+void initialize_debug_out(void)
+{
+    using namespace Griffin;
+    volatile uint8_t* debug_out = (uint8_t*) GLUE_DEBUG_OUT;
+    *debug_out = 0x01;
+}
+
+};
+
 
 int main()
 {
-    using namespace Griffin;
-
-    volatile uint8_t* debug_out = (uint8_t*) GLUE_DEBUG_OUT;
-
-    *debug_out = 0x01;
-
-    serial_putchar(debug_out, 'H');
-    serial_putchar(debug_out, 'e');
-    serial_putchar(debug_out, 'l');
-    serial_putchar(debug_out, 'l');
-    serial_putchar(debug_out, 'o');
-    serial_putchar(debug_out, '\n');
-
-    if(0) for(;;) {
-	for(uint32_t i = 0; i < 800000; i++)
-	{
-	    *debug_out = 0xff;
-	}
-	for(uint32_t i = 0; i < 200000; i++)
-	{
-	    *debug_out = 0x0;
-	}
-    }
+    initialize_debug_out();
+    printf("Hello There!\n");
 }
