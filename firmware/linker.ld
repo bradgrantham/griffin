@@ -3,14 +3,21 @@ ENTRY(_start)
 _min_heap = 0x10000;      /* required amount of heap  */
 _min_stack = 0x2000; /* required amount of stack */
 
+GLUE_ROM_OVERLAY_DISABLE = 0xF00005;
+
 MEMORY
 {
-    RAM (rwx) : ORIGIN = 0x00000000, LENGTH = 256K /* 4M */
+    RAM (rwx) : ORIGIN = 0x00000000, LENGTH = 256K /* known to be at least 256K but could be 4M */
     ROM (rx)  : ORIGIN = 0x00C00000, LENGTH = 128K
 }
 
 SECTIONS
 {
+    /* Reserve vector table area in RAM */
+    .vectors_ram (NOLOAD) : {
+        . = 0x400;
+    } > RAM
+
     .vectors : { *(.vectors) } > ROM
     .text    : { *(.text*) } > ROM
     .rodata  : { *(.rodata*) } > ROM

@@ -1,9 +1,29 @@
 #include <cstdint>
 
+struct MemoryRange
+{
+    uint32_t base;
+    uint32_t size;
+    MemoryRange(uint32_t base, uint32_t size) : base(base), size(size)
+    {
+    }
+    bool contains(uint32_t addr)
+    {
+        return (addr >= base) && (addr < base + size);
+    }
+    uint32_t get(uint32_t addr)
+    {
+        return addr - base;
+    }
+};
+
 namespace Griffin
 {
-    static constexpr uint32_t RAMbase = 0x0;
-    static constexpr uint32_t RAMsize = 256 * 1024; // 4 * 1024 * 1024;
+    // But these may not be populated
+    MemoryRange RAM_BANK_1(0 * 1024 * 1024, 1024 * 1024);
+    MemoryRange RAM_BANK_2(1 * 1024 * 1024, 1024 * 1024);
+    MemoryRange RAM_BANK_3(2 * 1024 * 1024, 1024 * 1024);
+    MemoryRange RAM_BANK_4(3 * 1024 * 1024, 1024 * 1024);
 
     static constexpr uint32_t ROMbase = 0xC00000;
     static constexpr uint32_t ROMsize = 128 * 1024;
@@ -21,7 +41,7 @@ namespace Griffin
 
     static constexpr uint32_t GLUE_DEBUG_OUT  = GLUEbase + 0x01;
     static constexpr uint32_t GLUE_DEBUG_IN   = GLUEbase + 0x03;
-    static constexpr uint32_t GLUE_UNSHADOW   = GLUEbase + 0x07;
+    static constexpr uint32_t GLUE_OVERLAY_DISABLE   = GLUEbase + 0x05;
 
     static constexpr uint32_t GLUE_DEBUG_OUT_BIT  = 0x01;
 };

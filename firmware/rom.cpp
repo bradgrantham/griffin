@@ -100,4 +100,8 @@ int main()
 {
     initialize_debug_out();
     printf("Hello There!\n");
+    volatile uint16_t* p = (uint16_t*)0x400;
+    *p = 0xAA55;
+    *p = 0x55AA;
+    printf("*p = %04X\n", *p);
 }
