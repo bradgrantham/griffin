@@ -1,0 +1,8 @@
+#!/bin/bash
+# m68k-gcc wrapper
+exec podman run --rm \
+    -v "$(pwd):/work" \
+    -w /work \
+    -u "$(id -u):$(id -g)" \
+    m68k-toolchain \
+    /opt/m68k-unknown-elf/bin/m68k-unknown-elf-gcc "$@"
