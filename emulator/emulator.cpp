@@ -1,36 +1,26 @@
-/*
-EmuCON is the built-in shell that EmuTOS provides, and it's relatively modest in its requirements.
-CPU emulation: Full 68000 user mode plus supervisor mode for BIOS calls. You need working TRAP instructions since that's how TOS calls work—TRAP #1 for GEMDOS, TRAP #13 for BIOS, TRAP #14 for XBIOS. The trap handler examines the stack to determine which function was called and with what arguments.
-Memory layout: RAM from $000000 with the exception vectors set up. The reset vector points to your ROM, and you'll need handlers for the TRAP vectors, any interrupts you plan to support, and ideally a catchall for unexpected exceptions so you can debug errant code.
-GEMDOS calls needed: Cconin/Cconout for console I/O, Fopen/Fclose/Fread/Fwrite/Fseek for file access, Dsetdrv/Dgetdrv/Dsetpath/Dgetpath for drive and directory navigation, Fsfirst/Fsnext for directory enumeration, Pexec for running programs, Malloc/Mfree/Mshrink for memory management, and Tgetdate/Tgettime if programs ask.
-BIOS calls: Bconstat/Bconin/Bconout for character I/O to various devices (console, serial, printer). Device 2 is the console.
-XBIOS calls: Mostly can be stubs or return sensible defaults. Getrez returns the current resolution. Setscreen can be ignored or logged. Supexec runs a function in supervisor mode.
-File system: You need something behind GEMDOS. Easiest is mapping a host directory to drive C, translating the GEMDOS calls to host file operations. Handle the 8.3 filename convention and case insensitivity.
-System variables: The low memory area has variables that programs read directly. Key ones include _bootdev (boot drive), _hz_200 (200Hz tick counter—increment this with a timer), _drvbits (bitmask of available drives), and the _con* vectors for console I/O.
-With this much, EmuCON will boot, you can navigate directories, and run simple command-line programs.
-*/
-
 #include <array>
 #include <cstdint>
 #include <cinttypes>
 
 #include "griffin.h"
 
-
 #include "Moira.h"
 
 constexpr uint32_t DEBUG_MEMORY = 0x0001;
-constexpr uint32_t DEBUG_DEBUG_OUT = 0x0002;
-constexpr uint32_t debug = 0; // DEBUG_MEMORY;
+constexpr uint32_t DEBUG_IO = 0x0002;
+constexpr uint32_t debug = 0; // DEBUG_MEMORY | DEBUG_IO;
 
 using namespace Griffin;
 
 class GriffinEmulator : public moira::Moira
 {
-    mutable std::array<uint8_t, RAMsize> RAM{};
+    mutable std::vector<uint8_t> RAM_bank1;
+    mutable std::vector<uint8_t> RAM_bank2;
+    mutable std::vector<uint8_t> RAM_bank3;
+    mutable std::vector<uint8_t> RAM_bank4;
     mutable std::array<uint8_t, ROMsize> ROM{};
     mutable int debug_out_latch = 0;
-    mutable bool ROMshadowed = true;
+    mutable bool ROMoverlay = true;
 
     uint8_t IO_read8(uint32_t addr) const
     {
@@ -51,9 +41,12 @@ class GriffinEmulator : public moira::Moira
         if(addr == GLUE_DEBUG_OUT - GLUEbase) {
             auto bit = val & GLUE_DEBUG_OUT_BIT;
             if(bit != debug_out_latch) {
-                if(debug & DEBUG_DEBUG_OUT) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
+                if(debug & DEBUG_IO) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
             }
             debug_out_latch = bit;
+        } else if(addr == GLUE_OVERLAY_DISABLE - GLUEbase) {
+            if(debug & DEBUG_IO) printf("ROM overlay disabled\n");
+            ROMoverlay = false;
         } else {
             if(isprint(val)) {
                 printf("%" PRIx32 " = %" PRIx8 " (%c)\n", addr, addr, val);
@@ -72,13 +65,56 @@ class GriffinEmulator : public moira::Moira
 
 public:
 
+    enum RAMConfig {RAM_1_BANK_256K, RAM_1_BANK_1M, RAM_4M };
+
+    GriffinEmulator(RAMConfig ram_config)
+    {
+        switch(ram_config)
+        {
+            case RAM_1_BANK_256K:
+                RAM_bank1.resize(256 * 1024, 0);
+                break;
+            case RAM_1_BANK_1M:
+                RAM_bank1.resize(1024 * 1024, 0);
+                break;
+            case RAM_4M:
+                RAM_bank1.resize(1024 * 1024, 0);
+                RAM_bank2.resize(1024 * 1024, 0);
+                RAM_bank3.resize(1024 * 1024, 0);
+                RAM_bank4.resize(1024 * 1024, 0);
+                break;
+        }
+    }
+
     uint8_t read8(uint32_t addr) const override
     {
         if(debug & DEBUG_MEMORY) { printf("read of uint8_t at %06X\n", addr); }
-        if (ROMshadowed && (addr < ROMsize)) {
+        if (ROMoverlay && (addr < ROMsize)) {
             return ROM[addr];
-        } else if (addr < (RAMbase + RAMsize)) {
-            return RAM[addr - RAMbase];
+        } else if (RAM_BANK_1.contains(addr)) {
+            if(RAM_bank1.size() == 0) {
+                return 0;
+            } else {
+                return RAM_bank1[RAM_BANK_1.get(addr) % RAM_bank1.size()];
+            }
+        } else if (RAM_BANK_2.contains(addr)) {
+            if(RAM_bank2.size() == 0) {
+                return 0;
+            } else {
+                return RAM_bank2[RAM_BANK_2.get(addr) % RAM_bank2.size()];
+            }
+        } else if (RAM_BANK_3.contains(addr)) {
+            if(RAM_bank3.size() == 0) {
+                return 0;
+            } else {
+                return RAM_bank3[RAM_BANK_3.get(addr) % RAM_bank3.size()];
+            }
+        } else if (RAM_BANK_4.contains(addr)) {
+            if(RAM_bank4.size() == 0) {
+                return 0;
+            } else {
+                return RAM_bank4[RAM_BANK_4.get(addr) % RAM_bank4.size()];
+            }
         } else if (addr >= ROMbase && addr < ROMbase + ROMsize) {
             return ROM[addr - ROMbase];
         } else if (addr >= IObase && addr < (IObase + IOsize)) {
@@ -92,10 +128,16 @@ public:
     uint16_t read16(uint32_t addr) const override
     {
         if(debug & DEBUG_MEMORY) { printf("read of uint16_t at %06X\n", addr); }
-        if (ROMshadowed && (addr < ROMsize)) {
+        if (ROMoverlay && (addr < ROMsize)) {
             return (ROM[addr] << 8) | ROM[addr + 1];
-        } else if (addr < (RAMbase + RAMsize)) {
-            return (RAM[addr - RAMbase] << 8) | RAM[addr - RAMbase + 1];
+        } else if (RAM_BANK_1.contains(addr)) {
+            return (read8(addr) << 8) | read8(addr + 1);
+        } else if (RAM_BANK_2.contains(addr)) {
+            return (read8(addr) << 8) | read8(addr + 1);
+        } else if (RAM_BANK_3.contains(addr)) {
+            return (read8(addr) << 8) | read8(addr + 1);
+        } else if (RAM_BANK_4.contains(addr)) {
+            return (read8(addr) << 8) | read8(addr + 1);
         } else if (addr >= ROMbase && addr < ROMbase + ROMsize) {
             return (ROM[addr - ROMbase] << 8) | ROM[addr - ROMbase + 1];
         } else if (addr >= IObase && addr < (IObase + IOsize)) {
@@ -109,9 +151,22 @@ public:
     void write8(uint32_t addr, uint8_t val) const override
     {
         if(debug & DEBUG_MEMORY) { printf("write of uint8_t %02X at %06X\n", val, addr); }
-        ROMshadowed = false;
-        if (addr < (RAMbase + RAMsize)) {
-            RAM[addr - RAMbase] = val;
+        if (RAM_BANK_1.contains(addr)) {
+            if(RAM_bank1.size() != 0) {
+                RAM_bank1[RAM_BANK_1.get(addr) % RAM_bank1.size()] = val;
+            } 
+        } else if (RAM_BANK_2.contains(addr)) {
+            if(RAM_bank2.size() != 0) {
+                RAM_bank2[RAM_BANK_2.get(addr) % RAM_bank2.size()] = val;
+            } 
+        } else if (RAM_BANK_3.contains(addr)) {
+            if(RAM_bank3.size() != 0) {
+                RAM_bank3[RAM_BANK_3.get(addr) % RAM_bank3.size()] = val;
+            } 
+        } else if (RAM_BANK_4.contains(addr)) {
+            if(RAM_bank4.size() != 0) {
+                RAM_bank4[RAM_BANK_4.get(addr) % RAM_bank4.size()] = val;
+            } 
         } else if (addr >= ROMbase && addr < ROMbase + ROMsize) {
             return;
         } else if (addr >= IObase && addr < (IObase + IOsize)) {
@@ -128,11 +183,26 @@ public:
         uint8_t high = (val >> 8);
         uint8_t low = (val & 0xFF);
 
-        ROMshadowed = false;
-
-        if (addr < (RAMbase + RAMsize)) {
-            RAM[addr - RAMbase] = high;
-            RAM[addr - RAMbase + 1] = low;
+        if (RAM_BANK_1.contains(addr)) {
+            if(RAM_bank1.size() != 0) {
+                RAM_bank1[RAM_BANK_1.get(addr) % RAM_bank1.size()] = high;
+                RAM_bank1[RAM_BANK_1.get(addr + 1) % RAM_bank1.size()] = low;
+            } 
+        } else if (RAM_BANK_2.contains(addr)) {
+            if(RAM_bank2.size() != 0) {
+                RAM_bank2[RAM_BANK_2.get(addr) % RAM_bank2.size()] = high;
+                RAM_bank2[RAM_BANK_2.get(addr + 1) % RAM_bank2.size()] = low;
+            } 
+        } else if (RAM_BANK_3.contains(addr)) {
+            if(RAM_bank3.size() != 0) {
+                RAM_bank3[RAM_BANK_3.get(addr) % RAM_bank3.size()] = high;
+                RAM_bank3[RAM_BANK_3.get(addr + 1) % RAM_bank3.size()] = low;
+            } 
+        } else if (RAM_BANK_4.contains(addr)) {
+            if(RAM_bank4.size() != 0) {
+                RAM_bank4[RAM_BANK_4.get(addr) % RAM_bank4.size()] = high;
+                RAM_bank4[RAM_BANK_4.get(addr + 1) % RAM_bank4.size()] = low;
+            } 
         } else if (addr >= ROMbase && addr < ROMbase + ROMsize) {
             return;
         } else if (addr >= IObase && addr < (IObase + IOsize)) {
@@ -227,7 +297,7 @@ int main(int argc, const char** argv)
         exit(EXIT_FAILURE);
     }
 
-    GriffinEmulator emulator;
+    GriffinEmulator emulator(GriffinEmulator::RAM_1_BANK_256K);
 
     FILE* fp = fopen(argv[1], "rb");
     if (fp == NULL) {
@@ -252,9 +322,11 @@ int main(int argc, const char** argv)
     printf("begin execution\n");
     uint64_t previous_uart_sample = 0;
     while (1) {
-        static char str[1024];
-        emulator.disassemble(str, emulator.getPC());
-        // printf("%04X: %s\n", emulator.getPC(), str);
+        if(0) {
+            static char str[1024];
+            emulator.disassemble(str, emulator.getPC());
+            printf("%04X: %s\n", emulator.getPC(), str);
+        }
         emulator.execute();
         auto current_clock = emulator.getClock();
         if(current_clock / SOFT_UART_SAMPLE_INTERVAL != previous_uart_sample / SOFT_UART_SAMPLE_INTERVAL)
