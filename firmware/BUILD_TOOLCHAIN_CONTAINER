@@ -1,0 +1,1 @@
+podman build --arch amd64 -t m68k-toolchain .
