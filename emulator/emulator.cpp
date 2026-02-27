@@ -6,9 +6,11 @@
 
 #include "Moira.h"
 
-constexpr uint32_t DEBUG_MEMORY = 0x0001;
+constexpr uint32_t DEBUG_BUS = 0x0001;
 constexpr uint32_t DEBUG_IO = 0x0002;
-constexpr uint32_t debug = 0; // DEBUG_MEMORY | DEBUG_IO;
+constexpr uint32_t DEBUG_UART = 0x0004;
+constexpr uint32_t DEBUG_DISASSEMBLE = 0x0008;
+constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
 
@@ -39,11 +41,12 @@ class GriffinEmulator : public moira::Moira
     void IO_write8(uint32_t addr, uint8_t val) const
     {
         if(addr == GLUE_DEBUG_OUT - GLUEbase) {
+            auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_BIT;
             auto bit = val & GLUE_DEBUG_OUT_BIT;
-            if(bit != debug_out_latch) {
+            if(bit != oldbit) {
                 if(debug & DEBUG_IO) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
             }
-            debug_out_latch = bit;
+            debug_out_latch = val;
         } else if(addr == GLUE_OVERLAY_DISABLE - GLUEbase) {
             if(debug & DEBUG_IO) printf("ROM overlay disabled\n");
             ROMoverlay = false;
@@ -88,7 +91,7 @@ public:
 
     uint8_t read8(uint32_t addr) const override
     {
-        if(debug & DEBUG_MEMORY) { printf("read of uint8_t at %06X\n", addr); }
+        if(debug & DEBUG_BUS) { printf("read of uint8_t at %06X\n", addr); }
         if (ROMoverlay && (addr < ROMsize)) {
             return ROM[addr];
         } else if (RAM_BANK_1.contains(addr)) {
@@ -127,7 +130,7 @@ public:
 
     uint16_t read16(uint32_t addr) const override
     {
-        if(debug & DEBUG_MEMORY) { printf("read of uint16_t at %06X\n", addr); }
+        if(debug & DEBUG_BUS) { printf("read of uint16_t at %06X\n", addr); }
         if (ROMoverlay && (addr < ROMsize)) {
             return (ROM[addr] << 8) | ROM[addr + 1];
         } else if (RAM_BANK_1.contains(addr)) {
@@ -150,7 +153,7 @@ public:
 
     void write8(uint32_t addr, uint8_t val) const override
     {
-        if(debug & DEBUG_MEMORY) { printf("write of uint8_t %02X at %06X\n", val, addr); }
+        if(debug & DEBUG_BUS) { printf("write of uint8_t %02X at %06X\n", val, addr); }
         if (RAM_BANK_1.contains(addr)) {
             if(RAM_bank1.size() != 0) {
                 RAM_bank1[RAM_BANK_1.get(addr) % RAM_bank1.size()] = val;
@@ -179,7 +182,7 @@ public:
 
     void write16(uint32_t addr, uint16_t val) const override
     {
-        if(debug & DEBUG_MEMORY) { printf("write of uint16_t %04X at %06X\n", val, addr); }
+        if(debug & DEBUG_BUS) { printf("write of uint16_t %04X at %06X\n", val, addr); }
         uint8_t high = (val >> 8);
         uint8_t low = (val & 0xFF);
 
@@ -244,6 +247,9 @@ struct SoftUART
     // For a 12 MHz system that's every 78.125 cycles — call every 78 cycles
     void clock(int level)
     {
+        if(debug & DEBUG_UART) printf("clock(%d)\n", level);
+        if(debug & DEBUG_UART) printf("    state %d, sample_count %d, bit_index %d, shift_reg %d\n",
+            state, sample_count, bit_index, shift_reg);
         if (state == 0) {
             // Idle — watch for falling edge (start bit)
             if (last_level == 1 && level == 0) {
@@ -280,12 +286,15 @@ struct SoftUART
                     if (level == 1) {
                         // Valid frame — emit character
                         printf("%c", shift_reg);
+                        if(debug & DEBUG_UART) printf("(%d)", shift_reg);
                         fflush(stdout);
                     }
                     state = 0;
                 }
             }
         }
+        if(debug & DEBUG_UART) printf("    -> state %d, sample_count %d, bit_index %d, shift_reg %d\n",
+            state, sample_count, bit_index, shift_reg);
         last_level = level;
     }
 };
@@ -322,17 +331,17 @@ int main(int argc, const char** argv)
     printf("begin execution\n");
     uint64_t previous_uart_sample = 0;
     while (1) {
-        if(0) {
+        if(debug & DEBUG_DISASSEMBLE) {
             static char str[1024];
             emulator.disassemble(str, emulator.getPC());
             printf("%04X: %s\n", emulator.getPC(), str);
         }
         emulator.execute();
         auto current_clock = emulator.getClock();
-        if(current_clock / SOFT_UART_SAMPLE_INTERVAL != previous_uart_sample / SOFT_UART_SAMPLE_INTERVAL)
+        while(current_clock / SOFT_UART_SAMPLE_INTERVAL != previous_uart_sample / SOFT_UART_SAMPLE_INTERVAL)
         {
             debug_uart.clock(emulator.get_debug_latch());
-            previous_uart_sample = current_clock;
+            previous_uart_sample = previous_uart_sample + SOFT_UART_SAMPLE_INTERVAL;
         }
     }
 }
