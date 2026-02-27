@@ -8,9 +8,9 @@ vector_table:
     .global _start
 _start:
     /* One debug pulse == "CPU started, ROM working" */
-    move.b 0x00, GLUE_DEBUG_OUT
-    move.b 0x01, GLUE_DEBUG_OUT
-    move.b 0x00, GLUE_DEBUG_OUT
+    move.b #0x00, GLUE_DEBUG_OUT
+    move.b #0x01, GLUE_DEBUG_OUT
+    move.b #0x00, GLUE_DEBUG_OUT
 
     /* Set up for debug out as serial port */
     move.b  #0x01, GLUE_DEBUG_OUT
@@ -18,6 +18,7 @@ _start:
 debug_out_settle:
     dbra    %d0, debug_out_settle
 
+    /* Hello! */
     lea     hellostr, %a1
     lea     .Lret3(%pc), %a6
     jmp     early_puts
@@ -25,8 +26,6 @@ debug_out_settle:
 
     /* Switch out ROM */
     move.b #0xFF, GLUE_ROM_OVERLAY_DISABLE
-
-    /* TODO give 2 debug pulses == "ROM OVERLAY disabled, low RAM verified" */
 
     /* Copy ROM vector table to RAM */
     move.l  vector_table, %a0
@@ -36,15 +35,63 @@ vec_copy:
     move.l  (%a0)+, (%a1)+
     dbra    %d0, vec_copy
 
-    /* TODO Probe RAM */
+    /* Probe RAM and print result */
+    move.w  #0xAA55, 0x400000 - 2
+    move.w  #0xFF00, 0x400000 - 4
+    cmp.w   #0xAA55, 0x400000 - 2
+    bne     test_3m
+    move    #4096, memory_size
+    move.l  #0x400000, _stack_top
+    move.l  #0x400000, %sp
+    lea     memory_4m, %a1
+    lea     memory_size_done(%pc), %a6
+    jmp     early_puts
 
-    /* TODO Test RAM */
+test_3m:
+    move.w  #0xAA55, 0x300000 - 2
+    move.w  #0xFF00, 0x300000 - 4
+    cmp.w   #0xAA55, 0x300000 - 2
+    bne     test_2m
+    move    #3072, memory_size
+    move.l  #0x300000, _stack_top
+    move.l  #0x300000, %sp
+    lea     memory_3m, %a1
+    lea     memory_size_done(%pc), %a6
+    jmp     early_puts
 
-    /* TODO sad beep if RAM failed, jump to panic */
+test_2m:
+    move.w  #0xAA55, 0x200000 - 2
+    move.w  #0xFF00, 0x200000 - 4
+    cmp.w   #0xAA55, 0x200000 - 2
+    bne     test_1m
+    move    #2048, memory_size
+    move.l  #0x200000, _stack_top
+    move.l  #0x200000, %sp
+    lea     memory_2m, %a1
+    lea     memory_size_done(%pc), %a6
+    jmp     early_puts
 
-    /* TODO happy beep */
+test_1m:
+    move.w  #0xFF00, 0x80000 - 2
+    move.w  #0xAA55, 0x40000 - 2
+    cmp.w   #0xAA55, 0x80000 - 2
+    beq     set_256k
+    move    #1024, memory_size
+    move.l  #0x100000, _stack_top
+    move.l  #0x100000, %sp
+    lea     memory_1m, %a1
+    lea     memory_size_done(%pc), %a6
+    jmp     early_puts
 
-    /* TODO set stack pointer to top of RAM */
+set_256k:
+    move    #256, memory_size
+    move.l  #0x40000, _stack_top
+    move.l  #0x40000, %sp
+    lea     memory_256k, %a1
+    lea     memory_size_done(%pc), %a6
+    jmp     early_puts
+
+memory_size_done:
 
     /* Zero .bss */
     lea     _bss_start, %a0
@@ -147,4 +194,18 @@ _fini:
 .section .rodata
 hellostr:
     .string	"Griffin!\n"
+memory_4m:
+    .string	"Memory: 4MB\n"
+memory_3m:
+    .string	"Memory: 3MB\n"
+memory_2m:
+    .string	"Memory: 2MB\n"
+memory_1m:
+    .string	"Memory: 1MB\n"
+memory_256k:
+    .string	"Memory: 256KB\n"
     
+.section .monitor_data
+    .align	2
+memory_size:
+    .hword      0
