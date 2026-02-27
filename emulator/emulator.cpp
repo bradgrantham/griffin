@@ -68,7 +68,7 @@ class GriffinEmulator : public moira::Moira
 
 public:
 
-    enum RAMConfig {RAM_1_BANK_256K, RAM_1_BANK_1M, RAM_4M };
+    enum RAMConfig {RAM_1_BANK_256K, RAM_1M, RAM_2M, RAM_3M, RAM_4M };
 
     GriffinEmulator(RAMConfig ram_config)
     {
@@ -77,14 +77,14 @@ public:
             case RAM_1_BANK_256K:
                 RAM_bank1.resize(256 * 1024, 0);
                 break;
-            case RAM_1_BANK_1M:
-                RAM_bank1.resize(1024 * 1024, 0);
-                break;
             case RAM_4M:
-                RAM_bank1.resize(1024 * 1024, 0);
-                RAM_bank2.resize(1024 * 1024, 0);
-                RAM_bank3.resize(1024 * 1024, 0);
                 RAM_bank4.resize(1024 * 1024, 0);
+            case RAM_3M:
+                RAM_bank3.resize(1024 * 1024, 0);
+            case RAM_2M:
+                RAM_bank2.resize(1024 * 1024, 0);
+            case RAM_1M:
+                RAM_bank1.resize(1024 * 1024, 0);
                 break;
         }
     }
@@ -299,18 +299,72 @@ struct SoftUART
     }
 };
 
+void usage(const char *progname)
+{
+    printf("%s [-m {256,1024,2048,3072,4096}] rom-filename\n", progname);
+}
+
 int main(int argc, const char** argv)
 {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <rom-file>\n", argv[0]);
+    const char *progname = argv[0];
+    argc -= 1;
+    argv += 1;
+    auto ram_config = GriffinEmulator::RAM_1_BANK_256K;
+
+    while((argc > 0) && (argv[0][0] == '-')) {
+	if(strcmp(argv[0], "-m") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "-m option requires a memory config in K (256, 1024, 2048, 3072, 4096).\n");
+                exit(EXIT_FAILURE);
+            }
+            static std::map <int, GriffinEmulator::RAMConfig> ram_configs = {
+                {256, GriffinEmulator::RAM_1_BANK_256K},
+                {1024, GriffinEmulator::RAM_1M},
+                {2048, GriffinEmulator::RAM_2M}, 
+                {3072, GriffinEmulator::RAM_3M},
+                {4096, GriffinEmulator::RAM_4M}
+            };
+            int k = atoi(argv[1]);
+            if(!ram_configs.contains(k)) {
+                if(argc < 2) {
+                    fprintf(stderr, "-m size %s unknown, expected 256, 1024, 2048, 3072, or 4096.\n", argv[1]);
+                    exit(EXIT_FAILURE);
+                }
+            }
+            ram_config = ram_configs.at(k);
+            argv += 2;
+            argc -= 2;
+        } else if(
+            (strcmp(argv[0], "-help") == 0) ||
+            (strcmp(argv[0], "-h") == 0) ||
+            (strcmp(argv[0], "-?") == 0))
+        {
+            usage(progname);
+            exit(EXIT_SUCCESS);
+	} else {
+	    fprintf(stderr, "unknown parameter \"%s\"\n", argv[0]);
+            usage(progname);
+	    exit(EXIT_FAILURE);
+	}
+    }
+
+    if(argc < 1) {
+        usage(progname);
         exit(EXIT_FAILURE);
     }
 
-    GriffinEmulator emulator(GriffinEmulator::RAM_1_BANK_256K);
+    if (argc < 1) {
+        fprintf(stderr, "Usage: %s <rom-file>\n", progname);
+        exit(EXIT_FAILURE);
+    }
 
-    FILE* fp = fopen(argv[1], "rb");
+    const char *romname = argv[0];
+
+    GriffinEmulator emulator(ram_config);
+
+    FILE* fp = fopen(romname, "rb");
     if (fp == NULL) {
-        fprintf(stderr, "Couldn't open \"%s\" for reading\n", argv[1]);
+        fprintf(stderr, "Couldn't open \"%s\" for reading\n", romname);
         exit(EXIT_FAILURE);
     }
     fseek(fp, 0, SEEK_END);
