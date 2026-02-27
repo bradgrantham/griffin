@@ -330,6 +330,8 @@ int main(int argc, const char** argv)
     emulator.reset();
     printf("begin execution\n");
     uint64_t previous_uart_sample = 0;
+    auto clock_then = emulator.getClock();
+    auto then = time(0);
     while (1) {
         if(debug & DEBUG_DISASSEMBLE) {
             static char str[1024];
@@ -337,11 +339,20 @@ int main(int argc, const char** argv)
             printf("%04X: %s\n", emulator.getPC(), str);
         }
         emulator.execute();
-        auto current_clock = emulator.getClock();
-        while(current_clock / SOFT_UART_SAMPLE_INTERVAL != previous_uart_sample / SOFT_UART_SAMPLE_INTERVAL)
+        auto clock_now = emulator.getClock();
+        auto now = time(0);
+
+        while(clock_now / SOFT_UART_SAMPLE_INTERVAL != previous_uart_sample / SOFT_UART_SAMPLE_INTERVAL)
         {
             debug_uart.clock(emulator.get_debug_latch());
             previous_uart_sample = previous_uart_sample + SOFT_UART_SAMPLE_INTERVAL;
+        }
+
+        if(now != then)
+        {
+            printf("%" PRIu64 " clocks\n", clock_now - clock_then);
+            clock_then = clock_now;
+            then = now;
         }
     }
 }
