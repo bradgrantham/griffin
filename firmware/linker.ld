@@ -19,9 +19,11 @@ SECTIONS
         . = 0x400;
     } > RAM
 
-    /* space for persistent data for ROM */
     .monitor_data (NOLOAD) : {
-        . = 0x200;
+        _monitor_start = .;
+        *(.monitor_data*)
+        . = MAX(., _monitor_start + 512);
+        _monitor_end = .;
     } > RAM
 
     .vectors : { *(.vectors) } > ROM

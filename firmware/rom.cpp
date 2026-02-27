@@ -1,3 +1,4 @@
+#include <string>
 #include <cstdio>
 #include <cstdint>
 #include <cstdarg>
@@ -47,12 +48,13 @@ void debug_printf(const char *fmt, ...)
     }
 }
 
+extern uint32_t memory_size;
+extern const char *build_date;
+extern const char *build_provenance;
+
 };
 
 int main()
 {
-    volatile uint16_t* p = (uint16_t*)0x400;
-    *p = 0xAA55;
-    *p = 0x55AA;
-    printf("*p = %04X\n", *p);
+    printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
 }

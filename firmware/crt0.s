@@ -205,7 +205,8 @@ memory_1m:
 memory_256k:
     .string	"Memory: 256KB\n"
     
-.section .monitor_data
+.section .monitor_data, "aw", @nobits
     .align	2
+    .global memory_size
 memory_size:
-    .hword      0
+    .skip 4
