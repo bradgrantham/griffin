@@ -92,6 +92,7 @@ _halt:
     .equ CYCLES_PER_BIT, 12000000 / 9600
     .equ DELAY_LOOP_COUNT, (CYCLES_PER_BIT - 20) / 10
 
+    .global early_putchar
 early_putchar:
     lea     GLUE_DEBUG_OUT, %a0
 
