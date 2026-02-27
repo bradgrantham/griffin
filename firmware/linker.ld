@@ -4,6 +4,7 @@ _min_heap = 0x10000;      /* required amount of heap  */
 _min_stack = 0x2000; /* required amount of stack */
 
 GLUE_ROM_OVERLAY_DISABLE = 0xF00005;
+GLUE_DEBUG_OUT = 0xF00001;
 
 MEMORY
 {

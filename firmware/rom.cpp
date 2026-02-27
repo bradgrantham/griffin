@@ -86,20 +86,10 @@ void debug_printf(const char *fmt, ...)
     }
 }
 
-void initialize_debug_out(void)
-{
-    using namespace Griffin;
-    volatile uint8_t* debug_out = (uint8_t*) GLUE_DEBUG_OUT;
-    *debug_out = 0x01;
-}
-
 };
-
 
 int main()
 {
-    initialize_debug_out();
-    printf("Hello There!\n");
     volatile uint16_t* p = (uint16_t*)0x400;
     *p = 0xAA55;
     *p = 0x55AA;

@@ -10,6 +10,9 @@ rom.bin: rom.elf
 rom.elf: $(SOURCES) $(LDSCRIPT)
 	$(M68K_GCC) -g -T $(LDSCRIPT) $(SOURCES) -o $@
 
+rom.s: rom.cpp $(LDSCRIPT)
+	$(M68K_GCC) -S -g rom.cpp 
+
 clean:
 	rm -f rom.elf rom.bin
 
