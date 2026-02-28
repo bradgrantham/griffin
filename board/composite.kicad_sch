@@ -5210,22 +5210,22 @@
 	)
 	(global_label "OBVID_TDI"
 		(shape input)
-		(at 137.16 161.29 180)
+		(at 132.08 163.83 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify right)
+			(justify left)
 		)
 		(uuid "0d5eb8f3-afbe-4ff8-b978-55653c6ca152")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 125.6477 161.29 0)
+			(at 143.5923 163.83 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
+				(justify left)
 				(hide yes)
 			)
 		)
@@ -6092,22 +6092,22 @@
 	)
 	(global_label "JTAG_TDO"
 		(shape output)
-		(at 137.16 163.83 180)
+		(at 132.08 166.37 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify right)
+			(justify left)
 		)
 		(uuid "94ad063b-a48e-4a19-9ae8-4a32001a6440")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 125.3453 163.83 0)
+			(at 143.8947 166.37 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
+				(justify left)
 				(hide yes)
 			)
 		)
@@ -9854,8 +9854,7 @@
 	)
 	(symbol
 		(lib_id "Connector:Conn_01x02_Pin")
-		(at 142.24 161.29 0)
-		(mirror y)
+		(at 127 163.83 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -9864,25 +9863,23 @@
 		(fields_autoplaced yes)
 		(uuid "edd1933f-e0f8-45dc-b7e4-7b8c5dd97c60")
 		(property "Reference" "J5"
-			(at 143.51 161.2899 0)
+			(at 127.635 158.75 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
 			)
 		)
-		(property "Value" "JTAG BYPASS"
-			(at 143.51 163.8299 0)
+		(property "Value" "OBVID_JTAG_BYPASS"
+			(at 127.635 161.29 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
 			)
 		)
-		(property "Footprint" "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
-			(at 142.24 161.29 0)
+		(property "Footprint" ""
+			(at 127 163.83 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9891,7 +9888,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 142.24 161.29 0)
+			(at 127 163.83 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9900,7 +9897,7 @@
 			)
 		)
 		(property "Description" "Generic connector, single row, 01x02, script generated"
-			(at 142.24 161.29 0)
+			(at 127 163.83 0)
 			(effects
 				(font
 					(size 1.27 1.27)

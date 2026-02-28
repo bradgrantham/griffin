@@ -3101,7 +3101,7 @@
 	)
 	(global_label "MOUSE_CLK"
 		(shape bidirectional)
-		(at 59.69 115.57 180)
+		(at 59.69 107.95 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -3111,7 +3111,7 @@
 		)
 		(uuid "a73376e1-3140-4bd6-aad4-5bcec63bd754")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 44.5869 115.57 0)
+			(at 44.5869 107.95 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3275,7 +3275,7 @@
 	)
 	(global_label "KBD_DATA"
 		(shape bidirectional)
-		(at 59.69 107.95 180)
+		(at 59.69 115.57 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -3285,7 +3285,7 @@
 		)
 		(uuid "d2675b8e-8266-4c70-a6a8-1f9d0ff9076d")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 46.4011 107.95 0)
+			(at 46.4011 115.57 0)
 			(effects
 				(font
 					(size 1.27 1.27)
