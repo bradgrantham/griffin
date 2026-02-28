@@ -21,7 +21,7 @@ debug_out_settle:
     /* Hello! */
     lea     hellostr, %a1
     lea     .Lret3(%pc), %a6
-    jmp     early_puts
+    jmp     debug_puts
 .Lret3:
 
     /* Switch out ROM */
@@ -45,7 +45,7 @@ vec_copy:
     move.l  #0x400000, %sp
     lea     memory_4m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     early_puts
+    jmp     debug_puts
 
 test_3m:
     move.w  #0xAA55, 0x300000 - 2
@@ -57,7 +57,7 @@ test_3m:
     move.l  #0x300000, %sp
     lea     memory_3m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     early_puts
+    jmp     debug_puts
 
 test_2m:
     move.w  #0xAA55, 0x200000 - 2
@@ -69,7 +69,7 @@ test_2m:
     move.l  #0x200000, %sp
     lea     memory_2m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     early_puts
+    jmp     debug_puts
 
 test_1m:
     move.w  #0xFF00, 0x80000 - 2
@@ -81,7 +81,7 @@ test_1m:
     move.l  #0x100000, %sp
     lea     memory_1m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     early_puts
+    jmp     debug_puts
 
 set_256k:
     move    #256, memory_size
@@ -89,7 +89,7 @@ set_256k:
     move.l  #0x40000, %sp
     lea     memory_256k, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     early_puts
+    jmp     debug_puts
 
 memory_size_done:
 
@@ -127,9 +127,33 @@ _halt:
     stop    #0x2700
     bra     _halt
 
-    /* TODO panic function */
-    /* take a character, bitbang that as a 9600 baud output */
+| panic: take a string, output that, then oscillate on the debug line
+| Input:  a0.l = string to send
+| Does not return
+    /* take a string, bitbang that as a 9600 baud output */
     /* pulse LED on and off fast */
+    .global monitor_panic
+monitor_panic:
+    lea     panic_loop(%pc), %a6
+    jmp     debug_puts
+panic_loop:
+    move.b  #0x01, GLUE_DEBUG_OUT
+| Courtesy Claude Opus 4.6
+    move.w  #1199, %d1          /* outer loop */
+.delay_on:
+    move.w  #99, %d0            /* inner: 100 × ~10 cycles */
+    dbra    %d0, .               /* 1200 × 100 × 10 = 1,200,000 cycles = 100ms */
+    dbra    %d1, .delay_on
+
+    move.b  #0x00, GLUE_DEBUG_OUT
+
+    move.w  #1199, %d1
+.delay_off:
+    move.w  #99, %d0
+    dbra    %d0, .
+    dbra    %d1, .delay_off
+
+    bra     panic_loop
 
 | early_putchar: bitbang one character at 9600 baud (8N1)
 | Input:  d0.b = character to send
@@ -171,19 +195,18 @@ early_putchar:
 
     jmp     (%a5)
 
-| early_puts: send null-terminated string at (a1)
+| debug_puts: send null-terminated string at (a1)
 | Return via jmp (a6)
 | Clobbers: a0, d0, d1, d2, a5, a1
-early_puts:
+debug_puts:
     move.b  (%a1)+, %d0
     beq.s   .Ldone
     lea     .Lret_puts(%pc), %a5
     jmp     early_putchar
 .Lret_puts:
-    bra.s   early_puts
+    bra.s   debug_puts
 .Ldone:
     jmp     (%a6)
-
 
 .global _init
 .global _fini

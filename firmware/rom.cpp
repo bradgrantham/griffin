@@ -31,6 +31,15 @@ asm(
     "    rts                  \n"
 );
 
+extern "C" void panic(const char *s);
+
+asm(
+    ".global panic\n"
+    "panic:\n"
+    "    move.l 4(%sp), %a1\n"
+    "    jmp monitor_panic\n"
+);
+
 extern "C" {
 
 void debug_printf(const char *fmt, ...)
@@ -57,4 +66,5 @@ extern const char *build_provenance;
 int main()
 {
     printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
+    panic("Panic!\n");
 }
