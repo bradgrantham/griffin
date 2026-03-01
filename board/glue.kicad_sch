@@ -3697,7 +3697,7 @@
 			)
 		)
 	)
-	(global_label "A6"
+	(global_label "A18"
 		(shape input)
 		(at 118.11 156.21 0)
 		(fields_autoplaced yes)
@@ -3709,7 +3709,7 @@
 		)
 		(uuid "35566202-dada-4421-8618-816811ac59cb")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 123.3933 156.21 0)
+			(at 124.6028 156.21 0)
 			(effects
 				(font
 					(size 1.27 1.27)
