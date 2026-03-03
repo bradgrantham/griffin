@@ -66,5 +66,5 @@ extern const char *build_provenance;
 int main()
 {
     printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
-    panic("Panic!\n");
+    // panic("Panic!\n");
 }

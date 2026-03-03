@@ -4687,7 +4687,7 @@
 			)
 		)
 	)
-	(global_label "~{ENGINE_IACK}"
+	(global_label "~{VPA}"
 		(shape output)
 		(at 118.11 143.51 0)
 		(fields_autoplaced yes)
@@ -4699,7 +4699,7 @@
 		)
 		(uuid "cbdc7e5d-19d6-4d37-a5e1-e970eaf42e60")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 133.13 143.51 0)
+			(at 124.5424 143.51 0)
 			(effects
 				(font
 					(size 1.27 1.27)

@@ -41,7 +41,7 @@ namespace Griffin
 
     static constexpr uint32_t GLUE_DEBUG_OUT  = GLUEbase + 0x01;
     static constexpr uint32_t GLUE_DEBUG_IN   = GLUEbase + 0x03;
-    static constexpr uint32_t GLUE_OVERLAY_DISABLE   = GLUEbase + 0x05;
+    static constexpr uint32_t GLUE_OVERLAY_DISABLE   = GLUEbase + 0x07;
 
     static constexpr uint32_t GLUE_DEBUG_OUT_BIT  = 0x01;
 };
