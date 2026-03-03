@@ -4,7 +4,7 @@
 #include <cstdarg>
 #include <cstring>
 
-#include "griffin.h"
+#include "../griffin.generated.h"
 
 static constexpr uint32_t SYSCLK = 12'000'000;
 

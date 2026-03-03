@@ -3,13 +3,12 @@ ENTRY(_start)
 _min_heap = 0x10000;      /* required amount of heap  */
 _min_stack = 0x2000; /* required amount of stack */
 
-GLUE_ROM_OVERLAY_DISABLE = 0xF00007;
-GLUE_DEBUG_OUT = 0xF00001;
+INCLUDE ../griffin.generated.ld
 
 MEMORY
 {
-    RAM (rwx) : ORIGIN = 0x00000000, LENGTH = 256K /* known to be at least 256K but could be 4M */
-    ROM (rx)  : ORIGIN = 0x00C00000, LENGTH = 128K
+    RAM (rwx) : ORIGIN = RAM_ORIGIN, LENGTH = RAM_LENGTH /* known to be at least 256K but could be 4M */
+    ROM (rx)  : ORIGIN = ROM_ORIGIN, LENGTH = ROM_LENGTH
 }
 
 SECTIONS
@@ -57,7 +56,6 @@ SECTIONS
         . = . + _min_stack;
         . = ALIGN(8);
     } >RAM
-
 
     _stack_top = ORIGIN(RAM) + LENGTH(RAM);
 

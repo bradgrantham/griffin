@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <cinttypes>
 
-#include "griffin.h"
+#include "../griffin.generated.h"
 
 #include "Moira.h"
 
@@ -20,7 +20,7 @@ class GriffinEmulator : public moira::Moira
     mutable std::vector<uint8_t> RAM_bank2;
     mutable std::vector<uint8_t> RAM_bank3;
     mutable std::vector<uint8_t> RAM_bank4;
-    mutable std::array<uint8_t, ROMsize> ROM{};
+    mutable std::array<uint8_t, ROM_SIZE> ROM{};
     mutable int debug_out_latch = 0;
     mutable bool ROMoverlay = true;
 
@@ -40,14 +40,14 @@ class GriffinEmulator : public moira::Moira
 
     void IO_write8(uint32_t addr, uint8_t val) const
     {
-        if(addr == GLUE_DEBUG_OUT - GLUEbase) {
-            auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_BIT;
-            auto bit = val & GLUE_DEBUG_OUT_BIT;
+        if(addr == GLUE_DEBUG_OUT - GLUE_BASE) {
+            auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_OUT_MASK;
+            auto bit = val & GLUE_DEBUG_OUT_OUT_MASK;
             if(bit != oldbit) {
                 if(debug & DEBUG_IO) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
             }
             debug_out_latch = val;
-        } else if(addr == GLUE_OVERLAY_DISABLE - GLUEbase) {
+        } else if(addr == GLUE_CONFIG - GLUE_BASE) {
             if(debug & DEBUG_IO) printf("ROM overlay disabled\n");
             ROMoverlay = false;
         } else {
@@ -92,7 +92,7 @@ public:
     uint8_t read8(uint32_t addr) const override
     {
         if(debug & DEBUG_BUS) { printf("read of uint8_t at %06X\n", addr); }
-        if (ROMoverlay && (addr < ROMsize)) {
+        if (ROMoverlay && (addr < ROM_SIZE)) {
             return ROM[addr];
         } else if (RAM_BANK_1.contains(addr)) {
             if(RAM_bank1.size() == 0) {
@@ -118,10 +118,10 @@ public:
             } else {
                 return RAM_bank4[RAM_BANK_4.get(addr) % RAM_bank4.size()];
             }
-        } else if (addr >= ROMbase && addr < ROMbase + ROMsize) {
-            return ROM[addr - ROMbase];
-        } else if (addr >= IObase && addr < (IObase + IOsize)) {
-            return IO_read8(addr - IObase);
+        } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
+            return ROM[(addr - ROM_BASE) % ROM_SIZE];
+        } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
+            return IO_read8(addr - IO_BASE);
         } else {
             printf("read of uint8_t at unhandled %06X\n", addr);
             abort();
@@ -131,7 +131,7 @@ public:
     uint16_t read16(uint32_t addr) const override
     {
         if(debug & DEBUG_BUS) { printf("read of uint16_t at %06X\n", addr); }
-        if (ROMoverlay && (addr < ROMsize)) {
+        if (ROMoverlay && (addr < ROM_SIZE)) {
             return (ROM[addr] << 8) | ROM[addr + 1];
         } else if (RAM_BANK_1.contains(addr)) {
             return (read8(addr) << 8) | read8(addr + 1);
@@ -141,10 +141,10 @@ public:
             return (read8(addr) << 8) | read8(addr + 1);
         } else if (RAM_BANK_4.contains(addr)) {
             return (read8(addr) << 8) | read8(addr + 1);
-        } else if (addr >= ROMbase && addr < ROMbase + ROMsize) {
-            return (ROM[addr - ROMbase] << 8) | ROM[addr - ROMbase + 1];
-        } else if (addr >= IObase && addr < (IObase + IOsize)) {
-            return IO_read16(addr - IObase);
+        } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
+            return (ROM[(addr - ROM_BASE) % ROM_SIZE] << 8) | ROM[(addr - ROM_BASE + 1) % ROM_SIZE];
+        } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
+            return IO_read16(addr - IO_BASE);
         } else {
             printf("read of uint16_t at unhandled %06X\n", addr);
             abort();
@@ -170,10 +170,10 @@ public:
             if(RAM_bank4.size() != 0) {
                 RAM_bank4[RAM_BANK_4.get(addr) % RAM_bank4.size()] = val;
             } 
-        } else if (addr >= ROMbase && addr < ROMbase + ROMsize) {
+        } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
-        } else if (addr >= IObase && addr < (IObase + IOsize)) {
-            IO_write8(addr - IObase, val);
+        } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
+            IO_write8(addr - IO_BASE, val);
         } else {
             printf("write of uint8_t %02X to unhandled %06X\n", val, addr);
             abort();
@@ -206,10 +206,10 @@ public:
                 RAM_bank4[RAM_BANK_4.get(addr) % RAM_bank4.size()] = high;
                 RAM_bank4[RAM_BANK_4.get(addr + 1) % RAM_bank4.size()] = low;
             } 
-        } else if (addr >= ROMbase && addr < ROMbase + ROMsize) {
+        } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
-        } else if (addr >= IObase && addr < (IObase + IOsize)) {
-            IO_write16(addr - IObase, val);
+        } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
+            IO_write16(addr - IO_BASE, val);
         } else {
             printf("write of uint16_t %04X to unhandled %06X\n", val, addr);
             abort();

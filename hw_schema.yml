@@ -1,0 +1,316 @@
+# SBC Hardware Definition Schema — Griffin subset
+# JSON Schema draft-07, expressed as YAML
+#
+# Reference this from your hardware YAML with:
+#   # yaml-language-server: $schema=hw_schema.yml
+
+$schema: "http://json-schema.org/draft-07/schema#"
+$id: hw_schema.yml
+title: Griffin 68000 SBC Hardware Definition
+description: >
+  Peripheral-centric hardware definition. Each peripheral owns its address
+  range, registers, interrupts, DTACK timing, and clock. Code headers,
+  assembly includes, and linker scripts are all generated from this file.
+
+type: object
+required: [project, peripherals]
+additionalProperties: false
+
+properties:
+
+  project:
+    type: object
+    required: [name, cpu, clock_hz]
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+        description: Project name, used for generated filenames
+      cpu:
+        type: string
+        description: "CPU part number (e.g. MC68000)"
+      clock_hz:
+        type: integer
+        minimum: 1
+      interrupt_mode:
+        type: string
+        enum: [autovector, vectored]
+        default: autovector
+
+  peripherals:
+    type: object
+    description: >
+      Map of peripheral name to definition. Names become C/asm symbol
+      prefixes (e.g. CF -> CF_DATA, CF_STATUS).
+    minProperties: 1
+    propertyNames:
+      pattern: "^[A-Z][A-Z0-9_]*$"
+    additionalProperties:
+      $ref: "#/$defs/peripheral"
+
+  constants:
+    type: object
+    description: >
+      Named constants emitted verbatim into headers. Useful for protocol
+      values (CF commands, status bits) that don't belong to a register.
+    propertyNames:
+      pattern: "^[A-Z][A-Z0-9_]*$"
+    additionalProperties:
+      $ref: "#/$defs/constant_value"
+
+  bodges:
+    type: array
+    description: Board bodge/rework notes
+    items:
+      type: string
+
+# ======================================================================
+# Reusable definitions
+# ======================================================================
+
+$defs:
+
+  # --------------------------------------------------------------------
+  # Primitives
+  # --------------------------------------------------------------------
+
+  address:
+    description: "Address as integer or hex string"
+    oneOf:
+      - type: integer
+        minimum: 0
+      - type: string
+        pattern: "^0x[0-9a-fA-F]+$"
+
+  size_expr:
+    description: "Size as integer or hex string"
+    oneOf:
+      - type: integer
+        minimum: 0
+      - type: string
+        pattern: "^(0x[0-9a-fA-F]+|[0-9]+[KMG]?)$"
+
+  constant_value:
+    oneOf:
+      - type: integer
+      - type: string
+        pattern: "^0[xXbB][0-9a-fA-F_]+$"
+
+  # --------------------------------------------------------------------
+  # Peripheral
+  # --------------------------------------------------------------------
+
+  peripheral:
+    type: object
+    additionalProperties: false
+    properties:
+
+      part:
+        type: string
+        description: Part number or short description
+
+      description:
+        type: string
+
+      address_range:
+        $ref: "#/$defs/address_range"
+
+      registers:
+        type: array
+        items:
+          $ref: "#/$defs/register"
+
+      interrupt:
+        $ref: "#/$defs/interrupt"
+
+      dtack:
+        $ref: "#/$defs/dtack"
+
+      berr_timeout:
+        type: integer
+        minimum: 1
+        description: >
+          BERR timeout in CPU clock cycles. If DTACK is not asserted
+          within this many cycles, GLUE asserts BERR.
+
+      clock:
+        $ref: "#/$defs/clock"
+
+      linker:
+        $ref: "#/$defs/linker_section"
+
+  # --------------------------------------------------------------------
+  # Address range
+  # --------------------------------------------------------------------
+
+  address_range:
+    type: object
+    required: [base]
+    additionalProperties: false
+    properties:
+      base:
+        $ref: "#/$defs/address"
+      size:
+        $ref: "#/$defs/size_expr"
+      window:
+        $ref: "#/$defs/size_expr"
+        description: "Address decode window size; if larger than size, data repeats (mirrors) through the window"
+      width:
+        description: "Data bus width (8 or 16), or list of supported widths"
+        oneOf:
+          - type: integer
+            enum: [8, 16]
+          - type: array
+            items:
+              type: integer
+              enum: [8, 16]
+            minItems: 1
+
+  # --------------------------------------------------------------------
+  # Register
+  # --------------------------------------------------------------------
+
+  register:
+    type: object
+    required: [offset, name, access, width]
+    additionalProperties: false
+    properties:
+      offset:
+        $ref: "#/$defs/address"
+      name:
+        type: string
+        pattern: "^[A-Z][A-Z0-9_]*$"
+      access:
+        type: string
+        enum: [read, write, rw]
+      width:
+        type: integer
+        enum: [8, 16]
+      description:
+        type: string
+      bits:
+        type: array
+        items:
+          $ref: "#/$defs/bitfield"
+
+  # --------------------------------------------------------------------
+  # Bitfield within a register
+  #
+  # bit: always a string. Single bit: "7". Hi:lo range inclusive: "2:0"
+  # means bits 2 down to 0. MSB listed first.
+  # --------------------------------------------------------------------
+
+  bitfield:
+    type: object
+    required: [bit, name]
+    additionalProperties: false
+    properties:
+      bit:
+        type: string
+        description: >
+          Bit position(s) as a string. Single bit: "3". Hi:lo range
+          inclusive: "2:0" means bits 2 down to 0, MSB first.
+        pattern: "^[0-9]+(:[0-9]+)?$"
+      name:
+        type: string
+        pattern: "^[A-Z][A-Z0-9_]*$"
+      description:
+        type: string
+      values:
+        type: array
+        description: Named enumeration of legal values for this field
+        items:
+          $ref: "#/$defs/enum_value"
+
+  # --------------------------------------------------------------------
+  # Enumerated value for a bitfield
+  # --------------------------------------------------------------------
+
+  enum_value:
+    type: object
+    required: [value, name]
+    additionalProperties: false
+    properties:
+      value:
+        description: "Integer or binary/hex string literal (e.g. 0b101, 0x03)"
+        oneOf:
+          - type: integer
+          - type: string
+            pattern: "^0[xXbB][0-9a-fA-F_]+$"
+      name:
+        type: string
+        pattern: "^[A-Z][A-Z0-9_]*$"
+      description:
+        type: string
+
+  # --------------------------------------------------------------------
+  # Interrupt
+  # --------------------------------------------------------------------
+
+  interrupt:
+    type: object
+    required: [level, signal]
+    additionalProperties: false
+    properties:
+      level:
+        type: integer
+        minimum: 1
+        maximum: 7
+      signal:
+        type: string
+        description: "Signal name driven by peripheral to request interrupt (e.g. ~VIDEO_IRQ)"
+
+  # --------------------------------------------------------------------
+  # DTACK / bus timing
+  #
+  # Two forms are used:
+  #   - String: signal name for handshake DTACK (e.g. ~ENGINE_DTACK)
+  #   - Array:  list of {clock_hz: wait_states} entries for fixed timing
+  #             e.g. [- 12000000: 1, - 20000000: 2]
+  # --------------------------------------------------------------------
+
+  dtack:
+    oneOf:
+      - type: string
+        description: "Handshake DTACK signal name (e.g. ~ENGINE_DTACK)"
+      - type: array
+        description: "Fixed wait states keyed by CPU clock frequency"
+        items:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+          minProperties: 1
+          maxProperties: 1
+
+  # --------------------------------------------------------------------
+  # Clock
+  #
+  # Two forms are used:
+  #   - Integer:       single crystal/oscillator frequency in Hz
+  #   - Array of int:  multiple clocks available (e.g. [14318181, 25175000])
+  # --------------------------------------------------------------------
+
+  clock:
+    oneOf:
+      - type: integer
+        minimum: 1
+        description: "Crystal/oscillator frequency in Hz"
+      - type: array
+        items:
+          type: integer
+          minimum: 1
+        minItems: 2
+        description: "Multiple available clock frequencies in Hz"
+
+  # --------------------------------------------------------------------
+  # Linker section contribution
+  # --------------------------------------------------------------------
+
+  linker_section:
+    type: object
+    additionalProperties: false
+    properties:
+      section:
+        type: string
+        description: "Linker section name (e.g. 'rom', 'ram')"

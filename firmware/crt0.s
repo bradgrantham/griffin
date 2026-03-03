@@ -1,3 +1,5 @@
+.include "../griffin.generated.inc"
+
 .section .vectors, "a"
 vector_table:
     .long   _stack_top
@@ -25,7 +27,7 @@ debug_out_settle:
 .Lret3:
 
     /* Switch out ROM */
-    move.b #0xFF, GLUE_ROM_OVERLAY_DISABLE
+    move.b #GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK, GLUE_CONFIG
 
     /* Copy ROM vector table to RAM */
     move.l  vector_table, %a0

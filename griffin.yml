@@ -1,0 +1,296 @@
+project:
+  name: Griffin
+  cpu: MC68000
+  clock_hz: 12000000
+  interrupt_mode: autovector
+
+peripherals:
+  GLUE:
+    part: ATF1508AS
+    description: "System glue logic"
+    address_range:
+      base: 0xF00000
+      size: 0x040000
+      width: 8
+    registers:
+      - offset: 0x01
+        name: DEBUG_OUT
+        access: write
+        width: 8
+        description: "Set or clear DEBUG_OUT signal (debug LED and test point output)"
+        bits:
+          - { bit: "0", name: OUT, description: "DEBUG_OUT drive level" }
+      - offset: 0x01
+        name: DEBUG_IN
+        access: read
+        width: 8
+        description: "Read DEBUG_IN signal state"
+        bits:
+          - { bit: "0", name: IN, description: "DEBUG_IN pin state" }
+      - offset: 0x03
+        name: UART_TX_STATUS
+        access: read
+        width: 8
+        description: "UART transmitter status; poll BUSY until clear before writing UART_TX_DATA"
+        bits:
+          - { bit: "0", name: BUSY, description: "TX is busy" }
+      - { offset: 0x03, name: UART_TX_DATA, access: write, width: 8,
+          description: "Load TX latch and begin 8N1 output on DEBUG_OUT" }
+      - offset: 0x05
+        name: UART_RX_STATUS
+        access: read
+        width: 8
+        description: "UART receiver status"
+        bits:
+          - { bit: "0", name: READY, description: "Sample ready (half-bit counter reached zero)" }
+          - { bit: "7", name: PIN,   description: "Current DEBUG_IN pin state" }
+      - offset: 0x05
+        name: UART_RX_CONFIG
+        access: write
+        width: 8
+        description: "UART receiver configuration"
+        bits:
+          - { bit: "0", name: ARM, description: "Arm edge detector to begin start-bit detection" }
+      - offset: 0x07
+        name: CONFIG
+        access: write
+        width: 8
+        description: "GLUE configuration register"
+        bits:
+          - { bit: "0", name: ROM_OVERLAY_DISABLE,
+              description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
+
+  ROM:
+    part: "2x 64K byte-wide EPROM/Flash"
+    address_range:
+      base: 0xC00000
+      size: 0x020000    # 128K chip data (2x 64K byte-wide)
+      window: 0x100000  # 1MB decode window; 128K repeats throughout
+      width: 16
+    dtack:
+      - 12000000: 1
+      - 20000000: 2
+    linker:
+      section: rom
+
+  RAM_BANK_1:
+    part: "SRAM"
+    address_range:
+      base: 0x000000
+      size: 0x100000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 20000000: 1
+    linker:
+      section: ram
+
+  RAM_BANK_2:
+    part: "SRAM"
+    address_range:
+      base: 0x100000
+      size: 0x100000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 20000000: 1
+
+  RAM_BANK_3:
+    part: "SRAM"
+    address_range:
+      base: 0x200000
+      size: 0x100000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 20000000: 1
+
+  RAM_BANK_4:
+    part: "SRAM"
+    address_range:
+      base: 0x300000
+      size: 0x100000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 20000000: 1
+
+  VIDEO:
+    part: ATF1508AS
+    description: "On-board video generator (OBVID / PLUME)"
+    clock: [14318181, 25175000]
+    address_range:
+      base: 0xE00000
+      size: 0x100000
+      width: [8, 16]
+    interrupt:
+      level: 7
+      signal: ~VIDEO_IRQ
+    registers:
+      - offset: 0x01
+        name: MODE
+        access: rw
+        width: 8
+        description: >
+          Primary video mode control. To change modes: disable ENBVINT, wait
+          50ms for settling, configure other registers, then write MODE.
+        bits:
+          - bit: "2:0"
+            name: CLOCK
+            description: "Clock source and output mode selection"
+            values:
+              - { value: "0b000", name: DISABLED,  description: "Video disabled; all outputs Hi-Z, OBVID_STALL reset" }
+              - { value: "0b100", name: CLK_14MHZ, description: "14.318 MHz pixel clock (NTSC composite)" }
+              - { value: "0b101", name: CLK_25MHZ, description: "25.175 MHz pixel clock (VGA 640x480)" }
+          - { bit: "3", name: PALETTE,
+              description: "0=slow palette (updated at most once per line), 1=fast palette (updated every 16 pixels)" }
+          - { bit: "4", name: FORMAT,
+              description: "0=progressive scan, 1=interlaced" }
+          - { bit: "5", name: ENBVINT,
+              description: "0=disable frame interrupt, 1=enable frame interrupt at start of vblank" }
+          - { bit: "6", name: ENBSNP,
+              description: "0=disable OBVID_STALL blocking snoop, 1=enable" }
+          - { bit: "7", name: CBURST,
+              description: "0=no colorburst cycles, 1=enable colorburst (composite artifact color)" }
+      - offset: 0x03
+        name: MODE2
+        access: rw
+        width: 8
+        description: "Secondary video mode control; can be changed at any time"
+        bits:
+          - { bit: "0", name: PPC,
+              description: "0=one pixel per clock, 1=one pixel per two clocks" }
+          - { bit: "1", name: ENBLINT,
+              description: "0=disable line interrupt, 1=enable line interrupt outside visible region" }
+      - { offset: 0x05, name: WORDS_START, access: write, width: 8,
+          description: "16-pixel word count from hblank end to first visible output; can change in hblank" }
+      - offset: 0x09
+        name: BORDER_PIXEL
+        access: rw
+        width: 8
+        description: "Pixel value used outside the visible word range; can change at any time"
+        bits:
+          - { bit: "0", name: VALUE, description: "Border pixel bit" }
+      - { offset: 0x0B, name: LINES_START, access: write, width: 8,
+          description: "Visible line start count after vblank end; unblocks OBVID snoop reads after vsync" }
+      - { offset: 0x0D, name: LINES_COUNT, access: write, width: 8,
+          description: "Number of visible lines" }
+      - offset: 0x0E
+        name: PALETTE
+        access: write
+        width: 16
+        description: "Load palette register immediately; 2x R3G3B2 entries; can change at any time"
+        bits:
+          - { bit: "7:0",  name: ENTRY_0, description: "R3G3B2 palette entry 0 (LSB)" }
+          - { bit: "15:8", name: ENTRY_1, description: "R3G3B2 palette entry 1 (MSB)" }
+      - offset: 0x10
+        name: NEXT_PALETTE
+        access: write
+        width: 16
+        description: "Load next-palette buffer; promoted to PALETTE on next shift register reload; can change at any time"
+        bits:
+          - { bit: "7:0",  name: ENTRY_0, description: "R3G3B2 palette entry 0 (LSB)" }
+          - { bit: "15:8", name: ENTRY_1, description: "R3G3B2 palette entry 1 (MSB)" }
+      - { offset: 0x12, name: ARM_SNOOP, access: write, width: 16,
+          description: "Write to arm OBVID_STALL blocking snoop; write once per visible line before pixel reads" }
+      - { offset: 0x14, name: DISARM_SNOOP, access: write, width: 16,
+          description: "Write to disarm OBVID_STALL blocking snoop" }
+
+  ENGINE:
+    part: ATF1508AS
+    description: "Application-specific accelerator"
+    address_range:
+      base: 0xD00000
+      size: 0x100000
+      width: [8, 16]
+    interrupt:
+      level: 6
+      signal: ~ENGINE_IRQ
+    dtack: ~ENGINE_DTACK
+
+  CF:
+    part: "Compact Flash (True IDE)"
+    description: "Storage via CF card in True IDE 8-bit PIO mode"
+    address_range:
+      base: 0xF40000
+      size: 0x040000
+      width: 8
+    dtack:
+      - 12000000: 7
+      - 20000000: 12
+    registers:
+      - { offset: 0x01, name: DATA,         access: rw,    width: 8,
+          description: "Data to/from CF card" }
+      - { offset: 0x03, name: ERROR,        access: read,  width: 8,
+          description: "Error register; valid after a command error" }
+      - { offset: 0x03, name: FEATURES,     access: write, width: 8,
+          description: "Features register; written before issuing SET_FEATURES command" }
+      - { offset: 0x05, name: SECTOR_COUNT, access: rw,    width: 8,
+          description: "Number of sectors to transfer" }
+      - { offset: 0x07, name: SECTOR_NUM,   access: rw,    width: 8,
+          description: "LBA bits 7:0" }
+      - { offset: 0x09, name: CYL_LO,       access: rw,    width: 8,
+          description: "LBA bits 15:8" }
+      - { offset: 0x0B, name: CYL_HI,       access: rw,    width: 8,
+          description: "LBA bits 23:16" }
+      - { offset: 0x0D, name: DRIVE_HEAD,   access: rw,    width: 8,
+          description: "LBA bits 27:24 and drive select; OR with CF_DH_LBA for LBA mode" }
+      - { offset: 0x0F, name: STATUS,       access: read,  width: 8,
+          description: "Device status; poll BSY clear and DRQ set before data transfer" }
+      - { offset: 0x0F, name: COMMAND,      access: write, width: 8,
+          description: "Issue command; write after setting all other registers" }
+
+  IO_MCU:
+    part: AT89S52
+    description: "Keyboard, mouse, serial IO processor"
+    clock: 11059200
+    address_range:
+      base: 0xF80000
+      size: 0x040000
+      width: 8
+    interrupt:
+      level: 5
+      signal: ~IO_IRQ
+    dtack: ~IO_DTACK_MISO  # dual-purpose with SPI
+    berr_timeout: 256
+    registers:
+      - { offset: 0x01, name: STATUS, access: read,  width: 8,
+          description: "IO processor status" }
+      - { offset: 0x01, name: CONFIG, access: write, width: 8,
+          description: "IO processor configuration; baud rate and mode" }
+      - { offset: 0x03, name: TX,     access: write, width: 8,
+          description: "UART transmit data byte" }
+      - { offset: 0x05, name: RX,     access: read,  width: 8,
+          description: "Receive data; first byte is type/status, subsequent bytes are payload" }
+
+  AUDIO:
+    part: "74HC373 + R2R DAC"
+    description: "8-bit latched audio output"
+    address_range:
+      base: 0xFC0000
+      size: 0x040000
+      width: 8
+    dtack:
+      - 12000000: 1
+      - 20000000: 2
+    registers:
+      - { offset: 0x01, name: DAC, access: write, width: 8,
+          description: "Write sample to 8-bit R2R DAC output latch" }
+
+constants:
+  CF_STATUS_BSY:   0x80
+  CF_STATUS_DRDY:  0x40
+  CF_STATUS_DRQ:   0x08
+  CF_STATUS_ERR:   0x01
+  CF_CMD_READ_SECTORS:  0x20
+  CF_CMD_WRITE_SECTORS: 0x30
+  CF_CMD_IDENTIFY:      0xEC
+  CF_CMD_SET_FEATURES:  0xEF
+  CF_CMD_SET_8BIT:      0x01
+  CF_DH_LBA:            0xE0
+
+bodges:
+  - "Swap MOUSE_CLK and KBD_DATA at MCU"
+  - "Swap KBD_CLK and MOUSE_DATA at MCU"
+  - "Reroute A6 pad on U12 to A18"
+  - "Route freed GLUE pin to ~VPA"
