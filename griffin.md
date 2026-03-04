@@ -81,21 +81,6 @@ DEBUG\_IN LED:
 * small NPN like a 2N3904 or SOT-23 MMBT3904. Collector to \+5V through the LED and resistor, base to the DEBUG\_OUT pad through a 1K–10K resistor, emitter to ground. The base current is microamps so it won't load the serial line at all, and the LED gets a clean 5V drive independent of your logic levels.  
 * You could dead-bug it right across the two pads - body of the transistor sitting on top, legs bent to reach the resistor and LED. A little ugly but perfectly functional for a dev board.
 
-Mouse and Keyboard
-
-* Will need to swap MOUSE\_CLK and KBD\_DATA with a bodge :  
-  * P3.2 = MOUSE\_CLK  
-  * P3.3 = KBD\_CLK  
-  * P3.4 = MOUSE\_DATA  
-  * P3.5 = KBD\_DATA
-
-Need A18 at GLUE for IO subdecode
-
-* Cut A6 to GLUE, bodge A18 to that pin
-
-VPA from GLUE to CPU
-
-* Don’t populate the pull-up route to GLUE where ENGINE\_IACK is
 
 # Board spin
 
@@ -237,15 +222,7 @@ completely forgot from the beginning.
     * Repeat for 3M, 2M, 1M  
     * Otherwise assume 256K
 
-0xC0\_0000 - 0xCF\_FFFF: 128K ROM, repeating  
-0xD0\_0000-0xDF\_FFFF = ENGINE IO config registers  
-0xE0\_0000 - 0xEF\_FFFF : on-board video “VIDEO” config, repeating  
-0xF0\_0000-0xFF\_FFFF - IO area, decode A23-A18
-
-* 0xF0\_XXXX - GLUE config and I/O  
-* 0xF4\_XXXX - compact flash, 8-bit access (odd addresses)  
-* 0xF8\_XXXX - IO MCU, 8-bit access (odd addresses)  
-* 0xFC\_XXXX - audio DAC latch, 8-bit access (all odd addresses)
+See griffin.yml for the complete peripheral address map.
 
 ## ROM
 
@@ -308,17 +285,7 @@ Dedicated ATF1508 CPLD for:
   * UART RX ISR waits for UART RX status & 0x40, reads pin state from UART RX status & 0x80  
     * Repeats for 8 bits plus start  
     * Can do something about framing error if desired  
-* GLUE memory mapped IO:
-
-| Offset | Width | Functionality |
-| :---- | :---- | :---- |
-| 0x01 Read | 8 bits | DEBUG\_OUT 0x01: set or clear DEBUG\_OUT |
-| 0x01 Read | 8 | DEBUG\_IN 0x01: status of DEBUG\_IN |
-| 0x03 Read | 8 | UART TX Status  0x01: TX is busy (loop and check this again) |
-| 0x03 Write | 8 | UART TX Data load latch, start 8n1 output on DEBUG\_OUT |
-| 0x05 Read | 8 | UART RX Status 0x01: sample ready (counter reached 0\) 0x80: RX pin state |
-| 0x05 Write | 8 | UART RX Config 0x01: Arm edge detector  |
-| 0x07 Write | 8 | GLUE Config 0x01: disable ROM overlay |
+* Registers: see griffin.yml.
 
 ## VIDEO or “PLUME” (Griffin plumage = display)
 
@@ -328,45 +295,10 @@ NTSC, VGA pixel and timing generation - second ATF1508
 
 * CPLD 16-bit shift register clocks out 1 bit, expands to R3G3B2 through internal pair of palette registers  
 * Count off hsync and vsync to provide HSYNC and VSYNC signals and exit-VBLANK interrupt (through GLUE)  
-* Default for all config registers is 0, video disabled  
-* Some config registers can be “changed any time” but CPU is likely to be busy in tight loop for visible pixels so practically will only change in hblank or vblank.  
-* Config registers are noted by address from base address  
-* Config register 0x1.b: VIDEO\_MODE  
-  * D2..D0 : VIDEO\_MODE\_CLOCK  
-    * 000 = disable video - disable oscillator clocks, Hi-Z VGA and CPST outputs, reset VIDEO\_STALL  
-    * 100 = 14.318 MHz (may decide later that this Hi-Z’s the 8 pins to VGA DACs and HSYNC and VSYNC)  
-    * 101 = 25.2 MHz (may decide later that this Hi-Z’s the PIXEL and SYNC signals to composite video circuit)  
-  * D3: VIDEO\_MODE\_PALETTE - 0 = “slow palette”  mode, 1 = “fast palette” mode  
-  * D4: VIDEO\_MODE\_FORMAT - 0 = progressive, 1 = interlaced  
-  * D5: VIDEO\_MODE\_ENBVINT - 0 = disable frame interrupt, 1 = enable frame interrupt  
-  * D6: VIDEO\_MODE\_ENBSNP - 0 = disable blocking snoop, 1 = enable blocking snoop  
-  * D7: VIDEO\_MODE\_CBURST - 0 = no colorburst cycles, 1 = enable colorburst cycles  
-  * CPU is expected to transition between modes by waiting until end of a visible pixel ISR. disabling frame interrupt (write 0 byte), then wait at least 50 milliseconds for settling, then configure counter and palette registers as desired with frame interrupt disabled, then set mode and optional interrupt enable.  
-* Config register 0x3.b: VIDEO\_MODE2  
-  * D0: VIDEO\_MODE2\_PPC - 0 = pixel per clock, 1 = pixel per 2 clocks  
-    * Realistically, I’ll need to upgrade to a 68EC000@20 to get 640\*480  
-  * D1: VIDEO\_MODE\_ENBLINT - 0 = disable line interrupt outside visible region, 1 - enable  
-  * Can be changed at any time  
-* Config register 0x5.b: VIDEO\_WORDS\_START  
-  * Set number of words (in words, so every 16 pixels) to start visible pixel processing after end of hblank.  That is to say, when CPU writes to 0x12.w, causing VIDEO\_STALL, when is VIDEO\_STALL released?  
-  * Can be changed in hblank  
-* Config register 0x9.b: VIDEO\_BORDER\_PIXEL  
-  * bit 0 is border pixel bit used outside of visible pixel word range  
-  * Can be changed any time  
-* Config register 0xB.b: VIDEO\_LINES\_START  
-  * set start of visible lines after end of vblank, when first read from memory for VIDEO CPLD snoop is unblocked after vsync  
-* Config register 0xD.b: VIDEO\_LINES\_COUNT  
-  * set start of visible lines after end of vblank, when first read from memory for VIDEO CPLD snoop is unblocked after vsync  
-* Config register 0xE.w : VIDEO\_PALETTE  
-  * Loads palette register immediately  
-  * 2 R3G3B2 palette entries, 0 in LSB, 1 in MSB  
-  * Can be changed any time  
-  * Is it worth exposing this?  
-* Config register 0x10.w : VIDEO\_NEXT\_PALETTE  
-  * Load color palette buffer  
-  * 2 R3G3B2 palette entries, 0 in LSB, 1 in MSB  
-  * Can be changed any time  
-* Operation register 0x12.w - write to this location arms blocking snoop, aka VIDEO\_STALL signal to GLUE logic after CPU releases ~AS  
+* Registers: see griffin.yml. All config registers default to 0 (video disabled). Some can be changed at any time but in practice CPU is in a tight pixel loop during visible lines, so changes happen in hblank or vblank.
+* MODE: To change modes, disable ENBVINT, wait at least 50ms for settling, configure other registers, then write MODE.
+* MODE2 PPC: Realistically upgrading to a 68EC000@20 will be needed to get 640×480.
+* ARM\_SNOOP: Write to arm blocking snoop (VIDEO\_STALL to GLUE after CPU releases \~AS). Must be written once per visible line.  
   * Snooped bus user data (FC2:FC0 == 101\) in “slow palette” mode expects 16bits of pixel data (16 pixels) repeated through visible pixels  
   * Snooped bus data in “fast palette” mode expects 16 bits of palette (2x R3G3B2) and then 16bits of pixel data (16 pixels) repeated through visible pixels and then one more 16-bits palette  
     * Would need something like looped or unrolled “move.l (A0)+, D0”, transfer two 16-bit words in 12 cycles. - works for 68000 @ 12MHz\!  
@@ -383,7 +315,7 @@ NTSC, VGA pixel and timing generation - second ATF1508
     * 16-bit "pixel shift register", "palette register", "next 16 pixels" register, and "next palette" register. The LSBit of the pixel shift register is the current pixel, and selects from the two 8-bit values in the palette register for VGA.  Or it is black or white voltage for composite video.  Every pixel clock the pixel shift register shifts right.  On the starting pixel clock (multiple of 16\) and every 16 clocks through the end of visible pixels, the pixel shift register would be loaded from the "next 16 pixels" and the palette register would be loaded from "next palette".  After the visible pixels range, every 16 clocks until visible pixels starts again, the shift would be filled with border pixel (maybe set or cleared) and the palette register would be loaded from VIDEO\_BORDER\_PALETTE. The implication is that all lines will be multiples of 16 and I'm okay with that.  
     * in "slow palette" mode, stall the next bus access (expecting a CPU read from framebuffer) until the pixel shift register is loaded from the previous "next 16 pixels", at which point the "next 16 pixels" are loaded from the snoop, the bus D lines are loaded into "next 16 pixels" and STALL is released.  Thus a line of "slow palette" can optionally set the "next" palette register to set border colors for the line, write 0x12, then just read N words. Next palette register isn't set during the line so it can still get loaded into "palette register" every 16 clocks.  
     * In "fast palette" the snoops also set the "next palette register" first, so a line of "fast palette" writes 0x12, then reads N\*2 words made of a palette read and a pixel read, likely a move.l which will then perform two word reads. The first load will not stall but will be immediately loaded into "next palette". The second read will stall until the shift is loaded from the "next 16 pixels", the bus D lines are loaded into "next 16 pixels" and STALL is released.  
-* Operation register 0x14.w, write to disarm blocking snoop  
+* DISARM\_SNOOP: Write to disarm blocking snoop.
 * Just before beginning of frame VIDEO interrupts CPU so that CPU enters “framebuffer” ISR, doing N (e.g. N is 200, 240, 400, 480\) tight loops to write rows and then check IO MCU, etc in HBLANK, exits ISR at end of visible rows   
   * Tight loop writes out 16 bits at a time for 320 or 640 pixels, eg MOVE.W (An+), D0  
   * CPU does busy wait on vblank todo per frame processing  
@@ -397,15 +329,7 @@ NTSC, VGA pixel and timing generation - second ATF1508
 * Only do 8-bit access to ease routing, D0-D7 so only odd addresses  
 * Entirely True IDE PIO mode, no interrupts  
 * GLUE manages DTACK, will need to hard-code wait states as necessary (7@12MHz, 12@20MHz)  
-* IO addresses as offsets from base address:  
-  * 0x1 - Data Register: (16-bit/8-bit) Data to/from the CF card.  
-  * 0x3 - Error (Read) / Features (Write): Valid after a command error or for enabling features.  
-  * 0x5 - Sector Count: Number of sectors to read/write.  
-  * 0x7 - Sector Number (LBA 7-0): Starting sector address.  
-  * 0x9 - Cylinder Low (LBA 15-8): Cylinder address low byte.  
-  * 0xB - Cylinder High (LBA 23-16): Cylinder address high byte.  
-  * 0xD - Drive/Head (LBA 27-24): Drive/Head register.  
-  * 0xF - Status (Read) / Command (Write): Used to check device status or issue commands. 
+* Registers: see griffin.yml.
 
 ## IO processor
 
@@ -416,14 +340,7 @@ Keyboard, mouse, serial port through 8051-compatible AT89S52
 * 2 PS2  
 * AT89S52 Continuously polls IO\_SELECT\_MOSI from GLUE chip: if detected, disable interrupts, do 68000 bus cycle including putting data on data bus, lowering DTACK, then waiting for AS to rise and releasing DTACK, enable interrupts  
 * Need FIFO for all inputs so CPU doesn't need to do anything during visible row scanout ISR  
-* IO addresses as offsets from base address:  
-  * 0x1: UART Config  
-    * Baud rate: 9600, 19200, 115200, higher?  
-  * 0x1: read status…?  
-  * 0x3: UART write   
-  * 0x5: read data on interrupt  
-    * Byte 1 is type and / or status  
-    * Following optional bytes are payload  
+* Registers: see griffin.yml.
 * Program either in jig or by GLUE control signals  
 * ISR for UART, PS2  
 * Got that old PS/2 software from PIC for Alice 2  
