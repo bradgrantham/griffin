@@ -117,7 +117,7 @@ peripherals:
 
   VIDEO:
     part: ATF1508AS
-    description: "On-board video generator (OBVID / PLUME)"
+    description: "On-board video generator"
     clock: [14318181, 25175000]
     address_range:
       base: 0xE00000
@@ -139,7 +139,7 @@ peripherals:
             name: CLOCK
             description: "Clock source and output mode selection"
             values:
-              - { value: "0b000", name: DISABLED,  description: "Video disabled; all outputs Hi-Z, OBVID_STALL reset" }
+              - { value: "0b000", name: DISABLED,  description: "Video disabled; all outputs Hi-Z, VIDEO_STALL reset" }
               - { value: "0b100", name: CLK_14MHZ, description: "14.318 MHz pixel clock (NTSC composite)" }
               - { value: "0b101", name: CLK_25MHZ, description: "25.175 MHz pixel clock (VGA 640x480)" }
           - { bit: "3", name: PALETTE,
@@ -149,7 +149,7 @@ peripherals:
           - { bit: "5", name: ENBVINT,
               description: "0=disable frame interrupt, 1=enable frame interrupt at start of vblank" }
           - { bit: "6", name: ENBSNP,
-              description: "0=disable OBVID_STALL blocking snoop, 1=enable" }
+              description: "0=disable VIDEO_STALL blocking snoop, 1=enable" }
           - { bit: "7", name: CBURST,
               description: "0=no colorburst cycles, 1=enable colorburst (composite artifact color)" }
       - offset: 0x03
@@ -172,7 +172,7 @@ peripherals:
         bits:
           - { bit: "0", name: VALUE, description: "Border pixel bit" }
       - { offset: 0x0B, name: LINES_START, access: write, width: 8,
-          description: "Visible line start count after vblank end; unblocks OBVID snoop reads after vsync" }
+          description: "Visible line start count after vblank end; unblocks VIDEO snoop reads after vsync" }
       - { offset: 0x0D, name: LINES_COUNT, access: write, width: 8,
           description: "Number of visible lines" }
       - offset: 0x0E
@@ -192,9 +192,9 @@ peripherals:
           - { bit: "7:0",  name: ENTRY_0, description: "R3G3B2 palette entry 0 (LSB)" }
           - { bit: "15:8", name: ENTRY_1, description: "R3G3B2 palette entry 1 (MSB)" }
       - { offset: 0x12, name: ARM_SNOOP, access: write, width: 16,
-          description: "Write to arm OBVID_STALL blocking snoop; write once per visible line before pixel reads" }
+          description: "Write to arm VIDEO_STALL blocking snoop; write once per visible line before pixel reads" }
       - { offset: 0x14, name: DISARM_SNOOP, access: write, width: 16,
-          description: "Write to disarm OBVID_STALL blocking snoop" }
+          description: "Write to disarm VIDEO_STALL blocking snoop" }
 
   ENGINE:
     part: ATF1508AS

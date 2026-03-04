@@ -5208,7 +5208,7 @@
 			)
 		)
 	)
-	(global_label "OBVID_TDI"
+	(global_label "VIDEO_TDI"
 		(shape input)
 		(at 132.08 163.83 0)
 		(fields_autoplaced yes)
@@ -5404,7 +5404,7 @@
 			)
 		)
 	)
-	(global_label "OBVID_TDI"
+	(global_label "VIDEO_TDI"
 		(shape input)
 		(at 100.33 162.56 0)
 		(fields_autoplaced yes)
@@ -5490,7 +5490,7 @@
 			)
 		)
 	)
-	(global_label "~{OBVID_IRQ}"
+	(global_label "~{VIDEO_IRQ}"
 		(shape output)
 		(at 54.61 76.2 180)
 		(fields_autoplaced yes)
@@ -5876,7 +5876,7 @@
 			)
 		)
 	)
-	(global_label "~{OBVID_SELECT}"
+	(global_label "~{VIDEO_SELECT}"
 		(shape input)
 		(at 54.61 167.64 180)
 		(fields_autoplaced yes)
@@ -6522,7 +6522,7 @@
 			)
 		)
 	)
-	(global_label "OBVID_STALL"
+	(global_label "VIDEO_STALL"
 		(shape output)
 		(at 100.33 149.86 0)
 		(fields_autoplaced yes)
@@ -9357,7 +9357,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "OBVID"
+		(property "Value" "VIDEO"
 			(at 79.6133 175.26 0)
 			(effects
 				(font
@@ -9870,7 +9870,7 @@
 				)
 			)
 		)
-		(property "Value" "OBVID_JTAG_BYPASS"
+		(property "Value" "VIDEO_JTAG_BYPASS"
 			(at 127.635 161.29 0)
 			(effects
 				(font

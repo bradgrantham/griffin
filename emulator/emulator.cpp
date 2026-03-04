@@ -41,8 +41,8 @@ class GriffinEmulator : public moira::Moira
     void IO_write8(uint32_t addr, uint8_t val) const
     {
         if(addr == GLUE_DEBUG_OUT - GLUE_BASE) {
-            auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_OUT_MASK;
-            auto bit = val & GLUE_DEBUG_OUT_OUT_MASK;
+            auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_MASK;
+            auto bit = val & GLUE_DEBUG_OUT_MASK;
             if(bit != oldbit) {
                 if(debug & DEBUG_IO) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
             }
@@ -98,25 +98,25 @@ public:
             if(RAM_bank1.size() == 0) {
                 return 0;
             } else {
-                return RAM_bank1[RAM_BANK_1.get(addr) % RAM_bank1.size()];
+                return RAM_bank1[RAM_BANK_1.offset(addr) % RAM_bank1.size()];
             }
         } else if (RAM_BANK_2.contains(addr)) {
             if(RAM_bank2.size() == 0) {
                 return 0;
             } else {
-                return RAM_bank2[RAM_BANK_2.get(addr) % RAM_bank2.size()];
+                return RAM_bank2[RAM_BANK_2.offset(addr) % RAM_bank2.size()];
             }
         } else if (RAM_BANK_3.contains(addr)) {
             if(RAM_bank3.size() == 0) {
                 return 0;
             } else {
-                return RAM_bank3[RAM_BANK_3.get(addr) % RAM_bank3.size()];
+                return RAM_bank3[RAM_BANK_3.offset(addr) % RAM_bank3.size()];
             }
         } else if (RAM_BANK_4.contains(addr)) {
             if(RAM_bank4.size() == 0) {
                 return 0;
             } else {
-                return RAM_bank4[RAM_BANK_4.get(addr) % RAM_bank4.size()];
+                return RAM_bank4[RAM_BANK_4.offset(addr) % RAM_bank4.size()];
             }
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return ROM[(addr - ROM_BASE) % ROM_SIZE];
@@ -156,19 +156,19 @@ public:
         if(debug & DEBUG_BUS) { printf("write of uint8_t %02X at %06X\n", val, addr); }
         if (RAM_BANK_1.contains(addr)) {
             if(RAM_bank1.size() != 0) {
-                RAM_bank1[RAM_BANK_1.get(addr) % RAM_bank1.size()] = val;
+                RAM_bank1[RAM_BANK_1.offset(addr) % RAM_bank1.size()] = val;
             } 
         } else if (RAM_BANK_2.contains(addr)) {
             if(RAM_bank2.size() != 0) {
-                RAM_bank2[RAM_BANK_2.get(addr) % RAM_bank2.size()] = val;
+                RAM_bank2[RAM_BANK_2.offset(addr) % RAM_bank2.size()] = val;
             } 
         } else if (RAM_BANK_3.contains(addr)) {
             if(RAM_bank3.size() != 0) {
-                RAM_bank3[RAM_BANK_3.get(addr) % RAM_bank3.size()] = val;
+                RAM_bank3[RAM_BANK_3.offset(addr) % RAM_bank3.size()] = val;
             } 
         } else if (RAM_BANK_4.contains(addr)) {
             if(RAM_bank4.size() != 0) {
-                RAM_bank4[RAM_BANK_4.get(addr) % RAM_bank4.size()] = val;
+                RAM_bank4[RAM_BANK_4.offset(addr) % RAM_bank4.size()] = val;
             } 
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
@@ -188,23 +188,23 @@ public:
 
         if (RAM_BANK_1.contains(addr)) {
             if(RAM_bank1.size() != 0) {
-                RAM_bank1[RAM_BANK_1.get(addr) % RAM_bank1.size()] = high;
-                RAM_bank1[RAM_BANK_1.get(addr + 1) % RAM_bank1.size()] = low;
+                RAM_bank1[RAM_BANK_1.offset(addr) % RAM_bank1.size()] = high;
+                RAM_bank1[RAM_BANK_1.offset(addr + 1) % RAM_bank1.size()] = low;
             } 
         } else if (RAM_BANK_2.contains(addr)) {
             if(RAM_bank2.size() != 0) {
-                RAM_bank2[RAM_BANK_2.get(addr) % RAM_bank2.size()] = high;
-                RAM_bank2[RAM_BANK_2.get(addr + 1) % RAM_bank2.size()] = low;
+                RAM_bank2[RAM_BANK_2.offset(addr) % RAM_bank2.size()] = high;
+                RAM_bank2[RAM_BANK_2.offset(addr + 1) % RAM_bank2.size()] = low;
             } 
         } else if (RAM_BANK_3.contains(addr)) {
             if(RAM_bank3.size() != 0) {
-                RAM_bank3[RAM_BANK_3.get(addr) % RAM_bank3.size()] = high;
-                RAM_bank3[RAM_BANK_3.get(addr + 1) % RAM_bank3.size()] = low;
+                RAM_bank3[RAM_BANK_3.offset(addr) % RAM_bank3.size()] = high;
+                RAM_bank3[RAM_BANK_3.offset(addr + 1) % RAM_bank3.size()] = low;
             } 
         } else if (RAM_BANK_4.contains(addr)) {
             if(RAM_bank4.size() != 0) {
-                RAM_bank4[RAM_BANK_4.get(addr) % RAM_bank4.size()] = high;
-                RAM_bank4[RAM_BANK_4.get(addr + 1) % RAM_bank4.size()] = low;
+                RAM_bank4[RAM_BANK_4.offset(addr) % RAM_bank4.size()] = high;
+                RAM_bank4[RAM_BANK_4.offset(addr + 1) % RAM_bank4.size()] = low;
             } 
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
@@ -227,7 +227,6 @@ public:
 
 // Courtesy Claude Opus 4.6
 
-static constexpr int SYSCLK = 12'000'000;
 static constexpr int OVERSAMPLE = 16;
 static constexpr int BAUDRATE = 9600;
 static constexpr int SOFT_UART_SAMPLE_INTERVAL = SYSCLK / (BAUDRATE * OVERSAMPLE);

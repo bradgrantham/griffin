@@ -63,7 +63,7 @@
 			(color 0 0 0 0.0000)
 		)
 		(uuid "189c4050-bf27-4d93-977d-e73def496750")
-		(property "Sheetname" "ONBOARDVID"
+		(property "Sheetname" "VIDEO"
 			(at 88.9 100.8884 0)
 			(effects
 				(font
@@ -272,7 +272,7 @@
 			(color 0 0 0 0.0000)
 		)
 		(uuid "a6ee04b7-7d16-47ea-9db5-ea25e69d73a5")
-		(property "Sheetname" "APP_ENGINE"
+		(property "Sheetname" "ENGINE"
 			(at 152.4 100.8884 0)
 			(effects
 				(font

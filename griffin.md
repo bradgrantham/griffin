@@ -66,7 +66,7 @@ YAML -\>
   * PS2 stab lock pins and need wider strain relief drill  
   * Need holes for retainer feet for headphone jack  
   * Rca jack needs to be past end of board for retainer feet?  Or square holes for pressure fit?  
-* No connection from OBVID to supply DTACK to GLUE, and no signal back to OBVID to IACK.  Are these important?
+* No connection from VIDEO to supply DTACK to GLUE, and no signal back to VIDEO to IACK.  Are these important?
 * If the CPU clock was gated through GLUE, other peripherals (mostly thinking ENGINE) could perform fast bus operations while stalling CPU clock.
 
 ## Need to buy
@@ -103,9 +103,9 @@ VPA from GLUE to CPU
 - [ ] PS2 stabs - move footprint  
 - [ ] Headphone jack pads - drill partial holes?  
 - [ ] RCA jack retainer feet - drill partial holes?  
-- [ ] Route oscillators separately into OBVID for simplicity, if possible  
+- [ ] Route oscillators separately into VIDEO for simplicity, if possible  
 - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
-- [ ] More signals between GLUE, OBVID, ENGINE  
+- [ ] More signals between GLUE, VIDEO, ENGINE  
 - [ ] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
 - [x] ~~Swap MOUSE\_CLK and KBD\_DATA~~  
 - [x] ~~Route A18 to GLUE instead of A6~~  
@@ -239,7 +239,7 @@ completely forgot from the beginning.
 
 0xC0\_0000 - 0xCF\_FFFF: 128K ROM, repeating  
 0xD0\_0000-0xDF\_FFFF = ENGINE IO config registers  
-0xE0\_0000 - 0xEF\_FFFF : on-board video “OBVID” config, repeating  
+0xE0\_0000 - 0xEF\_FFFF : on-board video “VIDEO” config, repeating  
 0xF0\_0000-0xFF\_FFFF - IO area, decode A23-A18
 
 * 0xF0\_XXXX - GLUE config and I/O  
@@ -274,22 +274,22 @@ Dedicated ATF1508 CPLD for:
 
 * Receive RESET - assert HALT while RESET is asserted  
   * After RESET, read HALT as input and do something if asserted, like flash LED  
-* Address decode: ~ROM\_SELECT, ~RAM\_BANK\_{n}\_SELECT, ~IO\_SELECT\_MOSI, ~OBVID\_SELECT, ~CF\_CS0, ~CF\_CS1, ~AUDIO\_LE, ~ENGINE\_SELECT  
+* Address decode: ~ROM\_SELECT, ~RAM\_BANK\_{n}\_SELECT, ~IO\_SELECT\_MOSI, ~VIDEO\_SELECT, ~CF\_CS0, ~CF\_CS1, ~AUDIO\_LE, ~ENGINE\_SELECT  
 * Invert R/~W to output ~R/W  
 * Decode ~UDS and ~LDS and R/~W into ~WRITE\_LO and ~WRITE\_HI  
 * Incorporate a hard-coded 115200 UART TX and a hardware-assist UART RX
 * Claude says *with autovectors, GLUE just needs to assert ~VPA instead of ~DTACK during an IACK cycle (FC=111). The CPU then uses the fixed autovector table (vectors 25-31, one per IPL level).*  So I’ll need to wire VPA back from GLUE to the CPU.  Replace ENGINE\_IACK, since that is no longer necessary.  
-  * 7: OBVID  
+  * 7: VIDEO  
   * 6: ENGINE  
   * 5: IO  
   * 4: DEBUG\_IN uart start bit detected
 * ROM initially overlaid at 0x0X\_XXXX, RAM bank 1 not selected  
 * DTACK generation logic  
   * Count off for internal registers, RAM, ROM, AUDIO, hard-coded in HDL assuming 20MHz crystal  
-  * Assume GLUE’s own access and OBVID and ENGINE are instantaneous?  
+  * Assume GLUE’s own access and VIDEO and ENGINE are instantaneous?  
   * What DTACK delay for CF?  
   * OR with ENGINE\_DTACK, IO\_DTACK to stall until video expansion or io releases bus  
-  * AND result with OBVID\_STALL on data access so any DTACK is blocked until 16-bit OBVID shift register in CPLD is ready to be loaded  
+  * AND result with VIDEO\_STALL on data access so any DTACK is blocked until 16-bit VIDEO shift register in CPLD is ready to be loaded  
 * BERR after some number of cycles if DTACK not asserted.  Have one timeout counter for BERR for everything else, like 8 cycles, and then crazy long BERR like 256 for IO\_DTACK  
 * Registers for negotiating SPI to the IO MCU  
 * Registers for writing JTAG to the ENGINE CPLD  
@@ -331,60 +331,60 @@ NTSC, VGA pixel and timing generation - second ATF1508
 * Default for all config registers is 0, video disabled  
 * Some config registers can be “changed any time” but CPU is likely to be busy in tight loop for visible pixels so practically will only change in hblank or vblank.  
 * Config registers are noted by address from base address  
-* Config register 0x1.b: OBVID\_MODE  
-  * D2..D0 : OBVID\_MODE\_CLOCK  
-    * 000 = disable video - disable oscillator clocks, Hi-Z VGA and CPST outputs, reset OBVID\_STALL  
+* Config register 0x1.b: VIDEO\_MODE  
+  * D2..D0 : VIDEO\_MODE\_CLOCK  
+    * 000 = disable video - disable oscillator clocks, Hi-Z VGA and CPST outputs, reset VIDEO\_STALL  
     * 100 = 14.318 MHz (may decide later that this Hi-Z’s the 8 pins to VGA DACs and HSYNC and VSYNC)  
     * 101 = 25.2 MHz (may decide later that this Hi-Z’s the PIXEL and SYNC signals to composite video circuit)  
-  * D3: OBVID\_MODE\_PALETTE - 0 = “slow palette”  mode, 1 = “fast palette” mode  
-  * D4: OBVID\_MODE\_FORMAT - 0 = progressive, 1 = interlaced  
-  * D5: OBVID\_MODE\_ENBVINT - 0 = disable frame interrupt, 1 = enable frame interrupt  
-  * D6: OBVID\_MODE\_ENBSNP - 0 = disable blocking snoop, 1 = enable blocking snoop  
-  * D7: OBVID\_MODE\_CBURST - 0 = no colorburst cycles, 1 = enable colorburst cycles  
+  * D3: VIDEO\_MODE\_PALETTE - 0 = “slow palette”  mode, 1 = “fast palette” mode  
+  * D4: VIDEO\_MODE\_FORMAT - 0 = progressive, 1 = interlaced  
+  * D5: VIDEO\_MODE\_ENBVINT - 0 = disable frame interrupt, 1 = enable frame interrupt  
+  * D6: VIDEO\_MODE\_ENBSNP - 0 = disable blocking snoop, 1 = enable blocking snoop  
+  * D7: VIDEO\_MODE\_CBURST - 0 = no colorburst cycles, 1 = enable colorburst cycles  
   * CPU is expected to transition between modes by waiting until end of a visible pixel ISR. disabling frame interrupt (write 0 byte), then wait at least 50 milliseconds for settling, then configure counter and palette registers as desired with frame interrupt disabled, then set mode and optional interrupt enable.  
-* Config register 0x3.b: OBVID\_MODE2  
-  * D0: OBVID\_MODE2\_PPC - 0 = pixel per clock, 1 = pixel per 2 clocks  
+* Config register 0x3.b: VIDEO\_MODE2  
+  * D0: VIDEO\_MODE2\_PPC - 0 = pixel per clock, 1 = pixel per 2 clocks  
     * Realistically, I’ll need to upgrade to a 68EC000@20 to get 640\*480  
-  * D1: OBVID\_MODE\_ENBLINT - 0 = disable line interrupt outside visible region, 1 - enable  
+  * D1: VIDEO\_MODE\_ENBLINT - 0 = disable line interrupt outside visible region, 1 - enable  
   * Can be changed at any time  
-* Config register 0x5.b: OBVID\_WORDS\_START  
-  * Set number of words (in words, so every 16 pixels) to start visible pixel processing after end of hblank.  That is to say, when CPU writes to 0x12.w, causing OBVID\_STALL, when is OBVID\_STALL released?  
+* Config register 0x5.b: VIDEO\_WORDS\_START  
+  * Set number of words (in words, so every 16 pixels) to start visible pixel processing after end of hblank.  That is to say, when CPU writes to 0x12.w, causing VIDEO\_STALL, when is VIDEO\_STALL released?  
   * Can be changed in hblank  
-* Config register 0x9.b: OBVID\_BORDER\_PIXEL  
+* Config register 0x9.b: VIDEO\_BORDER\_PIXEL  
   * bit 0 is border pixel bit used outside of visible pixel word range  
   * Can be changed any time  
-* Config register 0xB.b: OBVID\_LINES\_START  
-  * set start of visible lines after end of vblank, when first read from memory for OBVID CPLD snoop is unblocked after vsync  
-* Config register 0xD.b: OBVID\_LINES\_COUNT  
-  * set start of visible lines after end of vblank, when first read from memory for OBVID CPLD snoop is unblocked after vsync  
-* Config register 0xE.w : OBVID\_PALETTE  
+* Config register 0xB.b: VIDEO\_LINES\_START  
+  * set start of visible lines after end of vblank, when first read from memory for VIDEO CPLD snoop is unblocked after vsync  
+* Config register 0xD.b: VIDEO\_LINES\_COUNT  
+  * set start of visible lines after end of vblank, when first read from memory for VIDEO CPLD snoop is unblocked after vsync  
+* Config register 0xE.w : VIDEO\_PALETTE  
   * Loads palette register immediately  
   * 2 R3G3B2 palette entries, 0 in LSB, 1 in MSB  
   * Can be changed any time  
   * Is it worth exposing this?  
-* Config register 0x10.w : OBVID\_NEXT\_PALETTE  
+* Config register 0x10.w : VIDEO\_NEXT\_PALETTE  
   * Load color palette buffer  
   * 2 R3G3B2 palette entries, 0 in LSB, 1 in MSB  
   * Can be changed any time  
-* Operation register 0x12.w - write to this location arms blocking snoop, aka OBVID\_STALL signal to GLUE logic after CPU releases ~AS  
+* Operation register 0x12.w - write to this location arms blocking snoop, aka VIDEO\_STALL signal to GLUE logic after CPU releases ~AS  
   * Snooped bus user data (FC2:FC0 == 101\) in “slow palette” mode expects 16bits of pixel data (16 pixels) repeated through visible pixels  
   * Snooped bus data in “fast palette” mode expects 16 bits of palette (2x R3G3B2) and then 16bits of pixel data (16 pixels) repeated through visible pixels and then one more 16-bits palette  
     * Would need something like looped or unrolled “move.l (A0)+, D0”, transfer two 16-bit words in 12 cycles. - works for 68000 @ 12MHz\!  
     * Palette data loaded into “next palette”  
     * Next palette loaded into palette when shift register is loaded  
     * If there is no waiting pixel data, shift register and palette are loaded from border pixel and next palette.  
-  * CPLD holds OBVID\_STALL until shift register is empty  
+  * CPLD holds VIDEO\_STALL until shift register is empty  
     * Latches 16 bit shift register from data lines on PIXEL\_CLOCK signal  
-    * Releases OBVID\_STALL on next CPU\_CLOCK cycle so GLUE ~DTACK is asserted, then asserts OBVID\_STALL when CPU releases ~AS  
-  * If OBVID\_STALL is disabled, CPU is responsible for managing timing, or maybe framebuffer is used as visual debugger  
+    * Releases VIDEO\_STALL on next CPU\_CLOCK cycle so GLUE ~DTACK is asserted, then asserts VIDEO\_STALL when CPU releases ~AS  
+  * If VIDEO\_STALL is disabled, CPU is responsible for managing timing, or maybe framebuffer is used as visual debugger  
   * Must be written once per visible line  
   * Notes  
     * For VGA only, "slow palette" is the palette is updated at most once per line, or perhaps as slow as set once and never set again.  "Fast palette" is the palette is updated every 16 pixels. For composite, the pixels are just 0 and 1 and I might add a colorburst mode so I can get artifact colors.  
-    * 16-bit "pixel shift register", "palette register", "next 16 pixels" register, and "next palette" register. The LSBit of the pixel shift register is the current pixel, and selects from the two 8-bit values in the palette register for VGA.  Or it is black or white voltage for composite video.  Every pixel clock the pixel shift register shifts right.  On the starting pixel clock (multiple of 16\) and every 16 clocks through the end of visible pixels, the pixel shift register would be loaded from the "next 16 pixels" and the palette register would be loaded from "next palette".  After the visible pixels range, every 16 clocks until visible pixels starts again, the shift would be filled with border pixel (maybe set or cleared) and the palette register would be loaded from OBVID\_BORDER\_PALETTE. The implication is that all lines will be multiples of 16 and I'm okay with that.  
+    * 16-bit "pixel shift register", "palette register", "next 16 pixels" register, and "next palette" register. The LSBit of the pixel shift register is the current pixel, and selects from the two 8-bit values in the palette register for VGA.  Or it is black or white voltage for composite video.  Every pixel clock the pixel shift register shifts right.  On the starting pixel clock (multiple of 16\) and every 16 clocks through the end of visible pixels, the pixel shift register would be loaded from the "next 16 pixels" and the palette register would be loaded from "next palette".  After the visible pixels range, every 16 clocks until visible pixels starts again, the shift would be filled with border pixel (maybe set or cleared) and the palette register would be loaded from VIDEO\_BORDER\_PALETTE. The implication is that all lines will be multiples of 16 and I'm okay with that.  
     * in "slow palette" mode, stall the next bus access (expecting a CPU read from framebuffer) until the pixel shift register is loaded from the previous "next 16 pixels", at which point the "next 16 pixels" are loaded from the snoop, the bus D lines are loaded into "next 16 pixels" and STALL is released.  Thus a line of "slow palette" can optionally set the "next" palette register to set border colors for the line, write 0x12, then just read N words. Next palette register isn't set during the line so it can still get loaded into "palette register" every 16 clocks.  
     * In "fast palette" the snoops also set the "next palette register" first, so a line of "fast palette" writes 0x12, then reads N\*2 words made of a palette read and a pixel read, likely a move.l which will then perform two word reads. The first load will not stall but will be immediately loaded into "next palette". The second read will stall until the shift is loaded from the "next 16 pixels", the bus D lines are loaded into "next 16 pixels" and STALL is released.  
 * Operation register 0x14.w, write to disarm blocking snoop  
-* Just before beginning of frame OBVID interrupts CPU so that CPU enters “framebuffer” ISR, doing N (e.g. N is 200, 240, 400, 480\) tight loops to write rows and then check IO MCU, etc in HBLANK, exits ISR at end of visible rows   
+* Just before beginning of frame VIDEO interrupts CPU so that CPU enters “framebuffer” ISR, doing N (e.g. N is 200, 240, 400, 480\) tight loops to write rows and then check IO MCU, etc in HBLANK, exits ISR at end of visible rows   
   * Tight loop writes out 16 bits at a time for 320 or 640 pixels, eg MOVE.W (An+), D0  
   * CPU does busy wait on vblank todo per frame processing  
   * CPU ISR sets some word in memory at vblank  
@@ -440,10 +440,10 @@ third ATF1508
 * CPU signals for memory-mapped access (low 20 bits) and bus mastering (all 24 bits): R/W, AS, LDS, UDS, DTACK  
 * E.g. application comes with bitfile that is bitbanged through the GLUE.  Bitfile is loaded with e.g. fread and passed off to a system call  
 * Possibilities include:  
-  * Drive bus snooping for video generation at a higher rate with corresponding spin of OBVID, e.g. 320\*480@8bpp or 640\*480@4bpp  
+  * Drive bus snooping for video generation at a higher rate with corresponding spin of VIDEO, e.g. 320\*480@8bpp or 640\*480@4bpp  
   * Rudimentary fixed-point ray-box intersection  
   * Mandelbrot accelerator  
-* Probably will end up dedicated to “enhanced DMA” from memory to fill the video pixel generator on OBVID.
+* Probably will end up dedicated to “enhanced DMA” from memory to fill the video pixel generator on VIDEO.
 
 ## Latched 8-bit audio
 

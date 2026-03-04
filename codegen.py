@@ -86,7 +86,7 @@ def write_c_header(hw: dict, path: Path) -> None:
     w("    uint32_t size;")
     w("    constexpr MemoryRange(uint32_t b, uint32_t s) : base(b), size(s) {}")
     w("    constexpr bool contains(uint32_t addr) const { return addr >= base && addr < base + size; }")
-    w("    constexpr uint32_t get(uint32_t addr)    const { return addr - base; }")
+    w("    constexpr uint32_t offset(uint32_t addr) const { return addr - base; }")
     w("};")
     w("")
     w("namespace Griffin {")
@@ -145,7 +145,7 @@ def write_c_header(hw: dict, path: Path) -> None:
                 hi, lo  = parse_bit_spec(bf['bit'])
                 bname   = bf['name']
                 mask    = bit_mask(hi, lo)
-                prefix  = f"{pname}_{rname}_{bname}"
+                prefix  = f"{pname}_{rname}" if (rname == bname or rname.endswith('_' + bname)) else f"{pname}_{rname}_{bname}"
                 w(f"static constexpr uint32_t {prefix}_MASK  = {fmt_hex(mask)}U;  // bits {hi}:{lo}")
                 w(f"static constexpr uint32_t {prefix}_SHIFT = {lo}U;")
 
@@ -228,7 +228,7 @@ def write_asm_include(hw: dict, path: Path) -> None:
                 hi, lo = parse_bit_spec(bf['bit'])
                 bname  = bf['name']
                 mask   = bit_mask(hi, lo)
-                prefix = f"{pname}_{rname}_{bname}"
+                prefix = f"{pname}_{rname}" if (rname == bname or rname.endswith('_' + bname)) else f"{pname}_{rname}_{bname}"
                 w(f".equ {prefix}_MASK,  {fmt_hex(mask)}")
                 w(f".equ {prefix}_SHIFT, {lo}")
 
@@ -355,7 +355,7 @@ def write_verilog_include(hw: dict, path: Path) -> None:
                 bname  = bf['name']
                 mask   = bit_mask(hi, lo)
                 width  = hi - lo + 1
-                prefix = f"{pname}_{rname}_{bname}"
+                prefix = f"{pname}_{rname}" if (rname == bname or rname.endswith('_' + bname)) else f"{pname}_{rname}_{bname}"
                 w(f"`define {prefix}_MASK  {width}'h{mask:02X}")
                 w(f"`define {prefix}_SHIFT {lo}")
 
