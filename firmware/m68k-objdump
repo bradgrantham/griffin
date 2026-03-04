@@ -1,8 +1,9 @@
 #!/bin/bash
 # m68k-g++ wrapper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec podman run --rm \
-    -v "$(pwd):/work" \
-    -w /work \
+    -v "$(dirname "$SCRIPT_DIR"):/work" \
+    -w "/work/$(basename "$SCRIPT_DIR")" \
     -u "$(id -u):$(id -g)" \
     m68k-toolchain \
     /opt/m68k-unknown-elf/bin/m68k-unknown-elf-objdump "$@"
