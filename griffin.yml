@@ -119,6 +119,9 @@ peripherals:
     part: ATF1508AS
     description: "On-board video generator"
     clock: [14318181, 25175000]
+    dtack:
+      - 12000000: 0
+      - 20000000: 0
     address_range:
       base: 0xE00000
       size: 0x100000
@@ -173,7 +176,7 @@ peripherals:
           - { bit: "0", name: VALUE, description: "Border pixel bit" }
       - { offset: 0x0B, name: LINES_START, access: write, width: 8,
           description: "Visible line start count after vblank end; unblocks VIDEO snoop reads after vsync" }
-      - { offset: 0x0D, name: LINES_COUNT, access: write, width: 8,
+      - { offset: 0x0C, name: LINES_COUNT, access: write, width: 16,
           description: "Number of visible lines" }
       - offset: 0x0E
         name: PALETTE
@@ -206,7 +209,7 @@ peripherals:
     interrupt:
       level: 6
       signal: ~ENGINE_IRQ
-    dtack: ~ENGINE_DTACK
+    dtack: ~ENGINE_DTACK  # handshake: ENGINE drives this signal to assert DTACK
 
   CF:
     part: "Compact Flash (True IDE)"
@@ -251,7 +254,7 @@ peripherals:
     interrupt:
       level: 5
       signal: ~IO_IRQ
-    dtack: ~IO_DTACK_MISO  # dual-purpose with SPI
+    dtack: ~IO_DTACK_MISO  # handshake: IO MCU drives this signal to assert DTACK; dual-purpose with SPI MISO
     berr_timeout: 256
     registers:
       - { offset: 0x01, name: STATUS, access: read,  width: 8,
