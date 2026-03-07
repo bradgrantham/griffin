@@ -39,8 +39,7 @@ Find a way to share constants between Verilog, linker.ld, crt0.s, and C++
 
 * Codegen from a master file
 
-How much design file can be in YAML or in Python?  
-YAML -\>
+How much design file can be in YAML or in Python?  Generate from YAML:
 
 * Constants in Verilog, linker.ld, crt0.s, and C++  
 * Check against netlist from KiCAD
@@ -95,6 +94,10 @@ DEBUG\_IN LED:
 - [x] ~~Swap MOUSE\_CLK and KBD\_DATA~~  
 - [x] ~~Route A18 to GLUE instead of A6~~  
 - [x] ~~Wire GLUE VPA back to the CPU in place of ENGINE\_IACK~~
+- [ ] Decoupling for ROM is too close to the socket if I will be using ZIF
+- [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF?
+- [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
+- [ ] Switch out the 5-pin custom JTAG header for Standard 2x10 (20-pin) 0.1" shrouded IDC.
 
 # Bring up
 
