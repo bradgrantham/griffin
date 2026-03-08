@@ -75,7 +75,7 @@ How much design file can be in YAML or in Python?  Generate from YAML:
 
 # Bodges for rev 1 Board
 
-DEBUG\_IN LED:
+DEBUG\_OUT LED:
 
 * small NPN like a 2N3904 or SOT-23 MMBT3904. Collector to \+5V through the LED and resistor, base to the DEBUG\_OUT pad through a 1K–10K resistor, emitter to ground. The base current is microamps so it won't load the serial line at all, and the LED gets a clean 5V drive independent of your logic levels.  
 * You could dead-bug it right across the two pads - body of the transistor sitting on top, legs bent to reach the resistor and LED. A little ugly but perfectly functional for a dev board.
