@@ -28,7 +28,7 @@ Use PLD or CPLD devices - **settled on ATF1508 PLCC-84**
   * If there’s a .si file for the PLD “cupl.exe” will run that simulation and put outputs in .so  
   * Use pyftdi for toggling gpios and reading the results for test vectors  
   * **~~Sourcing~~** ~~ATF1508s may be difficult.  May need to stockpile?~~ Plenty at Microchip for now.
-  * [https://www.youtube.com/watch?v=LnGaDpGbbjQ](https://www.youtube.com/watch?v=LnGaDpGbbjQ) has a bunch of details on HDL and using these devices  
+  * [https://www.youtube.com/watch?v=LnGaDpGbbjQ](https://www.youtube.com/watch?v=LnGaDpGbbjQ) has a bunch of details on HDL through Microchip's tools and using these devices  
   * Really need to write HDL **before** doing the PCB because some pins may need to move.
 
 # Design philosophy
@@ -79,7 +79,7 @@ DEBUG\_IN LED:
 
 * small NPN like a 2N3904 or SOT-23 MMBT3904. Collector to \+5V through the LED and resistor, base to the DEBUG\_OUT pad through a 1K–10K resistor, emitter to ground. The base current is microamps so it won't load the serial line at all, and the LED gets a clean 5V drive independent of your logic levels.  
 * You could dead-bug it right across the two pads - body of the transistor sitting on top, legs bent to reach the resistor and LED. A little ugly but perfectly functional for a dev board.
-* See also bodges in griffin.yml
+* See also bodges in [griffin.yml](griffin.yml)
 
 
 # Board spin
@@ -242,7 +242,7 @@ completely forgot from the beginning.
     * Repeat for 3M, 2M, 1M  
     * Otherwise assume 256K
 
-See griffin.yml for the complete peripheral address map.
+See [griffin.yml](griffin.yml) for the complete peripheral address map.
 
 ## ROM
 
@@ -305,7 +305,7 @@ Dedicated ATF1508 CPLD for:
   * UART RX ISR waits for UART RX status & 0x40, reads pin state from UART RX status & 0x80  
     * Repeats for 8 bits plus start  
     * Can do something about framing error if desired  
-* Registers: see griffin.yml.
+* Registers: see [griffin.yml](griffin.yml).
 
 ## VIDEO or “PLUME” (Griffin plumage = display)
 
@@ -315,7 +315,7 @@ NTSC, VGA pixel and timing generation - second ATF1508
 
 * CPLD 16-bit shift register clocks out 1 bit, expands to R3G3B2 through internal pair of palette registers  
 * Count off hsync and vsync to provide HSYNC and VSYNC signals and exit-VBLANK interrupt (through GLUE)  
-* Registers: see griffin.yml. All config registers default to 0 (video disabled). Some can be changed at any time but in practice CPU is in a tight pixel loop during visible lines, so changes happen in hblank or vblank.
+* Registers: see [griffin.yml](griffin.yml). All config registers default to 0 (video disabled). Some can be changed at any time but in practice CPU is in a tight pixel loop during visible lines, so changes happen in hblank or vblank.
 * MODE: To change modes, disable ENBVINT, wait at least 50ms for settling, configure other registers, then write MODE.
 * MODE2 PPC: Realistically upgrading to a 68EC000@20 will be needed to get 640×480.
 * ARM\_SNOOP: Write to arm blocking snoop (VIDEO\_STALL to GLUE after CPU releases \~AS). Must be written once per visible line.  
@@ -349,7 +349,7 @@ NTSC, VGA pixel and timing generation - second ATF1508
 * Only do 8-bit access to ease routing, D0-D7 so only odd addresses  
 * Entirely True IDE PIO mode, no interrupts  
 * GLUE manages DTACK, will need to hard-code wait states as necessary (7@12MHz, 12@20MHz)  
-* Registers: see griffin.yml.
+* Registers: see [griffin.yml](griffin.yml).
 
 ## IO processor
 
@@ -360,7 +360,7 @@ Keyboard, mouse, serial port through 8051-compatible AT89S52
 * 2 PS2  
 * AT89S52 Continuously polls IO\_SELECT\_MOSI from GLUE chip: if detected, disable interrupts, do 68000 bus cycle including putting data on data bus, lowering DTACK, then waiting for AS to rise and releasing DTACK, enable interrupts  
 * Need FIFO for all inputs so CPU doesn't need to do anything during visible row scanout ISR  
-* Registers: see griffin.yml.
+* Registers: see [griffin.yml](griffin.yml).
 * Program either in jig or by GLUE control signals  
 * ISR for UART, PS2  
 * Got that old PS/2 software from PIC for Alice 2  
