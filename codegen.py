@@ -92,7 +92,7 @@ def write_c_header(hw: dict, path: Path) -> None:
     w("namespace Griffin {")
     w("")
     w(f"// Project: {proj['name']}")
-    w(f"static constexpr uint32_t SYSCLK = {proj['clock_hz']}UL;")
+    w(f"static constexpr uint32_t SYSCLK_HZ = {proj['clock_hz']}UL;")
     w("")
 
     # Track peripherals for IO span synthesis
@@ -197,7 +197,7 @@ def write_asm_include(hw: dict, path: Path) -> None:
     w(f"| {BANNER}")
     w("")
     w(f"| Project: {proj['name']}")
-    w(f".equ SYSCLK, {proj['clock_hz']}")
+    w(f".equ SYSCLK_HZ, {proj['clock_hz']}")
     w("")
 
     for pname, periph in perifs.items():
@@ -323,7 +323,7 @@ def write_verilog_include(hw: dict, path: Path) -> None:
     w(f"// Include with: `include \"griffin.generated.vh\"")
     w("")
     w(f"// Project: {proj['name']}")
-    w(f"`define SYSCLK {proj['clock_hz']}")
+    w(f"`define SYSCLK_HZ {proj['clock_hz']}")
     w("")
 
     for pname, periph in perifs.items():
