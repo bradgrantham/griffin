@@ -51,3 +51,9 @@ cp /Users/grantham/.wine32/drive_c/ATMEL_PLS_Tools/Prochip/pldfit/aprim.lib /Use
 
   The run_fitter.sh reads //PIN: <pin_def> comments from the .v file for pin constraints, so you'll need
   those in glue/glue.v — same idea as the current .pld pin declarations.
+
+---------------
+
+MacBookPro:cpld grantham$ cat .config.mk
+OSS_CAD_SUITE := /Users/grantham/trees/oss-cad-suite
+ATF15XX_YOSYS := /Users/grantham/trees/atf15xx_yosys
