@@ -39,3 +39,6 @@
 
 # debug information files
 *.dwo
+
+# Local tool path configuration (machine-specific, not committed)
+cpld/.config.mk
