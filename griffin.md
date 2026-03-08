@@ -79,6 +79,7 @@ DEBUG\_IN LED:
 
 * small NPN like a 2N3904 or SOT-23 MMBT3904. Collector to \+5V through the LED and resistor, base to the DEBUG\_OUT pad through a 1K–10K resistor, emitter to ground. The base current is microamps so it won't load the serial line at all, and the LED gets a clean 5V drive independent of your logic levels.  
 * You could dead-bug it right across the two pads - body of the transistor sitting on top, legs bent to reach the resistor and LED. A little ugly but perfectly functional for a dev board.
+* See also bodges in griffin.yml
 
 
 # Board spin
@@ -94,49 +95,71 @@ DEBUG\_IN LED:
 - [x] ~~Swap MOUSE\_CLK and KBD\_DATA~~  
 - [x] ~~Route A18 to GLUE instead of A6~~  
 - [x] ~~Wire GLUE VPA back to the CPU in place of ENGINE\_IACK~~
-- [ ] Decoupling for ROM is too close to the socket if I will be using ZIF
-- [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF?
+- [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
+- [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
+- [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
 - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
 - [ ] Switch out the 5-pin custom JTAG header for Standard 2x10 (20-pin) 0.1" shrouded IDC.
+- [ ] GND and +5V to test points
+- [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
+- [ ] Make audio stereo - not sure if I should expose as one 16-bit write or two 8-bit writes or maybe both
+  - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scalene)
+
 
 # Bring up
 
-* GLUE bitfile supporting ROM, RAM, CF, IO  
-* Emulator  
-  * ROM  
-  * MCU firmware  
-  * Serial in/out/audio testing  
-* Debug CLK  
-* Debug RESET and HALT  
-* Test DTACK, ROM\_SELECT, LDS, UDS, AS, A1-A16, D0-D15  
-* Make routine for bitbang serial out over DEBUG\_OUT  
-* Test RAM\_BANK\_1\_SELECT  
-* Emulator for 68000  
-  * Detect debug-out bitbang  
-* Software - get to interactive prompt and disk:  
-  * About 2 sec of boot loop cycling debug\_out, 2Hz (“blinka blinka” every second)  
-  * Test DEBUG\_OUT with flashy  
-  * ROM un-overlay IO access - implement in GLUE and then test  
+- [x] Emulator  
+  - [x] ROM
+  - [x] Detect Memory
+  - [x] Serial out on DEBUG_OUT
+  - [x] printf to debug_out
+
+- [ ] Solder
+  - [ ] power board
+  - [ ] CPLD socket and decoupling and discretes
+  - [ ] VIDEO socket and decoupling and discretes
+  - [ ] CPU socket and decoupling  and discretes (DNP)
+  - [ ] ROM and decoupling (DNP)
+  - [ ] RAM and decoupling (DNP)
+  - [ ] JTAG connector
+  - [ ] power LED and discretes
+  - [ ] reset button and discretes
+  - [ ] bodge DEBUG LED etc
+
+- [ ] Debug SYSCLK 
+- [ ] Debug RESET
+- [ ] GLUE bitfile passing RESET to HALT, SYSCLK / 8M blinks LED
+- [ ] Debug GLUE running
+- [ ] Debug HALT
+- [ ] Debug DEBUG_OUT blinka
+- [ ] GLUE bitfile supporting CPU access to ROM, RAM, DEBUG_OUT
+- [ ] Test DTACK, ROM\_SELECT, LDS, UDS, AS, A1-A16, D0-D15  
+- [ ] Test RAM\_BANK\_1\_SELECT  
+- [ ] Software - get to interactive prompt and disk:  
+  - [ ] ROM un-overlay IO access - implement in GLUE and then test  
     - [ ] Vectors to ROM in high memory  
     - [ ] ROM explicitly disable overlay  
     - [ ] ROM copies vectors to RAM  
-  * Switch to serial out over DEBUG\_OUT  
+  - [ ] Switch to serial out over DEBUG\_OUT  
     - [ ] DEBUG\_OUT serial char out disables interrupts  
-  * **At this point, ROM, GLUE, CPU, CLK, RESET, interrupts, and DEBUG\_OUT all work.**  
-  * Test serial polling on DEBUG\_IN  
-  * Add bootloader code to receive and run a binary over serial  
+  - [ ] **At this point, ROM, GLUE, CPU, CLK, RESET, interrupts, and DEBUG\_OUT all work.**  
+  - [ ] Test serial polling on DEBUG\_IN  
+  - [ ] Add bootloader code to receive and run a binary over serial  
     - [ ] Need a toolchain to emit “loadable” binary  
-  * Check and configure RAM size, print to serial  
-  * Check and configure CF card first block, print to serial  
-  * **At this point, storage works**  
+  - [ ] Check and configure RAM size, print to serial  
+  - [ ] Check and configure CF card first block, print to serial  
+  - [ ] **At this point, storage works**  
     - [ ] **Could actually run CP/M-68K**  
-  * Write MCU serial I/O and timer interrupts and protocol  
-  * Do negotiation with MCU - probably need an “OK” status  
-  * Switch to serial over MCU  
-  * Install ISR that flashies at 2Hz and updates time and date  
-  * **At this point, serial I/O and timers and the MCU protocol work**  
-  * Write boot code to query the time and date  
-  * Rest of monitor  
+  - [ ] Write MCU serial I/O and timer interrupts and protocol  
+  - [ ] Do negotiation with MCU - probably need an “OK” status  
+  - [ ] Switch to serial over MCU  
+  - [ ] Install ISR that flashies at 2Hz and updates time and date  
+  - [ ] **At this point, serial I/O and timers and the MCU protocol work**  
+  - [ ] Write boot code to query the time and date  
+  - [ ] Rest of monitor  
+
+
+
 * BIOS looks like this?
   * Make it a useful standalone monitor/ROM environment:  
     - [ ] Simple memory dump commands (monitor)  
@@ -165,17 +188,11 @@ DEBUG\_IN LED:
     * (later) Flash MCU from boot partition file  
       * Disable interrupts
       * Drop back to DEBUG\_IN serial output for duration
-  
+
   * Check CF card boot partition for boot kernel name or information and boot it
-  
 
-# Software path
 
-* GLUE CPLD for ROM, RAM, IO, CF card  
-* Bitbang serial  
-* IO code for serial port  
-* Boot monitor  
-  * Serial port
+
 
 # Components
 
