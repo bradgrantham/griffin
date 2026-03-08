@@ -12,8 +12,9 @@
 
 OSS_CAD_SUITE ?= $(error Set OSS_CAD_SUITE=/path/to/oss-cad-suite)
 ATF15XX_YOSYS ?= $(error Set ATF15XX_YOSYS=/path/to/atf15xx_yosys)
-WINEDEBUG="-all"
-MVK_CONFIG_LOG_LEVEL=0
+
+export WINEDEBUG=-all
+export MVK_CONFIG_LOG_LEVEL=0
 
 export PATH := $(OSS_CAD_SUITE)/bin:$(PATH)
 
