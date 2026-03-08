@@ -106,59 +106,7 @@ DEBUG\_OUT LED:
   - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scalene)
 
 
-# Bring up
-
-- [x] Emulator  
-  - [x] ROM
-  - [x] Detect Memory
-  - [x] Serial out on DEBUG_OUT
-  - [x] printf to debug_out
-
-- [ ] Solder
-  - [ ] power board
-  - [ ] CPLD socket and decoupling and discretes
-  - [ ] VIDEO socket and decoupling and discretes
-  - [ ] CPU socket and decoupling  and discretes (DNP)
-  - [ ] ROM and decoupling (DNP)
-  - [ ] RAM and decoupling (DNP)
-  - [ ] JTAG connector
-  - [ ] power LED and discretes
-  - [ ] reset button and discretes
-  - [ ] bodge DEBUG LED etc
-
-- [ ] Debug SYSCLK 
-- [ ] Debug RESET
-- [ ] GLUE bitfile passing RESET to HALT, SYSCLK / 8M blinks LED
-- [ ] Debug GLUE running
-- [ ] Debug HALT
-- [ ] Debug DEBUG_OUT blinka
-- [ ] GLUE bitfile supporting CPU access to ROM, RAM, DEBUG_OUT
-- [ ] Test DTACK, ROM\_SELECT, LDS, UDS, AS, A1-A16, D0-D15  
-- [ ] Test RAM\_BANK\_1\_SELECT  
-- [ ] Software - get to interactive prompt and disk:  
-  - [ ] ROM un-overlay IO access - implement in GLUE and then test  
-    - [ ] Vectors to ROM in high memory  
-    - [ ] ROM explicitly disable overlay  
-    - [ ] ROM copies vectors to RAM  
-  - [ ] Switch to serial out over DEBUG\_OUT  
-    - [ ] DEBUG\_OUT serial char out disables interrupts  
-  - [ ] **At this point, ROM, GLUE, CPU, CLK, RESET, interrupts, and DEBUG\_OUT all work.**  
-  - [ ] Test serial polling on DEBUG\_IN  
-  - [ ] Add bootloader code to receive and run a binary over serial  
-    - [ ] Need a toolchain to emit “loadable” binary  
-  - [ ] Check and configure RAM size, print to serial  
-  - [ ] Check and configure CF card first block, print to serial  
-  - [ ] **At this point, storage works**  
-    - [ ] **Could actually run CP/M-68K**  
-  - [ ] Write MCU serial I/O and timer interrupts and protocol  
-  - [ ] Do negotiation with MCU - probably need an “OK” status  
-  - [ ] Switch to serial over MCU  
-  - [ ] Install ISR that flashies at 2Hz and updates time and date  
-  - [ ] **At this point, serial I/O and timers and the MCU protocol work**  
-  - [ ] Write boot code to query the time and date  
-  - [ ] Rest of monitor  
-
-
+# Software
 
 * BIOS looks like this?
   * Make it a useful standalone monitor/ROM environment:  
