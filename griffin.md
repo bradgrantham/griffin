@@ -91,7 +91,7 @@ DEBUG\_OUT LED:
 - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
 - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
 - [ ] More signals between GLUE, VIDEO, ENGINE  
-- [ ] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
+- [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
 - [x] ~~Swap MOUSE\_CLK and KBD\_DATA~~  
 - [x] ~~Route A18 to GLUE instead of A6~~  
 - [x] ~~Wire GLUE VPA back to the CPU in place of ENGINE\_IACK~~
@@ -249,9 +249,9 @@ Dedicated ATF1508 CPLD for:
   * Reads a test point input  
 * HW assist for SoftUART on DEBUG\_IN  
   * Can arm “start counter at 51 on transition 1 to 0, IRQ when 0” (half an 115200 baud bit at 12MHz)  
-  * Then IRQ fires if debug\_in still 0 when counter reaches 0, counter resets to 103  
+  * Then IRQ fires if DEBUG\_IN is still 0 when counter reaches 0, counter resets to 103  
   * UART RX ISR waits for UART RX status & 0x40, reads pin state from UART RX status & 0x80  
-    * Repeats for 8 bits plus start  
+    * Repeats for 8 bits plus end
     * Can do something about framing error if desired  
 * Registers: see [griffin.yml](griffin.yml).
 
