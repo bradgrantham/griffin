@@ -293,7 +293,7 @@ constants:
   CF_DH_LBA:            0xE0
 
 bodges:
+  - "Reroute A6 pad on U12 to A18"
+  - "Route freed GLUE pin 75 to CPU ~VPA"
   - "Swap MOUSE_CLK and KBD_DATA at MCU"
   - "Swap KBD_CLK and MOUSE_DATA at MCU"
-  - "Reroute A6 pad on U12 to A18"
-  - "Route freed GLUE pin to ~VPA"

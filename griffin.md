@@ -84,26 +84,31 @@ DEBUG\_OUT LED:
 
 # Board spin
 
-- [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
-- [ ] PS2 stabs - move footprint  
-- [ ] Headphone jack pads - drill partial holes?  
-- [ ] RCA jack retainer feet - drill partial holes?  
-- [ ] Route oscillators separately into VIDEO for simplicity, if possible  
-- [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
-- [ ] More signals between GLUE, VIDEO, ENGINE  
-- [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
-- [x] ~~Swap MOUSE\_CLK and KBD\_DATA~~  
-- [x] ~~Route A18 to GLUE instead of A6~~  
-- [x] ~~Wire GLUE VPA back to the CPU in place of ENGINE\_IACK~~
-- [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
-- [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
-- [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
-- [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
-- [ ] Switch out the 5-pin custom JTAG header for Standard 2x10 (20-pin) 0.1" shrouded IDC.
-- [ ] GND and +5V to test points
-- [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
-- [ ] Make audio stereo - not sure if I should expose as one 16-bit write or two 8-bit writes or maybe both
-  - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scalene)
+- [ ] Schematic (+PCB if necessary)
+  - [ ] Dump SPI for IO MCU - just use an ISP header or something
+  - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
+  - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
+  - [ ] More signals between GLUE, VIDEO, ENGINE  
+  - [ ] Switch out the 5-pin custom JTAG header for Standard 2x10 (20-pin) 0.1" shrouded IDC.
+  - [ ] GND and +5V to test points
+  - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
+  - [ ] Make audio stereo - not sure if I should expose as one 16-bit write or two 8-bit writes or maybe both
+    - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
+  - [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
+  - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
+
+- [ ] PCB only
+  - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
+  - [ ] PS2 stabs - move footprint  
+  - [ ] Headphone jack pads - drill partial holes?  
+  - [ ] RCA jack retainer feet - drill partial holes?
+  - [x] Swap MOUSE\_CLK and KBD\_DATA  
+  - [x] Route A18 to GLUE instead of A6  
+  - [x] Wire GLUE VPA back to the CPU in place of ENGINE\_IACK
+  - [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
+  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
+  - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
+
 
 
 # Software
@@ -138,8 +143,6 @@ DEBUG\_OUT LED:
       * Drop back to DEBUG\_IN serial output for duration
 
   * Check CF card boot partition for boot kernel name or information and boot it
-
-
 
 
 # Components
