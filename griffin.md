@@ -1,7 +1,13 @@
+# What is it?
+
 Computer related to parts I already have in the bin
 
 Start with baremetal fun, then progress towards full SpareMiNT or fuzix until bored
 *  [Atari ST Free Operating Systems - Vincent Rivière](https://youtu.be/28ieOWEQXhU?si=ekVV36ixjHvCfm06&t=1301)  
+
+MVP:
+
+* Fuzix or CP/M-68K with an image viewer: NTSC 704\*480i BW, NTSC 176\*480i color (704 sample artifact color) , VGA 640\*480p 2 colors per row from palette of 256, VGA 320\*480p 4 colors per row from palette of 256
 
 # References
 
