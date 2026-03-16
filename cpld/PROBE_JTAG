@@ -1,0 +1,10 @@
+sudo openocd -f interface/ftdi/um232h.cfg \
+    -c "adapter speed 500" \
+    -c "transport select jtag" \
+    -c "jtag newtap tap0 tap -irlen 10 -expected-id 0x0150803f" \
+    -c "jtag newtap tap1 tap -irlen 10 -expected-id 0x0150803f" \
+    -c init \
+    -c shutdown
+
+    # -c "jtag newtap tap0 tap -irlen 10 -ircapture 0x03 -irmask 0x03 -expected-id 0x0150803f" \
+    # -c "jtag newtap tap1 tap -irlen 10 -ircapture 0x03 -irmask 0x03 -expected-id 0x0150803f" \

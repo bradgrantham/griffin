@@ -8,6 +8,11 @@ module glue (
     input  wire        nRESET,
     output wire        nHALT,
     output wire        DEBUG_OUT,
+    output wire        ENGINE_IACK,
+    input  wire        OE1_pin,
+    input  wire        OE2_pin,
+    input  wire        GCLR_pin,
+    output wire        ENGINE_TDI,
 );
 
     wire reset;
@@ -22,8 +27,11 @@ module glue (
     // So just pass through instead.  No detecting double bus fault for now.
     assign nHALT = ~reset;
 
+    assign ENGINE_TDI = OE1_pin & OE2_pin & GCLR_pin;
+
     reg [22:0] led_blink_counter;
     assign DEBUG_OUT = led_blink_counter[22];
+    assign ENGINE_IACK = SYSCLK;
 
     always @(posedge SYSCLK) begin
         if(reset) begin
@@ -50,3 +58,8 @@ endmodule
 //PIN: nRESET    : 37
 //PIN: nHALT     : 36
 //PIN: DEBUG_OUT     : 67
+//PIN: OE1_pin   : 84
+//PIN: OE2_pin   : 2
+//PIN: GCLR_pin  : 1
+//PIN: ENGINE_TDI  : 40
+//PIN: ENGINE_IACK  : 75
