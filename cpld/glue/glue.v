@@ -1,45 +1,305 @@
 // glue.v — Griffin system GLUE logic (ATF1508AS CPLD)
-//
+
 `include "../../griffin.generated.vh"
 
 module glue (
     // System clock, shared by CPLDs and CPU
     input  wire        SYSCLK,
     input  wire        nRESET,
-    output wire        nHALT,
-    output wire        DEBUG_OUT,
-    output wire        ENGINE_IACK,
     input  wire        OE1_pin,
     input  wire        OE2_pin,
     input  wire        GCLR_pin,
-    output wire        ENGINE_TDI,
+    input  wire        nAS,
+    input  wire        [23:18] A_hi,
+    input  wire        [5:1]   A_lo,
+    inout  wire        [7:0]   D,
+    input  wire        nUDS,
+    input  wire        nLDS,
+    input  wire        R_nW,
+    input  wire        [2:0] FC,
+
+    output wire        nROM_SELECT,
+    output wire        nRAM_1_SEL,
+    output wire        nRAM_2_SEL,
+    output wire        nRAM_3_SEL,
+    output wire        nRAM_4_SEL,
+    output wire        nVIDEO_SELECT,
+    output wire        nENGINE_SELECT,
+    output wire        nWRITE_LO,
+    output wire        nWRITE_HI,
+    output wire        DEBUG_OUT,
+    output wire        nAUDIO_LE,
+    output wire        nIO_SELECT,
+    output wire        CF_CS0,
+    output wire        CF_CS1,
+
+    inout  wire        nHALT,
+    output wire        nDTACK,  // Data Transfer Acknowledge
+    output wire        nBERR,   // Bus Error (timeout on unmapped access)
+    output wire [2:0]  nIPL,    // Interrupt Priority Level (active low; 111 = none)
+    output wire        nVPA,    // Valid Peripheral Address (autovector ack)
+
+    output wire        nR_W,
+
+    output wire        ENGINE_TDI // Currently to pin OE1, OE2, GCLK
 );
 
-    wire reset;
-    assign reset = ~nRESET;
+    // ----------------------------------------------------------------
+    // Baud-rate divisor
+    //
+    // UART_DIVISOR = floor(SYSCLK_HZ / baud) - 1
+    //   14.318 MHz / 115200 = 124.3  →  124 - 1 = 123  →  ~115,468 baud (0.23% err)
+    //   12.000 MHz / 115200 = 104.17 →  104 - 1 = 103  →  ~115,384 baud (0.16% err)
+    // ----------------------------------------------------------------
+    localparam UART_DIVISOR = 123;   // Change to 103 for 12 MHz clock
 
-    // Drive nHALT low during reset, tristate otherwise
-    // If I do this I lose the nRESET input in pin layout? wtf?
-    // Claude thinks this is not translated correctly to the fitter
-    // and thus optimized out.
-    // assign nHALT = reset ? 1'b0 : 1'bz;
+    reg rom_overlay_disable;    // power-on state 0 = overlay active
 
-    // So just pass through instead.  No detecting double bus fault for now.
-    assign nHALT = ~reset;
+    wire read = R_nW;
+    wire write = ~read;
 
-    assign ENGINE_TDI = OE1_pin & OE2_pin & GCLR_pin;
+    wire lo_byte_selected = ~nLDS;
+    wire hi_byte_selected = ~nUDS;
 
-    reg [22:0] led_blink_counter;
-    assign DEBUG_OUT = led_blink_counter[22];
-    assign ENGINE_IACK = SYSCLK;
+    wire RESET = ~nRESET;
+    wire AS = ~nAS;
+
+    // ----------------------------------------------------------------
+    // nHALT — open-drain style bidirectional
+    //
+    // During reset: drive low (assert HALT to CPU).
+    // After reset: tristate so the CPU can assert it on double bus
+    // fault.  We sample the pin each clock to detect this.
+    // ----------------------------------------------------------------
+    reg halt_sensed;
+
+    assign nHALT = RESET ? 1'b0 : 1'bz;
 
     always @(posedge SYSCLK) begin
-        if(reset) begin
-            led_blink_counter <= 0;
+        if (RESET)
+            halt_sensed <= 1'b1;  // not halted
+        else
+            halt_sensed <= nHALT; // sample actual pin state
+    end
+
+    // Make OE1, OE2, GCLR busy
+    assign ENGINE_TDI = OE1_pin & OE2_pin & GCLR_pin;
+
+    assign nR_W = ~R_nW;
+    assign nWRITE_LO = ~(lo_byte_selected & write);
+    assign nWRITE_HI = ~(hi_byte_selected & write);
+
+    wire [3:0] address_high_region = A_hi[23:20];
+    wire [3:0] address_io_segment = {A_hi[19:18], 2'b00};
+
+    wire ram_bank_1_region = (address_high_region == 4'h0);
+    wire ram_bank_2_region = (address_high_region == 4'h1);
+    wire ram_bank_3_region = (address_high_region == 4'h2);
+    wire ram_bank_4_region = (address_high_region == 4'h3);
+    wire rom_region        = (address_high_region == 4'hc);
+    wire engine_region     = (address_high_region == 4'hd);
+    wire video_region      = (address_high_region == 4'he);
+    wire io_region         = (address_high_region == 4'hf);
+
+    wire glue_segment  = io_region & (address_io_segment == 4'h0);
+    wire cf_segment    = io_region & (address_io_segment == 4'h4);
+    wire io_segment    = io_region & (address_io_segment == 4'h8);
+    wire audio_segment = io_region & (address_io_segment == 4'hc);
+
+    wire cf_register_bank0 = (A_lo[4] == 0);
+    wire cf_register_bank1 = ~cf_register_bank0;
+
+    wire ram_1_region_but_rom_overlaid = ram_bank_1_region & ~rom_overlay_disable;
+    wire ram_1_region_no_rom_overlaid  = ram_bank_1_region & rom_overlay_disable;
+
+    assign nRAM_1_SEL = ~(ram_1_region_no_rom_overlaid & AS);
+    assign nRAM_2_SEL = ~(ram_bank_2_region & AS);
+    assign nRAM_3_SEL = ~(ram_bank_3_region & AS);
+    assign nRAM_4_SEL = ~(ram_bank_4_region & AS);
+
+    assign nROM_SELECT = ~((rom_region | ram_1_region_but_rom_overlaid) & AS);
+
+    assign nENGINE_SELECT = ~(engine_region & AS);
+    assign nVIDEO_SELECT = ~(video_region & AS);
+
+    // nBERR 1 for now
+    assign nBERR = 1'd1;
+    assign nIPL = 3'b111;
+
+    wire glue_select = glue_segment & AS;
+    assign nAUDIO_LE = ~(audio_segment & AS);
+    assign nIO_SELECT = ~(io_segment & AS);
+    assign CF_CS0 = cf_segment & cf_register_bank0 & AS;
+    assign CF_CS1 = cf_segment & cf_register_bank1 & AS;
+
+    // VPA: assert during 68000 interrupt acknowledge cycle (FC = 111, AS active)
+    assign nVPA = ~((FC == 3'b111) & ~nAS);
+
+    // ----------------------------------------------------------------
+    // Glue register address decoding (matches griffin.yml)
+    //
+    // Glue registers live at 0xF00000+ (glue_segment).
+    // 68000 byte addresses, odd bytes active with LDS:
+    //   0xF00001  — DEBUG_IN       (read,  bit 0 = IN)       — STUB: no input pin
+    //   0xF00001  — DEBUG_OUT      (write, bit 0 = OUT)
+    //   0xF00003  — UART_STATUS    (read,  bit 0 = BUSY, bit 1 = RECEIVED)
+    //   0xF00003  — UART_TX_DATA   (write, byte)
+    //   0xF00005  — UART_RX_DATA   (read,  byte)             — STUB: no RX yet
+    //   0xF00005  — UART_RX_CONFIG (write, bit 0 = INT)      — STUB: no RX yet
+    //   0xF00007  — CONFIG         (write, bit 0 = ROM_OVERLAY_DISABLE)
+    //
+    // A_lo[5:1] selects the word address within the segment.
+    // ----------------------------------------------------------------
+
+    localparam [23:0] GLUE_CONFIG_ADDR    = `GLUE_CONFIG;
+    localparam [23:0] GLUE_DEBUG_ADDR     = `GLUE_DEBUG_OUT;
+    localparam [23:0] GLUE_UART_STAT_ADDR = `GLUE_UART_STATUS;
+    localparam [23:0] GLUE_UART_RX_ADDR   = `GLUE_UART_RX_DATA;
+
+    wire debug_out_select   = glue_select & lo_byte_selected & write
+                              & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
+    wire debug_in_select    = glue_select & lo_byte_selected & read
+                              & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
+    wire uart_tx_select     = glue_select & lo_byte_selected & write
+                              & (A_lo[5:1] == GLUE_UART_STAT_ADDR[5:1]);
+    wire uart_stat_select   = glue_select & lo_byte_selected & read
+                              & (A_lo[5:1] == GLUE_UART_STAT_ADDR[5:1]);
+    wire uart_rx_data_select  = glue_select & lo_byte_selected & read
+                              & (A_lo[5:1] == GLUE_UART_RX_ADDR[5:1]);
+    wire uart_rx_cfg_select   = glue_select & lo_byte_selected & write
+                              & (A_lo[5:1] == GLUE_UART_RX_ADDR[5:1]);
+
+    // ----------------------------------------------------------------
+    // Data bus — bidirectional
+    //
+    // The CPLD drives D[7:0] only during glue register reads.
+    // All other times the pins are tristated so the CPU, ROM, RAM,
+    // etc. can drive the bus.
+    // ----------------------------------------------------------------
+    wire glue_read_active = debug_in_select | uart_stat_select | uart_rx_data_select;
+
+    reg [7:0] glue_read_data;
+    always @(*) begin
+        glue_read_data = 8'h00;
+        if (debug_in_select)
+            glue_read_data = 8'h00;          // STUB: no DEBUG_IN pin
+        else if (uart_stat_select)
+            glue_read_data = {6'd0, 1'b0, tx_busy};  // bit 1=RECEIVED (stub), bit 0=BUSY
+        else if (uart_rx_data_select)
+            glue_read_data = 8'h00;          // STUB: no UART RX yet
+    end
+
+    assign D = glue_read_active ? glue_read_data : 8'bz;
+
+    // ----------------------------------------------------------------
+    // GLUE writable registers
+    // ----------------------------------------------------------------
+    reg debug_out_reg;               // DEBUG_OUT bit 0
+    reg uart_rx_int_en;              // UART_RX_CONFIG bit 0 (stub)
+
+    always @(posedge SYSCLK) begin
+        if(RESET) begin
+            rom_overlay_disable <= 0;
+            debug_out_reg       <= 0;
+            uart_rx_int_en      <= 0;
         end else begin
-            led_blink_counter <= led_blink_counter + 1;
+            if (glue_select & lo_byte_selected & write
+                & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1]))
+                rom_overlay_disable <= D[0];
+            if (debug_out_select)
+                debug_out_reg <= D[0];
+            if (uart_rx_cfg_select)
+                uart_rx_int_en <= D[0];       // STUB: no RX yet
         end
     end
+
+    // ----------------------------------------------------------------
+    // UART TX — 8N1 shift register on DEBUG_OUT
+    //
+    // Frame: IDLE(1) | START(0) | D0 D1 D2 D3 D4 D5 D6 D7 | STOP(1)
+    //
+    // bit_cnt counts down from 10 to 0:
+    //   0     = idle (tx line high, ready for new byte)
+    //   10..1 = transmitting
+    //
+    // baud_div counts down from UART_DIVISOR to 0, generating a
+    // single-cycle tick at the baud rate.
+    // ----------------------------------------------------------------
+
+    reg [9:0] tx_shift;       // shift register: {stop, d7..d0, start}
+    reg [3:0] bit_cnt;        // 0=idle, 10..1=transmitting
+    reg [6:0] baud_div;       // baud rate divider
+    reg       tx_out;         // registered TX output
+
+    wire tx_busy = (bit_cnt != 4'd0);
+    wire baud_tick = (baud_div == 7'd0);
+
+    // UART TX overrides DEBUG_OUT register while transmitting
+    assign DEBUG_OUT = tx_busy ? tx_out : debug_out_reg;
+
+    always @(posedge SYSCLK) begin
+        if (RESET) begin
+            tx_shift <= 10'd0;
+            bit_cnt  <= 4'd0;
+            baud_div <= 7'd0;
+            tx_out   <= 1'b1;        // idle high
+        end else if (!tx_busy && uart_tx_select) begin
+            // Load new frame: {stop, data[7:0], start}
+            tx_shift <= {1'b1, D[7:0], 1'b0};
+            bit_cnt  <= 4'd10;       // 10 bits to send
+            baud_div <= UART_DIVISOR[6:0];
+            tx_out   <= 1'b0;        // start bit begins immediately
+        end else if (tx_busy) begin
+            if (baud_tick) begin
+                tx_out   <= tx_shift[0];  // next bit out
+                tx_shift <= {1'b1, tx_shift[9:1]};  // shift right, fill with idle
+                bit_cnt  <= bit_cnt - 4'd1;
+                baud_div <= UART_DIVISOR[6:0];
+            end else begin
+                baud_div <= baud_div - 7'd1;
+            end
+        end
+    end
+
+    // ----------------------------------------------------------------
+    // DTACK generation
+    //
+    // A 4-bit counter (ws_cnt) increments on each SYSCLK while AS is
+    // asserted, and is asynchronously cleared when AS deasserts.
+    //
+    // Wait-state thresholds (clock cycles from AS assertion):
+    //   RAM banks 1-4: 0 WS → ws_cnt >= 2
+    //   ROM:           1 WS → ws_cnt >= 4
+    //   VIDEO/ENGINE:  0 WS → ws_cnt >= 2
+    //   GLUE:        0 WS  → ws_cnt >= 2
+    //   CF:            7 WS → ws_cnt >= 14
+    //   AUDIO:         1 WS → ws_cnt >= 4
+    // ----------------------------------------------------------------
+
+    reg [3:0] ws_cnt;
+
+    always @(posedge SYSCLK or posedge nAS) begin
+        if (nAS)
+            ws_cnt <= 4'd0;
+        else if (ws_cnt != 4'd15)
+            ws_cnt <= ws_cnt + 4'd1;
+    end
+
+    wire dtack_comb =
+        ((~nRAM_1_SEL)          & (ws_cnt >= 4'd2))  |  // RAM bank 1
+        ((~nRAM_2_SEL)   & (ws_cnt >= 4'd2))  |  // RAM bank 2
+        ((~nRAM_3_SEL)   & (ws_cnt >= 4'd2))  |  // RAM bank 3
+        ((~nRAM_4_SEL)   & (ws_cnt >= 4'd2))  |  // RAM bank 4
+        ((~nROM_SELECT)     & (ws_cnt >= 4'd4))  |  // ROM
+        ((~nVIDEO_SELECT)   & (ws_cnt >= 4'd2))  |  // VIDEO
+        ((~nENGINE_SELECT)  & (ws_cnt >= 4'd2))  |  // ENGINE
+        (glue_select        & (ws_cnt >= 4'd2))  |  // GLUE
+        (CF_CS0             & (ws_cnt >= 4'd14)) |  // CF
+        (CF_CS1             & (ws_cnt >= 4'd14)) |  // CF
+        ((~nAUDIO_LE)       & (ws_cnt >= 4'd4));    // AUDIO
+
+    assign nDTACK = ~dtack_comb;
+
 
 endmodule
 
@@ -62,4 +322,51 @@ endmodule
 //PIN: OE2_pin   : 2
 //PIN: GCLR_pin  : 1
 //PIN: ENGINE_TDI  : 40
-//PIN: ENGINE_IACK  : 75
+//PIN: nROM_SELECT  : 4
+//PIN: nAS        : 60
+// atf15xx_yosys seems to flatten out pins starting > 0, so renumber A_hi
+//PIN: A_hi_5     : 31
+//PIN: A_hi_4     : 57
+//PIN: A_hi_3     : 56
+//PIN: A_hi_2     : 33
+//PIN: A_hi_1     : 35
+//PIN: A_hi_0     : 81
+// atf15xx_yosys seems to flatten out pins starting > 0, so renumber A_lo
+//PIN: A_lo_4     : 80
+//PIN: A_lo_3     : 79
+//PIN: A_lo_2     : 54
+//PIN: A_lo_1     : 55
+//PIN: A_lo_0     : 51
+//PIN: D_7        : 25
+//PIN: D_6        : 64
+//PIN: D_5        : 22
+//PIN: D_4        : 65
+//PIN: D_3        : 24
+//PIN: D_2        : 63
+//PIN: D_1        : 27
+//PIN: D_0        : 61
+//PIN: nUDS       : 28
+//PIN: nLDS       : 29
+//PIN: R_nW       : 58
+//PIN: nRAM_1_SEL : 5
+//PIN: nRAM_2_SEL : 6
+//PIN: nRAM_3_SEL : 8
+//PIN: nRAM_4_SEL : 9
+//PIN: nWRITE_LO  : 10
+//PIN: nWRITE_HI  : 11
+//PIN: nDTACK     : 30
+//PIN: nBERR      : 44
+//PIN: nIPL_2     : 46
+//PIN: nIPL_1     : 45
+//PIN: nIPL_0     : 48
+//PIN: nVPA       : 75
+//PIN: nAUDIO_LE  : 68
+//PIN: nIO_SELECT : 12
+//PIN: nVIDEO_SELECT : 74
+//PIN: CF_CS0     : 76
+//PIN: CF_CS1     : 77
+//PIN: nR_W       : 73
+//PIN: FC_0       : 52
+//PIN: FC_1       : 49
+//PIN: FC_2       : 50
+//PIN: nENGINE_SELECT : 15
