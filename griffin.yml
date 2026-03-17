@@ -28,29 +28,40 @@ peripherals:
         bits:
           - { bit: "0", name: IN, description: "DEBUG_IN pin state" }
       - offset: 0x03
-        name: UART_TX_STATUS
+        name: UART_STATUS
         access: read
         width: 8
         description: "UART transmitter status; poll BUSY until clear before writing UART_TX_DATA"
         bits:
           - { bit: "0", name: BUSY, description: "TX is busy" }
-      - { offset: 0x03, name: UART_TX_DATA, access: write, width: 8,
-          description: "Load TX latch and begin 8N1 output on DEBUG_OUT" }
-      - offset: 0x05
-        name: UART_RX_STATUS
-        access: read
+          - { bit: "1", name: RECEIVED, description: "RX byte received" }
+      - offset: 0x03
+        name: UART_TX_DATA
+        access: write
         width: 8
-        description: "UART receiver status"
-        bits:
-          - { bit: "0", name: READY, description: "Sample ready (half-bit counter reached zero)" }
-          - { bit: "7", name: PIN,   description: "Current DEBUG_IN pin state" }
+        description: |
+          Load TX latch and begin 8N1 output on DEBUG_OUT.
+          Writing TX_DATA while UART_STATUS_BUSY is set is undefined.
+      - offset: 0x05
+        name: UART_RX_DATA
+        access: write
+        width: 8,
+        description: |
+          Return latched data for UART RX.  Clears UART_STATUS_RECEIVED.
+          Reading UART_RX_DATA a second time without another byte received will
+          return the previous byte.
       - offset: 0x05
         name: UART_RX_CONFIG
         access: write
         width: 8
-        description: "UART receiver configuration"
+        description: "UART configuration"
         bits:
-          - { bit: "0", name: ARM, description: "Arm edge detector to begin start-bit detection" }
+          - bit: "0"
+            name: INT
+            description: "Enable interrupt on received byte"
+            values:
+              - { value: "0b0", name: DISABLED, description: "RX interrupt is disabled" }
+              - { value: "0b1", name: ENABLED, description: "RX interrupt is enabled" }
       - offset: 0x07
         name: CONFIG
         access: write
