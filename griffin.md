@@ -91,11 +91,11 @@ DEBUG\_OUT LED:
 # Board spin
 
 - [ ] Schematic (+PCB if necessary)
+  - [ ] Pullups on JTAG lines
   - [ ] Dump SPI for IO MCU - just use an ISP header or something
   - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
   - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
-  - [ ] More signals between GLUE, VIDEO, ENGINE  
-  - [ ] Switch out the 5-pin custom JTAG header for Standard 2x10 (20-pin) 0.1" shrouded IDC.
+  - [ ] More signals between GLUE, VIDEO, ENGINE
   - [ ] GND and +5V to test points
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - not sure if I should expose as one 16-bit write or two 8-bit writes or maybe both
@@ -114,6 +114,7 @@ DEBUG\_OUT LED:
   - [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
   - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
   - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
+  - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
 
 
 
@@ -150,6 +151,13 @@ DEBUG\_OUT LED:
 
   * Check CF card boot partition for boot kernel name or information and boot it
 
+# Debug the GLUE
+
+Bodge pullups on JTAG TMS, 
+
+Try to set fitter parameters to disable GCLR, OE1, OE2
+
+Maybe set Verilog to 
 
 # Components
 
@@ -231,12 +239,12 @@ Dedicated ATF1508 CPLD for:
 * Address decode: ~ROM\_SELECT, ~RAM\_BANK\_{n}\_SELECT, ~IO\_SELECT\_MOSI, ~VIDEO\_SELECT, ~CF\_CS0, ~CF\_CS1, ~AUDIO\_LE, ~ENGINE\_SELECT  
 * Invert R/~W to output ~R/W  
 * Decode ~UDS and ~LDS and R/~W into ~WRITE\_LO and ~WRITE\_HI  
-* Incorporate a hard-coded 115200 UART TX and a hardware-assist UART RX
+* Incorporate a hard-coded 115200 UART TX and RX on DEBUG_OUT, DEBUG_IN
 * Claude says *with autovectors, GLUE just needs to assert ~VPA instead of ~DTACK during an IACK cycle (FC=111). The CPU then uses the fixed autovector table (vectors 25-31, one per IPL level).*  So I’ll need to wire VPA back from GLUE to the CPU.  Replace ENGINE\_IACK, since that is no longer necessary.  
   * 7: VIDEO  
   * 6: ENGINE  
   * 5: IO  
-  * 4: DEBUG\_IN uart start bit detected
+  * 4: DEBUG\_IN uart byte received
 * ROM initially overlaid at 0x0X\_XXXX, RAM bank 1 not selected  
 * DTACK generation logic  
   * Count off for internal registers, RAM, ROM, AUDIO, hard-coded in HDL assuming 20MHz crystal  
@@ -245,23 +253,17 @@ Dedicated ATF1508 CPLD for:
   * OR with ENGINE\_DTACK, IO\_DTACK to stall until video expansion or io releases bus  
   * AND result with VIDEO\_STALL on data access so any DTACK is blocked until 16-bit VIDEO shift register in CPLD is ready to be loaded  
 * BERR after some number of cycles if DTACK not asserted.  Have one timeout counter for BERR for everything else, like 8 cycles, and then crazy long BERR like 256 for IO\_DTACK  
-* Registers for negotiating SPI to the IO MCU  
-* Registers for writing JTAG to the ENGINE CPLD  
-* IO\_RESET and SPI programming for IO processor  
-  * hold IO\_RESET low on RESET a little bit  
-  * Programming IO processors - IO\_RESET, IO\_SELECT\_MOSI, IO\_DTACK\_MISO, IO\_IACK\_SCK  
+* ~~Registers for negotiating SPI to the IO MCU~~  
+* ~~Registers for writing JTAG to the ENGINE CPLD~~  
+* ~~IO\_RESET and SPI programming for IO processor~~  
+  * ~~hold IO\_RESET low on RESET a little bit~~  
+  * ~~Programming IO processors - IO\_RESET, IO\_SELECT\_MOSI, IO\_DTACK\_MISO, IO\_IACK\_SCK~~  
 * DEBUG\_OUT  
   * Sets or clears debug LED and test point output (clip an FTDI, bitbang serial for diagnostics)  
   * Can bit-bang serial output to debug IO board  
   * Claude tells me that debug output to LED and also FTDI will probably be marginal.  See [Bodges]()  
-* Debug in  
+* DEBUG_IN
   * Reads a test point input  
-* HW assist for SoftUART on DEBUG\_IN  
-  * Can arm “start counter at 51 on transition 1 to 0, IRQ when 0” (half an 115200 baud bit at 12MHz)  
-  * Then IRQ fires if DEBUG\_IN is still 0 when counter reaches 0, counter resets to 103  
-  * UART RX ISR waits for UART RX status & 0x40, reads pin state from UART RX status & 0x80  
-    * Repeats for 8 bits plus end
-    * Can do something about framing error if desired  
 * Registers: see [griffin.yml](griffin.yml).
 
 ## VIDEO or “PLUME” (Griffin plumage = display)
