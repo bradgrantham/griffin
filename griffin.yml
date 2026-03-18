@@ -1,7 +1,7 @@
 project:
   name: Griffin
   cpu: MC68000
-  clock_hz: 12000000
+  clock_hz: 14318181
   interrupt_mode: autovector
 
 peripherals:
@@ -80,7 +80,10 @@ peripherals:
       width: 16
     dtack:
       - 12000000: 1
-      - 20000000: 2
+      - 14000000: 1
+      - 14318181: 1
+      - 16000000: 1
+      - 20000000: 1
     linker:
       section: rom
 
@@ -92,6 +95,9 @@ peripherals:
       width: 16
     dtack:
       - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
       - 20000000: 1
     linker:
       section: ram
@@ -104,6 +110,9 @@ peripherals:
       width: 16
     dtack:
       - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
       - 20000000: 1
 
   RAM_BANK_3:
@@ -114,6 +123,9 @@ peripherals:
       width: 16
     dtack:
       - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
       - 20000000: 1
 
   RAM_BANK_4:
@@ -124,6 +136,9 @@ peripherals:
       width: 16
     dtack:
       - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
       - 20000000: 1
 
   VIDEO:
@@ -132,6 +147,9 @@ peripherals:
     clock: [14318181, 25175000]
     dtack:
       - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
       - 20000000: 0
     address_range:
       base: 0xE00000
@@ -231,6 +249,9 @@ peripherals:
       width: 8
     dtack:
       - 12000000: 7
+      - 14000000: 7
+      - 14318181: 7
+      - 16000000: 8
       - 20000000: 12
     registers:
       - { offset: 0x01, name: DATA,         access: rw,    width: 8,
@@ -286,7 +307,10 @@ peripherals:
       width: 8
     dtack:
       - 12000000: 1
-      - 20000000: 2
+      - 14000000: 1
+      - 14318181: 1
+      - 16000000: 1
+      - 20000000: 1
     registers:
       - { offset: 0x01, name: DAC, access: write, width: 8,
           description: "Write sample to 8-bit R2R DAC output latch" }

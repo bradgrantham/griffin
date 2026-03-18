@@ -14,16 +14,10 @@ _start:
     move.b #0x01, GLUE_DEBUG_OUT
     move.b #0x00, GLUE_DEBUG_OUT
 
-    /* Set up for debug out as serial port */
-    move.b  #0x01, GLUE_DEBUG_OUT
-    move.w  #0x1000, %d0 /* Let serial port sample that */
-debug_out_settle:
-    dbra    %d0, debug_out_settle
-
-    /* Hello! */
+    /* Hello via hardware UART */
     lea     hellostr, %a1
     lea     .Lret3(%pc), %a6
-    jmp     debug_puts
+    jmp     uart_puts
 .Lret3:
 
     /* Switch out ROM */
@@ -47,7 +41,7 @@ vec_copy:
     move.l  #0x400000, %sp
     lea     memory_4m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     debug_puts
+    jmp     uart_puts
 
 test_3m:
     move.w  #0xAA55, 0x300000 - 2
@@ -59,7 +53,7 @@ test_3m:
     move.l  #0x300000, %sp
     lea     memory_3m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     debug_puts
+    jmp     uart_puts
 
 test_2m:
     move.w  #0xAA55, 0x200000 - 2
@@ -71,7 +65,7 @@ test_2m:
     move.l  #0x200000, %sp
     lea     memory_2m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     debug_puts
+    jmp     uart_puts
 
 test_1m:
     move.w  #0xFF00, 0x80000 - 2
@@ -83,7 +77,7 @@ test_1m:
     move.l  #0x100000, %sp
     lea     memory_1m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     debug_puts
+    jmp     uart_puts
 
 set_256k:
     move    #256, memory_size
@@ -91,7 +85,7 @@ set_256k:
     move.l  #0x40000, %sp
     lea     memory_256k, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     debug_puts
+    jmp     uart_puts
 
 memory_size_done:
 
@@ -162,7 +156,7 @@ panic_loop:
 | Return: jmp (a5)
 | Clobbers: d0, d1, d2, a0
 
-    .equ CYCLES_PER_BIT, 12000000 / 9600
+    .equ CYCLES_PER_BIT, SYSCLK_HZ / 9600
     .equ DELAY_LOOP_COUNT, (CYCLES_PER_BIT - 20) / 10
 
     .global early_putchar
@@ -197,7 +191,7 @@ early_putchar:
 
     jmp     (%a5)
 
-| debug_puts: send null-terminated string at (a1)
+| debug_puts: send null-terminated string at (a1) via bitbang
 | Return via jmp (a6)
 | Clobbers: a0, d0, d1, d2, a5, a1
 debug_puts:
@@ -208,6 +202,32 @@ debug_puts:
 .Lret_puts:
     bra.s   debug_puts
 .Ldone:
+    jmp     (%a6)
+
+| uart_putchar: send one character via GLUE hardware UART TX (115200 baud)
+| Input:  d0.b = character to send
+| Return: jmp (a5)
+| Clobbers: a0
+    .global uart_putchar
+uart_putchar:
+    lea     GLUE_UART_STATUS, %a0
+.Luart_wait:
+    btst    #GLUE_UART_STATUS_BUSY_SHIFT, (%a0)
+    bne.s   .Luart_wait
+    move.b  %d0, GLUE_UART_TX_DATA
+    jmp     (%a5)
+
+| uart_puts: send null-terminated string at (a1) via GLUE hardware UART
+| Return via jmp (a6)
+| Clobbers: a0, d0, a5, a1
+uart_puts:
+    move.b  (%a1)+, %d0
+    beq.s   .Luart_puts_done
+    lea     .Luart_ret_puts(%pc), %a5
+    jmp     uart_putchar
+.Luart_ret_puts:
+    bra.s   uart_puts
+.Luart_puts_done:
     jmp     (%a6)
 
 .global _init

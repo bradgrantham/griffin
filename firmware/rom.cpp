@@ -6,27 +6,37 @@
 
 #include "../griffin.generated.h"
 
-static constexpr uint32_t SYSCLK = 12'000'000;
 
 /**
- * Bitbang one character at 9600 baud (8N1) through a byte-wide
- * memory-mapped I/O location on a 68000.
- *
- * Protocol: idle=high(0x01), start bit=low(0x00), 8 data bits LSB first,
- *           stop bit=high(0x01).
- *
- * @param ch       Character to transmit
+ * Send one character via the GLUE hardware UART TX (115200 baud 8N1).
+ * Polls UART_STATUS until not busy, then writes UART_TX_DATA.
  */
 extern "C" void debug_serial_putchar(const char s);
 
 asm(
     ".global debug_serial_putchar     \n"
     "debug_serial_putchar:            \n"
+    "    move.b  7(%sp), %d0 \n"
+    "    lea     .Lret_stub(%pc), %a5 \n"
+    "    jmp     uart_putchar \n"
+    ".Lret_stub:                   \n"
+    "    rts                  \n"
+);
+
+/**
+ * Bitbang one character at 9600 baud (8N1) through DEBUG_OUT.
+ * Kept as a fallback for debugging the GLUE UART itself.
+ */
+extern "C" void debug_serial_putchar_bitbang(const char s);
+
+asm(
+    ".global debug_serial_putchar_bitbang \n"
+    "debug_serial_putchar_bitbang:        \n"
     "    move.l  %d2, -(%sp) \n"
     "    move.b  11(%sp), %d0 \n"
-    "    lea     .Lret_stub(%pc), %a5 \n"
+    "    lea     .Lret_stub_bb(%pc), %a5 \n"
     "    jmp     early_putchar \n"
-    ".Lret_stub:                   \n"
+    ".Lret_stub_bb:                   \n"
     "    move.l  (%sp)+, %d2\n"
     "    rts                  \n"
 );

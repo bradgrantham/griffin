@@ -26,7 +26,13 @@ class GriffinEmulator : public moira::Moira
 
     uint8_t IO_read8(uint32_t addr) const
     {
-        printf("read of uint8_t at unhandled IO %06X\n", addr);
+        if(addr == GLUE_UART_STATUS - GLUE_BASE) {
+            // Hardware UART is never busy in emulation (instant TX)
+            return 0;
+        } else if(addr == GLUE_DEBUG_IN - GLUE_BASE) {
+            return 0;
+        }
+        printf("read of uint8_t at unhandled IO %06X\n", addr + IO_BASE);
         abort();
         return 0;
     }
@@ -47,16 +53,22 @@ class GriffinEmulator : public moira::Moira
                 if(debug & DEBUG_IO) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
             }
             debug_out_latch = val;
+        } else if(addr == GLUE_UART_TX_DATA - GLUE_BASE) {
+            // Hardware UART TX: emit character immediately
+            printf("%c", val);
+            if(debug & DEBUG_UART) printf("[UART TX: 0x%02X]", val);
+            fflush(stdout);
         } else if(addr == GLUE_CONFIG - GLUE_BASE) {
             if(debug & DEBUG_IO) printf("ROM overlay disabled\n");
             ROMoverlay = false;
         } else {
-            if(isprint(val)) {
-                printf("%" PRIx32 " = %" PRIx8 " (%c)\n", addr, addr, val);
-            } else {
-                printf("%" PRIx32 " = %" PRIx8 "\n", addr, addr);
+            if(debug & DEBUG_IO) {
+                if(isprint(val)) {
+                    printf("IO write: %06" PRIx32 " = %02x (%c)\n", addr + IO_BASE, val, val);
+                } else {
+                    printf("IO write: %06" PRIx32 " = %02x\n", addr + IO_BASE, val);
+                }
             }
-            // printf("%c", val);
         }
     }
 
@@ -229,7 +241,7 @@ public:
 
 static constexpr int OVERSAMPLE = 16;
 static constexpr int BAUDRATE = 9600;
-static constexpr int SOFT_UART_SAMPLE_INTERVAL = SYSCLK / (BAUDRATE * OVERSAMPLE);
+static constexpr int SOFT_UART_SAMPLE_INTERVAL = SYSCLK_HZ / (BAUDRATE * OVERSAMPLE);
 
 // TODO parameterize this on SYSCLOCK and OVERSAMPLE and BAUDRATE
 struct SoftUART

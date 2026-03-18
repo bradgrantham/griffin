@@ -55,7 +55,7 @@ module glue (
     //   14.318 MHz / 115200 = 124.3  →  124 - 1 = 123  →  ~115,468 baud (0.23% err)
     //   12.000 MHz / 115200 = 104.17 →  104 - 1 = 103  →  ~115,384 baud (0.16% err)
     // ----------------------------------------------------------------
-    localparam UART_DIVISOR = 123;   // Change to 103 for 12 MHz clock
+    localparam UART_DIVISOR = 123;   // 14.318 MHz; change to 103 for 12 MHz
     localparam ENGINE_ABSENT = 1;    // Set to 0 when ENGINE CPLD is populated
     localparam IO_ABSENT     = 1;    // Set to 0 when IO MCU is populated
 
