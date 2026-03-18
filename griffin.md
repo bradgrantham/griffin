@@ -28,9 +28,9 @@ Use PLD or CPLD devices - **settled on ATF1508 PLCC-84**
   * They have a USB programmer but that fits a 2x5 header and I’ve already put a 1x5 header on the board assuming I’d make my own cable  
   * They have a lot of resources for design and also a Verilog compiler  
   * Cupl can run under Wine on macOS  
-  * “​​Bake a JTAG header into the board. A 2x5 0.1" header is the standard pinout and takes almost no space. Get an FT232H board (Adafruit sells one for ~$15), wire it up, and you've got a programmer that works with OpenOCD.”  
+  * “Bake a JTAG header into the board. A 2x5 0.1" header is the standard pinout and takes almost no space. Get an FT232H board (Adafruit sells one for ~$15), wire it up, and you've got a programmer that works with OpenOCD.”  
     * [Adafruit FT232H Breakout - General Purpose USB to GPIO, SPI, I2C](https://www.adafruit.com/product/2264)   
-    * No, just put a 2x5 header on and wire from ft232h  
+    * No, just put a 1x5 header on and wire from ft232h
   * If there’s a .si file for the PLD “cupl.exe” will run that simulation and put outputs in .so  
   * Use pyftdi for toggling gpios and reading the results for test vectors  
   * **~~Sourcing~~** ~~ATF1508s may be difficult.  May need to stockpile?~~ Plenty at Microchip for now.
@@ -115,6 +115,7 @@ DEBUG\_OUT LED:
   - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
   - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
   - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
+  - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
 
 
 
