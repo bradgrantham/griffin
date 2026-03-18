@@ -28,13 +28,13 @@ FITTER := $(ATF15XX_YOSYS)/run_fitter.sh
 
 .PHONY: all glue clean
 
-all: glue
+all: glue video
 
 # ------------------------------------------------------------
 # GLUE (ATF1508AS)
 # ------------------------------------------------------------
 
-glue: glue/glue.jed
+glue: glue/glue.svf
 
 glue/glue.edif: glue/glue.v ../griffin.generated.vh
 	cd glue && $(YOSYS) glue
@@ -59,7 +59,7 @@ flash-glue: glue/glue.svf
 # VIDEO (ATF1508AS)
 # ------------------------------------------------------------
 
-video: video/video.jed
+video: video/video.svf
 
 video/video.edif: video/video.v ../griffin.generated.vh
 	cd video && $(YOSYS) video
