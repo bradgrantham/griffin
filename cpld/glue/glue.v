@@ -6,9 +6,13 @@ module glue (
     // System clock, shared by CPLDs and CPU
     input  wire        SYSCLK,
     input  wire        nRESET,
-    input  wire        OE1_pin,
+    input  wire        VIDEO_STALL, // pin 84: VIDEO CPLD stalls all DTACK (active high)
     input  wire        OE2_pin,
-    input  wire        GCLR_pin,
+    input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
+    input  wire        nENGINE_DTACK, // pin 17: ENGINE CPLD asserts when ready
+    input  wire        nIO_DTACK,     // pin 16: IO MCU asserts when ready
+    input  wire        nIO_IRQ,       // pin 18: IO MCU interrupt request (active low)
+    input  wire        nENGINE_IRQ,   // pin 20: ENGINE CPLD interrupt request (active low)
     input  wire        nAS,
     input  wire        [23:18] A_hi,
     input  wire        [5:1]   A_lo,
@@ -52,6 +56,8 @@ module glue (
     //   12.000 MHz / 115200 = 104.17 →  104 - 1 = 103  →  ~115,384 baud (0.16% err)
     // ----------------------------------------------------------------
     localparam UART_DIVISOR = 123;   // Change to 103 for 12 MHz clock
+    localparam ENGINE_ABSENT = 1;    // Set to 0 when ENGINE CPLD is populated
+    localparam IO_ABSENT     = 1;    // Set to 0 when IO MCU is populated
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
 
@@ -82,8 +88,8 @@ module glue (
             halt_sensed <= nHALT; // sample actual pin state
     end
 
-    // Make OE1, OE2, GCLR busy
-    assign ENGINE_TDI = OE1_pin & OE2_pin & GCLR_pin;
+    // Make OE2 busy (OE1/pin 84 is now VIDEO_STALL, GCLR/pin 1 is now nVIDEO_IRQ)
+    assign ENGINE_TDI = OE2_pin;
 
     assign nR_W = ~R_nW;
     assign nWRITE_LO = ~(lo_byte_selected & write);
@@ -124,7 +130,30 @@ module glue (
 
     // nBERR 1 for now
     assign nBERR = 1'd1;
-    assign nIPL = 3'b111;
+
+    // ----------------------------------------------------------------
+    // Interrupt priority encoder (active-low nIPL to 68000)
+    //
+    // Priority levels (from griffin.yml / griffin.md):
+    //   7: VIDEO    (~VIDEO_IRQ,  pin 1)   — nIPL = 000
+    //   6: ENGINE   (~ENGINE_IRQ, pin 20)  — nIPL = 001
+    //   5: IO       (~IO_IRQ,     pin 18)  — nIPL = 010
+    //   4: UART RX  (internal)             — nIPL = 011
+    //   none:                              — nIPL = 111
+    //
+    // Directly active: UART RX byte received AND rx interrupt enabled.
+    // (UART RX is still a stub, so uart_rx_active is always 0 for now.)
+    // ----------------------------------------------------------------
+    wire uart_rx_active = 1'b0;  // STUB: no UART RX yet; replace with rx_received & uart_rx_int_en
+
+    wire engine_irq_active = ~ENGINE_ABSENT & ~nENGINE_IRQ;
+    wire io_irq_active     = ~IO_ABSENT     & ~nIO_IRQ;
+
+    assign nIPL = ~nVIDEO_IRQ     ? 3'b000 :  // level 7
+                  engine_irq_active ? 3'b001 :  // level 6
+                  io_irq_active   ? 3'b010 :  // level 5
+                  uart_rx_active ? 3'b011 :  // level 4
+                                 3'b111;   // no interrupt
 
     wire glue_select = glue_segment & AS;
     assign nAUDIO_LE = ~(audio_segment & AS);
@@ -270,10 +299,23 @@ module glue (
     // Wait-state thresholds (clock cycles from AS assertion):
     //   RAM banks 1-4: 0 WS → ws_cnt >= 2
     //   ROM:           1 WS → ws_cnt >= 4
-    //   VIDEO/ENGINE:  0 WS → ws_cnt >= 2
-    //   GLUE:        0 WS  → ws_cnt >= 2
+    //   VIDEO:         0 WS → ws_cnt >= 2  (register access timing)
+    //   GLUE:          0 WS → ws_cnt >= 2
     //   CF:            7 WS → ws_cnt >= 14
     //   AUDIO:         1 WS → ws_cnt >= 4
+    //
+    // Handshake peripherals (no fixed wait states):
+    //   ENGINE:  DTACK from ~ENGINE_DTACK (pin 17)
+    //   IO MCU:  DTACK from ~IO_DTACK    (pin 16)
+    //
+    // VIDEO_STALL (pin 84, active high):
+    //   When asserted by the VIDEO CPLD, blocks ALL DTACK generation
+    //   to stall the CPU while the 1-bit pixel shift register is being
+    //   shifted out and cannot yet accept new data into the pixel latch.
+    //   VIDEO_STALL is OR'd into nDTACK so any bus cycle is held off.
+    //   TODO: Not yet driven by VIDEO CPLD — pin must be held low
+    //   (active low pull-down or direct ground) until VIDEO firmware
+    //   implements the stall protocol.
     // ----------------------------------------------------------------
 
     reg [3:0] ws_cnt;
@@ -291,14 +333,17 @@ module glue (
         ((~nRAM_3_SEL)   & (ws_cnt >= 4'd2))  |  // RAM bank 3
         ((~nRAM_4_SEL)   & (ws_cnt >= 4'd2))  |  // RAM bank 4
         ((~nROM_SELECT)     & (ws_cnt >= 4'd4))  |  // ROM
-        ((~nVIDEO_SELECT)   & (ws_cnt >= 4'd2))  |  // VIDEO
-        ((~nENGINE_SELECT)  & (ws_cnt >= 4'd2))  |  // ENGINE
+        ((~nVIDEO_SELECT)   & (ws_cnt >= 4'd2))  |  // VIDEO (register access)
+        ((~nENGINE_SELECT)  & ~ENGINE_ABSENT & ~nENGINE_DTACK) |  // ENGINE: handshake
         (glue_select        & (ws_cnt >= 4'd2))  |  // GLUE
         (CF_CS0             & (ws_cnt >= 4'd14)) |  // CF
         (CF_CS1             & (ws_cnt >= 4'd14)) |  // CF
+        ((~nIO_SELECT)      & ~IO_ABSENT & ~nIO_DTACK) |  // IO MCU: handshake
         ((~nAUDIO_LE)       & (ws_cnt >= 4'd4));    // AUDIO
 
-    assign nDTACK = ~dtack_comb;
+    // VIDEO_STALL OR'd into nDTACK: when VIDEO_STALL is high, nDTACK
+    // stays deasserted (high) regardless of dtack_comb, stalling the CPU.
+    assign nDTACK = ~dtack_comb | VIDEO_STALL;
 
 
 endmodule
@@ -318,9 +363,9 @@ endmodule
 //PIN: nRESET    : 37
 //PIN: nHALT     : 36
 //PIN: DEBUG_OUT     : 67
-//PIN: OE1_pin   : 84
+//PIN: VIDEO_STALL : 84
 //PIN: OE2_pin   : 2
-//PIN: GCLR_pin  : 1
+//PIN: nVIDEO_IRQ : 1
 //PIN: ENGINE_TDI  : 40
 //PIN: nROM_SELECT  : 4
 //PIN: nAS        : 60
@@ -370,3 +415,7 @@ endmodule
 //PIN: FC_1       : 49
 //PIN: FC_2       : 50
 //PIN: nENGINE_SELECT : 15
+//PIN: nIO_DTACK  : 16
+//PIN: nENGINE_DTACK : 17
+//PIN: nIO_IRQ    : 18
+//PIN: nENGINE_IRQ : 20
