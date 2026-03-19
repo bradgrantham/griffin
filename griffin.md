@@ -92,6 +92,8 @@ DEBUG\_OUT LED:
 
 - [ ] Schematic (+PCB if necessary)
   - [ ] Pullups on JTAG lines
+  - [ ] 4.7K Pullup on HALT
+  - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
   - [ ] Dump SPI for IO MCU - just use an ISP header or something
   - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
   - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
@@ -102,7 +104,7 @@ DEBUG\_OUT LED:
     - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
   - [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
   - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
-
+  
 - [ ] PCB only
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
   - [ ] PS2 stabs - move footprint  
