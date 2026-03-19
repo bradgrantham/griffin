@@ -255,13 +255,17 @@ module glue (
     // single-cycle tick at the baud rate.
     // ----------------------------------------------------------------
 
-    reg [9:0] tx_shift;       // shift register: {stop, d7..d0, start}
-    reg [3:0] bit_cnt;        // 0=idle, 10..1=transmitting
+    reg [9:0] tx_shift;       // shift register: {fill, stop, d7..d0}
+    reg [3:0] bit_cnt;        // 0=idle, 9..1=transmitting
     reg [6:0] baud_div;       // baud rate divider
     reg       tx_out;         // registered TX output
 
     wire tx_busy = (bit_cnt != 4'd0);
     wire baud_tick = (baud_div == 7'd0);
+
+    // Sample bus data when DTACK would fire, not on first clock after AS.
+    // The 68000 only guarantees valid data by the DTACK handshake point.
+    wire uart_tx_load = !tx_busy && uart_tx_select && (ws_cnt >= 4'd2);
 
     // UART TX overrides DEBUG_OUT register while transmitting
     assign DEBUG_OUT = tx_busy ? tx_out : debug_out_reg;
@@ -272,10 +276,10 @@ module glue (
             bit_cnt  <= 4'd0;
             baud_div <= 7'd0;
             tx_out   <= 1'b1;        // idle high
-        end else if (!tx_busy && uart_tx_select) begin
-            // Load new frame: {stop, data[7:0], start}
-            tx_shift <= {1'b1, D[7:0], 1'b0};
-            bit_cnt  <= 4'd10;       // 10 bits to send
+        end else if (uart_tx_load) begin
+            // Load frame: {fill, stop, data[7:0]} — start bit via tx_out
+            tx_shift <= {1'b1, 1'b1, D[7:0]};
+            bit_cnt  <= 4'd9;        // 9 bits to shift: D0..D7 + stop
             baud_div <= UART_DIVISOR[6:0];
             tx_out   <= 1'b0;        // start bit begins immediately
         end else if (tx_busy) begin
