@@ -73,8 +73,18 @@ extern const char *build_provenance;
 
 };
 
+static volatile uint8_t &uart_status = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_UART_STATUS);
+static volatile uint8_t &uart_rx_data = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_UART_RX_DATA);
+
 int main()
 {
-    printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
-    // panic("Panic!\n");
+    debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
+    debug_printf("Waiting for UART RX...\n");
+
+    for (;;) {
+        if (uart_status & Griffin::GLUE_UART_STATUS_RECEIVED_MASK) {
+            uint8_t ch = uart_rx_data;
+            debug_printf("received: %c (%d)\n", isprint(ch) ? ch : '.', ch);
+        }
+    }
 }

@@ -6,6 +6,7 @@ module glue (
     // System clock, shared by CPLDs and CPU
     input  wire        SYSCLK,
     input  wire        nRESET,
+    input  wire        DEBUG_IN,    // pin 83: UART RX input (GCLK1)
     input  wire        VIDEO_STALL, // pin 84: VIDEO CPLD stalls all DTACK (active high)
     input  wire        OE2_pin,
     input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
@@ -142,9 +143,8 @@ module glue (
     //   none:                              — nIPL = 111
     //
     // Directly active: UART RX byte received AND rx interrupt enabled.
-    // (UART RX is still a stub, so uart_rx_active is always 0 for now.)
     // ----------------------------------------------------------------
-    wire uart_rx_active = 1'b0;  // STUB: no UART RX yet; replace with rx_received & uart_rx_int_en
+    wire uart_rx_active = rx_received & uart_rx_int_en;
 
     wire engine_irq_active = ~ENGINE_ABSENT & ~nENGINE_IRQ;
     wire io_irq_active     = ~IO_ABSENT     & ~nIO_IRQ;
@@ -169,12 +169,12 @@ module glue (
     //
     // Glue registers live at 0xF00000+ (glue_segment).
     // 68000 byte addresses, odd bytes active with LDS:
-    //   0xF00001  — DEBUG_IN       (read,  bit 0 = IN)       — STUB: no input pin
+    //   0xF00001  — DEBUG_IN       (read,  bit 0 = DEBUG_IN pin state)
     //   0xF00001  — DEBUG_OUT      (write, bit 0 = OUT)
     //   0xF00003  — UART_STATUS    (read,  bit 0 = BUSY, bit 1 = RECEIVED)
     //   0xF00003  — UART_TX_DATA   (write, byte)
-    //   0xF00005  — UART_RX_DATA   (read,  byte)             — STUB: no RX yet
-    //   0xF00005  — UART_RX_CONFIG (write, bit 0 = INT)      — STUB: no RX yet
+    //   0xF00005  — UART_RX_DATA   (read,  byte; clears RECEIVED)
+    //   0xF00005  — UART_RX_CONFIG (write, bit 0 = INT enable)
     //   0xF00007  — CONFIG         (write, bit 0 = ROM_OVERLAY_DISABLE)
     //
     // A_lo[5:1] selects the word address within the segment.
@@ -211,11 +211,11 @@ module glue (
     always @(*) begin
         glue_read_data = 8'h00;
         if (debug_in_select)
-            glue_read_data = 8'h00;          // STUB: no DEBUG_IN pin
+            glue_read_data = {7'd0, DEBUG_IN};
         else if (uart_stat_select)
-            glue_read_data = {6'd0, 1'b0, tx_busy};  // bit 1=RECEIVED (stub), bit 0=BUSY
+            glue_read_data = {6'd0, rx_received, tx_busy};
         else if (uart_rx_data_select)
-            glue_read_data = 8'h00;          // STUB: no UART RX yet
+            glue_read_data = rx_data;
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;
@@ -224,7 +224,7 @@ module glue (
     // GLUE writable registers
     // ----------------------------------------------------------------
     reg debug_out_reg;               // DEBUG_OUT bit 0
-    reg uart_rx_int_en;              // UART_RX_CONFIG bit 0 (stub)
+    reg uart_rx_int_en;              // UART_RX_CONFIG bit 0
 
     always @(posedge SYSCLK) begin
         if(RESET) begin
@@ -238,7 +238,7 @@ module glue (
             if (debug_out_select)
                 debug_out_reg <= D[0];
             if (uart_rx_cfg_select)
-                uart_rx_int_en <= D[0];       // STUB: no RX yet
+                uart_rx_int_en <= D[0];
         end
     end
 
@@ -247,9 +247,9 @@ module glue (
     //
     // Frame: IDLE(1) | START(0) | D0 D1 D2 D3 D4 D5 D6 D7 | STOP(1)
     //
-    // bit_cnt counts down from 10 to 0:
+    // bit_cnt counts down from 9 to 0:
     //   0     = idle (tx line high, ready for new byte)
-    //   10..1 = transmitting
+    //   9..1  = transmitting (D0..D7 + stop)
     //
     // baud_div counts down from UART_DIVISOR to 0, generating a
     // single-cycle tick at the baud rate.
@@ -291,6 +291,114 @@ module glue (
             end else begin
                 baud_div <= baud_div - 7'd1;
             end
+        end
+    end
+
+    // ----------------------------------------------------------------
+    // UART RX — 8N1 receiver on DEBUG_IN (pin 83 / GCLK1)
+    //
+    // State machine:
+    //   IDLE:    wait for falling edge (start bit)
+    //   START:   wait half a bit period, verify still low
+    //   DATA:    sample 8 bits at full bit-period intervals (LSB first)
+    //   STOP:    sample stop bit; if high, latch byte and set received
+    //
+    // Uses the same UART_DIVISOR as TX for bit timing.
+    // rx_received is cleared when the CPU reads UART_RX_DATA.
+    // ----------------------------------------------------------------
+
+    localparam RX_IDLE  = 2'd0;
+    localparam RX_START = 2'd1;
+    localparam RX_DATA  = 2'd2;
+    localparam RX_STOP  = 2'd3;
+
+    reg [1:0]  rx_state;
+    reg [7:0]  rx_shift;          // incoming data shift register
+    reg [7:0]  rx_data;           // latched received byte
+    reg        rx_received;       // byte available flag
+    reg [6:0]  rx_baud_div;       // baud rate counter
+    reg [3:0]  rx_bit_cnt;        // bits remaining to sample
+    reg        rx_pin_prev;       // previous DEBUG_IN sample (edge detect)
+
+    wire rx_baud_tick = (rx_baud_div == 7'd0);
+
+    // Clear rx_received when CPU reads UART_RX_DATA (active during bus cycle)
+    wire rx_data_read = uart_rx_data_select && (ws_cnt >= 4'd2);
+
+    always @(posedge SYSCLK) begin
+        if (RESET) begin
+            rx_state    <= RX_IDLE;
+            rx_shift    <= 8'd0;
+            rx_data     <= 8'd0;
+            rx_received <= 1'b0;
+            rx_baud_div <= 7'd0;
+            rx_bit_cnt  <= 4'd0;
+            rx_pin_prev <= 1'b1;
+        end else begin
+            rx_pin_prev <= DEBUG_IN;
+
+            // Clear received flag on CPU read
+            if (rx_data_read)
+                rx_received <= 1'b0;
+
+            case (rx_state)
+                RX_IDLE: begin
+                    // Detect falling edge: previous was high, now low
+                    if (rx_pin_prev && !DEBUG_IN) begin
+                        rx_state    <= RX_START;
+                        rx_baud_div <= {1'b0, UART_DIVISOR[6:1]};  // half bit period
+                    end
+                end
+
+                RX_START: begin
+                    // Wait half a bit period, then verify start bit
+                    if (rx_baud_tick) begin
+                        if (!DEBUG_IN) begin
+                            // Valid start bit — begin sampling data
+                            rx_state    <= RX_DATA;
+                            rx_bit_cnt  <= 4'd8;
+                            rx_shift    <= 8'd0;
+                            rx_baud_div <= UART_DIVISOR[6:0];
+                        end else begin
+                            // False start — back to idle
+                            rx_state <= RX_IDLE;
+                        end
+                    end else begin
+                        rx_baud_div <= rx_baud_div - 7'd1;
+                    end
+                end
+
+                RX_DATA: begin
+                    if (rx_baud_tick) begin
+                        // Sample at bit midpoint, shift in MSB-first
+                        // then result is LSB-first in rx_shift
+                        rx_shift <= {DEBUG_IN, rx_shift[7:1]};
+                        if (rx_bit_cnt == 4'd1) begin
+                            rx_state    <= RX_STOP;
+                            rx_baud_div <= UART_DIVISOR[6:0];
+                        end else begin
+                            rx_bit_cnt  <= rx_bit_cnt - 4'd1;
+                            rx_baud_div <= UART_DIVISOR[6:0];
+                        end
+                    end else begin
+                        rx_baud_div <= rx_baud_div - 7'd1;
+                    end
+                end
+
+                RX_STOP: begin
+                    if (rx_baud_tick) begin
+                        if (DEBUG_IN) begin
+                            // Valid stop bit — latch byte
+                            rx_data     <= rx_shift;
+                            rx_received <= 1'b1;
+                        end
+                        // Framing error (stop bit low): discard silently
+                        rx_state <= RX_IDLE;
+                    end else begin
+                        rx_baud_div <= rx_baud_div - 7'd1;
+                    end
+                end
+            endcase
         end
     end
 
@@ -366,6 +474,7 @@ endmodule
 //PIN: SYSCLK    : 34
 //PIN: nRESET    : 37
 //PIN: nHALT     : 36
+//PIN: DEBUG_IN  : 83
 //PIN: DEBUG_OUT     : 67
 //PIN: VIDEO_STALL : 84
 //PIN: OE2_pin   : 2
