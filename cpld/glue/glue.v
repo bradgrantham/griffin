@@ -76,18 +76,10 @@ module glue (
     //
     // During reset: drive low (assert HALT to CPU).
     // After reset: tristate so the CPU can assert it on double bus
-    // fault.  We sample the pin each clock to detect this.
+    // fault.  External pull-up required.
     // ----------------------------------------------------------------
-    reg halt_sensed;
 
     assign nHALT = RESET ? 1'b0 : 1'bz;
-
-    always @(posedge SYSCLK) begin
-        if (RESET)
-            halt_sensed <= 1'b1;  // not halted
-        else
-            halt_sensed <= nHALT; // sample actual pin state
-    end
 
     // Make OE2 busy (OE1/pin 84 is now VIDEO_STALL, GCLR/pin 1 is now nVIDEO_IRQ)
     assign ENGINE_TDI = OE2_pin;
@@ -139,12 +131,8 @@ module glue (
     //   7: VIDEO    (~VIDEO_IRQ,  pin 1)   — nIPL = 000
     //   6: ENGINE   (~ENGINE_IRQ, pin 20)  — nIPL = 001
     //   5: IO       (~IO_IRQ,     pin 18)  — nIPL = 010
-    //   4: UART RX  (internal)             — nIPL = 011
     //   none:                              — nIPL = 111
-    //
-    // Directly active: UART RX byte received AND rx interrupt enabled.
     // ----------------------------------------------------------------
-    wire uart_rx_active = rx_received & uart_rx_int_en;
 
     wire engine_irq_active = ~ENGINE_ABSENT & ~nENGINE_IRQ;
     wire io_irq_active     = ~IO_ABSENT     & ~nIO_IRQ;
@@ -152,7 +140,6 @@ module glue (
     assign nIPL = ~nVIDEO_IRQ     ? 3'b000 :  // level 7
                   engine_irq_active ? 3'b001 :  // level 6
                   io_irq_active   ? 3'b010 :  // level 5
-                  uart_rx_active ? 3'b011 :  // level 4
                                  3'b111;   // no interrupt
 
     wire glue_select = glue_segment & AS;
@@ -173,8 +160,8 @@ module glue (
     //   0xF00001  — DEBUG_OUT      (write, bit 0 = OUT)
     //   0xF00003  — UART_STATUS    (read,  bit 0 = BUSY, bit 1 = RECEIVED)
     //   0xF00003  — UART_TX_DATA   (write, byte)
-    //   0xF00005  — UART_RX_DATA   (read,  byte; clears RECEIVED)
-    //   0xF00005  — UART_RX_CONFIG (write, bit 0 = INT enable)
+    //   0xF00005  — UART_RX_DATA   (stubbed — handled by IO MCU)
+    //   0xF00005  — UART_RX_CONFIG (stubbed — handled by IO MCU)
     //   0xF00007  — CONFIG         (write, bit 0 = ROM_OVERLAY_DISABLE)
     //
     // A_lo[5:1] selects the word address within the segment.
@@ -183,7 +170,7 @@ module glue (
     localparam [23:0] GLUE_CONFIG_ADDR    = `GLUE_CONFIG;
     localparam [23:0] GLUE_DEBUG_ADDR     = `GLUE_DEBUG_OUT;
     localparam [23:0] GLUE_UART_STAT_ADDR = `GLUE_UART_STATUS;
-    localparam [23:0] GLUE_UART_RX_ADDR   = `GLUE_UART_RX_DATA;
+    // GLUE_UART_RX_ADDR removed — RX stubbed out (see above)
 
     wire debug_out_select   = glue_select & lo_byte_selected & write
                               & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
@@ -193,11 +180,6 @@ module glue (
                               & (A_lo[5:1] == GLUE_UART_STAT_ADDR[5:1]);
     wire uart_stat_select   = glue_select & lo_byte_selected & read
                               & (A_lo[5:1] == GLUE_UART_STAT_ADDR[5:1]);
-    wire uart_rx_data_select  = glue_select & lo_byte_selected & read
-                              & (A_lo[5:1] == GLUE_UART_RX_ADDR[5:1]);
-    wire uart_rx_cfg_select   = glue_select & lo_byte_selected & write
-                              & (A_lo[5:1] == GLUE_UART_RX_ADDR[5:1]);
-
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -205,7 +187,7 @@ module glue (
     // All other times the pins are tristated so the CPU, ROM, RAM,
     // etc. can drive the bus.
     // ----------------------------------------------------------------
-    wire glue_read_active = debug_in_select | uart_stat_select | uart_rx_data_select;
+    wire glue_read_active = debug_in_select | uart_stat_select;
 
     reg [7:0] glue_read_data;
     always @(*) begin
@@ -213,9 +195,7 @@ module glue (
         if (debug_in_select)
             glue_read_data = {7'd0, DEBUG_IN};
         else if (uart_stat_select)
-            glue_read_data = {6'd0, rx_received, tx_busy};
-        else if (uart_rx_data_select)
-            glue_read_data = rx_data;
+            glue_read_data = {6'd0, 1'b0, tx_busy};
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;
@@ -224,21 +204,17 @@ module glue (
     // GLUE writable registers
     // ----------------------------------------------------------------
     reg debug_out_reg;               // DEBUG_OUT bit 0
-    reg uart_rx_int_en;              // UART_RX_CONFIG bit 0
 
     always @(posedge SYSCLK) begin
         if(RESET) begin
             rom_overlay_disable <= 0;
             debug_out_reg       <= 0;
-            uart_rx_int_en      <= 0;
         end else begin
             if (glue_select & lo_byte_selected & write
                 & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1]))
                 rom_overlay_disable <= D[0];
             if (debug_out_select)
                 debug_out_reg <= D[0];
-            if (uart_rx_cfg_select)
-                uart_rx_int_en <= D[0];
         end
     end
 
@@ -255,7 +231,7 @@ module glue (
     // single-cycle tick at the baud rate.
     // ----------------------------------------------------------------
 
-    reg [9:0] tx_shift;       // shift register: {fill, stop, d7..d0}
+    reg [8:0] tx_shift;       // shift register: {stop, d7..d0}
     reg [3:0] bit_cnt;        // 0=idle, 9..1=transmitting
     reg [6:0] baud_div;       // baud rate divider
     reg       tx_out;         // registered TX output
@@ -272,20 +248,20 @@ module glue (
 
     always @(posedge SYSCLK) begin
         if (RESET) begin
-            tx_shift <= 10'd0;
+            tx_shift <= 9'd0;
             bit_cnt  <= 4'd0;
             baud_div <= 7'd0;
             tx_out   <= 1'b1;        // idle high
         end else if (uart_tx_load) begin
-            // Load frame: {fill, stop, data[7:0]} — start bit via tx_out
-            tx_shift <= {1'b1, 1'b1, D[7:0]};
+            // Load frame: {stop, data[7:0]} — start bit via tx_out
+            tx_shift <= {1'b1, D[7:0]};
             bit_cnt  <= 4'd9;        // 9 bits to shift: D0..D7 + stop
             baud_div <= UART_DIVISOR[6:0];
             tx_out   <= 1'b0;        // start bit begins immediately
         end else if (tx_busy) begin
             if (baud_tick) begin
                 tx_out   <= tx_shift[0];  // next bit out
-                tx_shift <= {1'b1, tx_shift[9:1]};  // shift right, fill with idle
+                tx_shift <= {1'b1, tx_shift[8:1]};  // shift right, fill with idle
                 bit_cnt  <= bit_cnt - 4'd1;
                 baud_div <= UART_DIVISOR[6:0];
             end else begin
@@ -295,112 +271,11 @@ module glue (
     end
 
     // ----------------------------------------------------------------
-    // UART RX — 8N1 receiver on DEBUG_IN (pin 83 / GCLK1)
-    //
-    // State machine:
-    //   IDLE:    wait for falling edge (start bit)
-    //   START:   wait half a bit period, verify still low
-    //   DATA:    sample 8 bits at full bit-period intervals (LSB first)
-    //   STOP:    sample stop bit; if high, latch byte and set received
-    //
-    // Uses the same UART_DIVISOR as TX for bit timing.
-    // rx_received is cleared when the CPU reads UART_RX_DATA.
+    // UART RX — stubbed out; does not fit in ATF1508 alongside TX
+    // without the fitter moving SYSCLK off pin 34 (GCLK2).
+    // RX will be handled by the AT89S52 IO MCU instead.
+    // See git history for the full UART RX state machine implementation.
     // ----------------------------------------------------------------
-
-    localparam RX_IDLE  = 2'd0;
-    localparam RX_START = 2'd1;
-    localparam RX_DATA  = 2'd2;
-    localparam RX_STOP  = 2'd3;
-
-    reg [1:0]  rx_state;
-    reg [7:0]  rx_shift;          // incoming data shift register
-    reg [7:0]  rx_data;           // latched received byte
-    reg        rx_received;       // byte available flag
-    reg [6:0]  rx_baud_div;       // baud rate counter
-    reg [3:0]  rx_bit_cnt;        // bits remaining to sample
-    reg        rx_pin_prev;       // previous DEBUG_IN sample (edge detect)
-
-    wire rx_baud_tick = (rx_baud_div == 7'd0);
-
-    // Clear rx_received when CPU reads UART_RX_DATA (active during bus cycle)
-    wire rx_data_read = uart_rx_data_select && (ws_cnt >= 4'd2);
-
-    always @(posedge SYSCLK) begin
-        if (RESET) begin
-            rx_state    <= RX_IDLE;
-            rx_shift    <= 8'd0;
-            rx_data     <= 8'd0;
-            rx_received <= 1'b0;
-            rx_baud_div <= 7'd0;
-            rx_bit_cnt  <= 4'd0;
-            rx_pin_prev <= 1'b1;
-        end else begin
-            rx_pin_prev <= DEBUG_IN;
-
-            // Clear received flag on CPU read
-            if (rx_data_read)
-                rx_received <= 1'b0;
-
-            case (rx_state)
-                RX_IDLE: begin
-                    // Detect falling edge: previous was high, now low
-                    if (rx_pin_prev && !DEBUG_IN) begin
-                        rx_state    <= RX_START;
-                        rx_baud_div <= {1'b0, UART_DIVISOR[6:1]};  // half bit period
-                    end
-                end
-
-                RX_START: begin
-                    // Wait half a bit period, then verify start bit
-                    if (rx_baud_tick) begin
-                        if (!DEBUG_IN) begin
-                            // Valid start bit — begin sampling data
-                            rx_state    <= RX_DATA;
-                            rx_bit_cnt  <= 4'd8;
-                            rx_shift    <= 8'd0;
-                            rx_baud_div <= UART_DIVISOR[6:0];
-                        end else begin
-                            // False start — back to idle
-                            rx_state <= RX_IDLE;
-                        end
-                    end else begin
-                        rx_baud_div <= rx_baud_div - 7'd1;
-                    end
-                end
-
-                RX_DATA: begin
-                    if (rx_baud_tick) begin
-                        // Sample at bit midpoint, shift in MSB-first
-                        // then result is LSB-first in rx_shift
-                        rx_shift <= {DEBUG_IN, rx_shift[7:1]};
-                        if (rx_bit_cnt == 4'd1) begin
-                            rx_state    <= RX_STOP;
-                            rx_baud_div <= UART_DIVISOR[6:0];
-                        end else begin
-                            rx_bit_cnt  <= rx_bit_cnt - 4'd1;
-                            rx_baud_div <= UART_DIVISOR[6:0];
-                        end
-                    end else begin
-                        rx_baud_div <= rx_baud_div - 7'd1;
-                    end
-                end
-
-                RX_STOP: begin
-                    if (rx_baud_tick) begin
-                        if (DEBUG_IN) begin
-                            // Valid stop bit — latch byte
-                            rx_data     <= rx_shift;
-                            rx_received <= 1'b1;
-                        end
-                        // Framing error (stop bit low): discard silently
-                        rx_state <= RX_IDLE;
-                    end else begin
-                        rx_baud_div <= rx_baud_div - 7'd1;
-                    end
-                end
-            endcase
-        end
-    end
 
     // ----------------------------------------------------------------
     // DTACK generation
