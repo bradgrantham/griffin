@@ -4,6 +4,10 @@ M68K_OBJCOPY = ./m68k-objcopy
 SOURCES = crt0.s rom.cpp syscalls.c build_info.c
 LDSCRIPT = linker.ld
 
+rom_even.bin rom_odd.bin: rom.bin
+	$(M68K_OBJCOPY) -I binary -O binary --byte=0 --interleave=2 $< rom_even.bin
+	$(M68K_OBJCOPY) -I binary -O binary --byte=1 --interleave=2 $< rom_odd.bin
+
 rom.bin: rom.elf
 	$(M68K_OBJCOPY) -O binary -S $< $@
 
@@ -30,7 +34,7 @@ build_info.c: FORCE
 	echo "const char *build_provenance = \"$$REF\";" >> $@
 
 clean:
-	rm -f rom.elf rom.bin build_info.c
+	rm -f rom.elf rom.bin rom_even.bin rom_odd.bin build_info.c
 
 FORCE:
 
