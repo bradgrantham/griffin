@@ -44,7 +44,7 @@ peripherals:
           Writing TX_DATA while UART_STATUS_BUSY is set is undefined.
       - offset: 0x05
         name: UART_RX_DATA
-        access: write
+        access: read
         width: 8,
         description: |
           Return latched data for UART RX.  Clears UART_STATUS_RECEIVED.
