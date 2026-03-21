@@ -45,7 +45,7 @@ peripherals:
       - offset: 0x05
         name: UART_RX_DATA
         access: read
-        width: 8,
+        width: 8
         description: |
           Return latched data for UART RX.  Clears UART_STATUS_RECEIVED.
           Reading UART_RX_DATA a second time without another byte received will
