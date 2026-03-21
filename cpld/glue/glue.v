@@ -77,9 +77,36 @@ module glue (
     // During reset: drive low (assert HALT to CPU).
     // After reset: tristate so the CPU can assert it on double bus
     // fault.  External pull-up required.
+    //
+    // Double bus fault detection:
+    //   After reset, wait for nHALT to go high (pull-up settled).
+    //   If nHALT then goes low, the CPU has halted (double bus fault).
+    //   Latch this condition and blink DEBUG_OUT at ~1.7 Hz.
     // ----------------------------------------------------------------
 
     assign nHALT = RESET ? 1'b0 : 1'bz;
+
+    reg        halt_sensed;      // synchronized nHALT sample
+    reg        halt_seen_high;   // nHALT seen high since reset
+    reg        halt_latched;     // double bus fault detected (sticky)
+    reg [22:0] halt_blink_cnt;   // free-running counter for LED blink
+
+    always @(posedge SYSCLK) begin
+        if (RESET) begin
+            halt_sensed    <= 1'b1;
+            halt_seen_high <= 1'b0;
+            halt_latched   <= 1'b0;
+            halt_blink_cnt <= 23'd0;
+        end else begin
+            halt_sensed <= nHALT;
+            if (halt_sensed)
+                halt_seen_high <= 1'b1;
+            if (halt_seen_high & ~halt_sensed)
+                halt_latched <= 1'b1;
+            if (halt_latched)
+                halt_blink_cnt <= halt_blink_cnt + 23'd1;
+        end
+    end
 
     // Make OE2 busy (OE1/pin 84 is now VIDEO_STALL, GCLR/pin 1 is now nVIDEO_IRQ)
     assign ENGINE_TDI = OE2_pin;
@@ -121,8 +148,12 @@ module glue (
     assign nENGINE_SELECT = ~(engine_region & AS);
     assign nVIDEO_SELECT = ~(video_region & AS);
 
-    // nBERR 1 for now
-    assign nBERR = 1'd1;
+    // Bus error: assert after 15 wait-state clocks (~1.05 µs at 14.318 MHz)
+    // if no peripheral has responded with DTACK.  Causes the 68000 to take
+    // a bus error exception instead of hanging forever on unmapped access.
+    // Exclude interrupt acknowledge cycles (FC=111) which use VPA, not DTACK.
+    wire iack_cycle = (FC == 3'b111) & AS;
+    assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle);
 
     // ----------------------------------------------------------------
     // Interrupt priority encoder (active-low nIPL to 68000)
@@ -143,7 +174,10 @@ module glue (
                                  3'b111;   // no interrupt
 
     wire glue_select = glue_segment & AS;
-    assign nAUDIO_LE = ~(audio_segment & AS);
+    // 74HC373 LE is active-high: LE=1 transparent, LE=0 latched.
+    // Drive LE high during audio writes so data passes through,
+    // low otherwise so the DAC holds the last written sample.
+    assign nAUDIO_LE = audio_segment & AS;
     assign nIO_SELECT = ~(io_segment & AS);
     assign CF_CS0 = cf_segment & cf_register_bank0 & AS;
     assign CF_CS1 = cf_segment & cf_register_bank1 & AS;
@@ -243,8 +277,10 @@ module glue (
     // The 68000 only guarantees valid data by the DTACK handshake point.
     wire uart_tx_load = !tx_busy && uart_tx_select && (ws_cnt >= 4'd2);
 
-    // UART TX overrides DEBUG_OUT register while transmitting
-    assign DEBUG_OUT = tx_busy ? tx_out : debug_out_reg;
+    // Priority: halt blink > UART TX > DEBUG_OUT register
+    assign DEBUG_OUT = halt_latched ? halt_blink_cnt[22] :
+                       tx_busy     ? tx_out :
+                       debug_out_reg;
 
     always @(posedge SYSCLK) begin
         if (RESET) begin
@@ -326,7 +362,7 @@ module glue (
         (CF_CS0             & (ws_cnt >= 4'd14)) |  // CF
         (CF_CS1             & (ws_cnt >= 4'd14)) |  // CF
         ((~nIO_SELECT)      & ~IO_ABSENT & ~nIO_DTACK) |  // IO MCU: handshake
-        ((~nAUDIO_LE)       & (ws_cnt >= 4'd4));    // AUDIO
+        (nAUDIO_LE          & (ws_cnt >= 4'd4));    // AUDIO (nAUDIO_LE is active-high despite name)
 
     // VIDEO_STALL OR'd into nDTACK: when VIDEO_STALL is high, nDTACK
     // stays deasserted (high) regardless of dtack_comb, stalling the CPU.
