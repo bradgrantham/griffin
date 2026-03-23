@@ -331,5 +331,5 @@ bodges:
   - "Reroute A6 pad on U12 to A18"
   - "Route freed GLUE pin 75 to CPU ~VPA"
   - "Pull up CPU HALT with 4.7K to nearby CPU +5V"
-  - "Swap MOUSE_CLK and KBD_DATA at MCU"
-  - "Swap KBD_CLK and MOUSE_DATA at MCU"
+  - "Swap MOUSE_CLK and KBD_DATA at MCU so MOUSE_CLK ends up on P3.2"
+  - "Bodge IO RESET pin pull-down to ground"
