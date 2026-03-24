@@ -91,6 +91,8 @@ DEBUG\_OUT LED:
 # Board spin
 
 - [ ] Schematic (+PCB if necessary)
+  - [ ] Swap MCU RX and TX - wrong pins!!
+  - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
   - [ ] Pullups on JTAG lines
   - [ ] 4.7K Pullup on HALT
   - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
