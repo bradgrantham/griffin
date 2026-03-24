@@ -92,7 +92,6 @@ DEBUG\_OUT LED:
 
 - [ ] Schematic (+PCB if necessary)
   - [ ] Swap MCU RX and TX - wrong pins!!
-  - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
   - [ ] Pullups on JTAG lines
   - [ ] 4.7K Pullup on HALT
   - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
@@ -100,13 +99,15 @@ DEBUG\_OUT LED:
   - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
   - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
   - [ ] More signals between GLUE, VIDEO, ENGINE
+    - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
   - [ ] GND and +5V to test points
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - not sure if I should expose as one 16-bit write or two 8-bit writes or maybe both
     - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
   - [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
   - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
-  
+  - [ ] Add a debug LED with 1Hz on the IO MCU
+  - [ ] Pull down IO RST
 - [ ] PCB only
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
   - [ ] PS2 stabs - move footprint  
@@ -119,7 +120,7 @@ DEBUG\_OUT LED:
   - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
   - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
   - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
-  - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
+  - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
 
 
 
