@@ -11,6 +11,9 @@
 
 #define TOGGLE_PIN P1_4
 
+extern const char build_date[];
+extern const char build_provenance[];
+
 static void uart_init(void) {
     /* Timer 1 Mode 2 (8-bit auto-reload) for baud rate generation.
      * 11.0592 MHz, SMOD=1: baud = 2 * fosc / (32 * 12 * (256 - TH1))
@@ -74,7 +77,11 @@ void main(void) {
     EA = 0;             /* Disable interrupts */
 
     uart_init();
-    uart_puts("IO MCU\n");
+    uart_puts("IO MCU Build: ");
+    uart_puts(build_date);
+    uart_puts(", GIT ");
+    uart_puts(build_provenance);
+    uart_putchar('\n');
 
     for (;;) {
         c = uart_getchar();
