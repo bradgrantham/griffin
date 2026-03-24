@@ -333,3 +333,4 @@ bodges:
   - "Pull up CPU HALT with 4.7K to nearby CPU +5V"
   - "Swap MOUSE_CLK and KBD_DATA at MCU so MOUSE_CLK ends up on P3.2"
   - "Bodge IO RESET pin pull-down to ground"
+  - "Swap UART TX and RX on MCU"
