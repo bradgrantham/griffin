@@ -46,6 +46,8 @@ module glue (
 
     output wire        nR_W,
 
+    output wire        IO_RESET,  // Active high reset to AT89S52
+
     output wire        ENGINE_TDI // Currently to pin OE1, OE2, GCLK
 );
 
@@ -58,7 +60,7 @@ module glue (
     // ----------------------------------------------------------------
     localparam UART_DIVISOR = 123;   // 14.318 MHz; change to 103 for 12 MHz
     localparam ENGINE_ABSENT = 1;    // Set to 0 when ENGINE CPLD is populated
-    localparam IO_ABSENT     = 1;    // Set to 0 when IO MCU is populated
+    localparam IO_ABSENT     = 0;    // Set to 0 when IO MCU is populated
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
 
@@ -111,6 +113,26 @@ module glue (
     // Make OE2 busy (OE1/pin 84 is now VIDEO_STALL, GCLR/pin 1 is now nVIDEO_IRQ)
     assign ENGINE_TDI = OE2_pin;
 
+    // ----------------------------------------------------------------
+    // IO MCU reset (AT89S52 RST is active high)
+    //
+    // IO_RESET defaults high (held in reset) via external pull-up R9.
+    // The 68000 firmware clears it by writing CONFIG bit 1 = 1 to
+    // release the IO MCU after the crystal has had time to stabilize.
+    // On system RESET, IO_RESET is reasserted (high).
+    // ----------------------------------------------------------------
+    reg io_reset_released;
+
+    always @(posedge SYSCLK) begin
+        if (RESET)
+            io_reset_released <= 1'b0;
+        else if (glue_select & lo_byte_selected & write
+                 & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1]))
+            io_reset_released <= D[`GLUE_CONFIG_IO_RESET_RELEASE_SHIFT];
+    end
+
+    assign IO_RESET = ~io_reset_released;
+
     assign nR_W = ~R_nW;
     assign nWRITE_LO = ~(lo_byte_selected & write);
     assign nWRITE_HI = ~(hi_byte_selected & write);
@@ -152,8 +174,12 @@ module glue (
     // if no peripheral has responded with DTACK.  Causes the 68000 to take
     // a bus error exception instead of hanging forever on unmapped access.
     // Exclude interrupt acknowledge cycles (FC=111) which use VPA, not DTACK.
+    // Exclude handshake peripherals (IO MCU, ENGINE) — they drive DTACK
+    // externally and may take much longer than 15 clocks to respond.
     wire iack_cycle = (FC == 3'b111) & AS;
-    assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle);
+    wire handshake_cycle = (~nIO_SELECT & ~IO_ABSENT) |
+                           (~nENGINE_SELECT & ~ENGINE_ABSENT);
+    assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle & ~handshake_cycle);
 
     // ----------------------------------------------------------------
     // Interrupt priority encoder (active-low nIPL to 68000)
@@ -443,3 +469,4 @@ endmodule
 //PIN: nENGINE_DTACK : 17
 //PIN: nIO_IRQ    : 18
 //PIN: nENGINE_IRQ : 20
+//PIN: IO_RESET   : 69

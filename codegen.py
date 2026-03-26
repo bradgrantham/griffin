@@ -378,6 +378,79 @@ def write_verilog_include(hw: dict, path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# MCS-51 (SDCC) C header — register offsets and constants for IO MCU firmware
+# ---------------------------------------------------------------------------
+
+def write_mcs51_header(hw: dict, path: Path) -> None:
+    """Emit a C89-compatible header for SDCC with register offsets (not
+    absolute addresses) and all constants.  Only peripherals that declare
+    ``mcs51: true`` get their registers emitted as offsets."""
+    perifs = hw.get('peripherals', {})
+    consts = hw.get('constants', {})
+
+    lines = []
+    w = lines.append
+
+    w(f"/* {BANNER} */")
+    w("")
+    w("#ifndef GRIFFIN_MCS51_H")
+    w("#define GRIFFIN_MCS51_H")
+    w("")
+
+    for pname, periph in perifs.items():
+        if not periph.get('mcs51'):
+            continue
+        ar = periph.get('address_range')
+        if not ar:
+            continue
+
+        desc = periph.get('description') or periph.get('part') or ''
+        w(f"/* {pname}: {desc} */")
+        w("")
+
+        # The MCU sees address lines A1-A4 on port pins, so the register
+        # address the MCU matches against is the byte offset >> 1.
+        for reg in periph.get('registers', []):
+            offset = parse_int(reg['offset'])
+            mcu_addr = offset >> 1
+            rname  = reg['name']
+            access = reg.get('access', 'rw')
+            rdesc  = reg.get('description', '')
+            short  = rdesc.split('.')[0].strip() if rdesc else ''
+            comment = f"  /* {access.upper()}: {short} */" if short else f"  /* {access.upper()} */"
+            w(f"#define {pname}_REG_{rname}  {fmt_hex(mcu_addr)}{comment}")
+
+            for bf in reg.get('bits', []):
+                hi, lo = parse_bit_spec(bf['bit'])
+                bname  = bf['name']
+                mask   = bit_mask(hi, lo)
+                prefix = f"{pname}_{rname}" if (rname == bname or rname.endswith('_' + bname)) else f"{pname}_{rname}_{bname}"
+                w(f"#define {prefix}_MASK   {fmt_hex(mask)}")
+                w(f"#define {prefix}_SHIFT  {lo}")
+
+                for ev in bf.get('values', []):
+                    vname = ev['name']
+                    vraw  = parse_int(ev['value'])
+                    vdesc = ev.get('description', '')
+                    comment = f"  /* {vdesc} */" if vdesc else ""
+                    w(f"#define {prefix}_{vname}  {vraw}{comment}")
+
+        w("")
+
+    if consts:
+        w("/* Constants */")
+        for cname, cval in consts.items():
+            v = parse_int(cval)
+            w(f"#define {cname}  {fmt_hex(v)}")
+        w("")
+
+    w("#endif /* GRIFFIN_MCS51_H */")
+
+    path.write_text('\n'.join(lines) + '\n')
+    print(f"  wrote {path}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -406,6 +479,7 @@ def main():
     write_asm_include(    hw, outdir / f"{stem}.generated.inc")
     write_ld_include(     hw, outdir / f"{stem}.generated.ld")
     write_verilog_include(hw, outdir / f"{stem}.generated.vh")
+    write_mcs51_header(   hw, outdir / f"{stem}.generated.mcs51.h")
 
 
 if __name__ == '__main__':

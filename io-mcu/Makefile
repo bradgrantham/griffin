@@ -2,6 +2,7 @@ CC = sdcc
 CFLAGS = -mmcs51 --model-small --opt-code-size
 TARGET = io-mcu
 OBJECTS = main.rel build_info.rel
+GENERATED_H = ../griffin.generated.mcs51.h
 
 all: $(TARGET).bin
 
@@ -11,8 +12,11 @@ $(TARGET).bin: $(TARGET).ihx
 $(TARGET).ihx: $(OBJECTS)
 	$(CC) $(CFLAGS) -o $@ $(OBJECTS)
 
-%.rel: %.c
-	$(CC) $(CFLAGS) -c $<
+$(GENERATED_H): ../griffin.yml ../codegen.py
+	cd .. && python3 codegen.py griffin.yml
+
+%.rel: %.c $(GENERATED_H)
+	$(CC) $(CFLAGS) -I.. -c $<
 
 build_info.c: FORCE
 	@echo '/* auto-generated — do not edit */' > $@

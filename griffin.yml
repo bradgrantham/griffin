@@ -70,6 +70,8 @@ peripherals:
         bits:
           - { bit: "0", name: ROM_OVERLAY_DISABLE,
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
+          - { bit: "1", name: IO_RESET_RELEASE,
+              description: "Write 1 to release IO MCU from reset (IO_RESET driven low)" }
 
   ROM:
     part: "2x 64K byte-wide EPROM/Flash"
@@ -278,6 +280,7 @@ peripherals:
   IO_MCU:
     part: AT89S52
     description: "Keyboard, mouse, serial IO processor"
+    mcs51: true
     clock: 11059200
     address_range:
       base: 0xF80000
@@ -289,14 +292,44 @@ peripherals:
     dtack: ~IO_DTACK_MISO  # handshake: IO MCU drives this signal to assert DTACK; dual-purpose with SPI MISO
     berr_timeout: 256
     registers:
-      - { offset: 0x01, name: STATUS, access: read,  width: 8,
-          description: "IO processor status" }
-      - { offset: 0x01, name: CONFIG, access: write, width: 8,
-          description: "IO processor configuration; baud rate and mode" }
-      - { offset: 0x03, name: TX,     access: write, width: 8,
-          description: "UART transmit data byte" }
-      - { offset: 0x05, name: RX,     access: read,  width: 8,
-          description: "Receive data; first byte is type/status, subsequent bytes are payload" }
+      - offset: 0x01
+        name: RX_DATA
+        access: read
+        width: 8
+        description: >
+          Dequeue one byte from the event queue.  Returns EVT_EMPTY (0x00)
+          when the queue is empty.  IO_IRQ deasserts when the queue drains.
+      - offset: 0x01
+        name: TX_DATA
+        access: write
+        width: 8
+        description: "Write a byte to the UART transmitter"
+      - offset: 0x03
+        name: STATUS
+        access: read
+        width: 8
+        description: "IO processor status flags"
+        bits:
+          - { bit: "0", name: QUEUE_NOTEMPTY, description: "Event queue contains data" }
+          - { bit: "1", name: TX_READY, description: "UART TX buffer is empty and ready" }
+          - { bit: "2", name: KBD_PRESENT, description: "PS/2 keyboard detected" }
+          - { bit: "3", name: MOUSE_PRESENT, description: "PS/2 mouse detected" }
+          - { bit: "4", name: OVERFLOW, description: "Queue overflow occurred (sticky)" }
+      - offset: 0x03
+        name: CONFIG
+        access: write
+        width: 8
+        description: "IO processor configuration"
+        bits:
+          - bit: "2:0"
+            name: TIMER_RATE
+            description: "Systick timer rate selection"
+            values:
+              - { value: 0, name: "OFF",    description: "Timer disabled" }
+              - { value: 1, name: "HZ_50",  description: "50 Hz systick" }
+              - { value: 2, name: "HZ_60",  description: "60 Hz systick" }
+              - { value: 3, name: "HZ_100", description: "100 Hz systick" }
+              - { value: 4, name: "HZ_200", description: "200 Hz systick" }
 
   AUDIO:
     part: "74HC373 + R2R DAC"
@@ -316,6 +349,11 @@ peripherals:
           description: "Write sample to 8-bit R2R DAC output latch" }
 
 constants:
+  IO_MCU_EVT_EMPTY:     0x00
+  IO_MCU_EVT_UART_RX:   0x01
+  IO_MCU_EVT_KBD:       0x02
+  IO_MCU_EVT_MOUSE:     0x03
+  IO_MCU_EVT_TIMER:     0x04
   CF_STATUS_BSY:   0x80
   CF_STATUS_DRDY:  0x40
   CF_STATUS_DRQ:   0x08
@@ -332,5 +370,4 @@ bodges:
   - "Route freed GLUE pin 75 to CPU ~VPA"
   - "Pull up CPU HALT with 4.7K to nearby CPU +5V"
   - "Swap MOUSE_CLK and KBD_DATA at MCU so MOUSE_CLK ends up on P3.2"
-  - "Bodge IO RESET pin pull-down to ground"
   - "Swap UART TX and RX on MCU"

@@ -10,14 +10,14 @@
 
 #include <8052.h>
 #include <stdint.h>
+#include "griffin.generated.mcs51.h"
 
 extern const char build_date[];
 extern const char build_provenance[];
 
 /* ---- Pin assignments --------------------------------------------------- */
 
-/* P0: address bus A1-A4 (directly from 68000 address lines), active low */
-/* P0 directly from 68000 address lines and directly from active-low select */
+/* P0: address bus A1-A4 (directly from 68000 address lines) */
 #define nIO_IRQ_PIN     P0_5    /* Active low output to GLUE */
 
 /* P1 */
@@ -36,48 +36,6 @@ extern const char build_provenance[];
 #define MOUSE_DATA_PIN  P3_4
 #define KBD_DATA_PIN    P3_5
 #define R_nW_PIN        P3_6   /* 68000 R/~W: 1=read, 0=write */
-
-/* ---- Register map (address bits A1-A4 from P0) ------------------------- */
-
-#define REG_RX_DATA     0x00   /* Read: dequeue event byte (0x00 = empty) */
-#define REG_TX_DATA     0x00   /* Write: UART transmit byte */
-#define REG_STATUS      0x01   /* Read: status flags */
-#define REG_CONFIG      0x01   /* Write: configuration (timer rate, etc.) */
-
-/* ---- Status register bits ---------------------------------------------- */
-
-#define STATUS_QUEUE_NOTEMPTY  0x01  /* Event queue has data */
-#define STATUS_TX_READY        0x02  /* UART TX buffer empty */
-#define STATUS_KBD_PRESENT     0x04  /* Keyboard detected */
-#define STATUS_MOUSE_PRESENT   0x08  /* Mouse detected */
-#define STATUS_OVERFLOW        0x10  /* Queue overflow occurred (sticky) */
-
-/* ---- Event types ------------------------------------------------------- */
-
-#define EVT_EMPTY       0x00   /* Queue empty sentinel */
-#define EVT_UART_RX     0x01   /* UART RX byte; 1 payload byte follows */
-#define EVT_KBD         0x02   /* PS/2 keyboard scancode; 1 payload byte */
-#define EVT_MOUSE       0x03   /* PS/2 mouse byte; 1 payload byte */
-#define EVT_TIMER       0x04   /* Systick timer tick; no payload */
-
-/* ---- Timer rate codes (written to CONFIG register) --------------------- */
-/*
- * Timer 0 Mode 1 (16-bit), fosc/12 = 921600 Hz.
- * On overflow, ISR reloads the count and enqueues EVT_TIMER.
- *
- * Rate code  Hz     Count   Reload (65536 - count)
- * 0x00       off    —       —
- * 0x01       50     18432   0xB800
- * 0x02       60     15360   0xC400
- * 0x03       100    9216    0xDC00
- * 0x04       200    4608    0xEE00
- */
-
-#define TIMER_RATE_OFF  0x00
-#define TIMER_RATE_50   0x01
-#define TIMER_RATE_60   0x02
-#define TIMER_RATE_100  0x03
-#define TIMER_RATE_200  0x04
 
 /* ---- Event queue ------------------------------------------------------- */
 
@@ -108,20 +66,23 @@ static uint8_t queue_full(void)
  * where we know interrupts won't interfere. */
 static void queue_put(uint8_t b)
 {
-    if (queue_full()) {
-        status_flags |= STATUS_OVERFLOW;
+    if (queue_full())
+    {
+        status_flags |= IO_MCU_STATUS_OVERFLOW_MASK;
         return;
     }
     queue_buf[queue_head] = b;
     queue_head = (queue_head + 1) & (QUEUE_SIZE - 1);
 }
 
-/* Dequeue a single byte. Returns EVT_EMPTY if queue is empty. */
+/* Dequeue a single byte. Returns IO_MCU_EVT_EMPTY if queue is empty. */
 static uint8_t queue_get(void)
 {
     uint8_t b;
     if (queue_empty())
-        return EVT_EMPTY;
+    {
+        return IO_MCU_EVT_EMPTY;
+    }
     b = queue_buf[queue_tail];
     queue_tail = (queue_tail + 1) & (QUEUE_SIZE - 1);
     return b;
@@ -133,8 +94,9 @@ static void queue_put_event(uint8_t type, uint8_t payload)
     /* Need room for 2 bytes; check before either write so we don't
      * enqueue a type without its payload. */
     uint8_t free = (queue_tail - queue_head - 1) & (QUEUE_SIZE - 1);
-    if (free < 2) {
-        status_flags |= STATUS_OVERFLOW;
+    if (free < 2)
+    {
+        status_flags |= IO_MCU_STATUS_OVERFLOW_MASK;
         return;
     }
     queue_buf[queue_head] = type;
@@ -172,26 +134,32 @@ static void uart_init(void)
 static void uart_putchar(uint8_t c)
 {
     SBUF = c;
-    while (!TI);
+    while (!TI)
+    {
+    }
     TI = 0;
 }
 
 static void uart_puts(const char *s)
 {
     while (*s)
+    {
         uart_putchar(*s++);
+    }
 }
 
 /* Serial ISR: handles both RX and TX interrupts.
  * Uses register bank 3. */
 void serial_isr(void) __interrupt(4) __using(3)
 {
-    if (RI) {
+    if (RI)
+    {
         RI = 0;
-        queue_put_event(EVT_UART_RX, SBUF);
+        queue_put_event(IO_MCU_EVT_UART_RX, SBUF);
         irq_update();
     }
-    if (TI) {
+    if (TI)
+    {
         TI = 0;
         /* TX complete — nothing to do, polled TX for now */
     }
@@ -226,12 +194,13 @@ static void timer0_stop(void)
 
 static void timer0_set_rate(uint8_t rate)
 {
-    switch (rate) {
-    case TIMER_RATE_50:  timer0_start(0xB8, 0x00); break;
-    case TIMER_RATE_60:  timer0_start(0xC4, 0x00); break;
-    case TIMER_RATE_100: timer0_start(0xDC, 0x00); break;
-    case TIMER_RATE_200: timer0_start(0xEE, 0x00); break;
-    default:             timer0_stop();             break;
+    switch (rate)
+    {
+    case IO_MCU_CONFIG_TIMER_RATE_HZ_50:  timer0_start(0xB8, 0x00); break;
+    case IO_MCU_CONFIG_TIMER_RATE_HZ_60:  timer0_start(0xC4, 0x00); break;
+    case IO_MCU_CONFIG_TIMER_RATE_HZ_100: timer0_start(0xDC, 0x00); break;
+    case IO_MCU_CONFIG_TIMER_RATE_HZ_200: timer0_start(0xEE, 0x00); break;
+    default:                              timer0_stop();             break;
     }
 }
 
@@ -243,7 +212,7 @@ void timer0_isr(void) __interrupt(1) __using(0)
     /* Reload for next tick */
     TH0 = timer0_reload_hi;
     TL0 = timer0_reload_lo;
-    queue_put(EVT_TIMER);
+    queue_put(IO_MCU_EVT_TIMER);
     irq_update();
 }
 
@@ -287,29 +256,40 @@ void kbd_clk_isr(void) __interrupt(2) __using(2)
 {
     uint8_t bit = KBD_DATA_PIN;
 
-    if (kbd_bitcount == 0) {
+    if (kbd_bitcount == 0)
+    {
         /* Start bit — should be 0 */
-        if (bit == 0) {
+        if (bit == 0)
+        {
             kbd_shift = 0;
             kbd_parity = 0;
             kbd_bitcount = 1;
         }
-    } else if (kbd_bitcount <= 8) {
+    }
+    else if (kbd_bitcount <= 8)
+    {
         /* Data bits, LSB first */
         kbd_shift >>= 1;
         if (bit)
+        {
             kbd_shift |= 0x80;
+        }
         kbd_parity += bit;
         kbd_bitcount++;
-    } else if (kbd_bitcount == 9) {
+    }
+    else if (kbd_bitcount == 9)
+    {
         /* Parity bit (odd parity: data bits + parity bit should be odd) */
         kbd_parity += bit;
         kbd_bitcount++;
-    } else {
+    }
+    else
+    {
         /* Stop bit — should be 1 */
-        if (bit && (kbd_parity & 1)) {
+        if (bit && (kbd_parity & 1))
+        {
             /* Valid frame: odd parity check passed and stop bit is 1 */
-            queue_put_event(EVT_KBD, kbd_shift);
+            queue_put_event(IO_MCU_EVT_KBD, kbd_shift);
             irq_update();
         }
         /* else: framing/parity error — silently drop */
@@ -323,24 +303,35 @@ void mouse_clk_isr(void) __interrupt(0) __using(1)
 {
     uint8_t bit = MOUSE_DATA_PIN;
 
-    if (mouse_bitcount == 0) {
-        if (bit == 0) {
+    if (mouse_bitcount == 0)
+    {
+        if (bit == 0)
+        {
             mouse_shift = 0;
             mouse_parity = 0;
             mouse_bitcount = 1;
         }
-    } else if (mouse_bitcount <= 8) {
+    }
+    else if (mouse_bitcount <= 8)
+    {
         mouse_shift >>= 1;
         if (bit)
+        {
             mouse_shift |= 0x80;
+        }
         mouse_parity += bit;
         mouse_bitcount++;
-    } else if (mouse_bitcount == 9) {
+    }
+    else if (mouse_bitcount == 9)
+    {
         mouse_parity += bit;
         mouse_bitcount++;
-    } else {
-        if (bit && (mouse_parity & 1)) {
-            queue_put_event(EVT_MOUSE, mouse_shift);
+    }
+    else
+    {
+        if (bit && (mouse_parity & 1))
+        {
+            queue_put_event(IO_MCU_EVT_MOUSE, mouse_shift);
             irq_update();
         }
         mouse_bitcount = 0;
@@ -376,19 +367,25 @@ static void bus_process(void)
      * (A0 is not connected — byte-wide peripheral on odd addresses.) */
     address = P0 & 0x0F;
 
-    if (R_nW_PIN) {
+    if (R_nW_PIN)
+    {
         /* 68000 is reading: MCU provides data */
-        switch (address) {
-        case REG_RX_DATA:
+        switch (address)
+        {
+        case IO_MCU_REG_RX_DATA:
             data = queue_get();
             break;
-        case REG_STATUS:
+        case IO_MCU_REG_STATUS:
             data = status_flags;
             /* Live bits — set from current state */
             if (!queue_empty())
-                data |= STATUS_QUEUE_NOTEMPTY;
+            {
+                data |= IO_MCU_STATUS_QUEUE_NOTEMPTY_MASK;
+            }
             if (TI || !(SCON & 0x02))
-                data |= STATUS_TX_READY;
+            {
+                data |= IO_MCU_STATUS_TX_READY_MASK;
+            }
             break;
         default:
             data = 0xFF;
@@ -402,7 +399,9 @@ static void bus_process(void)
         nIO_DTACK_PIN = 0;
 
         /* Wait for 68000 to deassert IO_SELECT (active low: wait for high) */
-        while (!nIO_SELECT_PIN);
+        while (!nIO_SELECT_PIN)
+        {
+        }
 
         /* Release bus and deassert DTACK */
         P2 = 0xFF;
@@ -410,7 +409,9 @@ static void bus_process(void)
 
         /* Update IRQ — queue_get may have emptied the queue */
         irq_update();
-    } else {
+    }
+    else
+    {
         /* 68000 is writing: MCU reads data */
 
         /* Assert DTACK to tell 68000 we're ready to latch */
@@ -420,17 +421,20 @@ static void bus_process(void)
         data = P2;
 
         /* Wait for 68000 to deassert IO_SELECT */
-        while (!nIO_SELECT_PIN);
+        while (!nIO_SELECT_PIN)
+        {
+        }
 
         /* Deassert DTACK */
         nIO_DTACK_PIN = 1;
 
         /* Handle write */
-        switch (address) {
-        case REG_TX_DATA:
+        switch (address)
+        {
+        case IO_MCU_REG_TX_DATA:
             uart_putchar(data);
             break;
-        case REG_CONFIG:
+        case IO_MCU_REG_CONFIG:
             timer0_set_rate(data);
             break;
         default:
@@ -461,8 +465,10 @@ void main(void)
 
     EA = 1;
 
-    for (;;) {
-        if (!nIO_SELECT_PIN) {
+    for (;;)
+    {
+        if (!nIO_SELECT_PIN)
+        {
             EA = 0;
             bus_process();
             EA = 1;
