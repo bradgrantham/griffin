@@ -2,8 +2,39 @@
 
 .section .vectors, "a"
 vector_table:
-    .long   _stack_top
-    .long   _start
+    .long   _stack_top          | 0: Initial SSP
+    .long   _start              | 1: Initial PC
+    .long   _default_handler    | 2: Bus error
+    .long   _default_handler    | 3: Address error
+    .long   _default_handler    | 4: Illegal instruction
+    .long   _default_handler    | 5: Zero divide
+    .long   _default_handler    | 6: CHK instruction
+    .long   _default_handler    | 7: TRAPV instruction
+    .long   _default_handler    | 8: Privilege violation
+    .long   _default_handler    | 9: Trace
+    .long   _default_handler    | 10: Line 1010 emulator
+    .long   _default_handler    | 11: Line 1111 emulator
+    .rept 3
+    .long   _default_handler    | 12-14: Reserved
+    .endr
+    .long   _default_handler    | 15: Uninitialized interrupt
+    .rept 8
+    .long   _default_handler    | 16-23: Reserved
+    .endr
+    .long   _default_handler    | 24: Spurious interrupt
+    .long   _default_handler    | 25: Level 1 autovector
+    .long   _default_handler    | 26: Level 2 autovector
+    .long   _default_handler    | 27: Level 3 autovector
+    .long   _default_handler    | 28: Level 4 autovector
+    .long   io_mcu_isr          | 29: Level 5 autovector (IO_MCU)
+    .long   _default_handler    | 30: Level 6 autovector (ENGINE)
+    .long   _default_handler    | 31: Level 7 autovector (VIDEO)
+    .rept 16
+    .long   _default_handler    | 32-47: TRAP #0-15
+    .endr
+    .rept 16
+    .long   _default_handler    | 48-63: Reserved
+    .endr
 
     .section .text
     .align	2
@@ -20,11 +51,11 @@ _start:
     jmp     uart_puts
 .Lret3:
 
-    /* Switch out ROM */
-    move.b #GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK, GLUE_CONFIG
+    /* Switch out ROM and release IO_MCU from reset */
+    move.b #(GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK + GLUE_CONFIG_IO_RESET_RELEASE_MASK), GLUE_CONFIG
 
     /* Copy ROM vector table to RAM */
-    move.l  vector_table, %a0
+    lea     vector_table, %a0
     move.l  #0, %a1
     move.l  #0x100, %d0 /* 256 uint32_t's */
 vec_copy:
@@ -111,6 +142,9 @@ data_done:
 
     /* Call global constructors */
     jsr     __libc_init_array
+
+    /* Enable interrupts (supervisor mode, IPL mask = 0) */
+    move.w  #0x2000, %sr
 
     /* Call main */
     jsr     main
@@ -230,6 +264,50 @@ uart_puts:
 .Luart_puts_done:
     jmp     (%a6)
 
+| _default_handler: catch-all for unexpected exceptions
+    .global _default_handler
+_default_handler:
+    rte
+
+| io_mcu_isr: drain IO_MCU hardware event queue into RAM ring buffer.
+| EVT_TIMER events call timer_tick inline; all bytes go to the ring buffer.
+    .global io_mcu_isr
+io_mcu_isr:
+    movem.l %d0-%d1/%a0-%a2, -(%sp)
+    lea     IO_MCU_RX_DATA, %a0
+    lea     IO_MCU_STATUS, %a1
+    lea     io_evt_queue, %a2
+
+.Lisr_drain:
+    btst    #IO_MCU_STATUS_QUEUE_NOTEMPTY_SHIFT, (%a1)
+    beq.s   .Lisr_done
+
+    move.b  (%a0), %d0              | read one event byte
+
+    | Check for timer tick — handle inline before queuing
+    cmp.b   #IO_MCU_EVT_TIMER, %d0
+    bne.s   .Lisr_enqueue
+    jsr     timer_tick
+    | Fall through to enqueue the EVT_TIMER byte too
+
+.Lisr_enqueue:
+    | Ring buffer push: queue[tail] = d0; tail = (tail + 1) & mask
+    move.l  io_evt_tail, %d1        | d1 = tail index
+    move.b  %d0, (%a2, %d1.l)      | queue[tail] = byte
+    addq.l  #1, %d1
+    andi.l  #(IO_EVT_QUEUE_SIZE - 1), %d1
+    move.l  %d1, io_evt_tail
+
+    | Check for overflow (tail caught up to head)
+    cmp.l   io_evt_head, %d1
+    bne.s   .Lisr_drain
+    | Overflow — set sticky flag, stop draining to avoid clobbering data
+    move.b  #1, io_evt_overflow
+
+.Lisr_done:
+    movem.l (%sp)+, %d0-%d1/%a0-%a2
+    rte
+
 .global _init
 .global _fini
 _init:
@@ -255,3 +333,19 @@ memory_256k:
     .global memory_size
 memory_size:
     .skip 4
+
+    .equ IO_EVT_QUEUE_SIZE, 256     | must be power of 2
+
+    .align 2
+    .global io_evt_queue
+    .global io_evt_head
+    .global io_evt_tail
+    .global io_evt_overflow
+io_evt_queue:
+    .skip IO_EVT_QUEUE_SIZE
+io_evt_head:
+    .skip 4
+io_evt_tail:
+    .skip 4
+io_evt_overflow:
+    .skip 1

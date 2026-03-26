@@ -71,20 +71,95 @@ extern uint32_t memory_size;
 extern const char *build_date;
 extern const char *build_provenance;
 
-};
+// IO_MCU event ring buffer (written by ISR in crt0.s, read by main)
+constexpr size_t IO_EVT_QUEUE_SIZE = 256;  // must match crt0.s
+extern volatile uint8_t io_evt_queue[IO_EVT_QUEUE_SIZE];
+extern volatile uint32_t io_evt_head;
+extern volatile uint32_t io_evt_tail;
+extern volatile uint8_t io_evt_overflow;
 
-static volatile uint8_t &uart_status = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_UART_STATUS);
-static volatile uint8_t &uart_rx_data = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_UART_RX_DATA);
+// Timer tick handler — called from ISR context at IPL 5
+void timer_tick()
+{
+    // TODO: increment tick counter, feed watchdog, etc.
+}
+
+}; // extern "C"
+
+static volatile uint8_t &io_mcu_tx = *reinterpret_cast<volatile uint8_t *>(Griffin::IO_MCU_TX_DATA);
+
+static void io_mcu_putchar(uint8_t ch)
+{
+    io_mcu_tx = ch;
+}
+
+// Pop one byte from the event ring buffer.  Returns false if empty.
+// No interrupt masking needed — head is only modified here (single consumer).
+static bool evt_pop(uint8_t *out)
+{
+    uint32_t h = io_evt_head;
+    if(h == io_evt_tail)
+    {
+        return false;
+    }
+    *out = io_evt_queue[h];
+    io_evt_head = (h + 1) & (IO_EVT_QUEUE_SIZE - 1);
+    return true;
+}
 
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
-    debug_printf("Waiting for UART RX...\n");
+    debug_printf("IO_MCU console ready\n");
 
-    for (;;) {
-        if (uart_status & Griffin::GLUE_UART_STATUS_RECEIVED_MASK) {
-            uint8_t ch = uart_rx_data;
-            debug_printf("received: %c (%d)\n", isprint(ch) ? ch : '.', ch);
+    uint8_t evt;
+    for (;;)
+    {
+        if(!evt_pop(&evt))
+        {
+            continue;
+        }
+
+        switch(evt)
+        {
+            case Griffin::IO_MCU_EVT_UART_RX:
+            {
+                uint8_t ch;
+                if(evt_pop(&ch))
+                {
+                    debug_serial_putchar(ch);
+                    io_mcu_putchar(ch);
+                }
+                break;
+            }
+
+            case Griffin::IO_MCU_EVT_KBD:
+            {
+                uint8_t scancode;
+                if(evt_pop(&scancode))
+                {
+                    debug_printf("[KBD: 0x%02X]\n", scancode);
+                }
+                break;
+            }
+
+            case Griffin::IO_MCU_EVT_MOUSE:
+            {
+                uint8_t data;
+                if(evt_pop(&data))
+                {
+                    debug_printf("[MOUSE: 0x%02X]\n", data);
+                }
+                break;
+            }
+
+            case Griffin::IO_MCU_EVT_TIMER:
+                // Timer tick already handled in ISR; nothing to do here
+                break;
+
+            default:
+                debug_printf("[IO EVT: 0x%02X]\n", evt);
+                break;
         }
     }
 }

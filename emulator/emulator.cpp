@@ -4,15 +4,169 @@
 
 #include "../griffin.generated.h"
 
+// pty.h / util.h pull in termios.h which #defines EXTB, colliding with
+// a Moira enum member.  Include Moira first, then the PTY header.
 #include "Moira.h"
+
+#include <fcntl.h>
+#include <sys/select.h>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <util.h>
+#else
+#include <pty.h>
+#endif
 
 constexpr uint32_t DEBUG_BUS = 0x0001;
 constexpr uint32_t DEBUG_IO = 0x0002;
 constexpr uint32_t DEBUG_UART = 0x0004;
 constexpr uint32_t DEBUG_DISASSEMBLE = 0x0008;
+constexpr uint32_t DEBUG_IO_MCU = 0x0010;
 constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
+
+// PTY-based console for IO_MCU serial emulation.
+// The master fd acts like the IO_MCU's UART: write() sends to the terminal,
+// read() receives keystrokes.  Works on macOS and Linux.
+struct PTYConsole
+{
+    int master_fd = -1;
+
+    bool open()
+    {
+        int slave_fd;
+        if(openpty(&master_fd, &slave_fd, NULL, NULL, NULL) < 0)
+        {
+            perror("openpty");
+            return false;
+        }
+        fprintf(stderr, "IO_MCU console PTY: %s\n", ttyname(slave_fd));
+        close(slave_fd);
+        fcntl(master_fd, F_SETFL, O_NONBLOCK);
+        return true;
+    }
+
+    ~PTYConsole()
+    {
+        if(master_fd >= 0)
+        {
+            close(master_fd);
+        }
+    }
+
+    bool is_data_ready() const
+    {
+        if(master_fd < 0)
+        {
+            return false;
+        }
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(master_fd, &fds);
+        struct timeval tv = {0, 0};
+        int result = select(master_fd + 1, &fds, NULL, NULL, &tv);
+        if(result < 0)
+        {
+            if(errno == EINTR)
+            {
+                return false;
+            }
+            perror("select");
+            return false;
+        }
+        return result > 0 && FD_ISSET(master_fd, &fds);
+    }
+
+    // Read one byte.  Returns true if a byte was read.
+    bool receive(uint8_t *out) const
+    {
+        if(master_fd < 0)
+        {
+            return false;
+        }
+        ssize_t n = read(master_fd, out, 1);
+        return n == 1;
+    }
+
+    void send(uint8_t ch) const
+    {
+        if(master_fd >= 0)
+        {
+            write(master_fd, &ch, 1);
+        }
+    }
+};
+
+// IO_MCU event queue — mirrors the real MCU's event FIFO.
+// Firmware reads IO_MCU_RX_DATA to dequeue; IO_MCU_STATUS reports QUEUE_NOTEMPTY.
+struct IOmcuState
+{
+    static constexpr size_t QUEUE_SIZE = 256;
+    uint8_t queue[QUEUE_SIZE];
+    size_t head = 0;
+    size_t count = 0;
+    bool overflow = false;
+    bool io_reset_released = false;
+
+    void push(uint8_t byte)
+    {
+        if(count >= QUEUE_SIZE)
+        {
+            overflow = true;
+            return;
+        }
+        queue[(head + count) % QUEUE_SIZE] = byte;
+        count++;
+    }
+
+    uint8_t pop()
+    {
+        if(count == 0)
+        {
+            return IO_MCU_EVT_EMPTY;
+        }
+        uint8_t byte = queue[head % QUEUE_SIZE];
+        head = (head + 1) % QUEUE_SIZE;
+        count--;
+        return byte;
+    }
+
+    bool notempty() const
+    {
+        return count > 0;
+    }
+
+    uint8_t status() const
+    {
+        uint8_t s = 0;
+        if(notempty())
+        {
+            s |= IO_MCU_STATUS_QUEUE_NOTEMPTY_MASK;
+        }
+        s |= IO_MCU_STATUS_TX_READY_MASK; // TX is always ready in emulation
+        if(overflow)
+        {
+            s |= IO_MCU_STATUS_OVERFLOW_MASK;
+        }
+        return s;
+    }
+
+    // Poll the PTY and enqueue any received bytes as UART_RX events.
+    void poll(const PTYConsole &pty)
+    {
+        if(!io_reset_released)
+        {
+            return;
+        }
+        uint8_t ch;
+        while(pty.is_data_ready() && pty.receive(&ch))
+        {
+            push(IO_MCU_EVT_UART_RX);
+            push(ch);
+        }
+    }
+};
 
 class GriffinEmulator : public moira::Moira
 {
@@ -23,49 +177,87 @@ class GriffinEmulator : public moira::Moira
     mutable std::array<uint8_t, ROM_SIZE> ROM{};
     mutable int debug_out_latch = 0;
     mutable bool ROMoverlay = true;
+    PTYConsole pty_console;
+    mutable IOmcuState io_mcu;
 
     uint8_t IO_read8(uint32_t addr) const
     {
-        if(addr == GLUE_UART_STATUS - GLUE_BASE) {
+        if(addr == GLUE_UART_STATUS - IO_BASE) {
             // Hardware UART is never busy in emulation (instant TX)
             return 0;
-        } else if(addr == GLUE_DEBUG_IN - GLUE_BASE) {
+        } else if(addr == GLUE_DEBUG_IN - IO_BASE) {
             return 0;
+        } else if(addr == IO_MCU_RX_DATA - IO_BASE) {
+            uint8_t val = io_mcu.pop();
+            if(debug & DEBUG_IO_MCU)
+            {
+                printf("[IO_MCU RX_DATA: 0x%02X]\n", val);
+            }
+            // Deassert interrupt immediately when queue drains
+            if(!io_mcu.notempty())
+            {
+                const_cast<GriffinEmulator*>(this)->setIPL(0);
+            }
+            return val;
+        } else if(addr == IO_MCU_STATUS - IO_BASE) {
+            return io_mcu.status();
         }
-        printf("read of uint8_t at unhandled IO %06X\n", addr + IO_BASE);
-        abort();
+        if(debug & DEBUG_IO)
+        {
+            printf("read of uint8_t at unhandled IO %06X\n", addr + IO_BASE);
+        }
         return 0;
     }
 
     uint16_t IO_read16(uint32_t addr) const
     {
-        printf("read of uint16_t at unhandled IO %06X\n", addr);
-        abort();
+        if(debug & DEBUG_IO)
+        {
+            printf("read of uint16_t at unhandled IO %06X\n", addr + IO_BASE);
+        }
         return 0;
     }
 
     void IO_write8(uint32_t addr, uint8_t val) const
     {
-        if(addr == GLUE_DEBUG_OUT - GLUE_BASE) {
+        if(addr == GLUE_DEBUG_OUT - IO_BASE) {
             auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_MASK;
             auto bit = val & GLUE_DEBUG_OUT_MASK;
-            if(bit != oldbit) {
+            if(bit != oldbit)
+            {
                 if(debug & DEBUG_IO) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
             }
             debug_out_latch = val;
-        } else if(addr == GLUE_UART_TX_DATA - GLUE_BASE) {
-            // Hardware UART TX: emit character immediately
+        } else if(addr == GLUE_UART_TX_DATA - IO_BASE) {
+            // Hardware UART TX: emit character immediately to stdout
             printf("%c", val);
             if(debug & DEBUG_UART) printf("[UART TX: 0x%02X]", val);
             fflush(stdout);
-        } else if(addr == GLUE_CONFIG - GLUE_BASE) {
-            if(debug & DEBUG_IO) printf("ROM overlay disabled\n");
-            ROMoverlay = false;
+        } else if(addr == GLUE_CONFIG - IO_BASE) {
+            if(val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK)
+            {
+                if(debug & DEBUG_IO) printf("ROM overlay disabled\n");
+                ROMoverlay = false;
+            }
+            if(val & GLUE_CONFIG_IO_RESET_RELEASE_MASK)
+            {
+                if(debug & DEBUG_IO) printf("IO_MCU reset released\n");
+                io_mcu.io_reset_released = true;
+            }
+        } else if(addr == IO_MCU_TX_DATA - IO_BASE) {
+            // IO_MCU UART TX: send to PTY console
+            if(debug & DEBUG_IO_MCU) printf("[IO_MCU TX: 0x%02X]\n", val);
+            pty_console.send(val);
+        } else if(addr == IO_MCU_CONFIG - IO_BASE) {
+            if(debug & DEBUG_IO_MCU) printf("[IO_MCU CONFIG: 0x%02X]\n", val);
         } else {
             if(debug & DEBUG_IO) {
-                if(isprint(val)) {
+                if(isprint(val))
+                {
                     printf("IO write: %06" PRIx32 " = %02x (%c)\n", addr + IO_BASE, val, val);
-                } else {
+                }
+                else
+                {
                     printf("IO write: %06" PRIx32 " = %02x\n", addr + IO_BASE, val);
                 }
             }
@@ -74,8 +266,10 @@ class GriffinEmulator : public moira::Moira
 
     void IO_write16(uint32_t addr, uint16_t val) const
     {
-        printf("write of uint16_t at unhandled IO %06X\n", addr);
-        abort();
+        if(debug & DEBUG_IO)
+        {
+            printf("write of uint16_t %04X at unhandled IO %06X\n", val, addr + IO_BASE);
+        }
     }
 
 public:
@@ -235,6 +429,26 @@ public:
     {
         return debug_out_latch;
     }
+
+    bool init_pty()
+    {
+        return pty_console.open();
+    }
+
+    // Poll the PTY for incoming data and update IPL.
+    // Call this periodically from the main loop, not on every bus cycle.
+    void poll_io_mcu()
+    {
+        io_mcu.poll(pty_console);
+        if(io_mcu.notempty())
+        {
+            setIPL(IO_MCU_IRQ_LEVEL);
+        }
+        else
+        {
+            setIPL(0);
+        }
+    }
 };
 
 // Courtesy Claude Opus 4.6
@@ -390,11 +604,19 @@ int main(int argc, const char** argv)
     assert(was_read == static_cast<size_t>(size));
     fclose(fp);
 
+    if(!emulator.init_pty())
+    {
+        fprintf(stderr, "Failed to open PTY for IO_MCU console\n");
+        exit(EXIT_FAILURE);
+    }
+
     SoftUART debug_uart(emulator.get_debug_latch()); // This represents an FTDI 232 attached to the debug out pin
     emulator.setDasmSyntax(moira::Syntax::GNU_MIT);
     emulator.reset();
     printf("begin execution\n");
     uint64_t previous_uart_sample = 0;
+    uint64_t previous_io_mcu_poll = 0;
+    static constexpr uint64_t IO_MCU_POLL_INTERVAL = SYSCLK_HZ / 1000; // ~1ms
     auto clock_then = emulator.getClock();
     auto then = time(0);
     while (1) {
@@ -411,6 +633,12 @@ int main(int argc, const char** argv)
         {
             debug_uart.clock(emulator.get_debug_latch());
             previous_uart_sample = previous_uart_sample + SOFT_UART_SAMPLE_INTERVAL;
+        }
+
+        if(clock_now - previous_io_mcu_poll >= IO_MCU_POLL_INTERVAL)
+        {
+            emulator.poll_io_mcu();
+            previous_io_mcu_poll = clock_now;
         }
 
         if(now != then)

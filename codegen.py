@@ -121,6 +121,11 @@ def write_c_header(hw: dict, path: Path) -> None:
         if window:
             w(f"inline constexpr MemoryRange {pname}({fmt_hex(base, 6)}UL, {fmt_hex(window, 6)}UL);")
 
+        # Interrupt level
+        intr = periph.get('interrupt')
+        if intr and isinstance(intr, dict) and 'level' in intr:
+            w(f"static constexpr uint32_t {pname}_IRQ_LEVEL = {intr['level']}U;")
+
         # IO span: only peripherals in the 0xF0_0000 IO area (not VIDEO/ENGINE/ROM/RAM).
         if linker_section is None and base >= 0xF00000:
             if window:
@@ -216,6 +221,11 @@ def write_asm_include(hw: dict, path: Path) -> None:
             w(f".equ {pname}_SIZE, {fmt_hex(size, 6)}")
         if window and window != size:
             w(f".equ {pname}_WINDOW, {fmt_hex(window, 6)}")
+
+        # Interrupt level
+        intr = periph.get('interrupt')
+        if intr and isinstance(intr, dict) and 'level' in intr:
+            w(f".equ {pname}_IRQ_LEVEL, {intr['level']}")
 
         for reg in periph.get('registers', []):
             offset = parse_int(reg['offset'])
@@ -342,6 +352,11 @@ def write_verilog_include(hw: dict, path: Path) -> None:
             w(f"`define {pname}_SIZE 24'h{size:06X}")
         if window and window != size:
             w(f"`define {pname}_WINDOW 24'h{window:06X}")
+
+        # Interrupt level
+        intr = periph.get('interrupt')
+        if intr and isinstance(intr, dict) and 'level' in intr:
+            w(f"`define {pname}_IRQ_LEVEL {intr['level']}")
 
         for reg in periph.get('registers', []):
             offset = parse_int(reg['offset'])

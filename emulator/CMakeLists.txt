@@ -16,6 +16,9 @@ FetchContent_MakeAvailable(SDL3)
 
 add_executable(emulator emulator.cpp)
 target_link_libraries(emulator PRIVATE SDL3::SDL3 Moira)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(emulator PRIVATE util)
+endif()
 
 add_library(Moira STATIC
    external/Moira/Moira/Moira.cpp
