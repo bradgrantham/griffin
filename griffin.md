@@ -91,6 +91,7 @@ DEBUG\_OUT LED:
 # Board spin
 
 - [ ] Schematic (+PCB if necessary)
+  - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
   - [ ] Swap MCU RX and TX - wrong pins!!
   - [ ] Pullups on JTAG lines
   - [ ] 4.7K Pullup on HALT
@@ -102,12 +103,11 @@ DEBUG\_OUT LED:
     - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
   - [ ] GND and +5V to test points
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
-  - [ ] Make audio stereo - not sure if I should expose as one 16-bit write or two 8-bit writes or maybe both
+  - [ ] Make audio stereo - one 16-bit write
     - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
   - [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
   - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
-  - [ ] Add a debug LED with 1Hz on the IO MCU
-  - [ ] Pull down IO RST
+  - [ ] Add a debug LED on the IO MCU
 - [ ] PCB only
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
   - [ ] PS2 stabs - move footprint  
