@@ -1,0 +1,334 @@
+COMPONENTS
+======================================================================
+
+--- Capacitors ---
+  C1         10uF                  [CP_Radial_D5.0mm_P2.50mm]
+  C2         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C3         10uF                  [CP_Radial_D5.0mm_P2.50mm]
+  C4         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C5         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C6         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C7         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C8         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C9         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C10        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C11        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C12        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C13        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C14        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C15        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C16        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C17        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C18        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C21        15pF                  [C_Disc_D3.0mm_W1.6mm_P2.50mm]
+  C22        15pF                  [C_Disc_D3.0mm_W1.6mm_P2.50mm]
+  C23        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C24        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C25        10nF                  [C_Disc_D3.0mm_W1.6mm_P2.50mm]
+  C26        100µF                 [CP_Radial_D5.0mm_P2.50mm]
+  C27        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C30        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C35        220µF                 [CP_Radial_D6.3mm_P2.50mm]
+  C36        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+
+--- Diodes ---
+  D1         GREEN                 [LED_D3.0mm]
+  D2         RED                   [LED_D3.0mm]
+
+--- H ---
+  H1         MountingHole          [MountingHole_2.5mm_Pad_Via]
+  H2         MountingHole          [MountingHole_2.5mm_Pad_Via]
+  H3         MountingHole          [MountingHole_2.5mm_Pad_Via]
+  H4         MountingHole          [MountingHole_2.5mm_Pad_Via]
+  H9         MountingHole          [MountingHole_2.5mm_Pad_Via]
+
+--- Connectors ---
+  J1         Conn_01x05_Pin        [PinHeader_1x05_P2.54mm_Vertical]
+  J2         KEYBOARD              [Mini_din6]
+  J3         AdaFruit 4090 USB-C BOB  [PinHeader_1x08_P2.54mm_Vertical]
+  J4         MOUSE                 [Mini_din6]
+  J5         JTAG BYPASS           [PinHeader_1x02_P2.54mm_Vertical]
+  J6         COMPOSITE             [CUI_RCJ-044]
+  J7         STEREO_OUT            [SAMESKY_SJ3-35063B]
+  J8         CF Card               [SAMTEC_CFT-125-01-L-D-RA-01-SL]
+  J9         FTDI serial           [PinHeader_1x06_P2.54mm_Horizontal]
+  J10        VGA                   [AMPHENOL_ICD15S13E4GX00LF]
+
+--- LS ---
+  LS1        Speaker               [MagneticBuzzer_StarMicronics_QMX]
+
+--- Resistors ---
+  R1         100                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R2         10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R3         100K                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R4         100K                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R5         100                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R6         100K                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R7         10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R9         10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R12        560                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R14        1K                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R15        430                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R16        33                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R19        10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R20        560                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R21        270                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R22        1100                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R23        1100                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R25        270                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R26        560                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R31        270                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R33        100K                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R40        150                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R41        150                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R42        150                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R52        1K                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R53        1K                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R56        10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R57        100                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R58        100                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R59        47                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R60        4610X-R2R-103LF       [BO_4610X]
+
+--- Switches ---
+  SW1        RESET                 [SW_TH_Tactile_Omron_B3F-106x]
+
+--- Test Points ---
+  TP1        Debug In              [PinHeader_1x01_P2.54mm_Vertical]
+  TP2        Debug Out             [PinHeader_1x01_P2.54mm_Vertical]
+  TP3        CLK                   [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP4        ~{RESET}              [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP5        ~{HALT}               [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP6        ~{AS}                 [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP7        ~{DTACK}              [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP8        R/~{W}                [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP9        ~{LDS}                [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP10       ~{UDS}                [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP11       FC0                   [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP12       FC1                   [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP13       FC2                   [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP14       ~{ROM_SELECT}         [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+  TP15       ~{RAM_SELECT_1}       [TestPoint_THTPad_D2.0mm_Drill1.0mm]
+
+--- ICs ---
+  U1         MC68000P              [DIP-64_W22.86mm]
+  U2         ROM LO                [DIP-28_W15.24mm]
+  U3         ROM HI                [DIP-28_W15.24mm]
+  U4         RAM 1 LO              [DIP-32_W15.24mm]
+  U5         RAM 1 HI              [DIP-32_W15.24mm]
+  U6         RAM 2 LO              [DIP-32_W15.24mm]
+  U7         RAM 2 HI              [DIP-32_W15.24mm]
+  U8         RAM 3 LO              [DIP-32_W15.24mm]
+  U9         RAM 3 HI              [DIP-32_W15.24mm]
+  U10        RAM 4 LO              [DIP-32_W15.24mm]
+  U11        RAM 4 HI              [DIP-32_W15.24mm]
+  U12        GLUE                  [PLCC-84_THT-Socket]
+  U13        ENGINE                [PLCC-84_THT-Socket]
+  U15        LM358                 [DIP-8_W7.62mm]
+  U16        AT89x51xxP            [DIP-40_W15.24mm]
+  U17        VIDEO                 [PLCC-84_THT-Socket]
+  U23        74HC373               [DIP-20_W7.62mm]
+
+--- Crystals / Oscillators ---
+  Y1         14.318MHz             [Oscillator_DIP-8]
+  Y2         11.0592MHz            [Resonator-2Pin_W10.0mm_H5.0mm]
+  Y3         25.175MHz             [Oscillator_DIP-8]
+  Y4         12MHz                 [Oscillator_DIP-8]
+
+
+POWER NETS
+======================================================================
+  +5V              -> C1, C10, C11, C12, C13, C14, C15, C16, C17, C18, C2, C23, C24, C27, C30, C36, C4, C5, C6, C7, C8, C9, D1, J2, J3, J4, J8, R2, R3, R33, R4, R6, R7, R9, U1, U10, U11, U12, U13, U15, U16, U17, U2, U23, U3, U4, U5, U6, U7, U8, U9, Y1, Y3, Y4
+  GND              -> C1, C10, C11, C12, C13, C14, C15, C16, C17, C18, C2, C21, C22, C23, C24, C25, C27, C3, C30, C36, C4, C5, C6, C7, C8, C9, H1, H2, H3, H4, H9, J1, J10, J2, J3, J4, J6, J7, J8, J9, LS1, R1, R19, R40, R41, R42, R5, R53, R56, R60, SW1, U1, U10, U11, U12, U13, U15, U16, U17, U2, U23, U3, U4, U5, U6, U7, U8, U9, Y1, Y3, Y4
+
+
+SIGNAL NETS
+======================================================================
+
+--- Buses ---
+
+  A[1:23]  (23 bits)
+    A1: J8.20(A00), U1.29(A1), U10.12(A0), U11.12(A0), U12.51(I/O), U13.48(I/O), U16.39(P0.0/AD0), U17.48(I/O), U2.10(A0), U3.10(A0), U4.12(A0), U5.12(A0), U6.12(A0), U7.12(A0), U8.12(A0), U9.12(A0)
+    A2: J8.19(A01), U1.30(A2), U10.11(A1), U11.11(A1), U12.55(I/O), U13.49(I/O), U16.38(P0.1/AD1), U17.49(I/O), U2.9(A1), U3.9(A1), U4.11(A1), U5.11(A1), U6.11(A1), U7.11(A1), U8.11(A1), U9.11(A1)
+    A3: J8.18(A02), U1.31(A3), U10.10(A2), U11.10(A2), U12.54(I/O), U13.51(I/O), U16.37(P0.2/AD2), U17.51(I/O), U2.8(A2), U3.8(A2), U4.10(A2), U5.10(A2), U6.10(A2), U7.10(A2), U8.10(A2), U9.10(A2)
+    A4: J8.17(A03), U1.32(A4), U10.9(A3), U11.9(A3), U12.79(I/O), U13.54(I/O), U16.36(P0.3/AD3), U17.54(I/O), U2.7(A3), U3.7(A3), U4.9(A3), U5.9(A3), U6.9(A3), U7.9(A3), U8.9(A3), U9.9(A3)
+    A5: U1.33(A5), U10.8(A4), U11.8(A4), U12.80(I/O), U13.55(I/O), U16.35(P0.4/AD4), U17.55(I/O), U2.6(A4), U3.6(A4), U4.8(A4), U5.8(A4), U6.8(A4), U7.8(A4), U8.8(A4), U9.8(A4)
+    A6: U1.34(A6), U10.7(A5), U11.7(A5), U12.81(I/O/GCLK3), U13.52(I/O), U2.5(A5), U3.5(A5), U4.7(A5), U5.7(A5), U6.7(A5), U7.7(A5), U8.7(A5), U9.7(A5)
+    A7: U1.35(A7), U10.6(A6), U11.6(A6), U13.50(I/O), U2.4(A6), U3.4(A6), U4.6(A6), U5.6(A6), U6.6(A6), U7.6(A6), U8.6(A6), U9.6(A6)
+    A8: U1.36(A8), U10.5(A7), U11.5(A7), U13.45(I/O/PD2), U2.3(A7), U3.3(A7), U4.5(A7), U5.5(A7), U6.5(A7), U7.5(A7), U8.5(A7), U9.5(A7)
+    A9: U1.37(A9), U10.27(A8), U11.27(A8), U13.44(I/O), U2.25(A8), U3.25(A8), U4.27(A8), U5.27(A8), U6.27(A8), U7.27(A8), U8.27(A8), U9.27(A8)
+    A10: U1.38(A10), U10.26(A9), U11.26(A9), U13.39(I/O), U2.24(A9), U3.24(A9), U4.26(A9), U5.26(A9), U6.26(A9), U7.26(A9), U8.26(A9), U9.26(A9)
+    A11: U1.39(A11), U10.23(A10), U11.23(A10), U13.37(I/O), U2.21(A10), U3.21(A10), U4.23(A10), U5.23(A10), U6.23(A10), U7.23(A10), U8.23(A10), U9.23(A10)
+    A12: U1.40(A12), U10.25(A11), U11.25(A11), U13.29(I/O), U2.23(A11), U3.23(A11), U4.25(A11), U5.25(A11), U6.25(A11), U7.25(A11), U8.25(A11), U9.25(A11)
+    A13: U1.41(A13), U10.4(A12), U11.4(A12), U13.36(I/O), U2.2(A12), U3.2(A12), U4.4(A12), U5.4(A12), U6.4(A12), U7.4(A12), U8.4(A12), U9.4(A12)
+    A14: U1.42(A14), U10.28(A13), U11.28(A13), U13.75(I/O), U2.26(A13), U3.26(A13), U4.28(A13), U5.28(A13), U6.28(A13), U7.28(A13), U8.28(A13), U9.28(A13)
+    A15: U1.43(A15), U10.3(A14), U11.3(A14), U13.74(I/O), U2.27(A14), U3.27(A14), U4.3(A14), U5.3(A14), U6.3(A14), U7.3(A14), U8.3(A14), U9.3(A14)
+    A16: U1.44(A16), U10.31(A15), U11.31(A15), U13.56(I/O), U2.1(A15), U3.1(A15), U4.31(A15), U5.31(A15), U6.31(A15), U7.31(A15), U8.31(A15), U9.31(A15)
+    A17: U1.45(A17), U10.2(A16), U11.2(A16), U13.57(I/O), U4.2(A16), U5.2(A16), U6.2(A16), U7.2(A16), U8.2(A16), U9.2(A16)
+    A18: U1.46(A18), U10.30(A17), U11.30(A17), U13.31(I/O), U4.30(A17), U5.30(A17), U6.30(A17), U7.30(A17), U8.30(A17), U9.30(A17)
+    A19: U1.47(A19), U10.1(A18), U11.1(A18), U12.35(I/O), U13.30(I/O), U4.1(A18), U5.1(A18), U6.1(A18), U7.1(A18), U8.1(A18), U9.1(A18)
+    A20: U1.48(A20), U12.33(I/O), U13.58(I/O)
+    A21: U1.50(A21), U12.56(I/O), U13.28(I/O)
+    A22: U1.51(A22), U12.57(I/O), U13.60(I/O)
+    A23: U1.52(A23), U12.31(I/O), U13.61(I/O)
+
+  AUDIO[0:7]  (8 bits)
+    All bits: R60 <-> U23
+
+  D[0:15]  (16 bits)
+    D0: J8.21(D00), U1.5(D0), U10.13(DQ0), U12.61(I/O), U13.18(I/O), U16.21(P2.0/A8), U17.18(I/O), U2.11(D0), U23.3(D0), U4.13(DQ0), U6.13(DQ0), U8.13(DQ0)
+    D1: J8.22(D01), U1.4(D1), U10.14(DQ1), U12.27(I/O), U13.68(I/O), U16.22(P2.1/A9), U17.68(I/O), U2.12(D1), U23.4(D1), U4.14(DQ1), U6.14(DQ1), U8.14(DQ1)
+    D2: J8.23(D02), U1.3(D2), U10.15(DQ2), U12.63(I/O), U13.17(I/O), U16.23(P2.2/A10), U17.17(I/O), U2.13(D2), U23.7(D2), U4.15(DQ2), U6.15(DQ2), U8.15(DQ2)
+    D3: J8.02(D03), U1.2(D3), U10.17(DQ3), U12.24(I/O), U13.15(I/O), U16.24(P2.3/A11), U17.15(I/O), U2.15(D3), U23.8(D3), U4.17(DQ3), U6.17(DQ3), U8.17(DQ3)
+    D4: J8.03(D04), U1.1(D4), U10.18(DQ4), U12.65(I/O), U13.12(I/O/PD1), U16.25(P2.4/A12), U17.12(I/O/PD1), U2.16(D4), U23.13(D4), U4.18(DQ4), U6.18(DQ4), U8.18(DQ4)
+    D5: J8.04(D05), U1.64(D5), U10.19(DQ5), U12.22(I/O), U13.11(I/O), U16.26(P2.5/A13), U17.11(I/O), U2.17(D5), U23.14(D5), U4.19(DQ5), U6.19(DQ5), U8.19(DQ5)
+    D6: J8.05(D06), U1.63(D6), U10.20(DQ6), U12.64(I/O), U13.73(I/O), U16.27(P2.6/A14), U17.73(I/O), U2.18(D6), U23.17(D6), U4.20(DQ6), U6.20(DQ6), U8.20(DQ6)
+    D7: J8.06(D07), U1.62(D7), U10.21(DQ7), U12.25(I/O), U13.70(I/O), U16.28(P2.7/A15), U17.70(I/O), U2.19(D7), U23.18(D7), U4.21(DQ7), U6.21(DQ7), U8.21(DQ7)
+    D8: U1.61(D8), U11.13(DQ0), U13.16(I/O), U17.16(I/O), U3.11(D0), U5.13(DQ0), U7.13(DQ0), U9.13(DQ0)
+    D9: U1.60(D9), U11.14(DQ1), U13.69(I/O), U17.69(I/O), U3.12(D1), U5.14(DQ1), U7.14(DQ1), U9.14(DQ1)
+    D10: U1.59(D10), U11.15(DQ2), U13.67(I/O), U17.67(I/O), U3.13(D2), U5.15(DQ2), U7.15(DQ2), U9.15(DQ2)
+    D11: U1.58(D11), U11.17(DQ3), U13.20(I/O), U17.20(I/O), U3.15(D3), U5.17(DQ3), U7.17(DQ3), U9.17(DQ3)
+    D12: U1.57(D12), U11.18(DQ4), U13.65(I/O), U17.65(I/O), U3.16(D4), U5.18(DQ4), U7.18(DQ4), U9.18(DQ4)
+    D13: U1.56(D13), U11.19(DQ5), U13.24(I/O), U17.24(I/O), U3.17(D5), U5.19(DQ5), U7.19(DQ5), U9.19(DQ5)
+    D14: U1.55(D14), U11.20(DQ6), U13.63(I/O), U17.63(I/O), U3.18(D6), U5.20(DQ6), U7.20(DQ6), U9.20(DQ6)
+    D15: U1.54(D15), U11.21(DQ7), U13.27(I/O), U17.27(I/O), U3.19(D7), U5.21(DQ7), U7.21(DQ7), U9.21(DQ7)
+
+  FC[0:2]  (3 bits)
+    FC0: TP11.1(1), U1.28(FC0), U12.52(I/O), U13.33(I/O), U17.33(I/O)
+    FC1: TP12.1(1), U1.27(FC1), U12.49(I/O), U13.34(I/O), U17.34(I/O)
+    FC2: TP13.1(1), U1.26(FC2), U12.50(I/O), U13.35(I/O), U17.35(I/O)
+
+  S[2:4]  (3 bits)
+    All bits: J8
+
+  VGA_B[0:1]  (2 bits)
+    VGA_B0: R12.2, U17.74(I/O)
+    VGA_B1: R21.2, U17.75(I/O)
+
+  VGA_G[0:2]  (3 bits)
+    VGA_G0: R22.2, U17.76(I/O)
+    VGA_G1: R26.2, U17.77(I/O)
+    VGA_G2: R25.2, U17.81(I/O/GCLK3)
+
+  VGA_R[0:2]  (3 bits)
+    VGA_R0: R23.2, U17.4(I/O)
+    VGA_R1: R20.2, U17.8(I/O)
+    VGA_R2: R31.2, U17.6(I/O)
+
+--- Individual signals ---
+  AUDIO_LE: U12.68(I/O) [bidirectional], U23.11(LE) [input]
+  CPST_CLK_ENB: U17.40(I/O) [bidirectional], Y1.1(EN) [input]
+  CPST_PIXEL: R15.1 [passive], U17.80(I/O) [bidirectional]
+  CPUCLK: TP3.1(1) [passive], U1.15(CLK) [input], U12.34(I/O) [bidirectional], U13.83(INPUT/GCLK1) [input], U17.83(INPUT/GCLK1) [input], Y4.5(OUT) [output]
+  DEBUG_IN: R56.1 [passive], TP1.1(1) [passive], U12.83(INPUT/GCLK1) [input]
+  DEBUG_OUT: D2.2(A) [passive], TP2.1(1) [passive], U12.67(I/O) [bidirectional]
+  ENGINE_TCK: U12.39(I/O) [bidirectional], U13.62(I/O/TCK) [bidirectional]
+  ENGINE_TDI: U12.40(I/O) [bidirectional], U13.14(I/O/TDI) [bidirectional]
+  ENGINE_TDO: U12.41(I/O) [bidirectional], U13.71(I/O/TDO) [bidirectional]
+  ENGINE_TMS: U12.70(I/O) [bidirectional], U13.23(I/O/TMS) [bidirectional]
+  IO_RESET: R9.2 [passive], U12.69(I/O) [bidirectional], U16.9(RST) [input]
+  JTAG_TCK: J1.2(Pin_2) [passive], U12.62(I/O/TCK) [bidirectional], U17.62(I/O/TCK) [bidirectional]
+  JTAG_TDI: J1.3(Pin_3) [passive], U12.14(I/O/TDI) [bidirectional]
+  JTAG_TDO: J1.4(Pin_4) [passive], J5.2(Pin_2) [passive], U17.71(I/O/TDO) [bidirectional]
+  JTAG_TMS: J1.5(Pin_5) [passive], U12.23(I/O/TMS) [bidirectional], U17.23(I/O/TMS) [bidirectional]
+  KBD_CLK: J2.5 [passive], U16.13(P3.3) [bidirectional]
+  KBD_DATA: J2.1 [passive], U16.12(P3.2) [bidirectional]
+  MOUSE_CLK: J4.5 [passive], U16.15(P3.5) [bidirectional]
+  MOUSE_DATA: J4.1 [passive], U16.14(P3.4) [bidirectional]
+  Net-(C25-Pad1): C25.1 [passive], C26.1 [passive], R52.2 [passive]
+  Net-(C26-Pad2): C26.2 [passive], R53.2 [passive], R57.2 [passive], R58.2 [passive]
+  Net-(C35-Pad1): C35.1 [passive], R14.2 [passive], R15.2 [passive]
+  Net-(C35-Pad2): C35.2 [passive], R16.1 [passive]
+  Net-(D1-K): D1.1(K) [passive], R1.1 [passive]
+  Net-(D2-K): D2.1(K) [passive], R5.1 [passive]
+  Net-(J6-In): J6.1(In) [passive], R16.2 [passive]
+  Net-(J7-Pad2): J7.2 [passive], R57.1 [passive]
+  Net-(J7-Pad3): J7.3 [passive], R58.1 [passive]
+  Net-(J7-Pad4): J7.4 [passive], R59.2 [passive]
+  Net-(LS1-Pad1): LS1.1(1) [input], R59.1 [passive]
+  Net-(U1-~{VPA}): R6.2 [passive], U1.21(~{VPA}) [input]
+  Net-(U12-INPUT{slash}OE2{slash}GCLK2): R19.1 [passive], U12.2(INPUT/OE2/GCLK2) [input]
+  Net-(U15A-+): R60.1 [output], U15.3(+) [input]
+  Net-(U15A--): R52.1 [passive], U15.1 [output], U15.2(-) [input]
+  Net-(U15B--): U15.6(-) [input], U15.7 [output]
+  Net-(U16-XTAL1): C21.1 [passive], U16.19(XTAL1) [input], Y2.2(2) [passive]
+  Net-(U16-XTAL2): C22.2 [passive], U16.18(XTAL2) [input], Y2.1(1) [passive]
+  Net-(Y4-EN): R33.2 [passive], Y4.1(EN) [input]
+  VIDEO_STALL: U12.84(INPUT/OE1) [input], U17.79(I/O) [bidirectional]
+  VIDEO_TDI: J5.1(Pin_1) [passive], U12.71(I/O/TDO) [bidirectional], U17.14(I/O/TDI) [bidirectional]
+  PIXEL_CLK: U17.2(INPUT/OE2/GCLK2) [input], Y1.5(OUT) [tri_state], Y3.5(OUT) [bidirectional]
+  R{slash}~{W}: J8.35(-IOWR) [input], TP8.1(1) [passive], U1.9(R/~{W}) [tri_state], U12.58(I/O) [bidirectional], U13.25(I/O) [bidirectional], U16.16(P3.6) [bidirectional], U17.25(I/O) [bidirectional]
+  UART_RX: J9.3(Pin_3) [passive], U16.11(P3.1) [bidirectional]
+  UART_TX: J9.2(Pin_2) [passive], U16.10(P3.0) [bidirectional]
+  VGA_BLUE: J10.3(3) [passive], R12.1 [passive], R21.1 [passive], R40.2 [passive]
+  VGA_CLK_ENB: U17.41(I/O) [bidirectional], Y3.1(EN) [input]
+  VGA_GREEN: J10.2(2) [passive], R22.1 [passive], R25.1 [passive], R26.1 [passive], R41.2 [passive]
+  VGA_HSYNC: J10.13(13) [passive], U17.46(I/O) [bidirectional]
+  VGA_RED: J10.1(1) [passive], R20.1 [passive], R23.1 [passive], R31.1 [passive], R42.2 [passive]
+  VGA_VSYNC: J10.14(14) [passive], U17.29(I/O) [bidirectional]
+  ~{AS}: TP6.1(1) [passive], U1.6(~{AS}) [tri_state], U12.60(I/O) [bidirectional], U13.21(I/O) [bidirectional], U17.21(I/O) [bidirectional]
+  ~{BERR}: U1.22(~{BERR}) [input], U12.44(I/O) [bidirectional]
+  ~{BGACK}: R4.2 [passive], U1.12(~{BGACK}) [input], U13.77(I/O) [bidirectional]
+  ~{BG}: U1.11(~{BG}) [output], U13.76(I/O) [bidirectional]
+  ~{BR}: R3.2 [passive], U1.13(~{BR}) [input], U13.79(I/O) [bidirectional]
+  ~{CF_CS0}: J8.32(-CE21) [input], U12.76(I/O) [bidirectional]
+  ~{CF_CS1}: J8.07(-CE1) [input], U12.77(I/O) [bidirectional]
+  ~{CPST_SYNC}: R14.1 [passive], U17.10(I/O) [bidirectional]
+  ~{DTACK}: TP7.1(1) [passive], U1.10(~{DTACK}) [input], U12.30(I/O) [bidirectional], U13.81(I/O/GCLK3) [bidirectional]
+  ~{ENGINE_DTACK}: U12.17(I/O) [bidirectional], U13.4(I/O) [bidirectional]
+  ~{ENGINE_IACK}: U12.75(I/O) [bidirectional], U13.6(I/O) [bidirectional]
+  ~{ENGINE_IRQ}: U12.20(I/O) [bidirectional], U13.5(I/O) [bidirectional]
+  ~{ENGINE_SELECT}: U12.15(I/O) [bidirectional], U13.84(INPUT/OE1) [input]
+  ~{HALT}: TP5.1(1) [passive], U1.17(~{HALT}) [bidirectional], U12.36(I/O) [bidirectional]
+  ~{IO_DTACK_MISO}: U12.16(I/O) [bidirectional], U16.7(P1.6) [bidirectional]
+  ~{IO_IACK_SCK}: U12.21(I/O) [bidirectional], U16.8(P1.7/SCK) [bidirectional]
+  ~{IO_IRQ}: R7.2 [passive], U12.18(I/O) [bidirectional], U16.34(P0.5/AD5) [bidirectional]
+  ~{IO_SELECT_MOSI}: U12.12(I/O/PD1) [bidirectional], U16.6(P1.5) [bidirectional]
+  ~{IPL0}: U1.25(~{IPL0}) [input], U12.48(I/O) [bidirectional]
+  ~{IPL1}: U1.24(~{IPL1}) [input], U12.45(I/O/PD2) [bidirectional]
+  ~{IPL2}: U1.23(~{IPL2}) [input], U12.46(I/O) [bidirectional]
+  ~{LDS}: TP9.1(1) [passive], U1.8(~{LDS}) [tri_state], U12.29(I/O) [bidirectional], U13.64(I/O) [bidirectional], U17.64(I/O) [bidirectional], U2.22(~{OE}) [input]
+  ~{VIDEO_IRQ}: U12.1(INPUT/GCLR) [input], U17.5(I/O) [bidirectional]
+  ~{VIDEO_SELECT}: U12.74(I/O) [bidirectional], U17.84(INPUT/OE1) [input]
+  ~{RAM_SELECT_1}: TP15.1(1) [passive], U12.5(I/O) [bidirectional], U4.22(CE#) [input], U5.22(CE#) [input]
+  ~{RAM_SELECT_2}: U12.6(I/O) [bidirectional], U6.22(CE#) [input], U7.22(CE#) [input]
+  ~{RAM_SELECT_3}: U12.8(I/O) [bidirectional], U8.22(CE#) [input], U9.22(CE#) [input]
+  ~{RAM_SELECT_4}: U10.22(CE#) [input], U11.22(CE#) [input], U12.9(I/O) [bidirectional]
+  ~{RESET}: C3.1 [passive], J8.41(RESET) [input], R2.2 [passive], SW1.2(2) [passive], TP4.1(1) [passive], U1.18(~{RESET}) [bidirectional], U12.37(I/O) [bidirectional], U13.1(INPUT/GCLR) [input], U17.1(INPUT/GCLR) [input]
+  ~{ROM_SELECT}: TP14.1(1) [passive], U12.4(I/O) [bidirectional], U2.20(~{CE}) [input], U3.20(~{CE}) [input]
+  ~{R}{slash}W: J8.34(-IORD) [input], U12.73(I/O) [bidirectional]
+  ~{UDS}: TP10.1(1) [passive], U1.7(~{UDS}) [tri_state], U12.28(I/O) [bidirectional], U13.22(I/O) [bidirectional], U17.22(I/O) [bidirectional], U3.22(~{OE}) [input]
+  ~{WRITE_HI}: U11.29(WE#) [input], U12.11(I/O) [bidirectional], U5.29(WE#) [input], U7.29(WE#) [input], U9.29(WE#) [input]
+  ~{WRITE_LO}: U10.29(WE#) [input], U12.10(I/O) [bidirectional], U4.29(WE#) [input], U6.29(WE#) [input], U8.29(WE#) [input]
+
+
+POTENTIAL ISSUES
+======================================================================
+
+--- Single-pin nets (possibly unfinished wiring) ---
+  S2: J8.S2(S2)
+  S3: J8.S3(S3)
+  S4: J8.S4(S4)
+
+--- Nets with no apparent driver (all pins are input/passive) ---
+  DEBUG_IN: R56.1 [passive], TP1.1(1) [passive], U12.83(INPUT/GCLK1) [input]
+  Net-(C25-Pad1): C25.1 [passive], C26.1 [passive], R52.2 [passive]
+  Net-(C26-Pad2): C26.2 [passive], R53.2 [passive], R57.2 [passive], R58.2 [passive]
+  Net-(C35-Pad1): C35.1 [passive], R14.2 [passive], R15.2 [passive]
+  Net-(C35-Pad2): C35.2 [passive], R16.1 [passive]
+  Net-(D1-K): D1.1(K) [passive], R1.1 [passive]
+  Net-(D2-K): D2.1(K) [passive], R5.1 [passive]
+  Net-(J6-In): J6.1(In) [passive], R16.2 [passive]
+  Net-(J7-Pad2): J7.2 [passive], R57.1 [passive]
+  Net-(J7-Pad3): J7.3 [passive], R58.1 [passive]
+  Net-(J7-Pad4): J7.4 [passive], R59.2 [passive]
+  Net-(LS1-Pad1): LS1.1(1) [input], R59.1 [passive]
+  Net-(U1-~{VPA}): R6.2 [passive], U1.21(~{VPA}) [input]
+  Net-(U12-INPUT{slash}OE2{slash}GCLK2): R19.1 [passive], U12.2(INPUT/OE2/GCLK2) [input]
+  Net-(U16-XTAL1): C21.1 [passive], U16.19(XTAL1) [input], Y2.2(2) [passive]
+  Net-(U16-XTAL2): C22.2 [passive], U16.18(XTAL2) [input], Y2.1(1) [passive]
+  Net-(Y4-EN): R33.2 [passive], Y4.1(EN) [input]
+  VGA_BLUE: J10.3(3) [passive], R12.1 [passive], R21.1 [passive], R40.2 [passive]
+  VGA_GREEN: J10.2(2) [passive], R22.1 [passive], R25.1 [passive], R26.1 [passive], R41.2 [passive]
+  VGA_RED: J10.1(1) [passive], R20.1 [passive], R23.1 [passive], R31.1 [passive], R42.2 [passive]
+
