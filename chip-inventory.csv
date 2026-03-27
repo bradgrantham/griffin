@@ -1,0 +1,69 @@
+4001,3,quad 2-NOR
+4010,3,hex buffer
+4011,4,quad 2-NAND
+4013,10,dual D flip-flop
+4016,3,quad bilateral switch
+4020,6,14-stage binary ripple counter
+4021,1,8-stage shift
+HEF4021BP,1,8-stage shift
+4027,9,dual J-K flip flop
+4040,4,12-stage binary ripple counter
+4049,7,hex inverter
+4050,3,hex buffer
+4052,2,dual 4-channel mux/demux
+4066,1,quad bilateral switch
+4068,2,8-NAND
+4071,5,quad 2-OR
+4078,6,8-NOR/OR
+4081,9,quad 2-AND
+4094,2,8-stage shift-and-store
+4495,1,hex-to-7-segment driver
+4503,15,hex tri-state buffer
+14508,1,dual 4-bit latch with tri-state
+4520,8,dual 4-bit binary up counter
+4556,1,dual 1-of-4 decoder /demultiplexer
+7400,2,Quad 2-input NAND gate
+74S04,1,Hex inverter
+7404N,1,Hex inverter
+75189,2,Quad RS-232 line receiver (converts RS-232 levels to TTL)
+7476n,2,Dual J-K flip-flop with preset and clear
+74153n,2,Dual 4-input multiplexer
+74155n,3,Dual 2-to-4 line decoder/demultiplexer
+7490an,1,"Decade counter (divide-by-10, or configurable as divide-by-2 and divide-by-5)"
+7408n,1,Quad 2-input AND gate
+74161n,8,Synchronous 4-bit binary counter with parallel load
+741hc161n,6,"Same as 74161, but HC (high-speed CMOS) family"
+74hc153,3,dual 4-input multiplexer
+74HCT245N,4,tri-state octal bus transceiver
+74HC373,2,tri-state octal D-type latch
+8304? 8427?,1,8-bit tristate bidirectional transceiver
+68000P12,1,68K processor
+68681,3,DUART
+KM681000BLP-7,2,"128K SRAM, 70ns"
+MCM60L64P10,2,"8Kx8 SRAM, 100ns"
+KM6264L-15,2,"8Kx8 SRAM, 150ns"
+KM2816A-25,1,2Kx8 EEPROM
+PIC16C65A,3,PIC
+PIC16C64,1,PIC
+MAX232CPE,3,Rs232 voltage converter
+MAX732,1,12V/15V Step-Up Current-Mode Pwm Regulator
+AD9533,1,clock recovery and data retiming IC
+tda7000,1,FM receiver TV tuner
+SP0256A-AL2,1,speech chip
+8044316A,1,MCM68A316E 2Kx8 ROM containing TRS-80 char gen
+AY-3-1350,1,Tunes synthesizer
+567,1,Tone Decoder
+TCM1512AP,1,Telephone tone ringer driver
+TCM5089,1,Tone Encoder
+LM3914N,1,Dot / Bar display driver
+Z84c4006 SIO,2,dual serial port controller for Z80
+Z84C2006 PIO,1,dual parallel port controller for Z80
+Z84C3006,1,counter/timer circuit for Z80
+AM2732A-40,1,"4KB UV EPROM, 400ns"
+AT27C512-25,1,"64K UV EPROM, 250ns"
+NM27C512Q-250,2,"64K UV EPROM, 250ns"
+NM27C512AQ-250,1,"64K UV EPROM, 250ns"
+M27C512-70XFI,5,"64K UV EPROM, 70ns"
+NM27C128Q-250,2,"16K UV EPROM, 250ns"
+TMS27C128JL,1,16K UV EPROM
+A27C128-120DC,2,"16K UV EPROM, 120ns"
