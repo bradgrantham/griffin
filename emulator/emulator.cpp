@@ -272,6 +272,44 @@ class GriffinEmulator : public moira::Moira
         }
     }
 
+    // Wait state penalty (extra SYSCLK cycles) for a memory access,
+    // matching the GLUE CPLD DTACK generation thresholds.
+    //   RAM, GLUE, VIDEO: ws_cnt >= 2  (baseline, 0 penalty)
+    //   ROM, AUDIO:       ws_cnt >= 4  (+2 clocks)
+    //   CF:               ws_cnt >= 14 (+12 clocks)
+    // Note: read16 for RAM calls read8 twice, but RAM penalty is 0
+    // so double-application is harmless.
+    int wait_state_penalty(uint32_t addr) const
+    {
+        if ((ROMoverlay && addr < ROM_SIZE) ||
+            (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW))
+        {
+            return 2;
+        }
+        if (addr >= IO_BASE && addr < IO_BASE + IO_SIZE)
+        {
+            unsigned sub = (addr >> 18) & 0x3;
+            if (sub == 1)       // CF: 0xF40000
+            {
+                return 12;
+            }
+            if (sub == 3)       // AUDIO: 0xFC0000
+            {
+                return 2;
+            }
+        }
+        return 0;
+    }
+
+    void apply_wait_states(uint32_t addr) const
+    {
+        int penalty = wait_state_penalty(addr);
+        if (penalty > 0)
+        {
+            const_cast<GriffinEmulator*>(this)->sync(penalty);
+        }
+    }
+
 public:
 
     enum RAMConfig {RAM_1_BANK_256K, RAM_1M, RAM_2M, RAM_3M, RAM_4M };
@@ -297,6 +335,7 @@ public:
 
     uint8_t read8(uint32_t addr) const override
     {
+        apply_wait_states(addr);
         if(debug & DEBUG_BUS) { printf("read of uint8_t at %06X\n", addr); }
         if (ROMoverlay && (addr < ROM_SIZE)) {
             return ROM[addr];
@@ -336,6 +375,7 @@ public:
 
     uint16_t read16(uint32_t addr) const override
     {
+        apply_wait_states(addr);
         if(debug & DEBUG_BUS) { printf("read of uint16_t at %06X\n", addr); }
         if (ROMoverlay && (addr < ROM_SIZE)) {
             return (ROM[addr] << 8) | ROM[addr + 1];
@@ -359,6 +399,7 @@ public:
 
     void write8(uint32_t addr, uint8_t val) const override
     {
+        apply_wait_states(addr);
         if(debug & DEBUG_BUS) { printf("write of uint8_t %02X at %06X\n", val, addr); }
         if (RAM_BANK_1.contains(addr)) {
             if(RAM_bank1.size() != 0) {
@@ -388,6 +429,7 @@ public:
 
     void write16(uint32_t addr, uint16_t val) const override
     {
+        apply_wait_states(addr);
         if(debug & DEBUG_BUS) { printf("write of uint16_t %04X at %06X\n", val, addr); }
         uint8_t high = (val >> 8);
         uint8_t low = (val & 0xFF);
@@ -468,8 +510,7 @@ struct SoftUART
 
     SoftUART(int start_level) : last_level(start_level) { }
 
-    // Call this at 16x baud rate (9600 * 16 = 153600 Hz)
-    // For a 12 MHz system that's every 78.125 cycles — call every 78 cycles
+    // Call at 16x baud rate; sample interval derived from SYSCLK_HZ and BAUDRATE
     void clock(int level)
     {
         if(debug & DEBUG_UART) printf("clock(%d)\n", level);
