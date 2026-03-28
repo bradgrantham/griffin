@@ -52,17 +52,16 @@ module glue (
 );
 
     // ----------------------------------------------------------------
-    // Baud-rate divisor
+    // Baud-rate divisor — derived from SYSCLK_HZ in griffin.yml
     //
     // UART_DIVISOR = floor(SYSCLK_HZ / baud) - 1
-    //   14.318 MHz / 115200 = 124.3  →  124 - 1 = 123  →  ~115,468 baud (0.23% err)
-    //   12.000 MHz / 115200 = 104.17 →  104 - 1 = 103  →  ~115,384 baud (0.16% err)
     // ----------------------------------------------------------------
-    localparam UART_DIVISOR = 123;   // 14.318 MHz; change to 103 for 12 MHz
+    localparam UART_DIVISOR = (`SYSCLK_HZ / 115200) - 1;
     localparam ENGINE_ABSENT = 1;    // Set to 0 when ENGINE CPLD is populated
     localparam IO_ABSENT     = 0;    // Set to 0 when IO MCU is populated
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
+    reg video_stall_enable;     // power-on state 0 = VIDEO_STALL ignored
 
     wire read = R_nW;
     wire write = ~read;
@@ -80,35 +79,13 @@ module glue (
     // After reset: tristate so the CPU can assert it on double bus
     // fault.  External pull-up required.
     //
-    // Double bus fault detection:
-    //   After reset, wait for nHALT to go high (pull-up settled).
-    //   If nHALT then goes low, the CPU has halted (double bus fault).
-    //   Latch this condition and blink DEBUG_OUT at ~1.7 Hz.
+    // TODO: Double bus fault detection stubbed out to reduce CPLD
+    // resource usage and allow the fitter to honor pin constraints.
+    // Revisit when there is headroom (settling counter + blink
+    // counter used ~28 FFs + product terms).
     // ----------------------------------------------------------------
 
     assign nHALT = RESET ? 1'b0 : 1'bz;
-
-    reg        halt_sensed;      // synchronized nHALT sample
-    reg        halt_seen_high;   // nHALT seen high since reset
-    reg        halt_latched;     // double bus fault detected (sticky)
-    reg [22:0] halt_blink_cnt;   // free-running counter for LED blink
-
-    always @(posedge SYSCLK) begin
-        if (RESET) begin
-            halt_sensed    <= 1'b1;
-            halt_seen_high <= 1'b0;
-            halt_latched   <= 1'b0;
-            halt_blink_cnt <= 23'd0;
-        end else begin
-            halt_sensed <= nHALT;
-            if (halt_sensed)
-                halt_seen_high <= 1'b1;
-            if (halt_seen_high & ~halt_sensed)
-                halt_latched <= 1'b1;
-            if (halt_latched)
-                halt_blink_cnt <= halt_blink_cnt + 23'd1;
-        end
-    end
 
     // Make OE2 busy (OE1/pin 84 is now VIDEO_STALL, GCLR/pin 1 is now nVIDEO_IRQ)
     assign ENGINE_TDI = OE2_pin;
@@ -222,7 +199,9 @@ module glue (
     //   0xF00003  — UART_TX_DATA   (write, byte)
     //   0xF00005  — UART_RX_DATA   (stubbed — handled by IO MCU)
     //   0xF00005  — UART_RX_CONFIG (stubbed — handled by IO MCU)
-    //   0xF00007  — CONFIG         (write, bit 0 = ROM_OVERLAY_DISABLE)
+    //   0xF00007  — CONFIG         (write, bit 0 = ROM_OVERLAY_DISABLE,
+    //                                      bit 1 = IO_RESET_RELEASE,
+    //                                      bit 2 = VIDEO_STALL_ENABLE)
     //
     // A_lo[5:1] selects the word address within the segment.
     // ----------------------------------------------------------------
@@ -268,11 +247,14 @@ module glue (
     always @(posedge SYSCLK) begin
         if(RESET) begin
             rom_overlay_disable <= 0;
+            video_stall_enable  <= 0;
             debug_out_reg       <= 0;
         end else begin
             if (glue_select & lo_byte_selected & write
-                & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1]))
+                & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1])) begin
                 rom_overlay_disable <= D[0];
+                video_stall_enable  <= D[`GLUE_CONFIG_VIDEO_STALL_ENABLE_SHIFT];
+            end
             if (debug_out_select)
                 debug_out_reg <= D[0];
         end
@@ -283,9 +265,9 @@ module glue (
     //
     // Frame: IDLE(1) | START(0) | D0 D1 D2 D3 D4 D5 D6 D7 | STOP(1)
     //
-    // bit_cnt counts down from 9 to 0:
+    // bit_cnt counts down from 10 to 0:
     //   0     = idle (tx line high, ready for new byte)
-    //   9..1  = transmitting (D0..D7 + stop)
+    //   10..1 = transmitting (D0..D7 + stop + guard)
     //
     // baud_div counts down from UART_DIVISOR to 0, generating a
     // single-cycle tick at the baud rate.
@@ -303,10 +285,9 @@ module glue (
     // The 68000 only guarantees valid data by the DTACK handshake point.
     wire uart_tx_load = !tx_busy && uart_tx_select && (ws_cnt >= 4'd2);
 
-    // Priority: halt blink > UART TX > DEBUG_OUT register
-    assign DEBUG_OUT = halt_latched ? halt_blink_cnt[22] :
-                       tx_busy     ? tx_out :
-                       debug_out_reg;
+    // Priority: UART TX > DEBUG_OUT register
+    // (halt blink removed — see TODO above)
+    assign DEBUG_OUT = tx_busy ? tx_out : debug_out_reg;
 
     always @(posedge SYSCLK) begin
         if (RESET) begin
@@ -317,7 +298,7 @@ module glue (
         end else if (uart_tx_load) begin
             // Load frame: {stop, data[7:0]} — start bit via tx_out
             tx_shift <= {1'b1, D[7:0]};
-            bit_cnt  <= 4'd9;        // 9 bits to shift: D0..D7 + stop
+            bit_cnt  <= 4'd10;       // 10 bits: D0..D7 + stop + guard (keeps tx_busy during stop)
             baud_div <= UART_DIVISOR[6:0];
             tx_out   <= 1'b0;        // start bit begins immediately
         end else if (tx_busy) begin
@@ -390,9 +371,11 @@ module glue (
         ((~nIO_SELECT)      & ~IO_ABSENT & ~nIO_DTACK) |  // IO MCU: handshake
         (nAUDIO_LE          & (ws_cnt >= 4'd4));    // AUDIO (nAUDIO_LE is active-high despite name)
 
-    // VIDEO_STALL OR'd into nDTACK: when VIDEO_STALL is high, nDTACK
-    // stays deasserted (high) regardless of dtack_comb, stalling the CPU.
-    assign nDTACK = ~dtack_comb | VIDEO_STALL;
+    // VIDEO_STALL OR'd into nDTACK: when VIDEO_STALL is high and
+    // video_stall_enable is set, nDTACK stays deasserted (high)
+    // regardless of dtack_comb, stalling the CPU.  Default after reset
+    // is disabled so the system boots even if VIDEO_STALL is floating.
+    assign nDTACK = ~dtack_comb | (VIDEO_STALL & video_stall_enable);
 
 
 endmodule
