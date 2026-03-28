@@ -88,10 +88,17 @@ DEBUG\_OUT LED:
 * See also bodges in [griffin.yml](griffin.yml)
 
 
-# Board spin
+# Rev 2
 
 - [ ] Schematic (+PCB if necessary)
   - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
+  - [ ] Determine a more available ROM technology and design around that
+    - [ ] CPLD with I2C ROM?
+    - [ ] RP2350?
+    - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match...
+  - [ ] IO MCU is fragile; put it behind a 68681?
+    - [ ] 68681 manages UART and timers
+    - [ ] 8051 manages PS/2 and uses a serial protocol to 68681
   - [ ] Swap MCU RX and TX - wrong pins!!
   - [ ] Pullups on JTAG lines
   - [ ] 4.7K Pullup on HALT
@@ -101,13 +108,14 @@ DEBUG\_OUT LED:
   - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
   - [ ] More signals between GLUE, VIDEO, ENGINE
     - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
-  - [ ] GND and +5V to test points
+  - [ ] Decoupling caps for every +5V/GND pair
+  - [ ] GND, +5V, D0-D15, A1-A10 to test points
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
     - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
   - [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
   - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
-  - [ ] Add a debug LED on the IO MCU
+  - [ ] Add a debug LED to all ICs so I can get some idea of "alive".  Maybe route to a bar-graph LED.  Or is a MMIO on every device good enough and 68000 can report issue?
 - [ ] PCB only
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
   - [ ] PS2 stabs - move footprint  
@@ -120,6 +128,8 @@ DEBUG\_OUT LED:
   - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
   - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
   - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
+    - [ ] Is there a castellenated version I could solder on?
+    - [ ] Is there a better version, something smaller with fewer pins?
   - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
 
 
