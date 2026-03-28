@@ -72,6 +72,8 @@ peripherals:
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
           - { bit: "1", name: IO_RESET_RELEASE,
               description: "Write 1 to release IO MCU from reset (IO_RESET driven low)" }
+          - { bit: "2", name: VIDEO_STALL_ENABLE,
+              description: "Write 1 to allow VIDEO_STALL to block DTACK; default 0 ignores VIDEO_STALL so system boots without VIDEO" }
 
   ROM:
     part: "2x 64K byte-wide EPROM/Flash"
