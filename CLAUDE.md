@@ -38,6 +38,10 @@
 
 * Prefer C++20 for host-based tools and bare-metal-capable C++20 for the 68000 ROM firmware.
 
+### Design
+
+* In general prefer facilities don't cross-communicate except absolutely necessary.  E.g. a CF card facility can fill in a string with identity, but wouldn't call the UART to print it.  A higher function would call to get the identity, and then call whatever routine it prefers to print the identity or store it in NVRAM or whatever.
+
 ### C/C++ Style
 
 - All block statements (`if`, `else`, `for`, `while`, `switch`) must use braces, even for single-line bodies.
