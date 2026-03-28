@@ -40,7 +40,7 @@ glue/glue.edif: glue/glue.v ../griffin.generated.vh
 	cd glue && $(YOSYS) glue
 
 glue/glue.jed: glue/glue.edif
-	cd glue && $(FITTER) glue -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy debug = on -strategy power_reset on -strategy JTAG = on
+	cd glue && $(FITTER) glue -preassign keep -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy debug = on -strategy power_reset on -strategy JTAG = on
 
 glue/glue.svf: glue/glue.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/glue/glue.jed $(CURDIR)/glue/glue.svf
@@ -65,7 +65,7 @@ video/video.edif: video/video.v ../griffin.generated.vh
 	cd video && $(YOSYS) video
 
 video/video.jed: video/video.edif
-	cd video && $(FITTER) video -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy debug = on -strategy power_reset on -strategy JTAG = on
+	cd video && $(FITTER) video -preassign keep -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy debug = on -strategy power_reset on -strategy JTAG = on
 
 video/video.svf: video/video.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/video/video.jed $(CURDIR)/video/video.svf
