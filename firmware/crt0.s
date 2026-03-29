@@ -40,7 +40,15 @@ vector_table:
     .align	2
     .global _start
 _start:
-    /* One debug pulse == "CPU started, ROM working" */
+    /* Five debug pulses == "CPU started, ROM working" */
+    move.b #0x00, GLUE_DEBUG_OUT
+    move.b #0x01, GLUE_DEBUG_OUT
+    move.b #0x00, GLUE_DEBUG_OUT
+    move.b #0x01, GLUE_DEBUG_OUT
+    move.b #0x00, GLUE_DEBUG_OUT
+    move.b #0x01, GLUE_DEBUG_OUT
+    move.b #0x00, GLUE_DEBUG_OUT
+    move.b #0x01, GLUE_DEBUG_OUT
     move.b #0x00, GLUE_DEBUG_OUT
     move.b #0x01, GLUE_DEBUG_OUT
     move.b #0x00, GLUE_DEBUG_OUT
