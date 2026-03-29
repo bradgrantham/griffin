@@ -1,7 +1,7 @@
 project:
   name: Griffin
   cpu: MC68000
-  clock_hz: 14318181
+  clock_hz: 12000000
   interrupt_mode: autovector
 
 peripherals:
