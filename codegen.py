@@ -61,6 +61,29 @@ def fmt_hex(v, min_digits=2):
 BANNER = f"Generated from griffin.yml by codegen.py on {date.today()} — do not edit"
 
 
+def get_dtack_ws(periph, sysclk_hz):
+    """Extract the wait-state count for a peripheral at the given system clock.
+    Returns None for handshake peripherals (string dtack) or missing dtack."""
+    dtack = periph.get('dtack')
+    if dtack is None or isinstance(dtack, str):
+        return None
+    for entry in dtack:
+        for freq, ws in entry.items():
+            if freq == sysclk_hz:
+                return ws
+    return None
+
+
+def dtack_threshold(ws):
+    """Convert wait states to Verilog ws_cnt threshold, clamped to 14 (BERR at 15)."""
+    return min(2 + 2 * ws, 14)
+
+
+def dtack_penalty(ws):
+    """Convert wait states to emulator extra-cycle penalty (threshold minus baseline)."""
+    return dtack_threshold(ws) - 2
+
+
 # ---------------------------------------------------------------------------
 # C / C++ header
 # ---------------------------------------------------------------------------
@@ -125,6 +148,15 @@ def write_c_header(hw: dict, path: Path) -> None:
         intr = periph.get('interrupt')
         if intr and isinstance(intr, dict) and 'level' in intr:
             w(f"static constexpr uint32_t {pname}_IRQ_LEVEL = {intr['level']}U;")
+
+        # DTACK wait-state constants (for peripherals with fixed wait states)
+        ws = get_dtack_ws(periph, proj['clock_hz'])
+        if ws is not None:
+            thresh = dtack_threshold(ws)
+            pen = dtack_penalty(ws)
+            w(f"static constexpr int {pname}_DTACK_WS = {ws};  // wait states at {proj['clock_hz']} Hz")
+            w(f"static constexpr int {pname}_DTACK_THRESHOLD = {thresh};  // ws_cnt threshold for Verilog")
+            w(f"static constexpr int {pname}_DTACK_PENALTY = {pen};  // extra SYSCLK cycles for emulator")
 
         # IO span: only peripherals in the 0xF0_0000 IO area (not VIDEO/ENGINE/ROM/RAM).
         if linker_section is None and base >= 0xF00000:
@@ -357,6 +389,12 @@ def write_verilog_include(hw: dict, path: Path) -> None:
         intr = periph.get('interrupt')
         if intr and isinstance(intr, dict) and 'level' in intr:
             w(f"`define {pname}_IRQ_LEVEL {intr['level']}")
+
+        # DTACK wait-state threshold (for peripherals with fixed wait states)
+        ws = get_dtack_ws(periph, proj['clock_hz'])
+        if ws is not None:
+            thresh = dtack_threshold(ws)
+            w(f"`define {pname}_DTACK_THRESHOLD 4'd{thresh}  // {ws} WS at {proj['clock_hz']} Hz")
 
         for reg in periph.get('registers', []):
             offset = parse_int(reg['offset'])
