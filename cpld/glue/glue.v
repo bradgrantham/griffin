@@ -69,8 +69,18 @@ module glue (
     wire lo_byte_selected = ~nLDS;
     wire hi_byte_selected = ~nUDS;
 
-    wire RESET = ~nRESET;
     wire AS = ~nAS;
+
+    // ----------------------------------------------------------------
+    // Synchronize nRESET through two flip-flops to eliminate glitches
+    // from the RC reset circuit before deriving RESET and nHALT.
+    // ----------------------------------------------------------------
+    reg nreset_sync1, nreset_sync2;
+    always @(posedge SYSCLK) begin
+        nreset_sync1 <= nRESET;
+        nreset_sync2 <= nreset_sync1;
+    end
+    wire RESET = ~nreset_sync2;
 
     // ----------------------------------------------------------------
     // nHALT — open-drain style bidirectional
@@ -78,6 +88,9 @@ module glue (
     // During reset: drive low (assert HALT to CPU).
     // After reset: tristate so the CPU can assert it on double bus
     // fault.  External pull-up required.
+    //
+    // Uses synchronized RESET so RC ringing on nRESET cannot cause
+    // glitch pulses on nHALT after reset releases.
     //
     // TODO: Double bus fault detection stubbed out to reduce CPLD
     // resource usage and allow the fitter to honor pin constraints.
@@ -326,13 +339,9 @@ module glue (
     // A 4-bit counter (ws_cnt) increments on each SYSCLK while AS is
     // asserted, and is asynchronously cleared when AS deasserts.
     //
-    // Wait-state thresholds (clock cycles from AS assertion):
-    //   RAM banks 1-4: 0 WS → ws_cnt >= 2
-    //   ROM:           1 WS → ws_cnt >= 4
-    //   VIDEO:         0 WS → ws_cnt >= 2  (register access timing)
-    //   GLUE:          0 WS → ws_cnt >= 2
-    //   CF:            7 WS → ws_cnt >= 14
-    //   AUDIO:         1 WS → ws_cnt >= 4
+    // Wait-state thresholds are generated from griffin.yml dtack entries
+    // by codegen.py into griffin.generated.vh as *_DTACK_THRESHOLD defines.
+    // Formula: threshold = min(2 + 2*ws, 14) where ws is from the YAML.
     //
     // Handshake peripherals (no fixed wait states):
     //   ENGINE:  DTACK from ~ENGINE_DTACK (pin 17)
@@ -358,18 +367,18 @@ module glue (
     end
 
     wire dtack_comb =
-        ((~nRAM_1_SEL)          & (ws_cnt >= 4'd2))  |  // RAM bank 1
-        ((~nRAM_2_SEL)   & (ws_cnt >= 4'd2))  |  // RAM bank 2
-        ((~nRAM_3_SEL)   & (ws_cnt >= 4'd2))  |  // RAM bank 3
-        ((~nRAM_4_SEL)   & (ws_cnt >= 4'd2))  |  // RAM bank 4
-        ((~nROM_SELECT)     & (ws_cnt >= 4'd4))  |  // ROM
-        ((~nVIDEO_SELECT)   & (ws_cnt >= 4'd2))  |  // VIDEO (register access)
+        ((~nRAM_1_SEL)          & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // RAM bank 1
+        ((~nRAM_2_SEL)   & (ws_cnt >= `RAM_BANK_2_DTACK_THRESHOLD))  |  // RAM bank 2
+        ((~nRAM_3_SEL)   & (ws_cnt >= `RAM_BANK_3_DTACK_THRESHOLD))  |  // RAM bank 3
+        ((~nRAM_4_SEL)   & (ws_cnt >= `RAM_BANK_4_DTACK_THRESHOLD))  |  // RAM bank 4
+        ((~nROM_SELECT)     & (ws_cnt >= `ROM_DTACK_THRESHOLD))  |  // ROM
+        ((~nVIDEO_SELECT)   & (ws_cnt >= `VIDEO_DTACK_THRESHOLD))  |  // VIDEO (register access)
         ((~nENGINE_SELECT)  & ~ENGINE_ABSENT & ~nENGINE_DTACK) |  // ENGINE: handshake
-        (glue_select        & (ws_cnt >= 4'd2))  |  // GLUE
-        (CF_CS0             & (ws_cnt >= 4'd14)) |  // CF
-        (CF_CS1             & (ws_cnt >= 4'd14)) |  // CF
+        (glue_select        & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
+        (CF_CS0             & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
+        (CF_CS1             & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
         ((~nIO_SELECT)      & ~IO_ABSENT & ~nIO_DTACK) |  // IO MCU: handshake
-        (nAUDIO_LE          & (ws_cnt >= 4'd4));    // AUDIO (nAUDIO_LE is active-high despite name)
+        (nAUDIO_LE          & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO (nAUDIO_LE is active-high despite name)
 
     // VIDEO_STALL OR'd into nDTACK: when VIDEO_STALL is high and
     // video_stall_enable is set, nDTACK stays deasserted (high)
