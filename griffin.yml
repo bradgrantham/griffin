@@ -231,6 +231,8 @@ peripherals:
           description: "Write to arm VIDEO_STALL blocking snoop; write once per visible line before pixel reads" }
       - { offset: 0x14, name: DISARM_SNOOP, access: write, width: 16,
           description: "Write to disarm VIDEO_STALL blocking snoop" }
+      - { offset: 0x16, name: PIXEL_DATA, access: write, width: 16,
+          description: "16-bit pixel data; LSB shifted out first. Write stalls via VIDEO_STALL when latch is full." }
 
   ENGINE:
     part: ATF1508AS
