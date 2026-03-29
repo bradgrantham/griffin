@@ -34,6 +34,20 @@
 
 * I don't have "timeout", use a perl one-liner instead.
 
+## Building components
+
+* Generate C++, Verilog, and assembly includes for components with `make` at project root.
+* Build glue and video in cpld/ with `make glue` or `make video` or `make` (for both)
+* Configure emulator CMake in cpld/ with `cmake -Bbuild .` and build with `cmake --build build`
+* Build the ROM in firmware/ with `make`.  The toolchain is made from a Docker image of an Ubuntu 24 build of crosstool-ng for m68k-unknown-elf for 68000 and not for 68832; see firmware/m68k-crosstool-ng.config, firmware/m68k-{g++,gcc,objcopy,objdump}, BUILD_TOOLCHAIN_CONTAINER, Dockerfile.  The toolchain .tar.gz might not be in git.
+* Build the sanity test ROM image in firmware/ with `make`.  Same toolchain as firmware/.  (Probably should unify the toolchains between firmware and rom at some point...)
+* Build the IO MCU firmware in io-mcu/ with `make`, requires `sdcc`.
+
+## Testing components
+
+* sanity/sanity.bin and firmware/rom.bin should execute in emulator/emulator/build/emulator.
+  * note that IO-MCU UART TX and RX is through a PTY.
+
 ## Claude Code Guidelines
 
 * Prefer C++20 for host-based tools and bare-metal-capable C++20 for the 68000 ROM firmware.
