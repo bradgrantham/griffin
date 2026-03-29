@@ -22,6 +22,7 @@ constexpr uint32_t DEBUG_IO = 0x0002;
 constexpr uint32_t DEBUG_UART = 0x0004;
 constexpr uint32_t DEBUG_DISASSEMBLE = 0x0008;
 constexpr uint32_t DEBUG_IO_MCU = 0x0010;
+constexpr uint32_t DEBUG_DEBUG_BIT = 0x0020;
 constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
@@ -225,7 +226,7 @@ class GriffinEmulator : public moira::Moira
             auto bit = val & GLUE_DEBUG_OUT_MASK;
             if(bit != oldbit)
             {
-                if(debug & DEBUG_IO) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
+                if(debug & DEBUG_DEBUG_BIT) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
             }
             debug_out_latch = val;
         } else if(addr == GLUE_UART_TX_DATA - IO_BASE) {
@@ -273,10 +274,7 @@ class GriffinEmulator : public moira::Moira
     }
 
     // Wait state penalty (extra SYSCLK cycles) for a memory access,
-    // matching the GLUE CPLD DTACK generation thresholds.
-    //   RAM, GLUE, VIDEO: ws_cnt >= 2  (baseline, 0 penalty)
-    //   ROM, AUDIO:       ws_cnt >= 4  (+2 clocks)
-    //   CF:               ws_cnt >= 14 (+12 clocks)
+    // derived from griffin.yml dtack entries via codegen.py.
     // Note: read16 for RAM calls read8 twice, but RAM penalty is 0
     // so double-application is harmless.
     int wait_state_penalty(uint32_t addr) const
@@ -284,18 +282,18 @@ class GriffinEmulator : public moira::Moira
         if ((ROMoverlay && addr < ROM_SIZE) ||
             (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW))
         {
-            return 2;
+            return ROM_DTACK_PENALTY;
         }
         if (addr >= IO_BASE && addr < IO_BASE + IO_SIZE)
         {
             unsigned sub = (addr >> 18) & 0x3;
             if (sub == 1)       // CF: 0xF40000
             {
-                return 12;
+                return CF_DTACK_PENALTY;
             }
             if (sub == 3)       // AUDIO: 0xFC0000
             {
-                return 2;
+                return AUDIO_DTACK_PENALTY;
             }
         }
         return 0;
