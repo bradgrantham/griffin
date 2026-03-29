@@ -1,5 +1,14 @@
 | sanity.s — minimal 68000 board test, no crt0, no C runtime
 |
+| *** ENTIRELY STACK-FREE — no BSR, RTS, or SP usage ***
+| Uses address registers as link registers (like ARM lr):
+|   %a5 = putc/hex4 return
+|   %a4 = hex8 return
+|   %a3 = hex16 return
+|   %a2 = hex32 return
+|   %a6 = puts return
+| bit_delay is inlined (no call overhead).
+|
 | Phase 1: Bitbang "GRIFFIN sanity test ROM\r\n" at 9600 baud
 | Phase 2: Disable ROM overlay, test RAM patterns
 |          On failure: print address/expected/actual, blink LED 0.5 Hz
@@ -18,13 +27,18 @@
 .include "../griffin.generated.inc"
 
 | ---- Timing constants derived from SYSCLK_HZ ----
-| dbra %d0, . from ROM with 1 wait state ~ 16 clocks per iteration
+| dbra %dn, . from ROM with 1 wait state:
+|   68000 DBcc (taken) = 10 base + 2 reads * 2 WS clocks = 14 clocks
+| .equ DBRA_ROM_CLKS, 14
 .equ DBRA_ROM_CLKS, 16
 .equ INNER_COUNT, 500
 
-| Bitbang UART at 9600 baud (approximate — per-bit overhead adds a few %)
+| Bitbang UART at 9600 baud
+| Per-bit overhead: the ~5 instructions between delay loops in putc
+| (move.b, andi, move.b to GLUE, lsr, move.w) ≈ 70 clocks from ROM.
 .equ BITBANG_BAUD, 9600
-.equ BIT_DELAY_COUNT, SYSCLK_HZ / BITBANG_BAUD / DBRA_ROM_CLKS
+.equ BITBANG_BIT_OVERHEAD, 70
+.equ BIT_DELAY_COUNT, (SYSCLK_HZ / BITBANG_BAUD - BITBANG_BIT_OVERHEAD) / DBRA_ROM_CLKS
 
 | Audio: 2x frequency for half-period math, reps for 0.5s
 .equ C4_2X_HZ, 523
@@ -39,12 +53,15 @@
 .equ SLOW_BLINK_OUTER, SYSCLK_HZ / (INNER_COUNT * DBRA_ROM_CLKS) - 1
 
 | Exception handler toggle rates (half-period outer counts)
-| ~20 Hz toggle = 40 edges/sec → half-period = 1/40 s
-| ~5 Hz toggle  = 10 edges/sec → half-period = 1/10 s
-| ~2 Hz toggle  =  4 edges/sec → half-period = 1/4 s
+| ~20 Hz toggle = 40 edges/sec -> half-period = 1/40 s
+| ~5 Hz toggle  = 10 edges/sec -> half-period = 1/10 s
+| ~2 Hz toggle  =  4 edges/sec -> half-period = 1/4 s
 .equ EXC_FAST_OUTER, SYSCLK_HZ / 40 / (INNER_COUNT * DBRA_ROM_CLKS) - 1
 .equ EXC_MED_OUTER,  SYSCLK_HZ / 10 / (INNER_COUNT * DBRA_ROM_CLKS) - 1
 .equ EXC_SLOW_OUTER, SYSCLK_HZ / 4  / (INNER_COUNT * DBRA_ROM_CLKS) - 1
+
+| ~100ms startup delay to let nHALT settle after reset
+.equ HALT_SETTLE_OUTER, SYSCLK_HZ / 10 / (INNER_COUNT * DBRA_ROM_CLKS) - 1
 
 .section .vectors, "a"
     .long   0x00040000          | 0x00: initial SSP (top of 256K)
@@ -56,107 +73,168 @@
 .section .text
 .global _start
 _start:
+    | Wait ~100ms for nHALT to settle after reset
+    move.w  #HALT_SETTLE_OUTER, %d1
+.halt_settle:
+    move.w  #(INNER_COUNT - 1), %d0
+    dbra    %d0, .
+    dbra    %d1, .halt_settle
+
     | 5 pulses = ROM is running
-    move.b #0x00, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x00, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x00, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x00, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x00, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x00, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
+    move.b  #0x00, GLUE_DEBUG_OUT
+    move.b  #0x01, GLUE_DEBUG_OUT
+    move.b  #0x00, GLUE_DEBUG_OUT
+    move.b  #0x01, GLUE_DEBUG_OUT
+    move.b  #0x00, GLUE_DEBUG_OUT
+    move.b  #0x01, GLUE_DEBUG_OUT
+    move.b  #0x00, GLUE_DEBUG_OUT
+    move.b  #0x01, GLUE_DEBUG_OUT
+    move.b  #0x00, GLUE_DEBUG_OUT
+    move.b  #0x01, GLUE_DEBUG_OUT
+    move.b  #0x00, GLUE_DEBUG_OUT
+    move.b  #0x01, GLUE_DEBUG_OUT
+    move.b  #0x01, GLUE_DEBUG_OUT
+    move.b  #0x01, GLUE_DEBUG_OUT
+    move.b  #0x01, GLUE_DEBUG_OUT
     | pin is left high to be IDLE for UART
 
-    | Disable ROM overlay so 0x000000+ is RAM (needed for stack + tests)
+    | Send 10x 'U' (0x55) for scope bit-timing check
+    move.w  #9, %d3
+.u_loop:
+    move.b  #0x55, %d0
+    lea     .u_ret(%pc), %a5
+    jmp     bitbang_putc
+.u_ret:
+    dbra    %d3, .u_loop
+
+    | Disable ROM overlay so 0x000000+ is RAM (needed for RAM tests)
     | ** Does not release IO MCU, does not enable VIDEO_STALL
     move.b  #GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK, GLUE_CONFIG
 
-    | ---- Startup banner (bitbang 9600 baud) ----
+    | ---- Startup banner (bitbang 9600 baud, no stack) ----
     lea     msg_banner(%pc), %a0
-    bsr     bitbang_puts
+    lea     ram_test(%pc), %a6
+    jmp     bitbang_puts
 
     | ---- RAM test ----
-    | %a1 = test address, %d3.b = expected, %d4.b = actual on read-back.
-    | On mismatch, branch to ram_fail with these registers set.
+    | %d7 = failure flag (0 = all pass so far)
+    | Each test: write pattern, read back, on mismatch print and set flag.
+    | ram_check: %a1 = address, %d3 = expected, %d4 = readback.
+    |   %a7 (!) is NOT used; %d7 = fail flag, preserved across prints.
+    |   After printing a failure, returns to address in %a3.
+ram_test:
+    moveq   #0, %d7
 
     lea     0x1000, %a1
-
     move.b  #0xAA, %d3
     move.b  %d3, (%a1)
     move.b  (%a1), %d4
+    lea     .rt1(%pc), %a3
     cmp.b   %d3, %d4
-    bne     ram_fail
+    bne     ram_check_fail
+.rt1:
 
     lea     0x1001, %a1
     move.b  #0x55, %d3
     move.b  %d3, (%a1)
     move.b  (%a1), %d4
+    lea     .rt2(%pc), %a3
     cmp.b   %d3, %d4
-    bne     ram_fail
+    bne     ram_check_fail
+.rt2:
 
     lea     0x1002, %a1
     move.b  #0xFF, %d3
     move.b  %d3, (%a1)
     move.b  (%a1), %d4
+    lea     .rt3(%pc), %a3
     cmp.b   %d3, %d4
-    bne     ram_fail
+    bne     ram_check_fail
+.rt3:
 
     lea     0x1003, %a1
     move.b  #0x00, %d3
     move.b  %d3, (%a1)
     move.b  (%a1), %d4
+    lea     .rt4(%pc), %a3
     cmp.b   %d3, %d4
-    bne     ram_fail
+    bne     ram_check_fail
+.rt4:
 
     | Complement test (catches stuck bits)
     lea     0x1000, %a1
     move.b  #0x55, %d3
     move.b  %d3, (%a1)
     move.b  (%a1), %d4
+    lea     .rt5(%pc), %a3
     cmp.b   %d3, %d4
-    bne     ram_fail
+    bne     ram_check_fail
+.rt5:
 
     lea     0x1001, %a1
     move.b  #0xAA, %d3
     move.b  %d3, (%a1)
     move.b  (%a1), %d4
+    lea     .rt6(%pc), %a3
     cmp.b   %d3, %d4
-    bne     ram_fail
+    bne     ram_check_fail
+.rt6:
+
+    | ---- All tests done, check flag ----
+    tst.b   %d7
+    bne     ram_fail_blink
 
     | ---- RAM test passed ----
     lea     msg_ram_ok(%pc), %a0
-    bsr     bitbang_puts
-    bra     uart_loop
+    lea     uart_loop(%pc), %a6
+    jmp     bitbang_puts
 
-| ---- RAM test failure ----
-| %a1 = failed address, %d3.b = expected, %d4.b = actual
-ram_fail:
+| ---- Print one RAM failure and continue ----
+| %a1 = failed address, %d3.b = expected, %d4.b = actual, %a3 = return
+| Sets %d7 = 1 (failure flag).  Clobbers %d0-%d2, %d4-%d6, %a3.
+| %a3 is saved in %a1 (after extracting address) since hex32 clobbers %a3.
+| %d3 and %d7 survive (not clobbered by hex/puts routines).
+ram_check_fail:
+    moveq   #1, %d7
+    | Save actual value in high word of %d7 (low word keeps flag)
+    swap    %d7                     | flag -> high word
+    move.b  %d4, %d7               | actual -> low byte
+    swap    %d7                     | actual in high word, flag (1) in low word
+
     lea     msg_fail_at(%pc), %a0
-    bsr     bitbang_puts
-
+    lea     .rcf_addr(%pc), %a6
+    jmp     bitbang_puts
+.rcf_addr:
     move.l  %a1, %d0
-    bsr     bitbang_hex32
-
+    move.l  %a3, %a1               | save return addr (%a3 clobbered by hex32)
+    lea     .rcf_exp_label(%pc), %a2
+    jmp     bitbang_hex32
+.rcf_exp_label:
     lea     msg_fail_exp(%pc), %a0
-    bsr     bitbang_puts
-
+    lea     .rcf_exp_val(%pc), %a6
+    jmp     bitbang_puts
+.rcf_exp_val:
     move.b  %d3, %d0
-    bsr     bitbang_hex8
-
+    lea     .rcf_got_label(%pc), %a4
+    jmp     bitbang_hex8
+.rcf_got_label:
     lea     msg_fail_got(%pc), %a0
-    bsr     bitbang_puts
-
-    move.b  %d4, %d0
-    bsr     bitbang_hex8
-
-    bsr     bitbang_crlf
+    lea     .rcf_got_val(%pc), %a6
+    jmp     bitbang_puts
+.rcf_got_val:
+    swap    %d7                     | actual -> low word
+    move.b  %d7, %d0
+    swap    %d7                     | flag back to low word
+    lea     .rcf_crlf(%pc), %a4
+    jmp     bitbang_hex8
+.rcf_crlf:
+    move.b  #0x0D, %d0
+    lea     .rcf_lf(%pc), %a5
+    jmp     bitbang_putc
+.rcf_lf:
+    move.b  #0x0A, %d0
+    move.l  %a1, %a5               | return to next test (saved in a1)
+    jmp     bitbang_putc
 
     | Blink LED at 0.5 Hz (1s on, 1s off) forever
 ram_fail_blink:
@@ -211,7 +289,11 @@ uart_loop:
 
     | Silence 0.5s
     move.b  #0x80, AUDIO_DAC
-    bsr     delay_500ms
+    move.w  #DELAY_OUTER, %d1
+.sil1:
+    move.w  #(INNER_COUNT - 1), %d0
+    dbra    %d0, .
+    dbra    %d1, .sil1
 
     | C5 (523.25 Hz) for ~0.5s
     move.w  #C5_REPS, %d3
@@ -233,107 +315,118 @@ uart_loop:
 
     | Silence 0.5s
     move.b  #0x80, AUDIO_DAC
-    bsr     delay_500ms
+    move.w  #DELAY_OUTER, %d1
+.sil2:
+    move.w  #(INNER_COUNT - 1), %d0
+    dbra    %d0, .
+    dbra    %d1, .sil2
 
     bra     uart_loop
 
-| ---- Subroutine: ~500ms delay ----
-delay_500ms:
-    move.w  #DELAY_OUTER, %d1
-.d500_loop:
-    move.w  #(INNER_COUNT - 1), %d0
-    dbra    %d0, .
-    dbra    %d1, .d500_loop
-    rts
-
 | ====================================================================
-| Bitbang UART subroutines (9600 baud via GLUE_DEBUG_OUT register)
+| Bitbang UART routines (9600 baud via GLUE_DEBUG_OUT register)
 |
-| Register convention: all routines clobber %d0, %d1, %d2.
-| bitbang_puts also clobbers %a0.  All other regs preserved.
+| ALL STACK-FREE — link register convention:
+|   %a5 = return from bitbang_putc / bitbang_hex4
+|   %a4 = return from bitbang_hex8
+|   %a3 = return from bitbang_hex16
+|   %a2 = return from bitbang_hex32
+|   %a6 = return from bitbang_puts
+|
+| bit_delay is inlined as a dbra loop (no call overhead).
+| Data register saves replace stack push/pop in hex routines:
+|   %d4 = hex8 save, %d5 = hex16 save, %d6 = hex32 save
 | ====================================================================
 
 | bitbang_putc — send byte in %d0.b, 8N1 LSB-first
+| Return via jmp (%a5).  Clobbers %d0, %d1, %d2.
 bitbang_putc:
     move.w  #7, %d2
     | Start bit (low)
     move.b  #0x00, GLUE_DEBUG_OUT
-    bsr     bit_delay
-.bp_bit:
+    move.w  #BIT_DELAY_COUNT, %d1
+.bpc_sd:
+    dbra    %d1, .bpc_sd
+.bpc_bit:
     move.b  %d0, %d1
     andi.b  #0x01, %d1
     move.b  %d1, GLUE_DEBUG_OUT
     lsr.b   #1, %d0
-    bsr     bit_delay
-    dbra    %d2, .bp_bit
+    move.w  #BIT_DELAY_COUNT, %d1
+.bpc_dd:
+    dbra    %d1, .bpc_dd
+    dbra    %d2, .bpc_bit
     | Stop bit (high)
     move.b  #0x01, GLUE_DEBUG_OUT
-    bsr     bit_delay
-    rts
-
-bit_delay:
     move.w  #BIT_DELAY_COUNT, %d1
-.bd:
-    dbra    %d1, .bd
-    rts
+.bpc_stop:
+    dbra    %d1, .bpc_stop
+    jmp     (%a5)
 
 | bitbang_puts — send null-terminated string at (%a0)
+| Return via jmp (%a6).  Clobbers %d0, %d1, %d2, %a0.
 bitbang_puts:
+.bps_loop:
     move.b  (%a0)+, %d0
     beq.s   .bps_done
-    bsr     bitbang_putc
-    bra.s   bitbang_puts
+    lea     .bps_loop(%pc), %a5
+    jmp     bitbang_putc
 .bps_done:
-    rts
-
-| bitbang_crlf — send CR LF
-bitbang_crlf:
-    move.b  #0x0D, %d0
-    bsr     bitbang_putc
-    move.b  #0x0A, %d0
-    bra     bitbang_putc
+    jmp     (%a6)
 
 | bitbang_hex4 — send low nibble of %d0 as hex ASCII
+| Tail-calls bitbang_putc; returns via jmp (%a5).  Clobbers %d0, %d1, %d2.
 bitbang_hex4:
     andi.b  #0x0F, %d0
     cmpi.b  #10, %d0
     blt.s   .bh4_digit
     addi.b  #('A' - 10), %d0
-    bra     bitbang_putc
+    jmp     bitbang_putc
 .bh4_digit:
     addi.b  #'0', %d0
-    bra     bitbang_putc
+    jmp     bitbang_putc
 
 | bitbang_hex8 — send %d0.b as 2 hex chars (high nibble first)
+| Return via jmp (%a4).  Clobbers %d0, %d1, %d2, %d4.
 bitbang_hex8:
-    move.l  %d0, -(%sp)
+    move.b  %d0, %d4
     lsr.b   #4, %d0
-    bsr     bitbang_hex4
-    move.l  (%sp)+, %d0
-    bra     bitbang_hex4
+    lea     .bh8_lo(%pc), %a5
+    jmp     bitbang_hex4
+.bh8_lo:
+    move.b  %d4, %d0
+    move.l  %a4, %a5
+    jmp     bitbang_hex4
 
 | bitbang_hex16 — send %d0.w as 4 hex chars
+| Return via jmp (%a3).  Clobbers %d0, %d1, %d2, %d4, %d5.
 bitbang_hex16:
-    move.l  %d0, -(%sp)
+    move.w  %d0, %d5
     lsr.w   #8, %d0
-    bsr     bitbang_hex8
-    move.l  (%sp)+, %d0
-    bra     bitbang_hex8
+    lea     .bh16_lo(%pc), %a4
+    jmp     bitbang_hex8
+.bh16_lo:
+    move.b  %d5, %d0
+    move.l  %a3, %a4
+    jmp     bitbang_hex8
 
 | bitbang_hex32 — send %d0.l as 8 hex chars
+| Return via jmp (%a2).  Clobbers %d0, %d1, %d2, %d4, %d5, %d6.
 bitbang_hex32:
-    move.l  %d0, -(%sp)
+    move.l  %d0, %d6
     swap    %d0
-    bsr     bitbang_hex16
-    move.l  (%sp)+, %d0
-    bra     bitbang_hex16
+    lea     .bh32_lo(%pc), %a3
+    jmp     bitbang_hex16
+.bh32_lo:
+    move.w  %d6, %d0
+    move.l  %a2, %a3
+    jmp     bitbang_hex16
 
 | ====================================================================
 | Exception handlers — infinite toggle loops on DEBUG_OUT
 |
-| Each handler resets the stack pointer (RAM may be broken) and
-| toggles DEBUG_OUT at a unique rate so the exception type can be
-| identified on a scope without a logic analyzer.
+| Each handler resets the stack pointer and toggles DEBUG_OUT at a
+| unique rate so the exception type can be identified on a scope.
 |
 | Note: the 68000 pushes a stack frame before vectoring here.
 | With ROM overlay active the push writes to ROM (silently lost

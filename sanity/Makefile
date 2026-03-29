@@ -14,6 +14,12 @@ sanity.bin: sanity.elf
 sanity.elf: sanity.s linker.ld ../griffin.generated.ld ../griffin.generated.inc
 	$(M68K_GCC) -nostdlib -T $(SANITY_DIR)/linker.ld $(SANITY_DIR)/sanity.s -o $(SANITY_DIR)/sanity.elf
 
+flash-even: sanity_even.bin
+	minipro -s -b -p "M27C512@DIP28" -w sanity_even.bin
+
+flash-odd: sanity_odd.bin
+	minipro -s -b -p "M27C512@DIP28" -w sanity_odd.bin
+
 clean:
 	rm -f sanity.elf sanity.bin sanity_even.bin sanity_odd.bin
 
