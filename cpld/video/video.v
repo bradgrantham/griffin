@@ -9,15 +9,16 @@ module video (
     // Reset
     input  wire        nRESET,
 
-    // Bus interface — directly from CPU / GLUE
-    input  wire        nVIDEO_SELECT,     // nVIDEO_SELECT from GLUE (directly on OE1)
-    input  wire        nAS,
-    input  wire        nUDS,
-    input  wire        nLDS,
-    input  wire        R_nW,
-    input  wire [5:1]  A,
-    input  wire [15:0] D,
-    input  wire [2:0]  FC,
+// XXX bringup
+//      // Bus interface — directly from CPU / GLUE
+//      input  wire        nVIDEO_SELECT,     // nVIDEO_SELECT from GLUE (directly on OE1)
+//      input  wire        nAS,
+//      input  wire        nUDS,
+//      input  wire        nLDS,
+//      input  wire        R_nW,
+//      input  wire [5:1]  A,
+//      input  wire [15:0] D,
+//      input  wire [2:0]  FC,
 
     // Composite video outputs
     output reg         CPST_PIXEL,
@@ -26,9 +27,9 @@ module video (
     output wire        VGA_CLK_ENB,
 
     // Control outputs
-    output wire        VIDEO_STALL,
-    output wire        nVIDEO_IRQ,
-    output wire        VGA_B0
+// XXX bringup
+//      output wire        VIDEO_STALL,
+//      output wire        nVIDEO_IRQ,
 );
 
     // ----------------------------------------------------------------
@@ -148,176 +149,182 @@ module video (
         end
     end
 
-    // ----------------------------------------------------------------
-    // Bus write detect (SYSCLK domain)
-    //   Pixel data register at 0xE00016: A[5:1] = 5'b01011
-    // ----------------------------------------------------------------
-
-    wire write       = ~R_nW;
-    wire selected    = ~nVIDEO_SELECT & ~nAS;
-    wire pixel_write = selected & write & ~nUDS & ~nLDS
-                       & (A[5:1] == 5'b01011);
-
-    reg pixel_write_prev;
-    always @(posedge SYSCLK or posedge RESET)
-    begin
-        if (RESET)
-        begin
-            pixel_write_prev <= 1'b0;
-        end
-        else
-        begin
-            pixel_write_prev <= pixel_write;
-        end
-    end
-    wire pixel_write_pulse = pixel_write & ~pixel_write_prev;
-
-    // ----------------------------------------------------------------
-    // Input latch (SYSCLK domain)
-    //   Captures D[15:0] on write; sets latch_full.
-    //   Cleared when PIXEL_CLK domain consumes the data.
-    // ----------------------------------------------------------------
-
-    reg [15:0] latch;
-    reg        latch_full;
-
-    // Synchronize latch_consumed from PIXEL_CLK -> SYSCLK domain
-    reg consumed_sync1, consumed_sync2;
-    always @(posedge SYSCLK or posedge RESET)
-    begin
-        if (RESET)
-        begin
-            consumed_sync1 <= 1'b0;
-            consumed_sync2 <= 1'b0;
-        end
-        else
-        begin
-            consumed_sync1 <= latch_consumed;
-            consumed_sync2 <= consumed_sync1;
-        end
-    end
-
-    always @(posedge SYSCLK or posedge RESET)
-    begin
-        if (RESET)
-        begin
-            latch      <= 16'd0;
-            latch_full <= 1'b0;
-        end
-        else
-        begin
-            if (consumed_sync2)
-            begin
-                latch_full <= 1'b0;
-            end
-            if (pixel_write_pulse & ~latch_full)
-            begin
-                latch      <= D;
-                latch_full <= 1'b1;
-            end
-        end
-    end
-
-    // VIDEO_STALL: block DTACK while latch is full
-    assign VIDEO_STALL = latch_full;
-
-    // ----------------------------------------------------------------
-    // Clock domain crossing: latch_full SYSCLK -> PIXEL_CLK
-    // ----------------------------------------------------------------
-
-    reg latch_full_sync1, latch_full_sync2;
-    always @(posedge PIXEL_CLK or posedge RESET)
-    begin
-        if (RESET)
-        begin
-            latch_full_sync1 <= 1'b0;
-            latch_full_sync2 <= 1'b0;
-        end
-        else
-        begin
-            latch_full_sync1 <= latch_full;
-            latch_full_sync2 <= latch_full_sync1;
-        end
-    end
-
-    // ----------------------------------------------------------------
-    // Shift register + latch consumed handshake (PIXEL_CLK domain)
-    // ----------------------------------------------------------------
-
-    reg [15:0] shift_reg;
-    reg [3:0]  pixel_cnt;
-    reg        shift_active;
-    reg        latch_consumed;
-
-    always @(posedge PIXEL_CLK or posedge RESET)
-    begin
-        if (RESET)
-        begin
-            shift_reg      <= 16'd0;
-            pixel_cnt      <= 4'd0;
-            shift_active   <= 1'b0;
-            latch_consumed <= 1'b0;
-        end
-        else
-        begin
-            // Clear consumed flag once SYSCLK domain has acknowledged
-            if (~latch_full_sync2 & latch_consumed)
-            begin
-                latch_consumed <= 1'b0;
-            end
-
-            if (active_video)
-            begin
-                if (shift_active)
-                begin
-                    if (pixel_cnt == 4'd0)
-                    begin
-                        // Current word exhausted — try to load next
-                        if (latch_full_sync2 & ~latch_consumed)
-                        begin
-                            shift_reg      <= latch;
-                            pixel_cnt      <= 4'd15;
-                            latch_consumed <= 1'b1;
-                        end
-                        else
-                        begin
-                            // Underflow: no data ready
-                            shift_active <= 1'b0;
-                        end
-                    end
-                    else
-                    begin
-                        // Shift out LSB-first
-                        shift_reg <= {1'b0, shift_reg[15:1]};
-                        pixel_cnt <= pixel_cnt - 4'd1;
-                    end
-                end
-                else
-                begin
-                    // Inactive — try to load from latch
-                    if (latch_full_sync2 & ~latch_consumed)
-                    begin
-                        shift_reg      <= latch;
-                        pixel_cnt      <= 4'd15;
-                        shift_active   <= 1'b1;
-                        latch_consumed <= 1'b1;
-                    end
-                end
-            end
-            else
-            begin
-                // Blanking: reset shift state for next line
-                shift_active <= 1'b0;
-                pixel_cnt    <= 4'd0;
-            end
-        end
-    end
+// XXX comment out bus functionality for debugging
+//      // ----------------------------------------------------------------
+//      // Bus write detect (SYSCLK domain)
+//      //   Pixel data register at 0xE00016: A[5:1] = 5'b01011
+//      // ----------------------------------------------------------------
+//  
+//      wire write       = ~R_nW;
+//      wire selected    = ~nVIDEO_SELECT & ~nAS;
+//      wire pixel_write = selected & write & ~nUDS & ~nLDS
+//                         & (A[5:1] == 5'b01011);
+//  
+//      reg pixel_write_prev;
+//      always @(posedge SYSCLK or posedge RESET)
+//      begin
+//          if (RESET)
+//          begin
+//              pixel_write_prev <= 1'b0;
+//          end
+//          else
+//          begin
+//              pixel_write_prev <= pixel_write;
+//          end
+//      end
+//      wire pixel_write_pulse = pixel_write & ~pixel_write_prev;
+//  
+//      // ----------------------------------------------------------------
+//      // Input latch (SYSCLK domain)
+//      //   Captures D[15:0] on write; sets latch_full.
+//      //   Cleared when PIXEL_CLK domain consumes the data.
+//      // ----------------------------------------------------------------
+//  
+//      reg [15:0] latch;
+//      reg        latch_full;
+//  
+//      // Synchronize latch_consumed from PIXEL_CLK -> SYSCLK domain
+//      reg consumed_sync1, consumed_sync2;
+//      always @(posedge SYSCLK or posedge RESET)
+//      begin
+//          if (RESET)
+//          begin
+//              consumed_sync1 <= 1'b0;
+//              consumed_sync2 <= 1'b0;
+//          end
+//          else
+//          begin
+//              consumed_sync1 <= latch_consumed;
+//              consumed_sync2 <= consumed_sync1;
+//          end
+//      end
+//  
+//      always @(posedge SYSCLK or posedge RESET)
+//      begin
+//          if (RESET)
+//          begin
+//              latch      <= 16'd0;
+//              latch_full <= 1'b0;
+//          end
+//          else
+//          begin
+//              if (consumed_sync2)
+//              begin
+//                  latch_full <= 1'b0;
+//              end
+//              if (pixel_write_pulse & ~latch_full)
+//              begin
+//                  latch      <= D;
+//                  latch_full <= 1'b1;
+//              end
+//          end
+//      end
+//  
+//      // VIDEO_STALL: block DTACK while latch is full
+//      assign VIDEO_STALL = latch_full;
+//  
+//      // ----------------------------------------------------------------
+//      // Clock domain crossing: latch_full SYSCLK -> PIXEL_CLK
+//      // ----------------------------------------------------------------
+//  
+//      reg latch_full_sync1, latch_full_sync2;
+//      always @(posedge PIXEL_CLK or posedge RESET)
+//      begin
+//          if (RESET)
+//          begin
+//              latch_full_sync1 <= 1'b0;
+//              latch_full_sync2 <= 1'b0;
+//          end
+//          else
+//          begin
+//              latch_full_sync1 <= latch_full;
+//              latch_full_sync2 <= latch_full_sync1;
+//          end
+//      end
+//  
+//      // ----------------------------------------------------------------
+//      // Shift register + latch consumed handshake (PIXEL_CLK domain)
+//      // ----------------------------------------------------------------
+//  
+//      reg [15:0] shift_reg;
+//      reg [3:0]  pixel_cnt;
+//      reg        shift_active;
+//      reg        latch_consumed;
+//  
+//      always @(posedge PIXEL_CLK or posedge RESET)
+//      begin
+//          if (RESET)
+//          begin
+//              shift_reg      <= 16'd0;
+//              pixel_cnt      <= 4'd0;
+//              shift_active   <= 1'b0;
+//              latch_consumed <= 1'b0;
+//          end
+//          else
+//          begin
+//              // Clear consumed flag once SYSCLK domain has acknowledged
+//              if (~latch_full_sync2 & latch_consumed)
+//              begin
+//                  latch_consumed <= 1'b0;
+//              end
+//  
+//              if (active_video)
+//              begin
+//                  if (shift_active)
+//                  begin
+//                      if (pixel_cnt == 4'd0)
+//                      begin
+//                          // Current word exhausted — try to load next
+//                          if (latch_full_sync2 & ~latch_consumed)
+//                          begin
+//                              shift_reg      <= latch;
+//                              pixel_cnt      <= 4'd15;
+//                              latch_consumed <= 1'b1;
+//                          end
+//                          else
+//                          begin
+//                              // Underflow: no data ready
+//                              shift_active <= 1'b0;
+//                          end
+//                      end
+//                      else
+//                      begin
+//                          // Shift out LSB-first
+//                          shift_reg <= {1'b0, shift_reg[15:1]};
+//                          pixel_cnt <= pixel_cnt - 4'd1;
+//                      end
+//                  end
+//                  else
+//                  begin
+//                      // Inactive — try to load from latch
+//                      if (latch_full_sync2 & ~latch_consumed)
+//                      begin
+//                          shift_reg      <= latch;
+//                          pixel_cnt      <= 4'd15;
+//                          shift_active   <= 1'b1;
+//                          latch_consumed <= 1'b1;
+//                      end
+//                  end
+//              end
+//              else
+//              begin
+//                  // Blanking: reset shift state for next line
+//                  shift_active <= 1'b0;
+//                  pixel_cnt    <= 4'd0;
+//              end
+//          end
+//      end
 
     // ----------------------------------------------------------------
     // Pixel output (PIXEL_CLK domain)
     //   Output shift register MSB during active video when data valid,
     //   otherwise black (0).
     // ----------------------------------------------------------------
+
+    // XXX bringup 
+    wire h4 = h_cnt[4];
+    wire v4 = v_cnt[4];
+    wire checkerboard = h4 ^ v4;
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
@@ -327,9 +334,11 @@ module video (
         end
         else
         begin
-            if (active_video & shift_active)
+            // XXX bringup 
+            // if (active_video & shift_active)
+            if (active_video)
             begin
-                CPST_PIXEL <= shift_reg[0];
+                CPST_PIXEL <= checkerboard; // XXX bringup // shift_reg[0];
             end
             else
             begin
