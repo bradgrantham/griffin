@@ -1,0 +1,4 @@
+#!/bin/sh
+set -e
+magick splash.jpg -resize 640x240! -colorspace Gray -dither FloydSteinberg -colors 2 -normalize -depth 8 splash_mono.pgm
+python3 convert_splash.py
