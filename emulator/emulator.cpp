@@ -503,6 +503,41 @@ struct CFState
     }
 };
 
+// ---------------------------------------------------------------------------
+// GLUE timer emulation — ÷8 prescaler + 5-bit auto-reload counter
+//
+// On real hardware, arming the timer blocks ALL DTACK until the next
+// zero-crossing, freezing the CPU.  Moira executes whole instructions,
+// so we approximate by advancing the clock (sync) at the ARM write.
+// The total cycle count between I/O operations matches hardware.
+// ---------------------------------------------------------------------------
+
+struct TimerState
+{
+    uint8_t period = 0;       // 5-bit register value (0 = stopped)
+    uint64_t start_clock = 0; // SYSCLK when timer was last loaded
+
+    bool running() const { return period != 0; }
+    uint32_t period_clocks() const { return static_cast<uint32_t>(period) * 8; }
+
+    // Cycles from 'now' until the next zero-crossing.
+    // Returns 0 if stopped or exactly on a zero-crossing.
+    uint32_t cycles_to_zero(uint64_t now) const
+    {
+        if (!running())
+        {
+            return 0;
+        }
+        uint32_t pc = period_clocks();
+        uint64_t elapsed = (now - start_clock) % pc;
+        if (elapsed == 0)
+        {
+            return 0;
+        }
+        return pc - static_cast<uint32_t>(elapsed);
+    }
+};
+
 // IO_MCU event queue — mirrors the real MCU's event FIFO.
 // Firmware reads IO_MCU_RX_DATA to dequeue; IO_MCU_STATUS reports QUEUE_NOTEMPTY.
 struct IOmcuState
@@ -585,6 +620,7 @@ class GriffinEmulator : public moira::Moira
     PTYConsole pty_console;
     mutable IOmcuState io_mcu;
     mutable CFState cf;
+    mutable TimerState timer;
 
     static bool is_cf_addr(uint32_t io_offset)
     {
@@ -664,6 +700,23 @@ class GriffinEmulator : public moira::Moira
             {
                 if(debug & DEBUG_IO) printf("IO_MCU reset released\n");
                 io_mcu.io_reset_released = true;
+            }
+        } else if(addr == GLUE_TIMER - IO_BASE) {
+            timer.period = val & 0x1F;
+            timer.start_clock = getClock();
+            if (debug & DEBUG_IO)
+            {
+                printf("[TIMER: period=%u (%u clks)]\n", timer.period, timer.period_clocks());
+            }
+        } else if(addr == GLUE_TIMER_ARM - IO_BASE) {
+            uint32_t stall = timer.cycles_to_zero(getClock());
+            if (stall > 0)
+            {
+                const_cast<GriffinEmulator*>(this)->sync(stall);
+            }
+            if (debug & DEBUG_IO)
+            {
+                printf("[TIMER ARM: stall=%u clks]\n", stall);
             }
         } else if(addr == IO_MCU_TX_DATA - IO_BASE) {
             // IO_MCU UART TX: send to PTY console

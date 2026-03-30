@@ -74,6 +74,33 @@ peripherals:
               description: "Write 1 to release IO MCU from reset (IO_RESET driven low)" }
           - { bit: "2", name: VIDEO_STALL_ENABLE,
               description: "Write 1 to allow VIDEO_STALL to block DTACK; default 0 ignores VIDEO_STALL so system boots without VIDEO" }
+      - offset: 0x09
+        name: TIMER
+        access: write
+        width: 8
+        description: |
+          5-bit auto-reload timer period with ÷8 prescaler (bits 4:0).
+          Effective period = N × 8 SYSCLK cycles (N = 1..31, range
+          8..248 clocks, 0.67..20.7 µs at 12 MHz).  Writing a non-zero
+          value loads the period register, resets the prescaler, and
+          starts a free-running countdown that auto-reloads on reaching
+          0.  Writing 0 stops the timer.  Use with TIMER_ARM to create
+          deterministic periodic I/O timing without cycle counting.
+          For periods > 248, chain multiple TIMER_ARM writes.
+        bits:
+          - { bit: "4:0", name: PERIOD, description: "Countdown period in units of 8 SYSCLK cycles (1-31)" }
+      - offset: 0x0B
+        name: TIMER_ARM
+        access: write
+        width: 8
+        description: |
+          Arm the timer gate.  Any write sets the armed flag; data
+          value is ignored.  While armed, ALL bus DTACK is blocked
+          (CPU frozen) until the timer countdown reaches 0.  Armed
+          flag auto-clears on the next timer zero-crossing.
+          Typical use: arm, then issue the periodic I/O write — the
+          stall absorbs variable instruction timing so the period
+          between successive I/O operations is exactly TIMER clocks.
 
   ROM:
     part: "2x 64K byte-wide EPROM/Flash"

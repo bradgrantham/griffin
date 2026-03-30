@@ -222,6 +222,8 @@ module glue (
     localparam [23:0] GLUE_CONFIG_ADDR    = `GLUE_CONFIG;
     localparam [23:0] GLUE_DEBUG_ADDR     = `GLUE_DEBUG_OUT;
     localparam [23:0] GLUE_UART_STAT_ADDR = `GLUE_UART_STATUS;
+    localparam [23:0] GLUE_TIMER_ADDR     = `GLUE_TIMER;
+    localparam [23:0] GLUE_TIMER_ARM_ADDR = `GLUE_TIMER_ARM;
     // GLUE_UART_RX_ADDR removed — RX stubbed out (see above)
 
     wire debug_out_select   = glue_select & lo_byte_selected & write
@@ -232,6 +234,10 @@ module glue (
                               & (A_lo[5:1] == GLUE_UART_STAT_ADDR[5:1]);
     wire uart_stat_select   = glue_select & lo_byte_selected & read
                               & (A_lo[5:1] == GLUE_UART_STAT_ADDR[5:1]);
+    wire timer_write_select = glue_select & lo_byte_selected & write
+                              & (A_lo[5:1] == GLUE_TIMER_ADDR[5:1]);
+    wire timer_arm_select   = glue_select & lo_byte_selected & write
+                              & (A_lo[5:1] == GLUE_TIMER_ARM_ADDR[5:1]);
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -334,6 +340,68 @@ module glue (
     // ----------------------------------------------------------------
 
     // ----------------------------------------------------------------
+    // 5-bit auto-reload timer with ÷8 prescaler and arm gate
+    //
+    // A free-running 3-bit prescaler divides SYSCLK by 8.  The 5-bit
+    // countdown timer decrements on each prescaler rollover, giving
+    // an effective period of 8*N SYSCLK (N = 1..31, i.e. 8..248
+    // clocks, 0.67..20.7 µs at 12 MHz).  The prescaler has no load
+    // path — just a free-running counter — so it costs fewer product
+    // terms than adding 3 more reload-mux bits to the timer itself.
+    //
+    // Writing GLUE_TIMER sets the period and starts/restarts the
+    // countdown; writing 0 stops it.  Writing GLUE_TIMER_ARM sets
+    // the armed flag, which blocks ALL bus DTACK until the next
+    // timer zero-crossing, then auto-clears.
+    //
+    //   move.b  #13, TIMER        ; period = 13*8 = 104 clocks (115200 baud)
+    // .loop:
+    //   <set up next bit>
+    //   move.b  #0, TIMER_ARM     ; arm — next bus cycle stalls
+    //   move.b  d0, DEBUG_OUT     ; toggles exactly 104 clocks apart
+    //   dbra    d1, .loop
+    //   move.b  #0, TIMER         ; stop
+    // ----------------------------------------------------------------
+    reg [2:0] timer_prescale;
+    reg [4:0] timer_period;
+    reg [4:0] timer_cnt;
+    reg       timer_armed;
+
+    wire prescale_tick = (timer_prescale == 3'd0);
+    wire timer_zero    = (timer_cnt == 5'd0);
+    wire timer_running = (timer_period != 5'd0);
+
+    always @(posedge SYSCLK) begin
+        if (RESET) begin
+            timer_prescale <= 3'd0;
+            timer_period   <= 5'd0;
+            timer_cnt      <= 5'd0;
+            timer_armed    <= 1'b0;
+        end else begin
+            // Prescaler: free-running ÷8, resets on period load
+            if (timer_write_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
+                timer_prescale <= 3'd7;
+                timer_period   <= D[4:0];
+                timer_cnt      <= D[4:0];
+            end else if (timer_running) begin
+                timer_prescale <= timer_prescale - 3'd1;
+                if (prescale_tick) begin
+                    if (timer_zero) begin
+                        timer_cnt   <= timer_period;
+                        timer_armed <= 1'b0;
+                    end else begin
+                        timer_cnt <= timer_cnt - 5'd1;
+                    end
+                end
+            end
+
+            // Arm flag — set by TIMER_ARM write, cleared on zero-crossing above
+            if (timer_arm_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))
+                timer_armed <= 1'b1;
+        end
+    end
+
+    // ----------------------------------------------------------------
     // DTACK generation
     //
     // A 4-bit counter (ws_cnt) increments on each SYSCLK while AS is
@@ -384,7 +452,15 @@ module glue (
     // video_stall_enable is set, nDTACK stays deasserted (high)
     // regardless of dtack_comb, stalling the CPU.  Default after reset
     // is disabled so the system boots even if VIDEO_STALL is floating.
-    assign nDTACK = ~dtack_comb | (VIDEO_STALL & video_stall_enable);
+    //
+    // Timer armed gate: when armed and timer is not at zero, block
+    // ALL DTACK to freeze the CPU until the next zero-crossing.
+    // Timer stall: block DTACK while armed, release on the prescale
+    // tick where the counter reaches zero (i.e. timer_zero AND
+    // prescale_tick — the moment the armed flag clears).
+    assign nDTACK = ~dtack_comb
+                  | (VIDEO_STALL & video_stall_enable)
+                  | (timer_armed & ~(timer_zero & prescale_tick));
 
 
 endmodule

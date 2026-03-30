@@ -32,13 +32,18 @@
 .equ DBRA_ROM_CLKS, 16
 .equ INNER_COUNT, 500
 
+| GLUE timer: ÷8 prescaler + 5-bit counter, effective tick = 8*N SYSCLK
+.equ TIMER_PERIOD, 31
+.equ TICK_CLOCKS, 8 * TIMER_PERIOD
+
 | Audio: 2x frequency for half-period math, reps for 0.25s
+| Timer arms per half-period = SYSCLK_HZ / (2*freq * TICK_CLOCKS)
 .equ G3_2X_HZ, 392
 .equ AB3_2X_HZ, 416
 .equ C4_2X_HZ, 523
-.equ G3_DBRA, SYSCLK_HZ / G3_2X_HZ / DBRA_ROM_CLKS - 1
-.equ AB3_DBRA, SYSCLK_HZ / AB3_2X_HZ / DBRA_ROM_CLKS - 1
-.equ C4_DBRA, SYSCLK_HZ / C4_2X_HZ / DBRA_ROM_CLKS - 1
+.equ G3_TIMER_ARMS, SYSCLK_HZ / (G3_2X_HZ * TICK_CLOCKS) - 1
+.equ AB3_TIMER_ARMS, SYSCLK_HZ / (AB3_2X_HZ * TICK_CLOCKS) - 1
+.equ C4_TIMER_ARMS, SYSCLK_HZ / (C4_2X_HZ * TICK_CLOCKS) - 1
 .equ G3_REPS, G3_2X_HZ / 8
 .equ AB3_REPS, AB3_2X_HZ / 8
 .equ C4_REPS, C4_2X_HZ / 8
@@ -231,53 +236,26 @@ ram_check_fail:
     move.l  %a1, %a5               | return to next test (saved in a1)
     jmp     glue_putc
 
-    | Sad triplet: C4 -> Ab3 -> G3, each 0.25s, no gap
+    | Sad triplet: C4 -> Ab3 -> G3, each 0.25s, no gap (timer-based)
 ram_fail_blink:
-    | C4 (261.63 Hz) for 0.25s
+    move.b  #TIMER_PERIOD, GLUE_TIMER
+
+    move.w  #C4_TIMER_ARMS, %d2
     move.w  #C4_REPS, %d3
-.fail_c4_cycle:
-    move.b  #0xFF, AUDIO_DAC
-    move.w  #C4_DBRA, %d0
-.fail_c4_hi:
-    dbra    %d0, .fail_c4_hi
-
-    move.b  #0x00, AUDIO_DAC
-    move.w  #C4_DBRA, %d0
-.fail_c4_lo:
-    dbra    %d0, .fail_c4_lo
-
-    dbra    %d3, .fail_c4_cycle
-
-    | Ab3 (208 Hz) for 0.25s
+    lea     .fail_ab3(%pc), %a6
+    jmp     play_tone
+.fail_ab3:
+    move.w  #AB3_TIMER_ARMS, %d2
     move.w  #AB3_REPS, %d3
-.fail_ab3_cycle:
-    move.b  #0xFF, AUDIO_DAC
-    move.w  #AB3_DBRA, %d0
-.fail_ab3_hi:
-    dbra    %d0, .fail_ab3_hi
-
-    move.b  #0x00, AUDIO_DAC
-    move.w  #AB3_DBRA, %d0
-.fail_ab3_lo:
-    dbra    %d0, .fail_ab3_lo
-
-    dbra    %d3, .fail_ab3_cycle
-
-    | G3 (196 Hz) for 0.25s
+    lea     .fail_g3(%pc), %a6
+    jmp     play_tone
+.fail_g3:
+    move.w  #G3_TIMER_ARMS, %d2
     move.w  #G3_REPS, %d3
-.fail_g3_cycle:
-    move.b  #0xFF, AUDIO_DAC
-    move.w  #G3_DBRA, %d0
-.fail_g3_hi:
-    dbra    %d0, .fail_g3_hi
-
-    move.b  #0x00, AUDIO_DAC
-    move.w  #G3_DBRA, %d0
-.fail_g3_lo:
-    dbra    %d0, .fail_g3_lo
-
-    dbra    %d3, .fail_g3_cycle
-
+    lea     .fail_done(%pc), %a6
+    jmp     play_tone
+.fail_done:
+    move.b  #0, GLUE_TIMER
     | Silence DAC, then blink LED at 0.5 Hz forever
     move.b  #0x80, AUDIO_DAC
 
@@ -299,38 +277,22 @@ ram_fail_blink:
     bra     .rfb_loop
 
 | ---- Doot-deet then idle loop ----
-| Play G3 then C4, each 0.25s, no gap.  Then loop: toggle LED, send 'U'.
+| Play G3 then C4, each 0.25s, no gap (timer-based).
+| Then loop: toggle LED, send 'U'.
 uart_loop:
-    | G3 (196 Hz) for 0.25s
+    move.b  #TIMER_PERIOD, GLUE_TIMER
+
+    move.w  #G3_TIMER_ARMS, %d2
     move.w  #G3_REPS, %d3
-.g3_cycle:
-    move.b  #0xFF, AUDIO_DAC
-    move.w  #G3_DBRA, %d0
-.g3_hi:
-    dbra    %d0, .g3_hi
-
-    move.b  #0x00, AUDIO_DAC
-    move.w  #G3_DBRA, %d0
-.g3_lo:
-    dbra    %d0, .g3_lo
-
-    dbra    %d3, .g3_cycle
-
-    | C4 (261.63 Hz) for 0.25s
+    lea     .ok_c4(%pc), %a6
+    jmp     play_tone
+.ok_c4:
+    move.w  #C4_TIMER_ARMS, %d2
     move.w  #C4_REPS, %d3
-.c4_cycle:
-    move.b  #0xFF, AUDIO_DAC
-    move.w  #C4_DBRA, %d0
-.c4_hi:
-    dbra    %d0, .c4_hi
-
-    move.b  #0x00, AUDIO_DAC
-    move.w  #C4_DBRA, %d0
-.c4_lo:
-    dbra    %d0, .c4_lo
-
-    dbra    %d3, .c4_cycle
-
+    lea     .ok_done(%pc), %a6
+    jmp     play_tone
+.ok_done:
+    move.b  #0, GLUE_TIMER
     | Silence DAC
     move.b  #0x80, AUDIO_DAC
 
@@ -492,6 +454,35 @@ _exc_illegal_insn:
     dbra    %d0, .
     dbra    %d1, .illegal_delay
     bra     .illegal_loop
+
+| ====================================================================
+| play_tone — play square wave on AUDIO_DAC using GLUE timer
+|
+| GLUE timer must already be running (GLUE_TIMER set to period).
+| Each half-period is timed by arming the timer %d2+1 times; the
+| arm stall absorbs instruction overhead so the period between DAC
+| edges is exactly (%d2+1) * 8 * TIMER_PERIOD SYSCLK clocks.
+|
+| %d2.w = timer arms per half-period - 1 (for dbra, preserved)
+| %d3.w = full cycles (for dbra, consumed)
+| Return via jmp (%a6).  Clobbers %d0, %d3.
+| ====================================================================
+play_tone:
+.pt_cycle:
+    move.b  #0xFF, AUDIO_DAC
+    move.w  %d2, %d0
+.pt_hi:
+    move.b  #0, GLUE_TIMER_ARM
+    dbra    %d0, .pt_hi
+
+    move.b  #0x00, AUDIO_DAC
+    move.w  %d2, %d0
+.pt_lo:
+    move.b  #0, GLUE_TIMER_ARM
+    dbra    %d0, .pt_lo
+
+    dbra    %d3, .pt_cycle
+    jmp     (%a6)
 
 | ---- String data ----
 msg_banner:     .asciz "GRIFFIN sanity test ROM\r\n"
