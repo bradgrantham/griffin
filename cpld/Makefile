@@ -26,6 +26,13 @@ export PATH := $(OSS_CAD_SUITE)/bin:$(PATH)
 YOSYS  := $(ATF15XX_YOSYS)/run_yosys.sh
 FITTER := $(ATF15XX_YOSYS)/run_fitter.sh
 
+OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
+    -c "adapter speed 500" \
+    -c "transport select jtag" \
+    -c "jtag newtap tap0 tap -irlen 10 -expected-id 0x0150803f" \
+    -c "jtag newtap tap1 tap -irlen 10 -expected-id 0x0150803f" \
+    -c init
+
 .PHONY: all glue clean
 
 all: glue video
@@ -46,12 +53,7 @@ glue/glue.svf: glue/glue.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/glue/glue.jed $(CURDIR)/glue/glue.svf
 
 flash-glue: glue/glue.svf
-	sudo openocd -f interface/ftdi/um232h.cfg \
-    	    -c "adapter speed 500" \
-    	    -c "transport select jtag" \
-	    -c "jtag newtap tap0 tap -irlen 10 -expected-id 0x0150803f" \
-	    -c "jtag newtap tap1 tap -irlen 10 -expected-id 0x0150803f" \
-	    -c init \
+	$(OPENOCD_JTAG) \
 	    -c "svf glue/glue.svf -tap tap1.tap" \
 	    -c shutdown
 	
@@ -71,16 +73,42 @@ video/video.svf: video/video.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/video/video.jed $(CURDIR)/video/video.svf
 
 flash-video: video/video.svf
-	sudo openocd -f interface/ftdi/um232h.cfg \
-    	    -c "adapter speed 500" \
-    	    -c "transport select jtag" \
-	    -c "jtag newtap tap0 tap -irlen 10 -expected-id 0x0150803f" \
-	    -c "jtag newtap tap1 tap -irlen 10 -expected-id 0x0150803f" \
-	    -c init \
+	$(OPENOCD_JTAG) \
 	    -c "svf video/video.svf -tap tap0.tap" \
+	    -c shutdown
+
+# ------------------------------------------------------------
+# Verify-only SVF extraction
+#
+# The programming SVF already contains a full verify pass at the
+# end.  Extract just the header + ISC enable + verify words +
+# ISC disable so we can read back fuses without erasing/reprogramming.
+# ------------------------------------------------------------
+
+define extract_verify_svf
+	@echo "Extracting verify-only SVF from $<"
+	@sed -n '1,/^STATE IDLE/p' $< > $@
+	@sed -n '/^\/\/ ISC verify word/,$$p' $< >> $@
+endef
+
+glue/glue-verify.svf: glue/glue.svf
+	$(extract_verify_svf)
+
+video/video-verify.svf: video/video.svf
+	$(extract_verify_svf)
+
+read-glue: glue/glue-verify.svf
+	$(OPENOCD_JTAG) \
+	    -c "svf glue/glue-verify.svf -tap tap1.tap" \
+	    -c shutdown
+
+read-video: video/video-verify.svf
+	$(OPENOCD_JTAG) \
+	    -c "svf video/video-verify.svf -tap tap0.tap" \
 	    -c shutdown
 
 # ------------------------------------------------------------
 
 clean:
 	rm -f glue/glue.edif glue/glue.fit glue/glue.jed glue/glue.vo
+	rm -f glue/glue-verify.svf video/video-verify.svf
