@@ -1,0 +1,5 @@
+build_info.c
+m68k-unknown-elf.tar.xz
+m68k-unknown-elf/
+*.bin
+*.elf
