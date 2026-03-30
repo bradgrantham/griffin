@@ -302,6 +302,68 @@ void timer_tick()
 
 }; // extern "C"
 
+static void dump_hex(uint32_t base_addr, const uint8_t *data, int size)
+{
+    int offset = 0;
+    while (size > 0)
+    {
+        int howmany = (size < 16) ? size : 16;
+
+        debug_printf("  0x%06lX: ", (unsigned long)(base_addr + offset));
+        for (int i = 0; i < howmany; i++)
+        {
+            debug_printf("%02X ", data[i]);
+        }
+        debug_printf("\n");
+
+        debug_printf("            ");
+        for (int i = 0; i < howmany; i++)
+        {
+            char c = data[i];
+            debug_printf(" %c ", (c >= 0x20 && c <= 0x7E) ? c : '.');
+        }
+        debug_printf("\n");
+
+        size -= howmany;
+        data += howmany;
+        offset += howmany;
+    }
+}
+
+static void cf_test()
+{
+    cf_error err = cf_init();
+    if (err != CF_OK)
+    {
+        debug_printf("CF: init failed (err=%d)\n", err);
+        return;
+    }
+    debug_printf("CF: init OK\n");
+
+    uint8_t id_buf[512];
+    err = cf_identify(id_buf);
+    if (err != CF_OK)
+    {
+        debug_printf("CF: identify failed (err=%d)\n", err);
+        return;
+    }
+
+    cf_info info;
+    cf_parse_identify(id_buf, &info);
+    debug_printf("CF: %s, firmware %s, serial %s\n", info.model, info.firmware_rev, info.serial);
+    debug_printf("CF: sectors:  %lu, capacity: %lu KB\n", (unsigned long)info.lba_sectors, (unsigned long)(info.lba_sectors / 2));
+
+    uint8_t sector[512];
+    err = cf_read_sectors(0, 1, sector);
+    if (err != CF_OK)
+    {
+        debug_printf("CF: read sector 0 failed (err=%d)\n", err);
+        return;
+    }
+    debug_printf("CF: sector 0:\n");
+    dump_hex(0, sector, 512);
+}
+
 static volatile uint8_t &io_mcu_tx = *reinterpret_cast<volatile uint8_t *>(Griffin::IO_MCU_TX_DATA);
 
 static void io_mcu_putchar(uint8_t ch)
@@ -327,6 +389,8 @@ int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
     debug_printf("IO_MCU console ready\n");
+
+    cf_test();
 
     uint8_t evt;
     for (;;)

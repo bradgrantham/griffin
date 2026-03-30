@@ -10,6 +10,7 @@
 
 #include <fcntl.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #ifdef __APPLE__
 #include <util.h>
@@ -23,6 +24,7 @@ constexpr uint32_t DEBUG_UART = 0x0004;
 constexpr uint32_t DEBUG_DISASSEMBLE = 0x0008;
 constexpr uint32_t DEBUG_IO_MCU = 0x0010;
 constexpr uint32_t DEBUG_DEBUG_BIT = 0x0020;
+constexpr uint32_t DEBUG_CF = 0x0040;
 constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
@@ -95,6 +97,408 @@ struct PTYConsole
         if(master_fd >= 0)
         {
             write(master_fd, &ch, 1);
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Compact Flash emulation — True IDE 8-bit PIO register model
+// ---------------------------------------------------------------------------
+
+struct CFState
+{
+    int fd = -1;
+    bool read_only = false;
+    uint64_t file_size = 0;
+
+    uint8_t error = 0;
+    uint8_t features = 0;
+    uint8_t sector_count = 0;
+    uint8_t sector_num = 0;     // LBA 7:0
+    uint8_t cyl_lo = 0;         // LBA 15:8
+    uint8_t cyl_hi = 0;         // LBA 23:16
+    uint8_t drive_head = 0;     // LBA 27:24 + flags
+    uint8_t status = 0;
+    uint8_t command = 0;
+
+    uint8_t data_buf[512];
+    int data_idx = 0;
+    int data_len = 0;
+    int sectors_remaining = 0;
+    bool is_write = false;
+
+    uint8_t identify_buf[512];
+
+    bool is_present() const { return fd >= 0; }
+
+    // Store an ATA string into the identify buffer at the given word offset.
+    // ATA strings have the first char of each word in the high byte.
+    // In 8-bit PIO mode the low byte is read first, so we store:
+    //   buf[word*2]   = second char (low byte)
+    //   buf[word*2+1] = first char  (high byte)
+    static void set_ata_string(uint8_t *buf, int word_start, int word_count, const char *str)
+    {
+        int len = word_count * 2;
+        int slen = strlen(str);
+        for (int i = 0; i < len; i += 2)
+        {
+            char c0 = (i < slen) ? str[i] : ' ';
+            char c1 = (i + 1 < slen) ? str[i + 1] : ' ';
+            buf[word_start * 2 + i]     = c1;  // low byte = second char
+            buf[word_start * 2 + i + 1] = c0;  // high byte = first char
+        }
+    }
+
+    void build_identify()
+    {
+        memset(identify_buf, 0, 512);
+        uint32_t sectors = file_size / 512;
+
+        // Word 0: general config — CF flag + non-removable
+        identify_buf[0] = 0x8A;
+        identify_buf[1] = 0x84;
+
+        // Word 1: default cylinders
+        uint16_t cyls = (sectors > 16 * 63) ? (sectors / (16 * 63)) : 1;
+        if (cyls > 16383)
+        {
+            cyls = 16383;
+        }
+        identify_buf[2] = cyls & 0xFF;
+        identify_buf[3] = (cyls >> 8) & 0xFF;
+
+        // Word 3: default heads
+        identify_buf[6] = 16;
+        identify_buf[7] = 0;
+
+        // Word 6: sectors per track
+        identify_buf[12] = 63;
+        identify_buf[13] = 0;
+
+        // Words 7-8: number of sectors in card (CHS compat)
+        uint32_t chs_sectors = (uint32_t)cyls * 16 * 63;
+        if (chs_sectors > sectors)
+        {
+            chs_sectors = sectors;
+        }
+        identify_buf[14] = chs_sectors & 0xFF;
+        identify_buf[15] = (chs_sectors >> 8) & 0xFF;
+        identify_buf[16] = (chs_sectors >> 16) & 0xFF;
+        identify_buf[17] = (chs_sectors >> 24) & 0xFF;
+
+        // Words 10-19: serial number
+        set_ata_string(identify_buf, 10, 10, "GRIFFIN00001");
+
+        // Words 23-26: firmware revision
+        set_ata_string(identify_buf, 23, 4, "EMU 1.0");
+
+        // Words 27-46: model string
+        set_ata_string(identify_buf, 27, 20, "GRIFFIN CF EMULATOR");
+
+        // Word 49: capabilities — LBA supported (bit 9)
+        identify_buf[98] = 0x00;
+        identify_buf[99] = 0x02;  // bit 9 = LBA
+
+        // Words 60-61: total addressable LBA sectors
+        identify_buf[120] = sectors & 0xFF;
+        identify_buf[121] = (sectors >> 8) & 0xFF;
+        identify_buf[122] = (sectors >> 16) & 0xFF;
+        identify_buf[123] = (sectors >> 24) & 0xFF;
+    }
+
+    bool open(const char *path, bool ro)
+    {
+        read_only = ro;
+        fd = ::open(path, ro ? O_RDONLY : O_RDWR);
+        if (fd < 0)
+        {
+            perror(path);
+            return false;
+        }
+        struct stat st;
+        if (fstat(fd, &st) < 0)
+        {
+            perror("fstat");
+            ::close(fd);
+            fd = -1;
+            return false;
+        }
+        file_size = st.st_size;
+        if (file_size < 512)
+        {
+            fprintf(stderr, "CF image too small (%llu bytes, need at least 512)\n",
+                    (unsigned long long)file_size);
+            ::close(fd);
+            fd = -1;
+            return false;
+        }
+        status = CF_STATUS_DRDY;
+        build_identify();
+        uint32_t sectors = file_size / 512;
+        fprintf(stderr, "CF: %s (%u sectors, %llu bytes%s)\n",
+                path, sectors, (unsigned long long)file_size,
+                ro ? ", read-only" : "");
+        return true;
+    }
+
+    ~CFState()
+    {
+        if (fd >= 0)
+        {
+            ::close(fd);
+        }
+    }
+
+    uint32_t lba() const
+    {
+        return (uint32_t)sector_num
+             | ((uint32_t)cyl_lo << 8)
+             | ((uint32_t)cyl_hi << 16)
+             | ((uint32_t)(drive_head & 0x0F) << 24);
+    }
+
+    void load_sector()
+    {
+        uint32_t addr = lba();
+        if (sectors_remaining > 0 && data_idx >= data_len)
+        {
+            // Advance LBA for multi-sector reads
+            addr = lba();
+        }
+        off_t offset = (off_t)addr * 512;
+        if (offset + 512 > (off_t)file_size)
+        {
+            // Beyond end of file — return zeros
+            memset(data_buf, 0, 512);
+        }
+        else
+        {
+            lseek(fd, offset, SEEK_SET);
+            ssize_t n = ::read(fd, data_buf, 512);
+            if (n < 512)
+            {
+                memset(data_buf + (n > 0 ? n : 0), 0, 512 - (n > 0 ? n : 0));
+            }
+        }
+        data_idx = 0;
+        data_len = 512;
+    }
+
+    void flush_sector()
+    {
+        if (read_only)
+        {
+            error = 0x04;  // ABRT
+            status = CF_STATUS_DRDY | CF_STATUS_ERR;
+            return;
+        }
+        uint32_t addr = lba();
+        off_t offset = (off_t)addr * 512;
+        if (offset + 512 <= (off_t)file_size)
+        {
+            lseek(fd, offset, SEEK_SET);
+            ::write(fd, data_buf, 512);
+        }
+    }
+
+    void advance_lba()
+    {
+        // Increment the LBA stored across the registers
+        uint32_t a = lba() + 1;
+        sector_num = a & 0xFF;
+        cyl_lo = (a >> 8) & 0xFF;
+        cyl_hi = (a >> 16) & 0xFF;
+        drive_head = (drive_head & 0xF0) | ((a >> 24) & 0x0F);
+    }
+
+    void execute_command(uint8_t cmd)
+    {
+        command = cmd;
+        switch (cmd)
+        {
+            case CF_CMD_IDENTIFY:
+                memcpy(data_buf, identify_buf, 512);
+                data_idx = 0;
+                data_len = 512;
+                status = CF_STATUS_DRDY | CF_STATUS_DRQ;
+                error = 0;
+                if (debug & DEBUG_CF)
+                {
+                    printf("[CF: IDENTIFY]\n");
+                }
+                break;
+
+            case CF_CMD_READ_SECTORS:
+                sectors_remaining = sector_count == 0 ? 256 : sector_count;
+                is_write = false;
+                load_sector();
+                sectors_remaining--;
+                status = CF_STATUS_DRDY | CF_STATUS_DRQ;
+                error = 0;
+                if (debug & DEBUG_CF)
+                {
+                    printf("[CF: READ %d sector(s) at LBA %u]\n",
+                           sector_count == 0 ? 256 : sector_count, lba());
+                }
+                break;
+
+            case CF_CMD_WRITE_SECTORS:
+                sectors_remaining = sector_count == 0 ? 256 : sector_count;
+                is_write = true;
+                data_idx = 0;
+                data_len = 512;
+                status = CF_STATUS_DRDY | CF_STATUS_DRQ;
+                error = 0;
+                if (debug & DEBUG_CF)
+                {
+                    printf("[CF: WRITE %d sector(s) at LBA %u]\n",
+                           sector_count == 0 ? 256 : sector_count, lba());
+                }
+                break;
+
+            case CF_CMD_SET_FEATURES:
+                // Acknowledge; 8-bit mode is implicit in emulation
+                status = CF_STATUS_DRDY;
+                error = 0;
+                if (debug & DEBUG_CF)
+                {
+                    printf("[CF: SET FEATURES 0x%02X]\n", features);
+                }
+                break;
+
+            default:
+                // Unknown command — set ABRT error
+                error = 0x04;
+                status = CF_STATUS_DRDY | CF_STATUS_ERR;
+                if (debug & DEBUG_CF)
+                {
+                    printf("[CF: unknown command 0x%02X]\n", cmd);
+                }
+                break;
+        }
+    }
+
+    uint8_t read_reg(uint32_t abs_addr)
+    {
+        if (!is_present())
+        {
+            return 0xFF;  // no device
+        }
+
+        if (abs_addr == CF_DATA)
+        {
+            if (!(status & CF_STATUS_DRQ) || is_write)
+            {
+                return 0xFF;
+            }
+            uint8_t val = data_buf[data_idx++];
+            if (data_idx >= data_len)
+            {
+                if (sectors_remaining > 0)
+                {
+                    // Multi-sector: advance and load next
+                    advance_lba();
+                    load_sector();
+                    sectors_remaining--;
+                }
+                else
+                {
+                    // Transfer complete
+                    status = CF_STATUS_DRDY;
+                }
+            }
+            return val;
+        }
+        else if (abs_addr == CF_ERROR)
+        {
+            return error;
+        }
+        else if (abs_addr == CF_SECTOR_COUNT)
+        {
+            return sector_count;
+        }
+        else if (abs_addr == CF_SECTOR_NUM)
+        {
+            return sector_num;
+        }
+        else if (abs_addr == CF_CYL_LO)
+        {
+            return cyl_lo;
+        }
+        else if (abs_addr == CF_CYL_HI)
+        {
+            return cyl_hi;
+        }
+        else if (abs_addr == CF_DRIVE_HEAD)
+        {
+            return drive_head;
+        }
+        else if (abs_addr == CF_STATUS)
+        {
+            return status;
+        }
+        return 0xFF;
+    }
+
+    void write_reg(uint32_t abs_addr, uint8_t val)
+    {
+        if (!is_present())
+        {
+            return;
+        }
+
+        if (abs_addr == CF_DATA)
+        {
+            if (!(status & CF_STATUS_DRQ) || !is_write)
+            {
+                return;
+            }
+            data_buf[data_idx++] = val;
+            if (data_idx >= data_len)
+            {
+                // Sector buffer full — write it out
+                flush_sector();
+                sectors_remaining--;
+                if (sectors_remaining > 0)
+                {
+                    advance_lba();
+                    data_idx = 0;
+                    data_len = 512;
+                    status = CF_STATUS_DRDY | CF_STATUS_DRQ;
+                }
+                else
+                {
+                    status = CF_STATUS_DRDY;
+                }
+            }
+        }
+        else if (abs_addr == CF_FEATURES)
+        {
+            features = val;
+        }
+        else if (abs_addr == CF_SECTOR_COUNT)
+        {
+            sector_count = val;
+        }
+        else if (abs_addr == CF_SECTOR_NUM)
+        {
+            sector_num = val;
+        }
+        else if (abs_addr == CF_CYL_LO)
+        {
+            cyl_lo = val;
+        }
+        else if (abs_addr == CF_CYL_HI)
+        {
+            cyl_hi = val;
+        }
+        else if (abs_addr == CF_DRIVE_HEAD)
+        {
+            drive_head = val;
+        }
+        else if (abs_addr == CF_COMMAND)
+        {
+            execute_command(val);
         }
     }
 };
@@ -180,10 +584,19 @@ class GriffinEmulator : public moira::Moira
     mutable bool ROMoverlay = true;
     PTYConsole pty_console;
     mutable IOmcuState io_mcu;
+    mutable CFState cf;
+
+    static bool is_cf_addr(uint32_t io_offset)
+    {
+        uint32_t abs = io_offset + IO_BASE;
+        return abs >= CF_BASE && abs < CF_BASE + CF_SIZE;
+    }
 
     uint8_t IO_read8(uint32_t addr) const
     {
-        if(addr == GLUE_UART_STATUS - IO_BASE) {
+        if(is_cf_addr(addr)) {
+            return cf.read_reg(addr + IO_BASE);
+        } else if(addr == GLUE_UART_STATUS - IO_BASE) {
             // Hardware UART is never busy in emulation (instant TX)
             return 0;
         } else if(addr == GLUE_DEBUG_IN - IO_BASE) {
@@ -212,6 +625,11 @@ class GriffinEmulator : public moira::Moira
 
     uint16_t IO_read16(uint32_t addr) const
     {
+        if(is_cf_addr(addr))
+        {
+            printf("WARNING: 16-bit read from CF at %06X (firmware should use 8-bit only)\n", addr + IO_BASE);
+            return cf.read_reg(addr + IO_BASE);
+        }
         if(debug & DEBUG_IO)
         {
             printf("read of uint16_t at unhandled IO %06X\n", addr + IO_BASE);
@@ -221,7 +639,9 @@ class GriffinEmulator : public moira::Moira
 
     void IO_write8(uint32_t addr, uint8_t val) const
     {
-        if(addr == GLUE_DEBUG_OUT - IO_BASE) {
+        if(is_cf_addr(addr)) {
+            cf.write_reg(addr + IO_BASE, val);
+        } else if(addr == GLUE_DEBUG_OUT - IO_BASE) {
             auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_MASK;
             auto bit = val & GLUE_DEBUG_OUT_MASK;
             if(bit != oldbit)
@@ -267,6 +687,12 @@ class GriffinEmulator : public moira::Moira
 
     void IO_write16(uint32_t addr, uint16_t val) const
     {
+        if(is_cf_addr(addr))
+        {
+            printf("WARNING: 16-bit write 0x%04X to CF at %06X (firmware should use 8-bit only)\n", val, addr + IO_BASE);
+            cf.write_reg(addr + IO_BASE, val & 0xFF);
+            return;
+        }
         if(debug & DEBUG_IO)
         {
             printf("write of uint16_t %04X at unhandled IO %06X\n", val, addr + IO_BASE);
@@ -475,6 +901,11 @@ public:
         return pty_console.open();
     }
 
+    bool open_cf(const char *path, bool read_only)
+    {
+        return cf.open(path, read_only);
+    }
+
     // Poll the PTY for incoming data and update IPL.
     // Call this periodically from the main loop, not on every bus cycle.
     void poll_io_mcu()
@@ -565,7 +996,7 @@ struct SoftUART
 
 void usage(const char *progname)
 {
-    printf("%s [-m {256,1024,2048,3072,4096}] rom-filename\n", progname);
+    printf("%s [-m {256,1024,2048,3072,4096}] [--cf disk.img] [--cf-ro disk.img] rom-filename\n", progname);
 }
 
 int main(int argc, const char** argv)
@@ -574,9 +1005,29 @@ int main(int argc, const char** argv)
     argc -= 1;
     argv += 1;
     auto ram_config = GriffinEmulator::RAM_1_BANK_256K;
+    const char *cf_path = nullptr;
+    bool cf_ro = false;
 
     while((argc > 0) && (argv[0][0] == '-')) {
-	if(strcmp(argv[0], "-m") == 0) {
+	if(strcmp(argv[0], "--cf") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--cf option requires a disk image path.\n");
+                exit(EXIT_FAILURE);
+            }
+            cf_path = argv[1];
+            cf_ro = false;
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--cf-ro") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--cf-ro option requires a disk image path.\n");
+                exit(EXIT_FAILURE);
+            }
+            cf_path = argv[1];
+            cf_ro = true;
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "-m") == 0) {
             if(argc < 2) {
                 fprintf(stderr, "-m option requires a memory config in K (256, 1024, 2048, 3072, 4096).\n");
                 exit(EXIT_FAILURE);
@@ -625,6 +1076,14 @@ int main(int argc, const char** argv)
     const char *romname = argv[0];
 
     GriffinEmulator emulator(ram_config);
+
+    if (cf_path)
+    {
+        if (!emulator.open_cf(cf_path, cf_ro))
+        {
+            exit(EXIT_FAILURE);
+        }
+    }
 
     FILE* fp = fopen(romname, "rb");
     if (fp == NULL) {
