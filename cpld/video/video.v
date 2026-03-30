@@ -25,6 +25,9 @@ module video (
     output reg         nCPST_SYNC,
     output wire        CPST_CLK_ENB,
     output wire        VGA_CLK_ENB,
+    output wire        VGA_HSYNC,
+    output wire        VGA_VSYNC,
+    output wire        VGA_G2,
 
     // Control outputs
 // XXX bringup
@@ -84,13 +87,9 @@ module video (
         else
         begin
             if (h_last)
-            begin
                 h_cnt <= 10'd0;
-            end
             else
-            begin
                 h_cnt <= h_cnt + 10'd1;
-            end
         end
     end
 
@@ -105,13 +104,9 @@ module video (
             if (h_last)
             begin
                 if (v_cnt == V_TOTAL - 9'd1)
-                begin
                     v_cnt <= 9'd0;
-                end
                 else
-                begin
                     v_cnt <= v_cnt + 9'd1;
-                end
             end
         end
     end
@@ -124,6 +119,11 @@ module video (
     wire in_hsync = (h_cnt >= H_SYNC_START) & (h_cnt < H_SYNC_END);
     wire in_vsync = (v_cnt >= V_SYNC_START) & (v_cnt < V_SYNC_END);
 
+    // XXX bringup
+    assign VGA_HSYNC = in_hsync;
+    assign VGA_VSYNC = in_vsync;
+    assign VGA_G2 = CPST_PIXEL;
+
     // ----------------------------------------------------------------
     // Composite sync (PIXEL_CLK domain)
     //   VSYNC: nCPST_SYNC held low for 3 full lines
@@ -133,20 +133,9 @@ module video (
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
         if (RESET)
-        begin
             nCPST_SYNC <= 1'b1;
-        end
         else
-        begin
-            if (in_vsync)
-            begin
-                nCPST_SYNC <= 1'b0;
-            end
-            else
-            begin
-                nCPST_SYNC <= ~in_hsync;
-            end
-        end
+            nCPST_SYNC <= ~(in_vsync | in_hsync);
     end
 
 // XXX comment out bus functionality for debugging
@@ -406,3 +395,6 @@ endmodule
 //PIN: VIDEO_STALL   : 79
 //PIN: nVIDEO_IRQ    : 5
 //PIN: VGA_B0        : 74
+//PIN: VGA_HSYNC     : 46
+//PIN: VGA_VSYNC     : 29
+//PIN: VGA_G2        : 81
