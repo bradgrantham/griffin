@@ -95,8 +95,8 @@ DEBUG\_OUT LED:
   - [ ] Determine a more available ROM technology and design around that
     - [ ] CPLD with I2C ROM?
     - [ ] RP2350?
-    - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match...
-  - [ ] IO MCU is fragile; put it behind a 68681?
+    - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
+  - [ ] IO MCU interface may be fragile; put it behind a 68681?
     - [ ] 68681 manages UART and timers
     - [ ] 8051 manages PS/2 and uses a serial protocol to 68681
   - [ ] Swap MCU RX and TX - wrong pins!!
