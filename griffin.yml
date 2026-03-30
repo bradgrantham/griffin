@@ -74,6 +74,14 @@ peripherals:
               description: "Write 1 to release IO MCU from reset (IO_RESET driven low)" }
           - { bit: "2", name: VIDEO_STALL_ENABLE,
               description: "Write 1 to allow VIDEO_STALL to block DTACK; default 0 ignores VIDEO_STALL so system boots without VIDEO" }
+      - offset: 0x0D
+        name: BUILD_ID
+        access: read
+        width: 8
+        description: >
+          16-bit build ID baked into CPLD at synthesis, read as two bytes.
+          First read returns high byte (15:8), second read returns low byte (7:0),
+          then alternates.  Any write to this address resets to high byte.
       - offset: 0x09
         name: TIMER
         access: write

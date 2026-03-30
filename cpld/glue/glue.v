@@ -224,7 +224,10 @@ module glue (
     localparam [23:0] GLUE_UART_STAT_ADDR = `GLUE_UART_STATUS;
     localparam [23:0] GLUE_TIMER_ADDR     = `GLUE_TIMER;
     localparam [23:0] GLUE_TIMER_ARM_ADDR = `GLUE_TIMER_ARM;
+    localparam [23:0] GLUE_BUILD_ID_ADDR = `GLUE_BUILD_ID;
     // GLUE_UART_RX_ADDR removed — RX stubbed out (see above)
+
+    `include "build_id.vh"
 
     wire debug_out_select   = glue_select & lo_byte_selected & write
                               & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
@@ -238,6 +241,8 @@ module glue (
                               & (A_lo[5:1] == GLUE_TIMER_ADDR[5:1]);
     wire timer_arm_select   = glue_select & lo_byte_selected & write
                               & (A_lo[5:1] == GLUE_TIMER_ARM_ADDR[5:1]);
+    wire build_id_select    = glue_select & lo_byte_selected
+                              & (A_lo[5:1] == GLUE_BUILD_ID_ADDR[5:1]);
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -245,7 +250,8 @@ module glue (
     // All other times the pins are tristated so the CPU, ROM, RAM,
     // etc. can drive the bus.
     // ----------------------------------------------------------------
-    wire glue_read_active = debug_in_select | uart_stat_select;
+    wire glue_read_active = debug_in_select | uart_stat_select
+                          | (build_id_select & read);
 
     reg [7:0] glue_read_data;
     always @(*) begin
@@ -254,9 +260,40 @@ module glue (
             glue_read_data = {7'd0, DEBUG_IN};
         else if (uart_stat_select)
             glue_read_data = {6'd0, 1'b0, tx_busy};
+        else if (build_id_select & read)
+            glue_read_data = build_id_phase ? BUILD_ID[7:0] : BUILD_ID[15:8];
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;
+
+    // ----------------------------------------------------------------
+    // Build ID toggle: alternates high/low byte on successive reads.
+    // Write to BUILD_ID address resets to high byte (phase 0).
+    // Latches action during bus cycle, commits on nAS rising edge.
+    // ----------------------------------------------------------------
+    reg build_id_phase;
+    reg build_id_pending;  // toggle pending at end of bus cycle
+
+    always @(posedge SYSCLK) begin
+        if (RESET) begin
+            build_id_phase   <= 1'b0;
+            build_id_pending <= 1'b0;
+        end else if (nAS) begin
+            // Bus cycle ended — apply pending action
+            if (build_id_pending) begin
+                build_id_phase   <= ~build_id_phase;
+                build_id_pending <= 1'b0;
+            end
+        end else if (build_id_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
+            // During bus cycle: mark pending toggle for reads, reset for writes
+            if (read)
+                build_id_pending <= 1'b1;
+            else begin
+                build_id_phase   <= 1'b0;
+                build_id_pending <= 1'b0;
+            end
+        end
+    end
 
     // ----------------------------------------------------------------
     // GLUE writable registers

@@ -385,9 +385,20 @@ static bool evt_pop(uint8_t *out)
     return true;
 }
 
+static uint16_t glue_read_build_id()
+{
+    volatile uint8_t &build_id_reg = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_BUILD_ID);
+    // Write resets phase to high byte
+    build_id_reg = 0;
+    uint16_t hi = build_id_reg;
+    uint16_t lo = build_id_reg;
+    return (hi << 8) | lo;
+}
+
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
+    debug_printf("GLUE build ID: %u\n", glue_read_build_id());
     debug_printf("IO_MCU console ready\n");
 
     cf_test();

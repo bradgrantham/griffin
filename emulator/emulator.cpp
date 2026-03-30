@@ -622,6 +622,7 @@ class GriffinEmulator : public moira::Moira
     mutable IOmcuState io_mcu;
     mutable CFState cf;
     mutable TimerState timer;
+    mutable bool build_id_phase = false;  // false=high byte, true=low byte
 
     static bool is_cf_addr(uint32_t io_offset)
     {
@@ -638,6 +639,10 @@ class GriffinEmulator : public moira::Moira
             return 0;
         } else if(addr == GLUE_DEBUG_IN - IO_BASE) {
             return 0;
+        } else if(addr == GLUE_BUILD_ID - IO_BASE) {
+            uint8_t val = build_id_phase ? (build_id & 0xFF) : (build_id >> 8);
+            build_id_phase = !build_id_phase;
+            return val;
         } else if(addr == IO_MCU_RX_DATA - IO_BASE) {
             uint8_t val = io_mcu.pop();
             if(debug & DEBUG_IO_MCU)
@@ -719,6 +724,8 @@ class GriffinEmulator : public moira::Moira
             {
                 printf("[TIMER ARM: stall=%u clks]\n", stall);
             }
+        } else if(addr == GLUE_BUILD_ID - IO_BASE) {
+            build_id_phase = false;  // reset to high byte
         } else if(addr == IO_MCU_TX_DATA - IO_BASE) {
             // IO_MCU UART TX: send to PTY console
             if(debug & DEBUG_IO_MCU) printf("[IO_MCU TX: 0x%02X]\n", val);
@@ -789,6 +796,8 @@ class GriffinEmulator : public moira::Moira
     }
 
 public:
+
+    uint16_t build_id = 31415;
 
     enum RAMConfig {RAM_1_BANK_256K, RAM_1M, RAM_2M, RAM_3M, RAM_4M };
 
@@ -1050,7 +1059,7 @@ struct SoftUART
 
 void usage(const char *progname)
 {
-    printf("%s [-m {256,1024,2048,3072,4096}] [--cf disk.img] [--cf-ro disk.img] rom-filename\n", progname);
+    printf("%s [-m {256,1024,2048,3072,4096}] [--cf disk.img] [--cf-ro disk.img] [--build-id N] rom-filename\n", progname);
 }
 
 int main(int argc, const char** argv)
@@ -1061,6 +1070,7 @@ int main(int argc, const char** argv)
     auto ram_config = GriffinEmulator::RAM_1_BANK_256K;
     const char *cf_path = nullptr;
     bool cf_ro = false;
+    uint16_t build_id = 31415;
 
     while((argc > 0) && (argv[0][0] == '-')) {
 	if(strcmp(argv[0], "--cf") == 0) {
@@ -1103,6 +1113,14 @@ int main(int argc, const char** argv)
             ram_config = ram_configs.at(k);
             argv += 2;
             argc -= 2;
+        } else if(strcmp(argv[0], "--build-id") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--build-id option requires a number (0-65535).\n");
+                exit(EXIT_FAILURE);
+            }
+            build_id = static_cast<uint16_t>(atoi(argv[1]));
+            argv += 2;
+            argc -= 2;
         } else if(
             (strcmp(argv[0], "-help") == 0) ||
             (strcmp(argv[0], "-h") == 0) ||
@@ -1130,6 +1148,7 @@ int main(int argc, const char** argv)
     const char *romname = argv[0];
 
     GriffinEmulator emulator(ram_config);
+    emulator.build_id = build_id;
 
     if (cf_path)
     {
