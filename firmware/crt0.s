@@ -4,9 +4,9 @@
 vector_table:
     .long   _stack_top          | 0: Initial SSP
     .long   _start              | 1: Initial PC
-    .long   _default_handler    | 2: Bus error
-    .long   _default_handler    | 3: Address error
-    .long   _default_handler    | 4: Illegal instruction
+    .long   _exc_bus_error      | 2: Bus error
+    .long   _exc_address_error  | 3: Address error
+    .long   _exc_illegal_insn   | 4: Illegal instruction
     .long   _default_handler    | 5: Zero divide
     .long   _default_handler    | 6: CHK instruction
     .long   _default_handler    | 7: TRAPV instruction
@@ -39,7 +39,17 @@ vector_table:
     .section .text
     .align	2
     .global _start
+    .equ INNER_COUNT, 500
+    .equ HALT_SETTLE_OUTER, SYSCLK_HZ / 10 / (INNER_COUNT * 16) - 1
+
 _start:
+    /* Wait ~100ms for nHALT to settle after reset */
+    move.w  #HALT_SETTLE_OUTER, %d1
+.halt_settle:
+    move.w  #(INNER_COUNT - 1), %d0
+    dbra    %d0, .
+    dbra    %d1, .halt_settle
+
     /* Five debug pulses == "CPU started, ROM working" */
     move.b #0x00, GLUE_DEBUG_OUT
     move.b #0x01, GLUE_DEBUG_OUT
@@ -51,7 +61,7 @@ _start:
     move.b #0x01, GLUE_DEBUG_OUT
     move.b #0x00, GLUE_DEBUG_OUT
     move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x00, GLUE_DEBUG_OUT
+    /* Leave DEBUG_OUT high — UART idle state */
 
     /* Hello via hardware UART */
     lea     hellostr, %a1
@@ -127,6 +137,80 @@ set_256k:
     jmp     uart_puts
 
 memory_size_done:
+
+    | ----------------------------------------------------------------
+    | Stack-free RAM test — runs before .bss or stack are trusted.
+    | Tests data bus, then address lines in bank 1.
+    | On failure: prints diagnostic via UART, blinks DEBUG_OUT ~2 Hz.
+    | Uses only registers; no memory reads/writes except the test itself.
+    | ----------------------------------------------------------------
+
+    | --- Data bus test: walking ones at address 0x1000 ---
+    | Write each single-bit pattern, read back, verify.
+    lea     0x1000, %a0
+    move.w  #0x0001, %d2            | walking bit
+
+.data_bus_loop:
+    move.w  %d2, (%a0)
+    move.w  (%a0), %d3
+    cmp.w   %d2, %d3
+    bne     ram_test_fail_data
+    lsl.w   #1, %d2
+    bne     .data_bus_loop          | loop until bit shifts out
+
+    | Also test all-ones and all-zeros
+    move.w  #0xFFFF, (%a0)
+    move.w  (%a0), %d3
+    cmp.w   #0xFFFF, %d3
+    bne     ram_test_fail_allones
+    move.w  #0x0000, (%a0)
+    move.w  (%a0), %d3
+    tst.w   %d3
+    bne     ram_test_fail_allzeros
+
+    | --- Address line test: walking-one addresses in bank 1 ---
+    | First, write a unique pattern to address 0 (baseline).
+    | Then for each address line A1..A17 (word-aligned power-of-2
+    | offset), write a different pattern and verify it didn't
+    | clobber the baseline (i.e. the two addresses are distinct).
+    lea     0x0400, %a0             | baseline: above vector table
+    move.w  #0xA500, (%a0)          | baseline pattern
+
+    | Walk address lines A1..A17.  Memory_size (in KB) tells us
+    | the top; we test all lines within bank 1 (256K = A1..A17).
+    move.l  #0x0002, %d2            | offset = 1<<1 (A1, word-aligned)
+
+.addr_line_loop:
+    | Check that offset + 0x400 is within bank 1
+    move.l  %d2, %d3
+    add.l   #0x0400, %d3
+    cmp.l   #0x40000, %d3           | bank 1 is 256K
+    bge     .addr_test_done
+
+    | Write distinct pattern at offset + baseline
+    move.l  #0x0400, %a1
+    add.l   %d2, %a1
+    move.w  #0x5A01, (%a1)          | different from baseline
+
+    | Verify baseline is intact
+    move.w  (%a0), %d3
+    cmp.w   #0xA500, %d3
+    bne     ram_test_fail_addr
+
+    | Restore baseline for next iteration
+    move.w  #0xA500, (%a0)
+
+    lsl.l   #1, %d2                 | next address line
+    bra     .addr_line_loop
+
+.addr_test_done:
+
+    | --- RAM test passed ---
+    lea     msg_ram_ok, %a1
+    lea     ram_test_done(%pc), %a6
+    jmp     uart_puts
+
+ram_test_done:
 
     /* Zero .bss */
     lea     _bss_start, %a0
@@ -272,10 +356,194 @@ uart_puts:
 .Luart_puts_done:
     jmp     (%a6)
 
+| ====================================================================
+| Exception handlers — diagnostic blink loops on DEBUG_OUT
+|
+| Each critical handler resets SP (RAM may be garbage but DTACK is
+| guaranteed) and toggles DEBUG_OUT at a unique rate identifiable
+| on a scope.  These are initial vectors; firmware can install
+| more sophisticated handlers once RAM is validated.
+|
+| Register convention: %d7 = toggle state, %d0/%d1 = delay counters.
+| ====================================================================
+
+    .equ EXC_INNER, 500
+    .equ EXC_FAST_OUTER, SYSCLK_HZ / 40 / (EXC_INNER * 16) - 1
+    .equ EXC_MED_OUTER,  SYSCLK_HZ / 10 / (EXC_INNER * 16) - 1
+    .equ EXC_SLOW_OUTER, SYSCLK_HZ / 4  / (EXC_INNER * 16) - 1
+
+| Bus Error — ~20 Hz toggle (~25ms half-period)
+_exc_bus_error:
+    move.l  _stack_top, %sp
+    lea     msg_bus_error, %a1
+    lea     .exc_bus_blink(%pc), %a6
+    jmp     uart_puts
+.exc_bus_blink:
+    moveq   #0, %d7
+.bus_err_loop:
+    eori.b  #0x01, %d7
+    move.b  %d7, GLUE_DEBUG_OUT
+    move.w  #EXC_FAST_OUTER, %d1
+.bus_err_delay:
+    move.w  #(EXC_INNER - 1), %d0
+    dbra    %d0, .
+    dbra    %d1, .bus_err_delay
+    bra     .bus_err_loop
+
+| Address Error — ~5 Hz toggle (~100ms half-period)
+_exc_address_error:
+    move.l  _stack_top, %sp
+    lea     msg_addr_error, %a1
+    lea     .exc_addr_blink(%pc), %a6
+    jmp     uart_puts
+.exc_addr_blink:
+    moveq   #0, %d7
+.addr_err_loop:
+    eori.b  #0x01, %d7
+    move.b  %d7, GLUE_DEBUG_OUT
+    move.w  #EXC_MED_OUTER, %d1
+.addr_err_delay:
+    move.w  #(EXC_INNER - 1), %d0
+    dbra    %d0, .
+    dbra    %d1, .addr_err_delay
+    bra     .addr_err_loop
+
+| Illegal Instruction — ~2 Hz toggle (~250ms half-period)
+_exc_illegal_insn:
+    move.l  _stack_top, %sp
+    lea     msg_illegal_insn, %a1
+    lea     .exc_illegal_blink(%pc), %a6
+    jmp     uart_puts
+.exc_illegal_blink:
+    moveq   #0, %d7
+.illegal_loop:
+    eori.b  #0x01, %d7
+    move.b  %d7, GLUE_DEBUG_OUT
+    move.w  #EXC_SLOW_OUTER, %d1
+.illegal_delay:
+    move.w  #(EXC_INNER - 1), %d0
+    dbra    %d0, .
+    dbra    %d1, .illegal_delay
+    bra     .illegal_loop
+
 | _default_handler: catch-all for unexpected exceptions
     .global _default_handler
 _default_handler:
     rte
+
+| ====================================================================
+| RAM test failure handlers — stack-free, print via UART then blink
+| ====================================================================
+
+| Data bus failure: %d2 = expected, %d3 = actual
+ram_test_fail_data:
+    lea     msg_ram_data_fail, %a1
+    lea     .rtf_data_vals(%pc), %a6
+    jmp     uart_puts
+.rtf_data_vals:
+    bra     ram_test_fail_common
+
+| All-ones failure: expected 0xFFFF, %d3 = actual
+ram_test_fail_allones:
+    move.w  #0xFFFF, %d2
+    lea     msg_ram_data_fail, %a1
+    lea     .rtf_ao_vals(%pc), %a6
+    jmp     uart_puts
+.rtf_ao_vals:
+    bra     ram_test_fail_common
+
+| All-zeros failure: expected 0x0000, %d3 = actual
+ram_test_fail_allzeros:
+    move.w  #0x0000, %d2
+    lea     msg_ram_data_fail, %a1
+    lea     .rtf_az_vals(%pc), %a6
+    jmp     uart_puts
+.rtf_az_vals:
+    bra     ram_test_fail_common
+
+| Address line failure: %d2 = offset that aliased, %d3 = readback
+ram_test_fail_addr:
+    lea     msg_ram_addr_fail, %a1
+    lea     .rtf_addr_vals(%pc), %a6
+    jmp     uart_puts
+.rtf_addr_vals:
+    | fall through
+
+| Common: print "exp=XXXX got=XXXX\n" using %d2=expected %d3=actual,
+| then blink.  Stack-free, uses uart_putchar hex output.
+ram_test_fail_common:
+    | Print expected value (in %d2) as 4 hex chars
+    lea     msg_exp, %a1
+    lea     .rtf_exp_val(%pc), %a6
+    jmp     uart_puts
+.rtf_exp_val:
+    move.w  %d2, %d4               | save expected
+    move.w  %d3, %d5               | save actual
+    | Print high byte of expected
+    move.b  %d4, %d0
+    lsr.w   #8, %d0
+    andi.b  #0xFF, %d0
+    lea     .rtf_exp_hi2(%pc), %a6
+    jmp     uart_hex8
+.rtf_exp_hi2:
+    move.b  %d4, %d0
+    lea     .rtf_got_label(%pc), %a6
+    jmp     uart_hex8
+.rtf_got_label:
+    lea     msg_got, %a1
+    lea     .rtf_got_val(%pc), %a6
+    jmp     uart_puts
+.rtf_got_val:
+    move.w  %d5, %d0
+    lsr.w   #8, %d0
+    andi.b  #0xFF, %d0
+    lea     .rtf_got_lo(%pc), %a6
+    jmp     uart_hex8
+.rtf_got_lo:
+    move.b  %d5, %d0
+    lea     .rtf_crlf(%pc), %a6
+    jmp     uart_hex8
+.rtf_crlf:
+    move.b  #0x0A, %d0
+    lea     ram_fail_blink(%pc), %a5
+    jmp     uart_putchar
+
+| Blink DEBUG_OUT at ~2 Hz forever (RAM test failure)
+ram_fail_blink:
+    moveq   #0, %d7
+.rfb_loop:
+    eori.b  #0x01, %d7
+    move.b  %d7, GLUE_DEBUG_OUT
+    move.w  #EXC_SLOW_OUTER, %d1
+.rfb_delay:
+    move.w  #(EXC_INNER - 1), %d0
+    dbra    %d0, .
+    dbra    %d1, .rfb_delay
+    bra     .rfb_loop
+
+| uart_hex8: send %d0.b as 2 hex chars via GLUE UART
+| Return via jmp (%a6).  Clobbers %d0, %d6.
+uart_hex8:
+    move.b  %d0, %d6
+    lsr.b   #4, %d0
+    lea     .uh8_lo(%pc), %a5
+    jmp     uart_hex4
+.uh8_lo:
+    move.b  %d6, %d0
+    move.l  %a6, %a5
+    jmp     uart_hex4
+
+| uart_hex4: send low nibble of %d0 as hex ASCII via GLUE UART
+| Tail-calls uart_putchar; returns via jmp (%a5).  Clobbers %d0.
+uart_hex4:
+    andi.b  #0x0F, %d0
+    cmpi.b  #10, %d0
+    blt.s   .uh4_digit
+    addi.b  #('A' - 10), %d0
+    jmp     uart_putchar
+.uh4_digit:
+    addi.b  #'0', %d0
+    jmp     uart_putchar
 
 | io_mcu_isr: drain IO_MCU hardware event queue into RAM ring buffer.
 | EVT_TIMER events call timer_tick inline; all bytes go to the ring buffer.
@@ -325,6 +593,22 @@ _fini:
 .section .rodata
 hellostr:
     .string	"Griffin!\n"
+msg_ram_ok:
+    .string "RAM test OK\n"
+msg_ram_data_fail:
+    .string "RAM FAIL: data bus "
+msg_ram_addr_fail:
+    .string "RAM FAIL: addr line "
+msg_exp:
+    .string "exp="
+msg_got:
+    .string " got="
+msg_bus_error:
+    .string "*** BUS ERROR ***\n"
+msg_addr_error:
+    .string "*** ADDRESS ERROR ***\n"
+msg_illegal_insn:
+    .string "*** ILLEGAL INSN ***\n"
 memory_4m:
     .string	"Memory: 4MB\n"
 memory_3m:
