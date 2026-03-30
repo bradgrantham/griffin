@@ -80,8 +80,9 @@ peripherals:
         width: 8
         description: |
           5-bit auto-reload timer period with ÷8 prescaler (bits 4:0).
-          Effective period = N × 8 SYSCLK cycles (N = 1..31, range
-          8..248 clocks, 0.67..20.7 µs at 12 MHz).  Writing a non-zero
+          Counter counts N+1 states (N down to 0 inclusive), so
+          effective period = (N+1) × 8 SYSCLK cycles (N = 1..31,
+          range 16..256 clocks, 1.33..21.3 µs at 12 MHz).  Writing a non-zero
           value loads the period register, resets the prescaler, and
           starts a free-running countdown that auto-reloads on reaching
           0.  Writing 0 stops the timer.  Use with TIMER_ARM to create

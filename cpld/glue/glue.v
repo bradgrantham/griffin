@@ -369,7 +369,6 @@ module glue (
 
     wire prescale_tick = (timer_prescale == 3'd0);
     wire timer_zero    = (timer_cnt == 5'd0);
-    wire timer_running = (timer_period != 5'd0);
 
     always @(posedge SYSCLK) begin
         if (RESET) begin
@@ -383,7 +382,7 @@ module glue (
                 timer_prescale <= 3'd7;
                 timer_period   <= D[4:0];
                 timer_cnt      <= D[4:0];
-            end else if (timer_running) begin
+            end else if (timer_period != 5'd0) begin
                 timer_prescale <= timer_prescale - 3'd1;
                 if (prescale_tick) begin
                     if (timer_zero) begin
@@ -456,8 +455,8 @@ module glue (
     // Timer armed gate: when armed and timer is not at zero, block
     // ALL DTACK to freeze the CPU until the next zero-crossing.
     // Timer stall: block DTACK while armed, release on the prescale
-    // tick where the counter reaches zero (i.e. timer_zero AND
-    // prescale_tick — the moment the armed flag clears).
+    // tick where the counter reaches zero (timer_zero AND prescale_tick
+    // — the moment the armed flag clears).
     assign nDTACK = ~dtack_comb
                   | (VIDEO_STALL & video_stall_enable)
                   | (timer_armed & ~(timer_zero & prescale_tick));

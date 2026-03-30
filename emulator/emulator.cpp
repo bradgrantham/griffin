@@ -518,7 +518,8 @@ struct TimerState
     uint64_t start_clock = 0; // SYSCLK when timer was last loaded
 
     bool running() const { return period != 0; }
-    uint32_t period_clocks() const { return static_cast<uint32_t>(period) * 8; }
+    // Hardware counts N+1 states (N down to 0), so effective period = (N+1)*8
+    uint32_t period_clocks() const { return (static_cast<uint32_t>(period) + 1) * 8; }
 
     // Cycles from 'now' until the next zero-crossing.
     // Returns 0 if stopped or exactly on a zero-crossing.

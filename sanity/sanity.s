@@ -32,9 +32,11 @@
 .equ DBRA_ROM_CLKS, 16
 .equ INNER_COUNT, 500
 
-| GLUE timer: ÷8 prescaler + 5-bit counter, effective tick = 8*N SYSCLK
+| GLUE timer: ÷8 prescaler + 5-bit counter
+| Counter counts N+1 states (N down to 0 inclusive), so effective
+| period = (N+1) * 8 SYSCLK clocks.
 .equ TIMER_PERIOD, 31
-.equ TICK_CLOCKS, 8 * TIMER_PERIOD
+.equ TICK_CLOCKS, 8 * (TIMER_PERIOD + 1)
 
 | Audio: 2x frequency for half-period math, reps for 0.25s
 | Timer arms per half-period = SYSCLK_HZ / (2*freq * TICK_CLOCKS)
@@ -461,7 +463,7 @@ _exc_illegal_insn:
 | GLUE timer must already be running (GLUE_TIMER set to period).
 | Each half-period is timed by arming the timer %d2+1 times; the
 | arm stall absorbs instruction overhead so the period between DAC
-| edges is exactly (%d2+1) * 8 * TIMER_PERIOD SYSCLK clocks.
+| edges is exactly (%d2+1) * (TIMER_PERIOD+1) * 8 SYSCLK clocks.
 |
 | %d2.w = timer arms per half-period - 1 (for dbra, preserved)
 | %d3.w = full cycles (for dbra, consumed)
