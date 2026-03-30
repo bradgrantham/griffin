@@ -1,12 +1,20 @@
 M68K_GCC = ./m68k-gcc
 M68K_OBJCOPY = ./m68k-objcopy
 
-SOURCES = crt0.s rom.cpp syscalls.c build_info.c
+REAL_SOURCES = crt0.s rom.cpp syscalls.c
+SOURCES = $(REAL_SOURCES) build_info.c
 LDSCRIPT = linker.ld
 
 rom_even.bin rom_odd.bin: rom.bin
 	$(M68K_OBJCOPY) -I binary -O binary --byte=0 --interleave=2 $< rom_even.bin
 	$(M68K_OBJCOPY) -I binary -O binary --byte=1 --interleave=2 $< rom_odd.bin
+
+flash-even: rom_even.bin
+	minipro -s -b -p "M27C512@DIP28" -w rom_even.bin
+
+flash-odd: rom_odd.bin
+	minipro -s -b -p "M27C512@DIP28" -w rom_odd.bin
+
 
 rom.bin: rom.elf
 	$(M68K_OBJCOPY) -O binary -S $< $@
@@ -17,10 +25,12 @@ rom.elf: $(SOURCES) $(LDSCRIPT)
 rom.s: rom.cpp $(LDSCRIPT)
 	$(M68K_GCC) -S -g rom.cpp
 
-# Courtesy Claude Opus 4.6
-build_info.c: FORCE
-	@echo '/* auto-generated — do not edit */' > $@
-	@echo 'const char *build_date = "'"$$(date '+%Y-%m-%d %H:%M:%S')"'";' >> $@
+# Regenerate build_info.c only when sources, git HEAD, or dirty state change.
+# Write to a temp file first; replace only if content differs, preserving the
+# timestamp when nothing changed so Make won't rebuild downstream.
+build_info.c: $(REAL_SOURCES) $(LDSCRIPT)
+	@echo '/* auto-generated — do not edit */' > $@.tmp
+	@echo 'const char *build_date = "'"$$(date '+%Y-%m-%d %H:%M:%S')"'";' >> $@.tmp
 	@BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
 	HASH=$$(git rev-parse --short HEAD); \
 	if [ "$$BRANCH" = "HEAD" ]; then \
@@ -31,11 +41,10 @@ build_info.c: FORCE
 	if ! git diff --quiet HEAD 2>/dev/null; then \
 	    REF="$$REF+"; \
 	fi; \
-	echo "const char *build_provenance = \"$$REF\";" >> $@
+	echo "const char *build_provenance = \"$$REF\";" >> $@.tmp
+	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
 
 clean:
-	rm -f rom.elf rom.bin rom_even.bin rom_odd.bin build_info.c
+	rm -f rom.elf rom.bin rom_even.bin rom_odd.bin build_info.c build_info.c.tmp
 
-FORCE:
-
-.PHONY: clean FORCE
+.PHONY: clean
