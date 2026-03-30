@@ -105,19 +105,21 @@ DEBUG\_OUT LED:
   - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
   - [ ] Dump SPI for IO MCU - just use an ISP header or something
   - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
-  - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
   - [ ] More signals between GLUE, VIDEO, ENGINE
     - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
-  - [ ] Decoupling caps for every +5V/GND pair
+  - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
   - [ ] GND, +5V, D0-D15, A1-A10, WRITE_LO, WRITE_HI to test points
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
     - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
   - [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
   - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
-  - [ ] Add a debug LED to all ICs so I can get some idea of "alive".  Maybe route to a bar-graph LED.  Or is a MMIO on every device good enough and 68000 can report issue?
   - [ ] Put USB-C with PD on the board
-  - [ ] Put two FTDI's on the board with USB-C for debug out and for serial console?
+  - [ ] Much more attention to analog components - redesign composite and VGA analog circuitry to be robust
+  - [ ] Maybe
+    - [ ] Put two FTDI's on the board with USB-C for debug out and for serial console
+    - [ ] Audio input
+    - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
 - [ ] PCB only
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
   - [ ] PS2 stabs - move footprint  
