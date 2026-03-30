@@ -42,3 +42,15 @@
 
 # Local tool path configuration (machine-specific, not committed)
 cpld/.config.mk
+
+# Mac metadata
+.DS_Store
+
+# Generated code
+.codegen.stamp
+griffin.generated.h
+griffin.generated.inc
+griffin.generated.ld
+griffin.generated.mcs51.h
+griffin.generated.vh
+griffin.generated.yml
