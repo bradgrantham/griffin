@@ -473,21 +473,32 @@ static uint16_t glue_read_build_id()
     return (hi << 8) | lo;
 }
 
+static uint16_t glue_read_clock_mhz()
+{
+    volatile uint8_t &clock_mhz_reg = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_CLOCK_MHZ);
+    // Write resets phase to high byte
+    clock_mhz_reg = 0;
+    uint16_t hi = clock_mhz_reg;
+    uint16_t lo = clock_mhz_reg;
+    return (hi << 8) | lo;
+}
+
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
-    debug_printf("GLUE build ID: %u\n", glue_read_build_id());
-    debug_printf("IO_MCU console ready\n");
+    uint16_t clock_fp88 = glue_read_clock_mhz();
+    debug_printf("GLUE build ID: %u, compiled for %u.%03uMHz\n",
+                 glue_read_build_id(),
+                 clock_fp88 >> 8,
+                 ((clock_fp88 & 0xFF) * 1000u) / 256u);
 
     volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
 
-    cf_test();
-
     // Play startup sound
     uint32_t audio_len = _binary_startup_raw_end - _binary_startup_raw_start;
-    debug_printf("Playing startup sound (%lu samples)...\n", (unsigned long)audio_len);
     play_audio(_binary_startup_raw_start, audio_len, 11025);
-    debug_printf("done\n");
+
+    cf_test();
 
     uint8_t evt;
     for (;;)
@@ -499,6 +510,15 @@ int main()
 
         switch(evt)
         {
+            case Griffin::IO_MCU_EVT_IDENTITY:
+            {
+                char identity[128];
+                char *p = identity;
+                while(evt_pop((uint8_t*)(p++)));
+                *p = '\0';
+                debug_printf("IO_MCU ready: \"%s\"\n", identity);
+                break;
+            }
             case Griffin::IO_MCU_EVT_UART_RX:
             {
                 uint8_t ch;

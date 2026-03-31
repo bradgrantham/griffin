@@ -7,6 +7,7 @@
 // pty.h / util.h pull in termios.h which #defines EXTB, colliding with
 // a Moira enum member.  Include Moira first, then the PTY header.
 #include "Moira.h"
+#include <SDL3/SDL.h>
 
 #include <fcntl.h>
 #include <sys/select.h>
@@ -609,6 +610,108 @@ struct IOmcuState
     }
 };
 
+// ---------------------------------------------------------------------------
+// Real-time clock governor
+//
+// Paces emulation to wall-clock speed.  Called every THROTTLE_INTERVAL
+// instructions; sleeps if the emulator is running ahead of real time.
+// ---------------------------------------------------------------------------
+
+static constexpr int THROTTLE_INTERVAL = 1000;
+
+struct ClockGovernor
+{
+    uint64_t base_clock = 0;
+    uint64_t base_ticks = 0;
+
+    void reset(uint64_t emu_clock)
+    {
+        base_clock = emu_clock;
+        base_ticks = SDL_GetPerformanceCounter();
+    }
+
+    void throttle(uint64_t emu_clock)
+    {
+        double emu_seconds = static_cast<double>(emu_clock - base_clock) / SYSCLK_HZ;
+        double wall_seconds = static_cast<double>(SDL_GetPerformanceCounter() - base_ticks)
+                            / static_cast<double>(SDL_GetPerformanceFrequency());
+        double ahead = emu_seconds - wall_seconds;
+        if (ahead > 0.001)
+        {
+            SDL_Delay(static_cast<uint32_t>(ahead * 1000));
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Audio output via SDL3
+//
+// SDL pulls samples from a callback.  The callback reads dac_value,
+// which is updated by DAC writes in the emulation thread.  The clock
+// governor keeps emulation at real-time, so dac_value is always
+// current when the callback fires.
+// ---------------------------------------------------------------------------
+
+static constexpr int AUDIO_OUTPUT_RATE = 44100;
+
+struct AudioState
+{
+    SDL_AudioStream *stream = nullptr;
+    uint8_t dac_value = 0x80;
+
+    static void SDLCALL callback(void *userdata, SDL_AudioStream *astream, int additional_amount, int total_amount)
+    {
+        (void)total_amount;
+        auto *self = static_cast<AudioState *>(userdata);
+        int samples = additional_amount / sizeof(int16_t);
+        if (samples <= 0)
+        {
+            return;
+        }
+        // Fill with current DAC value (zero-order hold)
+        int16_t sample = (static_cast<int16_t>(self->dac_value) - 128) * 128;
+        // Batch into stack buffer
+        int16_t buf[1024];
+        while (samples > 0)
+        {
+            int n = (samples > 1024) ? 1024 : samples;
+            for (int i = 0; i < n; i++)
+            {
+                buf[i] = sample;
+            }
+            SDL_PutAudioStreamData(astream, buf, n * sizeof(int16_t));
+            samples -= n;
+        }
+    }
+
+    bool init()
+    {
+        SDL_AudioSpec spec{};
+        spec.format = SDL_AUDIO_S16;
+        spec.channels = 1;
+        spec.freq = AUDIO_OUTPUT_RATE;
+
+        stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+                                           &spec, callback, this);
+        if (!stream)
+        {
+            fprintf(stderr, "SDL audio: %s\n", SDL_GetError());
+            return false;
+        }
+        SDL_ResumeAudioStreamDevice(stream);
+        return true;
+    }
+
+    void shutdown()
+    {
+        if (stream)
+        {
+            SDL_DestroyAudioStream(stream);
+            stream = nullptr;
+        }
+    }
+};
+
 class GriffinEmulator : public moira::Moira
 {
     mutable std::vector<uint8_t> RAM_bank1;
@@ -623,6 +726,7 @@ class GriffinEmulator : public moira::Moira
     mutable CFState cf;
     mutable TimerState timer;
     mutable bool build_id_phase = false;  // false=high byte, true=low byte
+    mutable bool clock_mhz_phase = false;  // false=high byte, true=low byte
 
     static bool is_cf_addr(uint32_t io_offset)
     {
@@ -642,6 +746,10 @@ class GriffinEmulator : public moira::Moira
         } else if(addr == GLUE_BUILD_ID - IO_BASE) {
             uint8_t val = build_id_phase ? (build_id & 0xFF) : (build_id >> 8);
             build_id_phase = !build_id_phase;
+            return val;
+        } else if(addr == GLUE_CLOCK_MHZ - IO_BASE) {
+            uint8_t val = clock_mhz_phase ? (clock_mhz & 0xFF) : (clock_mhz >> 8);
+            clock_mhz_phase = !clock_mhz_phase;
             return val;
         } else if(addr == IO_MCU_RX_DATA - IO_BASE) {
             uint8_t val = io_mcu.pop();
@@ -726,12 +834,16 @@ class GriffinEmulator : public moira::Moira
             }
         } else if(addr == GLUE_BUILD_ID - IO_BASE) {
             build_id_phase = false;  // reset to high byte
+        } else if(addr == GLUE_CLOCK_MHZ - IO_BASE) {
+            clock_mhz_phase = false;  // reset to high byte
         } else if(addr == IO_MCU_TX_DATA - IO_BASE) {
             // IO_MCU UART TX: send to PTY console
             if(debug & DEBUG_IO_MCU) printf("[IO_MCU TX: 0x%02X]\n", val);
             pty_console.send(val);
         } else if(addr == IO_MCU_CONFIG - IO_BASE) {
             if(debug & DEBUG_IO_MCU) printf("[IO_MCU CONFIG: 0x%02X]\n", val);
+        } else if(addr + IO_BASE >= AUDIO_BASE && addr + IO_BASE < AUDIO_BASE + AUDIO_SIZE) {
+            audio.dac_value = val;
         } else {
             if(debug & DEBUG_IO) {
                 if(isprint(val))
@@ -798,6 +910,9 @@ class GriffinEmulator : public moira::Moira
 public:
 
     uint16_t build_id = 31415;
+    uint16_t clock_mhz = 0x0C00;  // 12.0 MHz as 8.8 fixed-point
+    mutable AudioState audio;
+    ClockGovernor governor;
 
     enum RAMConfig {RAM_1_BANK_256K, RAM_1M, RAM_2M, RAM_3M, RAM_4M };
 
@@ -1059,7 +1174,7 @@ struct SoftUART
 
 void usage(const char *progname)
 {
-    printf("%s [-m {256,1024,2048,3072,4096}] [--cf disk.img] [--cf-ro disk.img] [--build-id N] rom-filename\n", progname);
+    printf("%s [-m {256,1024,2048,3072,4096}] [--cf disk.img] [--cf-ro disk.img] [--build-id N] [--clock-mhz N.N] rom-filename\n", progname);
 }
 
 int main(int argc, const char** argv)
@@ -1071,6 +1186,7 @@ int main(int argc, const char** argv)
     const char *cf_path = nullptr;
     bool cf_ro = false;
     uint16_t build_id = 31415;
+    uint16_t clock_mhz = 0x0C00;  // 12.0 MHz default
 
     while((argc > 0) && (argv[0][0] == '-')) {
 	if(strcmp(argv[0], "--cf") == 0) {
@@ -1121,6 +1237,17 @@ int main(int argc, const char** argv)
             build_id = static_cast<uint16_t>(atoi(argv[1]));
             argv += 2;
             argc -= 2;
+        } else if(strcmp(argv[0], "--clock-mhz") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--clock-mhz option requires a frequency (e.g. 12.0 or 14.318).\n");
+                exit(EXIT_FAILURE);
+            }
+            double mhz = atof(argv[1]);
+            uint16_t int_part = static_cast<uint16_t>(mhz);
+            uint16_t frac_part = static_cast<uint16_t>((mhz - int_part) * 256.0 + 0.5);
+            clock_mhz = (int_part << 8) | (frac_part & 0xFF);
+            argv += 2;
+            argc -= 2;
         } else if(
             (strcmp(argv[0], "-help") == 0) ||
             (strcmp(argv[0], "-h") == 0) ||
@@ -1147,8 +1274,20 @@ int main(int argc, const char** argv)
 
     const char *romname = argv[0];
 
+    if (!SDL_Init(SDL_INIT_AUDIO))
+    {
+        fprintf(stderr, "SDL_Init(AUDIO): %s\n", SDL_GetError());
+        exit(EXIT_FAILURE);
+    }
+
     GriffinEmulator emulator(ram_config);
     emulator.build_id = build_id;
+    emulator.clock_mhz = clock_mhz;
+
+    if (!emulator.audio.init())
+    {
+        fprintf(stderr, "Warning: audio disabled\n");
+    }
 
     if (cf_path)
     {
@@ -1184,12 +1323,18 @@ int main(int argc, const char** argv)
     SoftUART debug_uart(emulator.get_debug_latch()); // This represents an FTDI 232 attached to the debug out pin
     emulator.setDasmSyntax(moira::Syntax::GNU_MIT);
     emulator.reset();
+    emulator.governor.reset(emulator.getClock());
     printf("begin execution\n");
     uint64_t previous_uart_sample = 0;
     uint64_t previous_io_mcu_poll = 0;
     static constexpr uint64_t IO_MCU_POLL_INTERVAL = SYSCLK_HZ / 1000; // ~1ms
     auto clock_then = emulator.getClock();
     auto then = time(0);
+    int throttle_counter = 0;
+    static constexpr uint64_t audio_rate_hertz = 11025;
+    static constexpr uint64_t sysclk_per_audio = SYSCLK_HZ / audio_rate_hertz;
+    uint64_t clock_next_audio = sysclk_per_audio;
+    FILE *audio = fopen("audio.raw", "wb");
     while (1) {
         if(debug & DEBUG_DISASSEMBLE) {
             static char str[1024];
@@ -1199,6 +1344,17 @@ int main(int argc, const char** argv)
         emulator.execute();
         auto clock_now = emulator.getClock();
         auto now = time(0);
+
+        while(clock_now > clock_next_audio) {
+            fwrite(&emulator.audio.dac_value, 1, 1, audio);
+            clock_next_audio += sysclk_per_audio;
+        }
+
+        if (++throttle_counter >= THROTTLE_INTERVAL)
+        {
+            emulator.governor.throttle(clock_now);
+            throttle_counter = 0;
+        }
 
         while(clock_now / SOFT_UART_SAMPLE_INTERVAL != previous_uart_sample / SOFT_UART_SAMPLE_INTERVAL)
         {

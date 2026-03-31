@@ -225,6 +225,7 @@ module glue (
     localparam [23:0] GLUE_TIMER_ADDR     = `GLUE_TIMER;
     localparam [23:0] GLUE_TIMER_ARM_ADDR = `GLUE_TIMER_ARM;
     localparam [23:0] GLUE_BUILD_ID_ADDR = `GLUE_BUILD_ID;
+    localparam [23:0] GLUE_CLOCK_MHZ_ADDR = `GLUE_CLOCK_MHZ;
     // GLUE_UART_RX_ADDR removed — RX stubbed out (see above)
 
     `include "build_id.vh"
@@ -243,6 +244,8 @@ module glue (
                               & (A_lo[5:1] == GLUE_TIMER_ARM_ADDR[5:1]);
     wire build_id_select    = glue_select & lo_byte_selected
                               & (A_lo[5:1] == GLUE_BUILD_ID_ADDR[5:1]);
+    wire clock_mhz_select   = glue_select & lo_byte_selected
+                              & (A_lo[5:1] == GLUE_CLOCK_MHZ_ADDR[5:1]);
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -251,7 +254,10 @@ module glue (
     // etc. can drive the bus.
     // ----------------------------------------------------------------
     wire glue_read_active = debug_in_select | uart_stat_select
-                          | (build_id_select & read);
+                          | (build_id_select & read)
+                          | (clock_mhz_select & read);
+
+    localparam [15:0] CLOCK_MHZ_FP88 = `CLOCK_MHZ_FP88;
 
     reg [7:0] glue_read_data;
     always @(*) begin
@@ -262,6 +268,8 @@ module glue (
             glue_read_data = {6'd0, 1'b0, tx_busy};
         else if (build_id_select & read)
             glue_read_data = build_id_phase ? BUILD_ID[7:0] : BUILD_ID[15:8];
+        else if (clock_mhz_select & read)
+            glue_read_data = clock_mhz_phase ? CLOCK_MHZ_FP88[7:0] : CLOCK_MHZ_FP88[15:8];
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;
@@ -291,6 +299,32 @@ module glue (
             else begin
                 build_id_phase   <= 1'b0;
                 build_id_pending <= 1'b0;
+            end
+        end
+    end
+
+    // ----------------------------------------------------------------
+    // Clock MHz toggle: same mechanism as Build ID — alternates
+    // high/low byte on successive reads, write resets to high byte.
+    // ----------------------------------------------------------------
+    reg clock_mhz_phase;
+    reg clock_mhz_pending;
+
+    always @(posedge SYSCLK) begin
+        if (RESET) begin
+            clock_mhz_phase   <= 1'b0;
+            clock_mhz_pending <= 1'b0;
+        end else if (nAS) begin
+            if (clock_mhz_pending) begin
+                clock_mhz_phase   <= ~clock_mhz_phase;
+                clock_mhz_pending <= 1'b0;
+            end
+        end else if (clock_mhz_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
+            if (read)
+                clock_mhz_pending <= 1'b1;
+            else begin
+                clock_mhz_phase   <= 1'b0;
+                clock_mhz_pending <= 1'b0;
             end
         end
     end
