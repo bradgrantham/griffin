@@ -674,7 +674,6 @@ class GriffinEmulator : public moira::Moira
     mutable CFState cf;
     mutable TimerState timer;
     mutable bool build_id_phase = false;  // false=high byte, true=low byte
-    mutable bool clock_mhz_phase = false;  // false=high byte, true=low byte
     mutable uint8_t dac_value = 0x0;
 
     static bool is_cf_addr(uint32_t io_offset)
@@ -695,13 +694,6 @@ class GriffinEmulator : public moira::Moira
         } else if(addr == GLUE_BUILD_ID - IO_BASE) {
             uint8_t val = build_id_phase ? (build_id & 0xFF) : (build_id >> 8);
             build_id_phase = !build_id_phase;
-            return val;
-        } else if(addr == GLUE_CLOCK_MHZ - IO_BASE) {
-            uint16_t int_part = clock_hz / 1000000;
-            uint16_t frac_part = ((clock_hz % 1000000) * 256 + 500000) / 1000000;
-            uint16_t fp88 = (int_part << 8) | (frac_part & 0xFF);
-            uint8_t val = clock_mhz_phase ? (fp88 & 0xFF) : (fp88 >> 8);
-            clock_mhz_phase = !clock_mhz_phase;
             return val;
         } else if(addr == IO_MCU_RX_DATA - IO_BASE) {
             uint8_t val = io_mcu.pop();
@@ -786,8 +778,6 @@ class GriffinEmulator : public moira::Moira
             }
         } else if(addr == GLUE_BUILD_ID - IO_BASE) {
             build_id_phase = false;  // reset to high byte
-        } else if(addr == GLUE_CLOCK_MHZ - IO_BASE) {
-            clock_mhz_phase = false;  // reset to high byte
         } else if(addr == IO_MCU_TX_DATA - IO_BASE) {
             // IO_MCU UART TX: send to PTY console
             if(debug & DEBUG_IO_MCU) printf("[IO_MCU TX: 0x%02X]\n", val);
@@ -1130,7 +1120,7 @@ struct SoftUART
 
 void usage(const char *progname)
 {
-    printf("%s [-m {256,1024,2048,3072,4096}] [--cf disk.img] [--cf-ro disk.img] [--build-id N] [--clock-mhz N.N] rom-filename\n", progname);
+    printf("%s [-m {256,1024,2048,3072,4096}] [--cf disk.img] [--cf-ro disk.img] [--build-id N] rom-filename\n", progname);
 }
 
 int main(int argc, const char** argv)
@@ -1142,7 +1132,6 @@ int main(int argc, const char** argv)
     const char *cf_path = nullptr;
     bool cf_ro = false;
     uint16_t build_id = 31415;
-    uint32_t clock_hz = 12000000;
 
     while((argc > 0) && (argv[0][0] == '-')) {
 	if(strcmp(argv[0], "--cf") == 0) {
@@ -1193,14 +1182,6 @@ int main(int argc, const char** argv)
             build_id = static_cast<uint16_t>(atoi(argv[1]));
             argv += 2;
             argc -= 2;
-        } else if(strcmp(argv[0], "--clock-mhz") == 0) {
-            if(argc < 2) {
-                fprintf(stderr, "--clock-mhz option requires a frequency (e.g. 12.0 or 14.318).\n");
-                exit(EXIT_FAILURE);
-            }
-            clock_hz = static_cast<uint32_t>(atof(argv[1]) * 1e6 + 0.5);
-            argv += 2;
-            argc -= 2;
         } else if(
             (strcmp(argv[0], "-help") == 0) ||
             (strcmp(argv[0], "-h") == 0) ||
@@ -1229,7 +1210,6 @@ int main(int argc, const char** argv)
 
     GriffinEmulator emulator(ram_config);
     emulator.build_id = build_id;
-    emulator.clock_hz = clock_hz;
 
     if (cf_path)
     {

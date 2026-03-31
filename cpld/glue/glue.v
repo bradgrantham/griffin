@@ -35,8 +35,8 @@ module glue (
     output wire        DEBUG_OUT,
     output wire        nAUDIO_LE,
     output wire        nIO_SELECT,
-    output wire        CF_CS0,
-    output wire        CF_CS1,
+    output wire        nCF_CS0,
+    output wire        nCF_CS1,
 
     inout  wire        nHALT,
     output wire        nDTACK,  // Data Transfer Acknowledge
@@ -195,8 +195,16 @@ module glue (
     // low otherwise so the DAC holds the last written sample.
     assign nAUDIO_LE = audio_segment & AS;
     assign nIO_SELECT = ~(io_segment & AS);
-    assign CF_CS0 = cf_segment & cf_register_bank0 & AS;
-    assign CF_CS1 = cf_segment & cf_register_bank1 & AS;
+    // CF chip selects are active-low on the card (-CE pins).
+    // PCB nets are crossed: CPLD nCF_CS0 → CF /CS1, CPLD nCF_CS1 → CF /CS0.
+    // Swap bank assignments here so bank0 (task file) → CF /CS0 and
+    // bank1 (control) → CF /CS1, and drive active-low so both default
+    // HIGH (deasserted) when CF is not being accessed.
+    //
+
+    wire cf_select = cf_segment & AS;
+    assign nCF_CS0 = ~(cf_select & cf_register_bank1);
+    assign nCF_CS1 = ~(cf_select & cf_register_bank0);
 
     // VPA: assert during 68000 interrupt acknowledge cycle (FC = 111, AS active)
     assign nVPA = ~((FC == 3'b111) & ~nAS);
@@ -225,7 +233,6 @@ module glue (
     localparam [23:0] GLUE_TIMER_ADDR     = `GLUE_TIMER;
     localparam [23:0] GLUE_TIMER_ARM_ADDR = `GLUE_TIMER_ARM;
     localparam [23:0] GLUE_BUILD_ID_ADDR = `GLUE_BUILD_ID;
-    localparam [23:0] GLUE_CLOCK_MHZ_ADDR = `GLUE_CLOCK_MHZ;
     // GLUE_UART_RX_ADDR removed — RX stubbed out (see above)
 
     `include "build_id.vh"
@@ -244,8 +251,6 @@ module glue (
                               & (A_lo[5:1] == GLUE_TIMER_ARM_ADDR[5:1]);
     wire build_id_select    = glue_select & lo_byte_selected
                               & (A_lo[5:1] == GLUE_BUILD_ID_ADDR[5:1]);
-    wire clock_mhz_select   = glue_select & lo_byte_selected
-                              & (A_lo[5:1] == GLUE_CLOCK_MHZ_ADDR[5:1]);
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -254,10 +259,12 @@ module glue (
     // etc. can drive the bus.
     // ----------------------------------------------------------------
     wire glue_read_active = debug_in_select | uart_stat_select
-                          | (build_id_select & read)
-                          | (clock_mhz_select & read);
+                          | (build_id_select & read);
 
-    localparam [15:0] CLOCK_MHZ_FP88 = `CLOCK_MHZ_FP88;
+    // ----------------------------------------------------------------
+    // BUILD_ID — 8-bit build counter (0-255, auto-incremented).
+    // Reduced from 16-bit to free macrocells for CF CS hold logic.
+    // ----------------------------------------------------------------
 
     reg [7:0] glue_read_data;
     always @(*) begin
@@ -267,67 +274,10 @@ module glue (
         else if (uart_stat_select)
             glue_read_data = {6'd0, 1'b0, tx_busy};
         else if (build_id_select & read)
-            glue_read_data = build_id_phase ? BUILD_ID[7:0] : BUILD_ID[15:8];
-        else if (clock_mhz_select & read)
-            glue_read_data = clock_mhz_phase ? CLOCK_MHZ_FP88[7:0] : CLOCK_MHZ_FP88[15:8];
+            glue_read_data = BUILD_ID[7:0];
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;
-
-    // ----------------------------------------------------------------
-    // Build ID toggle: alternates high/low byte on successive reads.
-    // Write to BUILD_ID address resets to high byte (phase 0).
-    // Latches action during bus cycle, commits on nAS rising edge.
-    // ----------------------------------------------------------------
-    reg build_id_phase;
-    reg build_id_pending;  // toggle pending at end of bus cycle
-
-    always @(posedge SYSCLK) begin
-        if (RESET) begin
-            build_id_phase   <= 1'b0;
-            build_id_pending <= 1'b0;
-        end else if (nAS) begin
-            // Bus cycle ended — apply pending action
-            if (build_id_pending) begin
-                build_id_phase   <= ~build_id_phase;
-                build_id_pending <= 1'b0;
-            end
-        end else if (build_id_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
-            // During bus cycle: mark pending toggle for reads, reset for writes
-            if (read)
-                build_id_pending <= 1'b1;
-            else begin
-                build_id_phase   <= 1'b0;
-                build_id_pending <= 1'b0;
-            end
-        end
-    end
-
-    // ----------------------------------------------------------------
-    // Clock MHz toggle: same mechanism as Build ID — alternates
-    // high/low byte on successive reads, write resets to high byte.
-    // ----------------------------------------------------------------
-    reg clock_mhz_phase;
-    reg clock_mhz_pending;
-
-    always @(posedge SYSCLK) begin
-        if (RESET) begin
-            clock_mhz_phase   <= 1'b0;
-            clock_mhz_pending <= 1'b0;
-        end else if (nAS) begin
-            if (clock_mhz_pending) begin
-                clock_mhz_phase   <= ~clock_mhz_phase;
-                clock_mhz_pending <= 1'b0;
-            end
-        end else if (clock_mhz_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
-            if (read)
-                clock_mhz_pending <= 1'b1;
-            else begin
-                clock_mhz_phase   <= 1'b0;
-                clock_mhz_pending <= 1'b0;
-            end
-        end
-    end
 
     // ----------------------------------------------------------------
     // GLUE writable registers
@@ -513,8 +463,7 @@ module glue (
         ((~nVIDEO_SELECT)   & (ws_cnt >= `VIDEO_DTACK_THRESHOLD))  |  // VIDEO (register access)
         ((~nENGINE_SELECT)  & ~ENGINE_ABSENT & ~nENGINE_DTACK) |  // ENGINE: handshake
         (glue_select        & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
-        (CF_CS0             & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
-        (CF_CS1             & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
+        (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
         ((~nIO_SELECT)      & ~IO_ABSENT & ~nIO_DTACK) |  // IO MCU: handshake
         (nAUDIO_LE          & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO (nAUDIO_LE is active-high despite name)
 
@@ -596,8 +545,8 @@ endmodule
 //PIN: nAUDIO_LE  : 68
 //PIN: nIO_SELECT : 12
 //PIN: nVIDEO_SELECT : 74
-//PIN: CF_CS0     : 76
-//PIN: CF_CS1     : 77
+//PIN: nCF_CS0     : 76
+//PIN: nCF_CS1     : 77
 //PIN: nR_W       : 73
 //PIN: FC_0       : 52
 //PIN: FC_1       : 49
