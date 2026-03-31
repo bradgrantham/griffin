@@ -366,6 +366,9 @@ def write_verilog_include(hw: dict, path: Path) -> None:
     w("")
     w(f"// Project: {proj['name']}")
     w(f"`define SYSCLK_HZ {proj['clock_hz']}")
+    clock_hz = proj['clock_hz']
+    fp88 = (clock_hz * 256 + 500000) // 1000000
+    w(f"`define CLOCK_MHZ_FP88 16'h{fp88:04X}  // {clock_hz} Hz as 8.8 fixed-point MHz")
     w("")
 
     for pname, periph in perifs.items():
