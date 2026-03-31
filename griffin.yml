@@ -82,15 +82,6 @@ peripherals:
           16-bit build ID baked into CPLD at synthesis, read as two bytes.
           First read returns high byte (15:8), second read returns low byte (7:0),
           then alternates.  Any write to this address resets to high byte.
-      - offset: 0x0F
-        name: CLOCK_MHZ
-        access: read
-        width: 8
-        description: >
-          System clock frequency in 8.8 fixed-point MHz, read as two bytes.
-          First read returns high byte (integer MHz), second read returns
-          low byte (fractional 1/256 MHz), then alternates.  Any write to
-          this address resets to high byte.  Value is baked in at synthesis.
       - offset: 0x09
         name: TIMER
         access: write
