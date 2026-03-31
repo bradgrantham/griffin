@@ -82,6 +82,15 @@ peripherals:
           16-bit build ID baked into CPLD at synthesis, read as two bytes.
           First read returns high byte (15:8), second read returns low byte (7:0),
           then alternates.  Any write to this address resets to high byte.
+      - offset: 0x0F
+        name: CLOCK_MHZ
+        access: read
+        width: 8
+        description: >
+          System clock frequency in 8.8 fixed-point MHz, read as two bytes.
+          First read returns high byte (integer MHz), second read returns
+          low byte (fractional 1/256 MHz), then alternates.  Any write to
+          this address resets to high byte.  Value is baked in at synthesis.
       - offset: 0x09
         name: TIMER
         access: write
@@ -394,6 +403,7 @@ constants:
   IO_MCU_EVT_KBD:       0x02
   IO_MCU_EVT_MOUSE:     0x03
   IO_MCU_EVT_TIMER:     0x04
+  IO_MCU_EVT_IDENTITY:     0x05
   CF_STATUS_BSY:   0x80
   CF_STATUS_DRDY:  0x40
   CF_STATUS_DRQ:   0x08
