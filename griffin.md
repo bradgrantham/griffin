@@ -123,7 +123,13 @@ DEBUG\_OUT LED:
     - [ ] Put two FTDI's on the board with USB-C for debug output and for 8051 serial console
     - [ ] Audio input
     - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
+  - [ ] CF symbol is junk - redo it.
+  - [ ] CF card IOWR should be gated by AS.
+    - [ ] CF card latches on rise of IOWR
+    - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
+  - [ ] CF card to 16 bits?  Routing those pins will be annoying, but possible.
 - [ ] PCB only
+  - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
   - [ ] PS2 stabs - move footprint  
   - [ ] Headphone jack pads - drill partial holes?  
