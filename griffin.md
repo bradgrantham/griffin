@@ -92,15 +92,17 @@ DEBUG\_OUT LED:
 
 - [ ] Schematic (+PCB if necessary)
   - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
-  - [ ] Determine a more available ROM technology and design around that
+  - [ ] Determine a more available ROM technology and design around that.
     - [ ] CPLD with I2C ROM?
     - [ ] RP2350?
     - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
+    - [ ] https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614 is a 256K x 16 ROM, 40DIP, 90ns (more wait states but maybe okay) for about $10 and they have 142 of them at the moment.
   - [ ] IO MCU interface may be fragile; put it behind a 68681?
     - [ ] 68681 manages UART and timers
     - [ ] 8051 manages PS/2 and uses a serial protocol to 68681
   - [ ] Swap MCU RX and TX - wrong pins!!
   - [ ] Pullups on JTAG lines
+  - [ ] Pullup on DTACK so missing peripherals can't spuriously ACK
   - [ ] 4.7K Pullup on HALT
   - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
   - [ ] Dump SPI for IO MCU - just use an ISP header or something
@@ -117,7 +119,7 @@ DEBUG\_OUT LED:
   - [ ] Put USB-C with PD on the board
   - [ ] Much more attention to analog components - redesign composite and VGA analog circuitry to be robust
   - [ ] Maybe
-    - [ ] Put two FTDI's on the board with USB-C for debug out and for serial console
+    - [ ] Put two FTDI's on the board with USB-C for debug output and for 8051 serial console
     - [ ] Audio input
     - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
 - [ ] PCB only
