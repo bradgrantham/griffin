@@ -88,6 +88,26 @@ static uint8_t queue_get(void)
     return b;
 }
 
+/* Enqueue a typed event with a buffer. */
+static void queue_put_event_string(uint8_t type, uint8_t size, const uint8_t *payload)
+{
+    /* Need room for 2 bytes; check before either write so we don't
+     * enqueue a type without its payload. */
+    uint8_t free = (queue_tail - queue_head - 1) & (QUEUE_SIZE - 1);
+    if (free < (1 + size))
+    {
+        status_flags |= IO_MCU_STATUS_OVERFLOW_MASK;
+        return;
+    }
+    queue_buf[queue_head] = type;
+    queue_head = (queue_head + 1) & (QUEUE_SIZE - 1);
+    for(int i = 0; i < size; i++) 
+    {
+        queue_buf[queue_head] = payload[i];
+        queue_head = (queue_head + 1) & (QUEUE_SIZE - 1);
+    }
+}
+
 /* Enqueue a typed event with one payload byte. */
 static void queue_put_event(uint8_t type, uint8_t payload)
 {
@@ -459,6 +479,9 @@ void main(void)
     queue_init();
     bus_init();
     ps2_init();
+
+    const char identity[] = "IO MCU";
+    queue_put_event_string(IO_MCU_EVT_IDENTITY, sizeof(identity), identity);
 
     /* Enable serial interrupt (UART RX) */
     ES = 1;
