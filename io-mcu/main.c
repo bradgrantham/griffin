@@ -153,7 +153,8 @@ static void uart_init(void)
     TR2 = 1;            /* Start Timer 2 */
 }
 
-static void uart_putchar(uint8_t c)
+/* Blocking transmit — used only during boot banner before 68000 is active. */
+static void uart_putchar_sync(uint8_t c)
 {
     SBUF = c;
     while (!TI)
@@ -162,11 +163,19 @@ static void uart_putchar(uint8_t c)
     TI = 0;
 }
 
+/* Non-blocking transmit — fire and forget.  Caller (68000) must poll
+ * TX_READY in STATUS before sending the next byte. */
+static void uart_putchar_async(uint8_t c)
+{
+    TI = 0;
+    SBUF = c;
+}
+
 static void uart_puts(const char *s)
 {
     while (*s)
     {
-        uart_putchar(*s++);
+        uart_putchar_sync(*s++);
     }
 }
 
@@ -436,11 +445,11 @@ static void bus_process(void)
     {
         /* 68000 is writing: MCU reads data */
 
-        /* Assert DTACK to tell 68000 we're ready to latch */
-        nIO_DTACK_PIN = 0;
-
-        /* Read data from P2 */
+        /* Read data from P2 while 68000 is still driving the bus */
         data = P2;
+
+        /* Now assert DTACK to end the bus cycle */
+        nIO_DTACK_PIN = 0;
 
         /* Wait for 68000 to deassert IO_SELECT */
         while (!nIO_SELECT_PIN)
@@ -454,7 +463,7 @@ static void bus_process(void)
         switch (address)
         {
         case IO_MCU_REG_TX_DATA:
-            uart_putchar(data);
+            uart_putchar_async(data);
             break;
         case IO_MCU_REG_CONFIG:
             timer0_set_rate(data);
@@ -476,7 +485,7 @@ void main(void)
     uart_puts(build_date);
     uart_puts(", GIT ");
     uart_puts(build_provenance);
-    uart_putchar('\n');
+    uart_putchar_sync('\n');
 
     queue_init();
     bus_init();
@@ -484,6 +493,7 @@ void main(void)
 
     const char identity[] = "IO MCU";
     queue_put_event_string(IO_MCU_EVT_IDENTITY, sizeof(identity), identity);
+    irq_update();
 
     /* Enable serial interrupt (UART RX) */
     ES = 1;
