@@ -101,6 +101,8 @@ static void queue_put_event_string(uint8_t type, uint8_t size, const uint8_t *pa
     }
     queue_buf[queue_head] = type;
     queue_head = (queue_head + 1) & (QUEUE_SIZE - 1);
+    queue_buf[queue_head] = size;
+    queue_head = (queue_head + 1) & (QUEUE_SIZE - 1);
     for(int i = 0; i < size; i++) 
     {
         queue_buf[queue_head] = payload[i];

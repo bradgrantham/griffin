@@ -514,8 +514,13 @@ int main()
             {
                 char identity[128];
                 char *p = identity;
-                while(evt_pop((uint8_t*)(p++)));
-                *p = '\0';
+                uint8_t size;
+                evt_pop(&size);
+                for(int i = 0; i < size; i++)
+                {
+                    evt_pop((uint8_t*)(&identity[i]));
+                }
+                identity[size] = '\0';
                 debug_printf("IO_MCU ready: \"%s\"\n", identity);
                 break;
             }
