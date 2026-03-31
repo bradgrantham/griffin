@@ -23,6 +23,11 @@ struct cf_info
 
 static constexpr uint32_t CF_POLL_LIMIT = 500000;
 
+// Power-on poll limit for cf_init.  CF spec allows up to 31 seconds
+// for BSY to clear after power-on; 2 seconds covers most cards.
+// Each iteration is ~50 SYSCLK (~4 µs at 12 MHz), so 600K ≈ 2.4 s.
+static constexpr uint32_t CF_INIT_POLL_LIMIT = 600000;
+
 static volatile uint8_t &cf_data       = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_DATA);
 static volatile uint8_t &cf_error_reg  = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_ERROR);
 static volatile uint8_t &cf_features   = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_FEATURES);
@@ -78,14 +83,19 @@ static void cf_set_lba(uint32_t lba, uint8_t count)
 // Initialize CF card: wait for ready, set 8-bit PIO mode.
 cf_error cf_init()
 {
-    cf_error err = cf_wait_ready();
-    if (err != CF_OK)
+    // Wait for BSY clear with extended power-on timeout.
+    for (uint32_t i = 0; i < CF_INIT_POLL_LIMIT; i++)
     {
-        return err;
+        if (!(cf_status & Griffin::CF_STATUS_BSY))
+        {
+            goto bsy_clear;
+        }
     }
+    return CF_TIMEOUT;
 
+bsy_clear:
     // Wait for DRDY
-    for (uint32_t i = 0; i < CF_POLL_LIMIT; i++)
+    for (uint32_t i = 0; i < CF_INIT_POLL_LIMIT; i++)
     {
         if (cf_status & Griffin::CF_STATUS_DRDY)
         {
@@ -98,7 +108,20 @@ drdy_ok:
     // Set 8-bit transfer mode
     cf_features = Griffin::CF_CMD_SET_8BIT;
     cf_command  = Griffin::CF_CMD_SET_FEATURES;
-    return cf_wait_ready();
+
+    for (uint32_t i = 0; i < CF_INIT_POLL_LIMIT; i++)
+    {
+        uint8_t s = cf_status;
+        if (s & Griffin::CF_STATUS_ERR)
+        {
+            return CF_ERR;
+        }
+        if (!(s & Griffin::CF_STATUS_BSY))
+        {
+            return CF_OK;
+        }
+    }
+    return CF_TIMEOUT;
 }
 
 // Read the 512-byte IDENTIFY DEVICE block into caller-provided buffer.
@@ -335,7 +358,8 @@ static void cf_test()
     cf_error err = cf_init();
     if (err != CF_OK)
     {
-        debug_printf("CF: init failed (err=%d)\n", err);
+        debug_printf("CF: init failed (err=%d) status=0x%02X error=0x%02X\n",
+                     err, cf_status, cf_error_reg);
         return;
     }
     debug_printf("CF: init OK\n");
@@ -344,7 +368,8 @@ static void cf_test()
     err = cf_identify(id_buf);
     if (err != CF_OK)
     {
-        debug_printf("CF: identify failed (err=%d)\n", err);
+        debug_printf("CF: identify failed (err=%d) status=0x%02X error=0x%02X\n",
+                     err, cf_status, cf_error_reg);
         return;
     }
 
@@ -463,34 +488,17 @@ static bool evt_pop(uint8_t *out)
     return true;
 }
 
-static uint16_t glue_read_build_id()
+static uint8_t glue_read_build_id()
 {
     volatile uint8_t &build_id_reg = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_BUILD_ID);
-    // Write resets phase to high byte
-    build_id_reg = 0;
-    uint16_t hi = build_id_reg;
-    uint16_t lo = build_id_reg;
-    return (hi << 8) | lo;
+    return build_id_reg;
 }
 
-static uint16_t glue_read_clock_mhz()
-{
-    volatile uint8_t &clock_mhz_reg = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_CLOCK_MHZ);
-    // Write resets phase to high byte
-    clock_mhz_reg = 0;
-    uint16_t hi = clock_mhz_reg;
-    uint16_t lo = clock_mhz_reg;
-    return (hi << 8) | lo;
-}
 
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
-    uint16_t clock_fp88 = glue_read_clock_mhz();
-    debug_printf("GLUE build ID: %u, compiled for %u.%03uMHz\n",
-                 glue_read_build_id(),
-                 clock_fp88 >> 8,
-                 ((clock_fp88 & 0xFF) * 1000u) / 256u);
+    debug_printf("GLUE build ID: %d\n", glue_read_build_id());
 
     volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
 
