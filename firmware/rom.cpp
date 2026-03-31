@@ -364,6 +364,84 @@ static void cf_test()
     dump_hex(0, sector, 512);
 }
 
+// ---------------------------------------------------------------------------
+// Audio playback via GLUE timer + AUDIO_DAC
+// ---------------------------------------------------------------------------
+
+// Embedded startup sound (linked from startup_audio.o)
+extern "C" const int8_t _binary_startup_raw_start[];
+extern "C" const int8_t _binary_startup_raw_end[];
+
+// Stream signed 8-bit samples to the DAC at the given sample rate.
+// Uses the GLUE auto-reload timer to get deterministic sample timing:
+// each sample period is broken into 'arms' timer stalls of (period+1)*8
+// SYSCLK clocks each.  The stall absorbs instruction overhead.
+static void play_audio(const int8_t *buf, uint32_t len, uint32_t sample_rate)
+{
+    // Find best timer period (1-31) and arm count to match sample_rate.
+    uint32_t target = Griffin::SYSCLK_HZ / sample_rate;
+    uint8_t best_period = 1;
+    uint16_t best_arms = 1;
+    uint32_t best_error = UINT32_MAX;
+
+    for (uint8_t n = 1; n <= 31; n++)
+    {
+        uint32_t tick = (static_cast<uint32_t>(n) + 1) * 8;
+        uint16_t arms = (target + tick / 2) / tick;
+        if (arms < 1)
+        {
+            arms = 1;
+        }
+        uint32_t actual = arms * tick;
+        uint32_t err = (actual > target) ? actual - target : target - actual;
+        if (err < best_error)
+        {
+            best_error = err;
+            best_period = n;
+            best_arms = arms;
+        }
+    }
+
+    volatile uint8_t &timer_reg = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_TIMER);
+    volatile uint8_t &timer_arm = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_TIMER_ARM);
+    volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
+
+    timer_reg = best_period;
+
+    // Inner loop in inline asm for tightness.
+    // Per sample: write (sample + 128) to DAC, then arm the timer best_arms times.
+    // The timer stall freezes the CPU each arm, giving deterministic timing.
+    //
+    // Local register variables force GCC to allocate buf/count/arms_m1 to
+    // specific registers — the asm body references them by name, so they
+    // must not be relegated to arbitrary regs by the constraint allocator.
+    register const int8_t *buf_ptr asm("a0") = buf;
+    register uint16_t count asm("d3") = static_cast<uint16_t>(len - 1);
+    register uint16_t arms_m1 asm("d2") = best_arms - 1;
+
+    asm volatile (
+        "    bra.s   2f                   \n"  // enter loop
+        "1:                               \n"  // .sample_loop
+        "    move.b  (%%a0)+, %%d0        \n"  // load signed sample
+        "    addi.b  #0x80, %%d0          \n"  // signed -> unsigned
+        "    move.b  %%d0, (%[dac])       \n"  // write DAC
+        "    move.w  %%d2, %%d1           \n"  // arm counter
+        "3:                               \n"  // .arm_loop
+        "    move.b  %%d0, (%[arm])       \n"  // arm (CPU stalls)
+        "    dbra    %%d1, 3b             \n"
+        "2:                               \n"  // .test
+        "    dbra    %%d3, 1b             \n"
+        : "+a" (buf_ptr), "+d" (count)
+        : [dac] "a" (&dac),
+          [arm] "a" (&timer_arm),
+          "d" (arms_m1)
+        : "d0", "d1", "memory"
+    );
+
+    timer_reg = 0;
+    dac = 0x80;  // silence (center)
+}
+
 static volatile uint8_t &io_mcu_tx = *reinterpret_cast<volatile uint8_t *>(Griffin::IO_MCU_TX_DATA);
 
 static void io_mcu_putchar(uint8_t ch)
@@ -401,7 +479,15 @@ int main()
     debug_printf("GLUE build ID: %u\n", glue_read_build_id());
     debug_printf("IO_MCU console ready\n");
 
+    volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
+
     cf_test();
+
+    // Play startup sound
+    uint32_t audio_len = _binary_startup_raw_end - _binary_startup_raw_start;
+    debug_printf("Playing startup sound (%lu samples)...\n", (unsigned long)audio_len);
+    play_audio(_binary_startup_raw_start, audio_len, 11025);
+    debug_printf("done\n");
 
     uint8_t evt;
     for (;;)

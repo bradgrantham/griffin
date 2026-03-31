@@ -3,6 +3,7 @@ M68K_OBJCOPY = ./m68k-objcopy
 
 REAL_SOURCES = crt0.s rom.cpp syscalls.c
 SOURCES = $(REAL_SOURCES) build_info.c
+OBJECTS = startup_audio.o
 LDSCRIPT = linker.ld
 
 rom_even.bin rom_odd.bin: rom.bin
@@ -19,8 +20,13 @@ flash-odd: rom_odd.bin
 rom.bin: rom.elf
 	$(M68K_OBJCOPY) -O binary -S $< $@
 
-rom.elf: $(SOURCES) $(LDSCRIPT)
-	$(M68K_GCC) -g -T $(LDSCRIPT) $(SOURCES) -o $@
+# 11025 8-bit mono signed(?)
+startup_audio.o: startup.raw
+	$(M68K_OBJCOPY) -I binary -O elf32-m68k -B m68k \
+	    --rename-section .data=.rodata,alloc,load,readonly,data,contents $< $@
+
+rom.elf: $(SOURCES) $(OBJECTS) $(LDSCRIPT)
+	$(M68K_GCC) -g -T $(LDSCRIPT) $(SOURCES) $(OBJECTS) -o $@
 
 rom.s: rom.cpp $(LDSCRIPT)
 	$(M68K_GCC) -S -g rom.cpp
@@ -45,6 +51,6 @@ build_info.c: $(REAL_SOURCES) $(LDSCRIPT)
 	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
 
 clean:
-	rm -f rom.elf rom.bin rom_even.bin rom_odd.bin build_info.c build_info.c.tmp
+	rm -f rom.elf rom.bin rom_even.bin rom_odd.bin build_info.c build_info.c.tmp startup_audio.o
 
 .PHONY: clean
