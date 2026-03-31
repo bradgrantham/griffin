@@ -111,6 +111,7 @@ DEBUG\_OUT LED:
     - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
   - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
   - [ ] GND, +5V, D0-D15, A1-A10, WRITE_LO, WRITE_HI to test points
+  - [ ] Pullups on PS/2 clock lines
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
     - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
