@@ -453,6 +453,14 @@ static void bus_process(void)
             uart_putchar_sync(' ');
         }
 
+        /* DEBUG: read P2 before driving it to see what's on the bus */
+        {
+            uint8_t bus_state = P2;
+            uart_putchar_sync('P');
+            uart_hex8(bus_state);
+            uart_putchar_sync(' ');
+        }
+
         /* Drive data onto P2 */
         P2 = data;
 
