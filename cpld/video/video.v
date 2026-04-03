@@ -9,16 +9,18 @@ module video (
     // Reset
     input  wire        nRESET,
 
-// XXX bringup
-//      // Bus interface — directly from CPU / GLUE
-//      input  wire        nVIDEO_SELECT,     // nVIDEO_SELECT from GLUE (directly on OE1)
-//      input  wire        nAS,
-//      input  wire        nUDS,
-//      input  wire        nLDS,
-//      input  wire        R_nW,
-//      input  wire [5:1]  A,
-//      input  wire [15:0] D,
-//      input  wire [2:0]  FC,
+    // Bus interface — directly from CPU / GLUE
+    // Active bus logic commented out for bringup, but pins must be
+    // declared so the fitter configures them correctly (inputs as
+    // inputs, data bus tristated) instead of driving the bus.
+    input  wire        nVIDEO_SELECT,
+    input  wire        nAS,
+    input  wire        nUDS,
+    input  wire        nLDS,
+    input  wire        R_nW,
+    input  wire [5:1]  A,
+    inout  wire [15:0] D,
+    input  wire [2:0]  FC,
 
     // Composite video outputs
     output reg         CPST_PIXEL,
@@ -30,9 +32,8 @@ module video (
     output wire        VGA_G2,
 
     // Control outputs
-// XXX bringup
-//      output wire        VIDEO_STALL,
-//      output wire        nVIDEO_IRQ,
+    output wire        VIDEO_STALL,
+    output wire        nVIDEO_IRQ
 );
 
     // ----------------------------------------------------------------
@@ -44,6 +45,12 @@ module video (
     assign CPST_CLK_ENB = 1'b1;     // enable 14.318 MHz NTSC oscillator
     assign VGA_CLK_ENB  = 1'b0;     // disable 25.175 MHz VGA oscillator
     assign nVIDEO_IRQ   = 1'b1;     // deasserted for bringup
+    assign VIDEO_STALL  = 1'b0;     // no stall for bringup
+    // Tristate D during bringup — drive zeros only when VIDEO_SELECT is
+    // asserted (which doesn't happen during IO MCU testing).  Uses a real
+    // signal so the fitter keeps the pins assigned rather than leaving
+    // them unconfigured.
+    assign D = ~nVIDEO_SELECT ? 16'd0 : 16'bz;
 
     // ----------------------------------------------------------------
     // NTSC timing parameters (912 x 262, progressive 240p)
