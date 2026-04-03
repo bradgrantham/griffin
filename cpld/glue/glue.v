@@ -71,6 +71,12 @@ module glue (
 
     wire AS = ~nAS;
 
+    // Normal bus cycle — excludes interrupt acknowledge (FC=111) which
+    // uses VPA, not address decoding.  All chip selects use this so
+    // the all-1s IACK address doesn't spuriously activate peripherals.
+    wire iack_cycle = (FC == 3'b111) & AS;
+    wire bus_cycle = AS & ~iack_cycle;
+
     // ----------------------------------------------------------------
     // Synchronize nRESET through two flip-flops to eliminate glitches
     // from the RC reset circuit before deriving RESET and nHALT.
@@ -150,15 +156,15 @@ module glue (
     wire ram_1_region_but_rom_overlaid = ram_bank_1_region & ~rom_overlay_disable;
     wire ram_1_region_no_rom_overlaid  = ram_bank_1_region & rom_overlay_disable;
 
-    assign nRAM_1_SEL = ~(ram_1_region_no_rom_overlaid & AS);
-    assign nRAM_2_SEL = ~(ram_bank_2_region & AS);
-    assign nRAM_3_SEL = ~(ram_bank_3_region & AS);
-    assign nRAM_4_SEL = ~(ram_bank_4_region & AS);
+    assign nRAM_1_SEL = ~(ram_1_region_no_rom_overlaid & bus_cycle);
+    assign nRAM_2_SEL = ~(ram_bank_2_region & bus_cycle);
+    assign nRAM_3_SEL = ~(ram_bank_3_region & bus_cycle);
+    assign nRAM_4_SEL = ~(ram_bank_4_region & bus_cycle);
 
-    assign nROM_SELECT = ~((rom_region | ram_1_region_but_rom_overlaid) & AS);
+    assign nROM_SELECT = ~((rom_region | ram_1_region_but_rom_overlaid) & bus_cycle);
 
-    assign nENGINE_SELECT = ~(engine_region & AS);
-    assign nVIDEO_SELECT = ~(video_region & AS);
+    assign nENGINE_SELECT = ~(engine_region & bus_cycle);
+    assign nVIDEO_SELECT = ~(video_region & bus_cycle);
 
     // Bus error: assert after 15 wait-state clocks (~1.05 µs at 14.318 MHz)
     // if no peripheral has responded with DTACK.  Causes the 68000 to take
@@ -166,7 +172,6 @@ module glue (
     // Exclude interrupt acknowledge cycles (FC=111) which use VPA, not DTACK.
     // Exclude handshake peripherals (IO MCU, ENGINE) — they drive DTACK
     // externally and may take much longer than 15 clocks to respond.
-    wire iack_cycle = (FC == 3'b111) & AS;
     wire handshake_cycle = (~nIO_SELECT & ~IO_ABSENT) |
                            (~nENGINE_SELECT & ~ENGINE_ABSENT);
     assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle & ~handshake_cycle);
@@ -189,12 +194,12 @@ module glue (
                   io_irq_active   ? 3'b010 :  // level 5
                                  3'b111;   // no interrupt
 
-    wire glue_select = glue_segment & AS;
+    wire glue_select = glue_segment & bus_cycle;
     // 74HC373 LE is active-high: LE=1 transparent, LE=0 latched.
     // Drive LE high during audio writes so data passes through,
     // low otherwise so the DAC holds the last written sample.
-    assign nAUDIO_LE = audio_segment & AS;
-    assign nIO_SELECT = ~(io_segment & AS);
+    assign nAUDIO_LE = audio_segment & bus_cycle;
+    assign nIO_SELECT = ~(io_segment & bus_cycle);
     // CF chip selects are active-low on the card (-CE pins).
     // PCB nets are crossed: CPLD nCF_CS0 → CF /CS1, CPLD nCF_CS1 → CF /CS0.
     // Swap bank assignments here so bank0 (task file) → CF /CS0 and
@@ -202,7 +207,7 @@ module glue (
     // HIGH (deasserted) when CF is not being accessed.
     //
 
-    wire cf_select = cf_segment & AS;
+    wire cf_select = cf_segment & bus_cycle;
     assign nCF_CS0 = ~(cf_select & cf_register_bank1);
     assign nCF_CS1 = ~(cf_select & cf_register_bank0);
 
