@@ -28,40 +28,27 @@ peripherals:
         bits:
           - { bit: "0", name: IN, description: "DEBUG_IN pin state" }
       - offset: 0x03
-        name: UART_STATUS
+        name: SYSTICK_STATUS
         access: read
         width: 8
-        description: "UART transmitter status; poll BUSY until clear before writing UART_TX_DATA"
+        description: "Systick timer status; reading clears the pending flag and deasserts the IRQ"
         bits:
-          - { bit: "0", name: BUSY, description: "TX is busy" }
-          - { bit: "1", name: RECEIVED, description: "RX byte received" }
+          - { bit: "0", name: PENDING, description: "Tick interrupt pending (read clears)" }
       - offset: 0x03
-        name: UART_TX_DATA
+        name: SYSTICK_CONFIG
         access: write
         width: 8
-        description: |
-          Load TX latch and begin 8N1 output on DEBUG_OUT.
-          Writing TX_DATA while UART_STATUS_BUSY is set is undefined.
-      - offset: 0x05
-        name: UART_RX_DATA
-        access: read
-        width: 8
-        description: |
-          Return latched data for UART RX.  Clears UART_STATUS_RECEIVED.
-          Reading UART_RX_DATA a second time without another byte received will
-          return the previous byte.
-      - offset: 0x05
-        name: UART_RX_CONFIG
-        access: write
-        width: 8
-        description: "UART configuration"
+        description: "Systick timer rate configuration"
         bits:
-          - bit: "0"
-            name: INT
-            description: "Enable interrupt on received byte"
+          - bit: "2:0"
+            name: RATE
+            description: "Tick rate selection"
             values:
-              - { value: "0b0", name: DISABLED, description: "RX interrupt is disabled" }
-              - { value: "0b1", name: ENABLED, description: "RX interrupt is enabled" }
+              - { value: 0, name: "OFF",    description: "Systick disabled" }
+              - { value: 1, name: "HZ_50",  description: "50 Hz systick" }
+              - { value: 2, name: "HZ_60",  description: "60 Hz systick" }
+              - { value: 3, name: "HZ_100", description: "100 Hz systick" }
+              - { value: 4, name: "HZ_200", description: "200 Hz systick" }
       - offset: 0x07
         name: CONFIG
         access: write
