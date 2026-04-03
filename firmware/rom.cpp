@@ -6,6 +6,10 @@
 
 #include "../griffin.generated.h"
 
+extern "C" {
+#include "ff.h"
+}
+
 
 // ---------------------------------------------------------------------------
 // Compact Flash (True IDE, 8-bit PIO)
@@ -81,7 +85,7 @@ static void cf_set_lba(uint32_t lba, uint8_t count)
 }
 
 // Initialize CF card: wait for ready, set 8-bit PIO mode.
-cf_error cf_init()
+extern "C" cf_error cf_init()
 {
     // Wait for BSY clear with extended power-on timeout.
     for (uint32_t i = 0; i < CF_INIT_POLL_LIMIT; i++)
@@ -125,7 +129,7 @@ drdy_ok:
 }
 
 // Read the 512-byte IDENTIFY DEVICE block into caller-provided buffer.
-cf_error cf_identify(uint8_t buf[512])
+extern "C" cf_error cf_identify(uint8_t buf[512])
 {
     cf_error err = cf_wait_ready();
     if (err != CF_OK)
@@ -186,7 +190,7 @@ void cf_parse_identify(const uint8_t buf[512], cf_info *info)
 
 // Read count sectors starting at lba into buf.
 // buf must be at least count * 512 bytes.
-cf_error cf_read_sectors(uint32_t lba, uint8_t count, uint8_t *buf)
+extern "C" cf_error cf_read_sectors(uint32_t lba, uint8_t count, uint8_t *buf)
 {
     cf_error err = cf_wait_ready();
     if (err != CF_OK)
@@ -214,7 +218,7 @@ cf_error cf_read_sectors(uint32_t lba, uint8_t count, uint8_t *buf)
 
 // Write count sectors starting at lba from buf.
 // buf must be at least count * 512 bytes.
-cf_error cf_write_sectors(uint32_t lba, uint8_t count, const uint8_t *buf)
+extern "C" cf_error cf_write_sectors(uint32_t lba, uint8_t count, const uint8_t *buf)
 {
     cf_error err = cf_wait_ready();
     if (err != CF_OK)
@@ -353,7 +357,9 @@ static void dump_hex(uint32_t base_addr, const uint8_t *data, int size)
     }
 }
 
-static void cf_test()
+static FATFS fatfs;
+
+static void cf_mount_and_list()
 {
     cf_error err = cf_init();
     if (err != CF_OK)
@@ -378,15 +384,64 @@ static void cf_test()
     debug_printf("CF: %s, firmware %s, serial %s\n", info.model, info.firmware_rev, info.serial);
     debug_printf("CF: sectors:  %lu, capacity: %lu KB\n", (unsigned long)info.lba_sectors, (unsigned long)(info.lba_sectors / 2));
 
-    uint8_t sector[512];
-    err = cf_read_sectors(0, 1, sector);
-    if (err != CF_OK)
+    // Mount filesystem
+    FRESULT res = f_mount(&fatfs, "", 1);
+    if (res != FR_OK)
     {
-        debug_printf("CF: read sector 0 failed (err=%d)\n", err);
+        debug_printf("CF: mount failed (FatFS err=%d)\n", res);
         return;
     }
-    debug_printf("CF: sector 0:\n");
-    dump_hex(0, sector, 512);
+    debug_printf("CF: filesystem mounted\n");
+
+    // Print volume label
+    char label[12];
+    DWORD vsn;
+    res = f_getlabel("", label, &vsn);
+    if (res == FR_OK)
+    {
+        if (label[0])
+        {
+            debug_printf("Volume: %s (S/N %04X-%04X)\n",
+                         label, (unsigned)(vsn >> 16), (unsigned)(vsn & 0xFFFF));
+        }
+        else
+        {
+            debug_printf("Volume: (no label) (S/N %04X-%04X)\n",
+                         (unsigned)(vsn >> 16), (unsigned)(vsn & 0xFFFF));
+        }
+    }
+
+    // Print free space
+    DWORD free_clust;
+    FATFS *fs_ptr;
+    res = f_getfree("", &free_clust, &fs_ptr);
+    if (res == FR_OK)
+    {
+        unsigned long free_kb = (unsigned long)(free_clust * fs_ptr->csize) / 2;
+        unsigned long total_kb = (unsigned long)((fs_ptr->n_fatent - 2) * fs_ptr->csize) / 2;
+        debug_printf("  %lu KB free / %lu KB total\n", free_kb, total_kb);
+    }
+
+    // List root directory
+    DIR dir;
+    FILINFO fno;
+    res = f_opendir(&dir, "/");
+    if (res == FR_OK)
+    {
+        debug_printf("Root directory:\n");
+        for (;;)
+        {
+            res = f_readdir(&dir, &fno);
+            if (res != FR_OK || fno.fname[0] == '\0')
+            {
+                break;
+            }
+            debug_printf("  %c %7lu  %s\n",
+                         (fno.fattrib & AM_DIR) ? 'd' : '-',
+                         (unsigned long)fno.fsize, fno.fname);
+        }
+        f_closedir(&dir);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -506,7 +561,7 @@ int main()
     uint32_t audio_len = _binary_startup_raw_end - _binary_startup_raw_start;
     play_audio(_binary_startup_raw_start, audio_len, 11025);
 
-    cf_test();
+    cf_mount_and_list();
 
     uint8_t evt;
     for (;;)
@@ -538,7 +593,7 @@ int main()
                 if(evt_pop(&ch))
                 {
                     debug_serial_putchar(ch);
-                    io_mcu_putchar(ch);
+                    // io_mcu_putchar(ch);
                 }
                 break;
             }
