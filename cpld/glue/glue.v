@@ -51,12 +51,6 @@ module glue (
     output wire        ENGINE_TDI // Currently to pin OE1, OE2, GCLK
 );
 
-    // ----------------------------------------------------------------
-    // Baud-rate divisor — derived from SYSCLK_HZ in griffin.yml
-    //
-    // UART_DIVISOR = floor(SYSCLK_HZ / baud) - 1
-    // ----------------------------------------------------------------
-    localparam UART_DIVISOR = (`SYSCLK_HZ / 115200) - 1;
     localparam ENGINE_ABSENT = 1;    // Set to 0 when ENGINE CPLD is populated
     localparam IO_ABSENT     = 1;    // Set to 1 when IO MCU is not populated
 
@@ -182,17 +176,19 @@ module glue (
     // Priority levels (from griffin.yml / griffin.md):
     //   7: VIDEO    (~VIDEO_IRQ,  pin 1)   — nIPL = 000
     //   6: ENGINE   (~ENGINE_IRQ, pin 20)  — nIPL = 001
-    //   5: IO       (~IO_IRQ,     pin 18)  — nIPL = 010
+    //   5: IO/SYSTICK (~IO_IRQ | systick)  — nIPL = 010
     //   none:                              — nIPL = 111
     // ----------------------------------------------------------------
 
-    wire engine_irq_active = ~ENGINE_ABSENT & ~nENGINE_IRQ;
-    wire io_irq_active     = ~IO_ABSENT     & ~nIO_IRQ;
+    wire engine_irq_active  = ~ENGINE_ABSENT & ~nENGINE_IRQ;
+    wire io_irq_active      = ~IO_ABSENT     & ~nIO_IRQ;
+    wire systick_irq_active = systick_pending;
 
-    assign nIPL = ~nVIDEO_IRQ     ? 3'b000 :  // level 7
-                  engine_irq_active ? 3'b001 :  // level 6
-                  io_irq_active   ? 3'b010 :  // level 5
-                                 3'b111;   // no interrupt
+    assign nIPL = ~nVIDEO_IRQ       ? 3'b000 :  // level 7
+                  engine_irq_active  ? 3'b001 :  // level 6
+                  (io_irq_active | systick_irq_active)
+                                     ? 3'b010 :  // level 5
+                                       3'b111;   // no interrupt
 
     wire glue_select = glue_segment & bus_cycle;
     // 74HC373 LE is active-high: LE=1 transparent, LE=0 latched.
@@ -219,37 +215,34 @@ module glue (
     //
     // Glue registers live at 0xF00000+ (glue_segment).
     // 68000 byte addresses, odd bytes active with LDS:
-    //   0xF00001  — DEBUG_IN       (read,  bit 0 = DEBUG_IN pin state)
-    //   0xF00001  — DEBUG_OUT      (write, bit 0 = OUT)
-    //   0xF00003  — UART_STATUS    (read,  bit 0 = BUSY, bit 1 = RECEIVED)
-    //   0xF00003  — UART_TX_DATA   (write, byte)
-    //   0xF00005  — UART_RX_DATA   (stubbed — handled by IO MCU)
-    //   0xF00005  — UART_RX_CONFIG (stubbed — handled by IO MCU)
-    //   0xF00007  — CONFIG         (write, bit 0 = ROM_OVERLAY_DISABLE,
-    //                                      bit 1 = IO_RESET_RELEASE,
-    //                                      bit 2 = VIDEO_STALL_ENABLE)
+    //   0xF00001  — DEBUG_IN         (read,  bit 0 = DEBUG_IN pin state)
+    //   0xF00001  — DEBUG_OUT        (write, bit 0 = OUT)
+    //   0xF00003  — SYSTICK_STATUS   (read,  bit 0 = pending; read clears)
+    //   0xF00003  — SYSTICK_CONFIG   (write, bits 2:0 = rate)
+    //   0xF00007  — CONFIG           (write, bit 0 = ROM_OVERLAY_DISABLE,
+    //                                        bit 1 = IO_RESET_RELEASE,
+    //                                        bit 2 = VIDEO_STALL_ENABLE)
     //
     // A_lo[5:1] selects the word address within the segment.
     // ----------------------------------------------------------------
 
-    localparam [23:0] GLUE_CONFIG_ADDR    = `GLUE_CONFIG;
-    localparam [23:0] GLUE_DEBUG_ADDR     = `GLUE_DEBUG_OUT;
-    localparam [23:0] GLUE_UART_STAT_ADDR = `GLUE_UART_STATUS;
-    localparam [23:0] GLUE_TIMER_ADDR     = `GLUE_TIMER;
-    localparam [23:0] GLUE_TIMER_ARM_ADDR = `GLUE_TIMER_ARM;
-    localparam [23:0] GLUE_BUILD_ID_ADDR = `GLUE_BUILD_ID;
-    // GLUE_UART_RX_ADDR removed — RX stubbed out (see above)
+    localparam [23:0] GLUE_CONFIG_ADDR       = `GLUE_CONFIG;
+    localparam [23:0] GLUE_DEBUG_ADDR        = `GLUE_DEBUG_OUT;
+    localparam [23:0] GLUE_SYSTICK_ADDR      = `GLUE_SYSTICK_STATUS;
+    localparam [23:0] GLUE_TIMER_ADDR        = `GLUE_TIMER;
+    localparam [23:0] GLUE_TIMER_ARM_ADDR    = `GLUE_TIMER_ARM;
+    localparam [23:0] GLUE_BUILD_ID_ADDR     = `GLUE_BUILD_ID;
 
     `include "build_id.vh"
 
-    wire debug_out_select   = glue_select & lo_byte_selected & write
-                              & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
-    wire debug_in_select    = glue_select & lo_byte_selected & read
-                              & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
-    wire uart_tx_select     = glue_select & lo_byte_selected & write
-                              & (A_lo[5:1] == GLUE_UART_STAT_ADDR[5:1]);
-    wire uart_stat_select   = glue_select & lo_byte_selected & read
-                              & (A_lo[5:1] == GLUE_UART_STAT_ADDR[5:1]);
+    wire debug_out_select      = glue_select & lo_byte_selected & write
+                                 & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
+    wire debug_in_select       = glue_select & lo_byte_selected & read
+                                 & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
+    wire systick_config_select = glue_select & lo_byte_selected & write
+                                 & (A_lo[5:1] == GLUE_SYSTICK_ADDR[5:1]);
+    wire systick_stat_select   = glue_select & lo_byte_selected & read
+                                 & (A_lo[5:1] == GLUE_SYSTICK_ADDR[5:1]);
     wire timer_write_select = glue_select & lo_byte_selected & write
                               & (A_lo[5:1] == GLUE_TIMER_ADDR[5:1]);
     wire timer_arm_select   = glue_select & lo_byte_selected & write
@@ -263,7 +256,7 @@ module glue (
     // All other times the pins are tristated so the CPU, ROM, RAM,
     // etc. can drive the bus.
     // ----------------------------------------------------------------
-    wire glue_read_active = debug_in_select | uart_stat_select
+    wire glue_read_active = debug_in_select | systick_stat_select
                           | (build_id_select & read);
 
     // ----------------------------------------------------------------
@@ -276,8 +269,8 @@ module glue (
         glue_read_data = 8'h00;
         if (debug_in_select)
             glue_read_data = {7'd0, DEBUG_IN};
-        else if (uart_stat_select)
-            glue_read_data = {6'd0, 1'b0, tx_busy};
+        else if (systick_stat_select)
+            glue_read_data = {7'd0, systick_pending};
         else if (build_id_select & read)
             glue_read_data = BUILD_ID[7:0];
     end
@@ -305,82 +298,45 @@ module glue (
         end
     end
 
-    // ----------------------------------------------------------------
-    // UART TX — 8N1 shift register on DEBUG_OUT
-    //
-    // Frame: IDLE(1) | START(0) | D0 D1 D2 D3 D4 D5 D6 D7 | STOP(1)
-    //
-    // bit_cnt counts down from 10 to 0:
-    //   0     = idle (tx line high, ready for new byte)
-    //   10..1 = transmitting (D0..D7 + stop + guard)
-    //
-    // baud_div counts down from UART_DIVISOR to 0, generating a
-    // single-cycle tick at the baud rate.
-    // ----------------------------------------------------------------
-
-    reg [8:0] tx_shift;       // shift register: {stop, d7..d0}
-    reg [3:0] bit_cnt;        // 0=idle, 9..1=transmitting
-    reg [6:0] baud_div;       // baud rate divider
-    reg       tx_out;         // registered TX output
-
-    wire tx_busy = (bit_cnt != 4'd0);
-    wire baud_tick = (baud_div == 7'd0);
-
-    // Sample bus data when DTACK would fire, not on first clock after AS.
-    // The 68000 only guarantees valid data by the DTACK handshake point.
-    wire uart_tx_load = !tx_busy && uart_tx_select && (ws_cnt >= 4'd2);
-
-    // Priority: UART TX > DEBUG_OUT register
-    // (halt blink removed — see TODO above)
-    assign DEBUG_OUT = tx_busy ? tx_out : debug_out_reg;
-
-    always @(posedge SYSCLK) begin
-        if (RESET) begin
-            tx_shift <= 9'd0;
-            bit_cnt  <= 4'd0;
-            baud_div <= 7'd0;
-            tx_out   <= 1'b1;        // idle high
-        end else if (uart_tx_load) begin
-            // Load frame: {stop, data[7:0]} — start bit via tx_out
-            tx_shift <= {1'b1, D[7:0]};
-            bit_cnt  <= 4'd10;       // 10 bits: D0..D7 + stop + guard (keeps tx_busy during stop)
-            baud_div <= UART_DIVISOR[6:0];
-            tx_out   <= 1'b0;        // start bit begins immediately
-        end else if (tx_busy) begin
-            if (baud_tick) begin
-                tx_out   <= tx_shift[0];  // next bit out
-                tx_shift <= {1'b1, tx_shift[8:1]};  // shift right, fill with idle
-                bit_cnt  <= bit_cnt - 4'd1;
-                baud_div <= UART_DIVISOR[6:0];
-            end else begin
-                baud_div <= baud_div - 7'd1;
-            end
-        end
-    end
+    // UART TX removed — TX is now bit-banged by firmware using
+    // the GLUE_TIMER ARM mechanism via DEBUG_OUT, freeing macrocells
+    // for the systick timer IRQ.
+    assign DEBUG_OUT = debug_out_reg;
 
     // ----------------------------------------------------------------
-    // UART RX — stubbed out; does not fit in ATF1508 alongside TX
-    // without the fitter moving SYSCLK off pin 34 (GCLK2).
-    // RX will be handled by the AT89S52 IO MCU instead.
-    // See git history for the full UART RX state machine implementation.
+    // Shared ÷8 prescaler for both GLUE_TIMER and systick
+    //
+    // The 3-bit prescaler free-runs whenever the bit-bang timer or
+    // systick is active.  Writing GLUE_TIMER resets it to 7 for
+    // precise UART timing; the systick tolerates the occasional
+    // glitch (sub-µs jitter on a 5–20 ms tick).
     // ----------------------------------------------------------------
+    reg [2:0] timer_prescale;
+    reg [4:0] timer_period;
+    reg [4:0] timer_cnt;
+    reg       timer_armed;
+
+    // Systick state
+    reg [6:0]  systick_subdiv;       // ÷128 on top of ÷8 → ÷1024
+    reg [7:0]  systick_cnt;          // countdown counter
+    reg [7:0]  systick_reload;       // registered reload (0 = disabled)
+    reg        systick_pending;      // IRQ pending flag
+
+    wire prescale_tick    = (timer_prescale == 3'd0);
+    wire timer_zero       = (timer_cnt == 5'd0);
+    wire systick_enabled  = (systick_reload != 8'd0);
+    wire prescaler_active = (timer_period != 5'd0) | systick_enabled;
+    wire systick_tick     = prescale_tick & (systick_subdiv == 7'd0);
 
     // ----------------------------------------------------------------
-    // 5-bit auto-reload timer with ÷8 prescaler and arm gate
+    // 5-bit auto-reload timer with arm gate (GLUE_TIMER)
     //
-    // A free-running 3-bit prescaler divides SYSCLK by 8.  The 5-bit
-    // countdown timer decrements on each prescaler rollover, giving
-    // an effective period of 8*N SYSCLK (N = 1..31, i.e. 8..248
-    // clocks, 0.67..20.7 µs at 12 MHz).  The prescaler has no load
-    // path — just a free-running counter — so it costs fewer product
-    // terms than adding 3 more reload-mux bits to the timer itself.
+    // Effective period = (N+1) × 8 SYSCLK (N = 1..31).
+    // Writing GLUE_TIMER loads period, resets prescaler, starts
+    // countdown.  Writing 0 stops it.  GLUE_TIMER_ARM blocks all
+    // DTACK until the next zero-crossing.
     //
-    // Writing GLUE_TIMER sets the period and starts/restarts the
-    // countdown; writing 0 stops it.  Writing GLUE_TIMER_ARM sets
-    // the armed flag, which blocks ALL bus DTACK until the next
-    // timer zero-crossing, then auto-clears.
-    //
-    //   move.b  #13, TIMER        ; period = 13*8 = 104 clocks (115200 baud)
+    //   move.b  #12, TIMER        ; (12+1)*8 = 104 clocks (115200 baud)
     // .loop:
     //   <set up next bit>
     //   move.b  #0, TIMER_ARM     ; arm — next bus cycle stalls
@@ -388,29 +344,45 @@ module glue (
     //   dbra    d1, .loop
     //   move.b  #0, TIMER         ; stop
     // ----------------------------------------------------------------
-    reg [2:0] timer_prescale;
-    reg [4:0] timer_period;
-    reg [4:0] timer_cnt;
-    reg       timer_armed;
 
-    wire prescale_tick = (timer_prescale == 3'd0);
-    wire timer_zero    = (timer_cnt == 5'd0);
+    // ----------------------------------------------------------------
+    // Systick timer — configurable periodic interrupt (level 5)
+    //
+    // Shares the ÷8 prescaler with GLUE_TIMER, then divides by
+    // 128 more via systick_subdiv → effective ÷1024 from SYSCLK
+    // (11718.75 Hz at 12 MHz).  Rates are approximate (<1% error).
+    //
+    // Rate     Reload   Actual Hz    Error
+    //  OFF       0        —           —
+    //  HZ_50    233      50.08       +0.16%
+    //  HZ_60    194      60.10       +0.17%
+    //  HZ_100   116     100.16       +0.16%
+    //  HZ_200    57     202.05       +1.03%
+    //
+    // SYSTICK_CONFIG (write): bits 2:0 = rate selection
+    // SYSTICK_STATUS (read):  bit 0 = pending; reading clears flag
+    // ----------------------------------------------------------------
 
     always @(posedge SYSCLK) begin
         if (RESET) begin
-            timer_prescale <= 3'd0;
-            timer_period   <= 5'd0;
-            timer_cnt      <= 5'd0;
-            timer_armed    <= 1'b0;
+            timer_prescale  <= 3'd0;
+            timer_period    <= 5'd0;
+            timer_cnt       <= 5'd0;
+            timer_armed     <= 1'b0;
+            systick_subdiv  <= 7'd0;
+            systick_cnt     <= 8'd0;
+            systick_reload  <= 8'd0;
+            systick_pending <= 1'b0;
         end else begin
-            // Prescaler: free-running ÷8, resets on period load
+            // --- Prescaler: shared ÷8, resets on timer period load ---
             if (timer_write_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
                 timer_prescale <= 3'd7;
                 timer_period   <= D[4:0];
                 timer_cnt      <= D[4:0];
-            end else if (timer_period != 5'd0) begin
+            end else if (prescaler_active) begin
                 timer_prescale <= timer_prescale - 3'd1;
-                if (prescale_tick) begin
+                // --- GLUE_TIMER countdown ---
+                if (prescale_tick & (timer_period != 5'd0)) begin
                     if (timer_zero) begin
                         timer_cnt   <= timer_period;
                         timer_armed <= 1'b0;
@@ -420,9 +392,40 @@ module glue (
                 end
             end
 
-            // Arm flag — set by TIMER_ARM write, cleared on zero-crossing above
+            // --- Systick ÷128 sub-divider (free-running on prescale_tick) ---
+            if (prescale_tick & systick_enabled)
+                systick_subdiv <= systick_subdiv - 7'd1;
+
+            // --- Systick countdown ---
+            if (systick_tick & systick_enabled) begin
+                if (systick_cnt == 8'd0) begin
+                    systick_cnt     <= systick_reload;
+                    systick_pending <= 1'b1;
+                end else begin
+                    systick_cnt <= systick_cnt - 8'd1;
+                end
+            end
+
+            // --- Systick config write ---
+            if (systick_config_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
+                case (D[2:0])
+                    `GLUE_SYSTICK_CONFIG_RATE_HZ_50:  systick_reload <= 8'd233;
+                    `GLUE_SYSTICK_CONFIG_RATE_HZ_60:  systick_reload <= 8'd194;
+                    `GLUE_SYSTICK_CONFIG_RATE_HZ_100: systick_reload <= 8'd116;
+                    `GLUE_SYSTICK_CONFIG_RATE_HZ_200: systick_reload <= 8'd57;
+                    default:                          systick_reload <= 8'd0;
+                endcase
+                systick_subdiv <= 7'd0;
+                systick_cnt    <= 8'd0;
+            end
+
+            // --- Arm flag (GLUE_TIMER) ---
             if (timer_arm_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))
                 timer_armed <= 1'b1;
+
+            // --- Read-to-clear systick pending ---
+            if (systick_stat_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))
+                systick_pending <= 1'b0;
         end
     end
 
