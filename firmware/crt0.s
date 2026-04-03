@@ -549,16 +549,49 @@ uart_hex4:
 | EVT_TIMER events call timer_tick inline; all bytes go to the ring buffer.
     .global io_mcu_isr
 io_mcu_isr:
-    movem.l %d0-%d1/%a0-%a2, -(%sp)
+    movem.l %d0-%d1/%d6-%d7/%a0-%a2/%a5-%a6, -(%sp)
+
     lea     IO_MCU_RX_DATA, %a0
     lea     IO_MCU_STATUS, %a1
     lea     io_evt_queue, %a2
 
 .Lisr_drain:
-    btst    #IO_MCU_STATUS_QUEUE_NOTEMPTY_SHIFT, (%a1)
+    | DEBUG: read STATUS and print it as "S=XX "
+    move.b  (%a1), %d7              | read STATUS into d7
+    move.b  #'S', %d0
+    lea     .Ldbg_s_eq(%pc), %a5
+    jmp     uart_putchar
+.Ldbg_s_eq:
+    move.b  #'=', %d0
+    lea     .Ldbg_s_hex(%pc), %a5
+    jmp     uart_putchar
+.Ldbg_s_hex:
+    move.b  %d7, %d0
+    lea     .Ldbg_s_sp(%pc), %a6
+    jmp     uart_hex8
+.Ldbg_s_sp:
+    move.b  #' ', %d0
+    lea     .Ldbg_s_resume(%pc), %a5
+    jmp     uart_putchar
+.Ldbg_s_resume:
+    lea     IO_MCU_RX_DATA, %a0    | reload (clobbered by uart_putchar)
+
+    btst    #IO_MCU_STATUS_QUEUE_NOTEMPTY_SHIFT, %d7
     beq.s   .Lisr_done
 
     move.b  (%a0), %d0              | read one event byte
+    move.b  %d0, %d7                | save across debug print
+
+    | DEBUG: print each event byte as "XX " via GLUE UART
+    lea     .Ldbg_space(%pc), %a6
+    jmp     uart_hex8
+.Ldbg_space:
+    move.b  #' ', %d0
+    lea     .Ldbg_resume(%pc), %a5
+    jmp     uart_putchar
+.Ldbg_resume:
+    move.b  %d7, %d0               | restore event byte
+    lea     IO_MCU_RX_DATA, %a0    | reload (clobbered by uart_putchar)
 
     | Check for timer tick — handle inline before queuing
     cmp.b   #IO_MCU_EVT_TIMER, %d0
@@ -576,12 +609,12 @@ io_mcu_isr:
 
     | Check for overflow (tail caught up to head)
     cmp.l   io_evt_head, %d1
-    bne.s   .Lisr_drain
+    bne     .Lisr_drain
     | Overflow — set sticky flag, stop draining to avoid clobbering data
     move.b  #1, io_evt_overflow
 
 .Lisr_done:
-    movem.l (%sp)+, %d0-%d1/%a0-%a2
+    movem.l (%sp)+, %d0-%d1/%d6-%d7/%a0-%a2/%a5-%a6
     rte
 
 .global _init
