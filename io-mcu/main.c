@@ -179,6 +179,19 @@ static void uart_puts(const char *s)
     }
 }
 
+/* DEBUG: print a nibble, byte, or "R"/"W"+addr+data summary */
+static void uart_hex4(uint8_t v)
+{
+    v &= 0x0F;
+    uart_putchar_sync(v < 10 ? '0' + v : 'A' - 10 + v);
+}
+
+static void uart_hex8(uint8_t v)
+{
+    uart_hex4(v >> 4);
+    uart_hex4(v);
+}
+
 /* Serial ISR: handles both RX and TX interrupts.
  * Uses register bank 3. */
 void serial_isr(void) __interrupt(4) __using(3)
@@ -388,15 +401,22 @@ static void bus_init(void)
     R_nW_PIN = 1;       /* Write 1 for input mode */
 }
 
+static uint8_t bus_debug_count;
+
 static void bus_process(void)
 {
     uint8_t address;
     uint8_t data;
+    uint8_t do_print;
 
     /* Gather address from A1-A4 on P0 low nibble.
      * The 68000 address lines A1-A4 map to P0.0-P0.3.
      * (A0 is not connected — byte-wide peripheral on odd addresses.) */
     address = P0 & 0x0F;
+
+    /* DEBUG: print every 16th bus cycle to avoid flooding */
+    do_print = ((bus_debug_count & 0x0F) == 0);
+    bus_debug_count++;
 
     if (R_nW_PIN)
     {
@@ -421,6 +441,16 @@ static void bus_process(void)
         default:
             data = 0xFF;
             break;
+        }
+
+        /* DEBUG: print "R<addr>=<data> " */
+        if (do_print)
+        {
+            uart_putchar_sync('R');
+            uart_hex4(address);
+            uart_putchar_sync('=');
+            uart_hex8(data);
+            uart_putchar_sync(' ');
         }
 
         /* Drive data onto P2 */
@@ -458,6 +488,16 @@ static void bus_process(void)
 
         /* Deassert DTACK */
         nIO_DTACK_PIN = 1;
+
+        /* DEBUG: print "W<addr>=<data> " */
+        if (do_print)
+        {
+            uart_putchar_sync('W');
+            uart_hex4(address);
+            uart_putchar_sync('=');
+            uart_hex8(data);
+            uart_putchar_sync(' ');
+        }
 
         /* Handle write */
         switch (address)
