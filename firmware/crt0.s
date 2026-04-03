@@ -26,7 +26,7 @@ vector_table:
     .long   _default_handler    | 26: Level 2 autovector
     .long   _default_handler    | 27: Level 3 autovector
     .long   _default_handler    | 28: Level 4 autovector
-    .long   io_mcu_isr          | 29: Level 5 autovector (IO_MCU)
+    .long   systick_isr         | 29: Level 5 autovector (SYSTICK / IO_MCU)
     .long   _default_handler    | 30: Level 6 autovector (ENGINE)
     .long   _default_handler    | 31: Level 7 autovector (VIDEO)
     .rept 16
@@ -66,7 +66,7 @@ _start:
     /* Hello via hardware UART */
     lea     hellostr, %a1
     lea     .Lret3(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .Lret3:
 
     /* Switch out ROM and release IO_MCU from reset */
@@ -90,7 +90,7 @@ vec_copy:
     move.l  #0x400000, %sp
     lea     memory_4m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 
 test_3m:
     move.w  #0xAA55, 0x300000 - 2
@@ -102,7 +102,7 @@ test_3m:
     move.l  #0x300000, %sp
     lea     memory_3m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 
 test_2m:
     move.w  #0xAA55, 0x200000 - 2
@@ -114,7 +114,7 @@ test_2m:
     move.l  #0x200000, %sp
     lea     memory_2m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 
 test_1m:
     move.w  #0xFF00, 0x80000 - 2
@@ -126,7 +126,7 @@ test_1m:
     move.l  #0x100000, %sp
     lea     memory_1m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 
 set_256k:
     move    #256, memory_size
@@ -134,7 +134,7 @@ set_256k:
     move.l  #0x40000, %sp
     lea     memory_256k, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 
 memory_size_done:
 
@@ -208,7 +208,7 @@ memory_size_done:
     | --- RAM test passed ---
     lea     msg_ram_ok, %a1
     lea     ram_test_done(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 
 ram_test_done:
 
@@ -330,30 +330,47 @@ debug_puts:
 .Ldone:
     jmp     (%a6)
 
-| uart_putchar: send one character via GLUE hardware UART TX (115200 baud)
+| timer_putchar: send one character at 115200 via GLUE timer + DEBUG_OUT
 | Input:  d0.b = character to send
 | Return: jmp (a5)
-| Clobbers: a0
-    .global uart_putchar
-uart_putchar:
-    lea     GLUE_UART_STATUS, %a0
-.Luart_wait:
-    btst    #GLUE_UART_STATUS_BUSY_SHIFT, (%a0)
-    bne.s   .Luart_wait
-    move.b  %d0, GLUE_UART_TX_DATA
+| Clobbers: d0, d1, a0
+    .global timer_putchar
+timer_putchar:
+    lea     GLUE_DEBUG_OUT, %a0
+
+    | Build 10-bit frame: start(0) + 8 data bits + stop(1)
+    andi.w  #0x00FF, %d0
+    lsl.w   #1, %d0             | shift data up, bit 0 = 0 (start bit)
+    ori.w   #0x0200, %d0        | set bit 9 (stop bit)
+
+    move.b  #TIMER_FULL_BIT, GLUE_TIMER
+
+    move.w  #9, %d1             | 10 bits (0..9)
+
+.Ltx_bit:
+    move.b  #0, GLUE_TIMER_ARM | arm — next bus access stalls
+    move.b  %d0, (%a0)         | stalled write; only bit 0 reaches DEBUG_OUT
+    lsr.w   #1, %d0            | shift to next bit
+    dbra    %d1, .Ltx_bit
+
+    | Hold stop bit for one full bit time
+    move.b  #0, GLUE_TIMER_ARM
+    tst.b   (%a0)              | stall (dummy read, discard)
+
+    move.b  #0, GLUE_TIMER     | stop timer
     jmp     (%a5)
 
-| uart_puts: send null-terminated string at (a1) via GLUE hardware UART
+| timer_puts: send null-terminated string at (a1) via timer bitbang
 | Return via jmp (a6)
-| Clobbers: a0, d0, a5, a1
-uart_puts:
+| Clobbers: a0, d0, d1, a5, a1
+timer_puts:
     move.b  (%a1)+, %d0
-    beq.s   .Luart_puts_done
-    lea     .Luart_ret_puts(%pc), %a5
-    jmp     uart_putchar
-.Luart_ret_puts:
-    bra.s   uart_puts
-.Luart_puts_done:
+    beq.s   .Ltimer_puts_done
+    lea     .Ltimer_ret_puts(%pc), %a5
+    jmp     timer_putchar
+.Ltimer_ret_puts:
+    bra.s   timer_puts
+.Ltimer_puts_done:
     jmp     (%a6)
 
 | debug_getchar_asm: bit-bang receive one byte at 115200 via GLUE timer
@@ -363,7 +380,6 @@ uart_puts:
 | Clobbers: d0, d1, d2, a0
 
     .equ TIMER_FULL_BIT, 12         /* (12+1)*8 = 104 clocks = 115200 baud */
-    .equ TIMER_HALF_BIT, 5          /* (5+1)*8  = 48 clocks  ~ half bit    */
     .equ RX_TIMEOUT_COUNT, 500      /* ~1ms at 12 MHz with ROM wait states */
 
     .global debug_getchar_asm
@@ -380,12 +396,8 @@ debug_getchar_asm:
     jmp     (%a5)
 
 .Lrx_got_start:
-    | Half-bit delay to reach mid-start-bit
-    move.b  #TIMER_HALF_BIT, GLUE_TIMER
-    move.b  #0, GLUE_TIMER_ARM
-    tst.b   (%a0)                   | stall until zero-crossing (discard)
-
-    | Switch to full bit period
+    | Start full-bit timer — detection latency + instruction overhead
+    | (~146 clocks from edge) naturally centers in D0 (center at 156)
     move.b  #TIMER_FULL_BIT, GLUE_TIMER
 
     | Sample 8 data bits (LSB first)
@@ -429,7 +441,7 @@ _exc_bus_error:
     move.l  _stack_top, %sp
     lea     msg_bus_error, %a1
     lea     .exc_bus_blink(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .exc_bus_blink:
     moveq   #0, %d7
 .bus_err_loop:
@@ -447,7 +459,7 @@ _exc_address_error:
     move.l  _stack_top, %sp
     lea     msg_addr_error, %a1
     lea     .exc_addr_blink(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .exc_addr_blink:
     moveq   #0, %d7
 .addr_err_loop:
@@ -465,7 +477,7 @@ _exc_illegal_insn:
     move.l  _stack_top, %sp
     lea     msg_illegal_insn, %a1
     lea     .exc_illegal_blink(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .exc_illegal_blink:
     moveq   #0, %d7
 .illegal_loop:
@@ -491,7 +503,7 @@ _default_handler:
 ram_test_fail_data:
     lea     msg_ram_data_fail, %a1
     lea     .rtf_data_vals(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .rtf_data_vals:
     bra     ram_test_fail_common
 
@@ -500,7 +512,7 @@ ram_test_fail_allones:
     move.w  #0xFFFF, %d2
     lea     msg_ram_data_fail, %a1
     lea     .rtf_ao_vals(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .rtf_ao_vals:
     bra     ram_test_fail_common
 
@@ -509,7 +521,7 @@ ram_test_fail_allzeros:
     move.w  #0x0000, %d2
     lea     msg_ram_data_fail, %a1
     lea     .rtf_az_vals(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .rtf_az_vals:
     bra     ram_test_fail_common
 
@@ -517,17 +529,17 @@ ram_test_fail_allzeros:
 ram_test_fail_addr:
     lea     msg_ram_addr_fail, %a1
     lea     .rtf_addr_vals(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .rtf_addr_vals:
     | fall through
 
 | Common: print "exp=XXXX got=XXXX\n" using %d2=expected %d3=actual,
-| then blink.  Stack-free, uses uart_putchar hex output.
+| then blink.  Stack-free, uses timer_putchar hex output.
 ram_test_fail_common:
     | Print expected value (in %d2) as 4 hex chars
     lea     msg_exp, %a1
     lea     .rtf_exp_val(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .rtf_exp_val:
     move.w  %d2, %d4               | save expected
     move.w  %d3, %d5               | save actual
@@ -536,29 +548,29 @@ ram_test_fail_common:
     lsr.w   #8, %d0
     andi.b  #0xFF, %d0
     lea     .rtf_exp_hi2(%pc), %a6
-    jmp     uart_hex8
+    jmp     timer_hex8
 .rtf_exp_hi2:
     move.b  %d4, %d0
     lea     .rtf_got_label(%pc), %a6
-    jmp     uart_hex8
+    jmp     timer_hex8
 .rtf_got_label:
     lea     msg_got, %a1
     lea     .rtf_got_val(%pc), %a6
-    jmp     uart_puts
+    jmp     timer_puts
 .rtf_got_val:
     move.w  %d5, %d0
     lsr.w   #8, %d0
     andi.b  #0xFF, %d0
     lea     .rtf_got_lo(%pc), %a6
-    jmp     uart_hex8
+    jmp     timer_hex8
 .rtf_got_lo:
     move.b  %d5, %d0
     lea     .rtf_crlf(%pc), %a6
-    jmp     uart_hex8
+    jmp     timer_hex8
 .rtf_crlf:
     move.b  #0x0A, %d0
     lea     ram_fail_blink(%pc), %a5
-    jmp     uart_putchar
+    jmp     timer_putchar
 
 | Blink DEBUG_OUT at ~2 Hz forever (RAM test failure)
 ram_fail_blink:
@@ -573,100 +585,42 @@ ram_fail_blink:
     dbra    %d1, .rfb_delay
     bra     .rfb_loop
 
-| uart_hex8: send %d0.b as 2 hex chars via GLUE UART
+| timer_hex8: send %d0.b as 2 hex chars via timer bitbang
 | Return via jmp (%a6).  Clobbers %d0, %d6.
-uart_hex8:
+timer_hex8:
     move.b  %d0, %d6
     lsr.b   #4, %d0
     lea     .uh8_lo(%pc), %a5
-    jmp     uart_hex4
+    jmp     timer_hex4
 .uh8_lo:
     move.b  %d6, %d0
     move.l  %a6, %a5
-    jmp     uart_hex4
+    jmp     timer_hex4
 
-| uart_hex4: send low nibble of %d0 as hex ASCII via GLUE UART
-| Tail-calls uart_putchar; returns via jmp (%a5).  Clobbers %d0.
-uart_hex4:
+| timer_hex4: send low nibble of %d0 as hex ASCII via timer bitbang
+| Tail-calls timer_putchar; returns via jmp (%a5).  Clobbers %d0.
+timer_hex4:
     andi.b  #0x0F, %d0
     cmpi.b  #10, %d0
     blt.s   .uh4_digit
     addi.b  #('A' - 10), %d0
-    jmp     uart_putchar
+    jmp     timer_putchar
 .uh4_digit:
     addi.b  #'0', %d0
-    jmp     uart_putchar
+    jmp     timer_putchar
 
-| io_mcu_isr: drain IO_MCU hardware event queue into RAM ring buffer.
-| EVT_TIMER events call timer_tick inline; all bytes go to the ring buffer.
-    .global io_mcu_isr
-io_mcu_isr:
-    movem.l %d0-%d1/%d6-%d7/%a0-%a2/%a5-%a6, -(%sp)
+| systick_isr: GLUE systick timer interrupt handler (level 5)
+| Reads SYSTICK_STATUS to clear the pending flag, then calls timer_tick.
+    .global systick_isr
+systick_isr:
+    move.l  %d0, -(%sp)
 
-    lea     IO_MCU_RX_DATA, %a0
-    lea     IO_MCU_STATUS, %a1
-    lea     io_evt_queue, %a2
+    | Read status to clear IRQ pending flag
+    move.b  GLUE_SYSTICK_STATUS, %d0
 
-.Lisr_drain:
-    | DEBUG: read STATUS and print it as "S=XX "
-    move.b  (%a1), %d7              | read STATUS into d7
-    move.b  #'S', %d0
-    lea     .Ldbg_s_eq(%pc), %a5
-    jmp     uart_putchar
-.Ldbg_s_eq:
-    move.b  #'=', %d0
-    lea     .Ldbg_s_hex(%pc), %a5
-    jmp     uart_putchar
-.Ldbg_s_hex:
-    move.b  %d7, %d0
-    lea     .Ldbg_s_sp(%pc), %a6
-    jmp     uart_hex8
-.Ldbg_s_sp:
-    move.b  #' ', %d0
-    lea     .Ldbg_s_resume(%pc), %a5
-    jmp     uart_putchar
-.Ldbg_s_resume:
-    lea     IO_MCU_RX_DATA, %a0    | reload (clobbered by uart_putchar)
-
-    btst    #IO_MCU_STATUS_QUEUE_NOTEMPTY_SHIFT, %d7
-    beq.s   .Lisr_done
-
-    move.b  (%a0), %d0              | read one event byte
-    move.b  %d0, %d7                | save across debug print
-
-    | DEBUG: print each event byte as "XX " via GLUE UART
-    lea     .Ldbg_space(%pc), %a6
-    jmp     uart_hex8
-.Ldbg_space:
-    move.b  #' ', %d0
-    lea     .Ldbg_resume(%pc), %a5
-    jmp     uart_putchar
-.Ldbg_resume:
-    move.b  %d7, %d0               | restore event byte
-    lea     IO_MCU_RX_DATA, %a0    | reload (clobbered by uart_putchar)
-
-    | Check for timer tick — handle inline before queuing
-    cmp.b   #IO_MCU_EVT_TIMER, %d0
-    bne.s   .Lisr_enqueue
     jsr     timer_tick
-    | Fall through to enqueue the EVT_TIMER byte too
 
-.Lisr_enqueue:
-    | Ring buffer push: queue[tail] = d0; tail = (tail + 1) & mask
-    move.l  io_evt_tail, %d1        | d1 = tail index
-    move.b  %d0, (%a2, %d1.l)      | queue[tail] = byte
-    addq.l  #1, %d1
-    andi.l  #(IO_EVT_QUEUE_SIZE - 1), %d1
-    move.l  %d1, io_evt_tail
-
-    | Check for overflow (tail caught up to head)
-    cmp.l   io_evt_head, %d1
-    bne     .Lisr_drain
-    | Overflow — set sticky flag, stop draining to avoid clobbering data
-    move.b  #1, io_evt_overflow
-
-.Lisr_done:
-    movem.l (%sp)+, %d0-%d1/%d6-%d7/%a0-%a2/%a5-%a6
+    move.l  (%sp)+, %d0
     rte
 
 .global _init

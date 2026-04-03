@@ -251,8 +251,8 @@ extern "C" cf_error cf_write_sectors(uint32_t lba, uint8_t count, const uint8_t 
 // ---------------------------------------------------------------------------
 
 /**
- * Send one character via the GLUE hardware UART TX (115200 baud 8N1).
- * Polls UART_STATUS until not busy, then writes UART_TX_DATA.
+ * Send one character at 115200 baud (8N1) via GLUE timer + DEBUG_OUT.
+ * Uses the GLUE_TIMER ARM mechanism for precise bit timing.
  */
 extern "C" void debug_serial_putchar(const char s);
 
@@ -261,7 +261,7 @@ asm(
     "debug_serial_putchar:            \n"
     "    move.b  7(%sp), %d0 \n"
     "    lea     .Lret_stub(%pc), %a5 \n"
-    "    jmp     uart_putchar \n"
+    "    jmp     timer_putchar \n"
     ".Lret_stub:                   \n"
     "    rts                  \n"
 );
@@ -575,8 +575,8 @@ int main()
     volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
 
     // Play startup sound
-    uint32_t audio_len = _binary_startup_raw_end - _binary_startup_raw_start;
-    play_audio(_binary_startup_raw_start, audio_len, 11025);
+    // uint32_t audio_len = _binary_startup_raw_end - _binary_startup_raw_start;
+    // play_audio(_binary_startup_raw_start, audio_len, 11025);
 
     cf_mount_and_list();
 
