@@ -97,9 +97,11 @@ DEBUG\_OUT LED:
     - [ ] RP2350?
     - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
     - [ ] https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614 is a 256K x 16 ROM, 40DIP, 90ns (more wait states but maybe okay) for about $10 and they have 142 of them at the moment.
-  - [ ] IO MCU interface may be fragile; put it behind a 68681?
-    - [ ] 68681 manages UART and timers
-    - [ ] 8051 manages PS/2 and uses a serial protocol to 68681
+  - [ ] IO MCU interface is fragile
+    - [ ] Put it behind a 68681?
+      - [ ] 68681 manages UART and timers
+      - [ ] 8051 manages PS/2 and uses a serial protocol to 68681
+    - [ ] 8051 has weird signaling - **at least put a 74HC245 between it and CPU**
   - [ ] Swap MCU RX and TX - wrong pins!!
   - [ ] Pullups on JTAG lines
   - [ ] Pullup on DTACK so missing peripherals can't spuriously ACK
@@ -128,6 +130,7 @@ DEBUG\_OUT LED:
     - [ ] CF card latches on rise of IOWR
     - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
   - [ ] CF card to 16 bits?  Routing those pins will be annoying, but possible.
+  - [ ] Slap an ESP on it or a Pico for networking?  Moving to a Pico for UART, keyboard, mouse, timer, and wifi would knock a lot of stuff over in one shot, but unclear whether 3.3V would be a problem.
 - [ ] PCB only
   - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps

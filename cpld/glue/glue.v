@@ -58,7 +58,7 @@ module glue (
     // ----------------------------------------------------------------
     localparam UART_DIVISOR = (`SYSCLK_HZ / 115200) - 1;
     localparam ENGINE_ABSENT = 1;    // Set to 0 when ENGINE CPLD is populated
-    localparam IO_ABSENT     = 0;    // Set to 0 when IO MCU is populated
+    localparam IO_ABSENT     = 1;    // Set to 1 when IO MCU is not populated
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
     reg video_stall_enable;     // power-on state 0 = VIDEO_STALL ignored

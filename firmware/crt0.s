@@ -356,6 +356,58 @@ uart_puts:
 .Luart_puts_done:
     jmp     (%a6)
 
+| debug_getchar_asm: bit-bang receive one byte at 115200 via GLUE timer
+| Input:  none
+| Output: d0.b = received byte, or d0.l = -1 on timeout (~1ms)
+| Return: jmp (a5)
+| Clobbers: d0, d1, d2, a0
+
+    .equ TIMER_FULL_BIT, 12         /* (12+1)*8 = 104 clocks = 115200 baud */
+    .equ TIMER_HALF_BIT, 5          /* (5+1)*8  = 48 clocks  ~ half bit    */
+    .equ RX_TIMEOUT_COUNT, 500      /* ~1ms at 12 MHz with ROM wait states */
+
+    .global debug_getchar_asm
+debug_getchar_asm:
+    lea     GLUE_DEBUG_IN, %a0
+    move.w  #RX_TIMEOUT_COUNT, %d1
+
+.Lrx_poll:
+    btst    #GLUE_DEBUG_IN_SHIFT, (%a0)
+    beq.s   .Lrx_got_start
+    dbra    %d1, .Lrx_poll
+
+    moveq   #-1, %d0
+    jmp     (%a5)
+
+.Lrx_got_start:
+    | Half-bit delay to reach mid-start-bit
+    move.b  #TIMER_HALF_BIT, GLUE_TIMER
+    move.b  #0, GLUE_TIMER_ARM
+    tst.b   (%a0)                   | stall until zero-crossing (discard)
+
+    | Switch to full bit period
+    move.b  #TIMER_FULL_BIT, GLUE_TIMER
+
+    | Sample 8 data bits (LSB first)
+    moveq   #0, %d0
+    moveq   #7, %d2
+
+.Lrx_bit:
+    move.b  #0, GLUE_TIMER_ARM
+    move.b  (%a0), %d1              | stall, then read DEBUG_IN
+    lsr.b   #1, %d1                 | bit 0 -> X flag
+    roxr.b  #1, %d0                 | X -> MSB of d0, shift right
+    dbra    %d2, .Lrx_bit
+
+    | Wait through stop bit
+    move.b  #0, GLUE_TIMER_ARM
+    tst.b   (%a0)
+
+    | Stop timer
+    move.b  #0, GLUE_TIMER
+
+    jmp     (%a5)
+
 | ====================================================================
 | Exception handlers — diagnostic blink loops on DEBUG_OUT
 |

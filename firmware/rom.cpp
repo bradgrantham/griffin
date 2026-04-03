@@ -284,6 +284,23 @@ asm(
     "    rts                  \n"
 );
 
+/**
+ * Bit-bang receive one byte at 115200 via DEBUG_IN + GLUE timer.
+ * Returns 0–255 on success, -1 on timeout (~1ms).
+ */
+extern "C" int debug_getchar(void);
+
+asm(
+    ".global debug_getchar       \n"
+    "debug_getchar:              \n"
+    "    move.l  %d2, -(%sp)     \n"
+    "    lea     .Lret_gc(%pc), %a5 \n"
+    "    jmp     debug_getchar_asm \n"
+    ".Lret_gc:                   \n"
+    "    move.l  (%sp)+, %d2     \n"
+    "    rts                     \n"
+);
+
 extern "C" void panic(const char *s);
 
 asm(
@@ -563,68 +580,14 @@ int main()
 
     cf_mount_and_list();
 
-    uint8_t evt;
+    // IO MCU pulled — bit-bang UART RX loop via DEBUG_IN
     for (;;)
     {
-        if(!evt_pop(&evt))
+        int ch = debug_getchar();
+        if (ch >= 0)
         {
-            continue;
-        }
-
-        switch(evt)
-        {
-            case Griffin::IO_MCU_EVT_IDENTITY:
-            {
-                char identity[128];
-                char *p = identity;
-                uint8_t size;
-                evt_pop(&size);
-                for(int i = 0; i < size; i++)
-                {
-                    evt_pop((uint8_t*)(&identity[i]));
-                }
-                identity[size] = '\0';
-                debug_printf("IO_MCU ready: \"%s\"\n", identity);
-                break;
-            }
-            case Griffin::IO_MCU_EVT_UART_RX:
-            {
-                uint8_t ch;
-                if(evt_pop(&ch))
-                {
-                    debug_serial_putchar(ch);
-                    // io_mcu_putchar(ch);
-                }
-                break;
-            }
-
-            case Griffin::IO_MCU_EVT_KBD:
-            {
-                uint8_t scancode;
-                if(evt_pop(&scancode))
-                {
-                    debug_printf("[KBD: 0x%02X]\n", scancode);
-                }
-                break;
-            }
-
-            case Griffin::IO_MCU_EVT_MOUSE:
-            {
-                uint8_t data;
-                if(evt_pop(&data))
-                {
-                    debug_printf("[MOUSE: 0x%02X]\n", data);
-                }
-                break;
-            }
-
-            case Griffin::IO_MCU_EVT_TIMER:
-                // Timer tick already handled in ISR; nothing to do here
-                break;
-
-            default:
-                debug_printf("[IO EVT: 0x%02X]\n", evt);
-                break;
+            debug_printf("received: 0x%02X '%c'\n", ch,
+                         (ch >= 0x20 && ch < 0x7F) ? ch : '.');
         }
     }
 }
