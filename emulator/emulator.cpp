@@ -542,6 +542,155 @@ struct TimerState
     }
 };
 
+// ---------------------------------------------------------------------------
+// Systick timer — shares the ÷8 prescaler with GLUE_TIMER.
+// Hardware uses ÷128 subdiv on prescaler → ÷1024 total from SYSCLK (11718.75 Hz).
+// Approximate rates: 50.08/60.10/100.16/202.05 Hz (all <1% error).
+// ---------------------------------------------------------------------------
+
+struct SystickState
+{
+    uint8_t rate = 0;       // GLUE_SYSTICK_CONFIG_RATE value
+    uint8_t reload = 0;     // auto-reload value (depends on rate)
+    uint8_t counter = 0;    // countdown counter
+    bool pending = false;   // IRQ pending flag (read-to-clear)
+    bool enabled = false;
+
+    // Prescaler base frequency = SYSCLK / 1024 = 11718.75 Hz
+    // Reload values chosen so that (reload+1) divides 11718.75 to approximate target rate.
+    static uint8_t reload_for_rate(uint8_t r)
+    {
+        switch (r)
+        {
+            case GLUE_SYSTICK_CONFIG_RATE_HZ_50:  return 233;  // 11718.75/234 ≈ 50.08
+            case GLUE_SYSTICK_CONFIG_RATE_HZ_60:  return 194;  // 11718.75/195 ≈ 60.10
+            case GLUE_SYSTICK_CONFIG_RATE_HZ_100: return 116;  // 11718.75/117 ≈ 100.16
+            case GLUE_SYSTICK_CONFIG_RATE_HZ_200: return 57;   // 11718.75/58  ≈ 202.05
+            default: return 0;
+        }
+    }
+
+    void configure(uint8_t val)
+    {
+        rate = val & GLUE_SYSTICK_CONFIG_RATE_MASK;
+        enabled = (rate != GLUE_SYSTICK_CONFIG_RATE_OFF);
+        if (enabled)
+        {
+            reload = reload_for_rate(rate);
+            counter = reload;
+        }
+        else
+        {
+            reload = 0;
+            counter = 0;
+        }
+    }
+
+    // Called at the prescaler tick rate (SYSCLK / 1024).
+    // Returns true when the counter wraps (IRQ fires).
+    bool tick()
+    {
+        if (!enabled)
+        {
+            return false;
+        }
+        if (counter == 0)
+        {
+            counter = reload;
+            pending = true;
+            return true;
+        }
+        counter--;
+        return false;
+    }
+
+    uint8_t read_status()
+    {
+        uint8_t val = pending ? GLUE_SYSTICK_STATUS_PENDING_MASK : 0;
+        pending = false;
+        return val;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// SoftUART TX synthesizer — generates an 8N1 bitstream on DEBUG_IN from
+// bytes received on the PTY.  The emulator's firmware bit-bang RX routine
+// polls DEBUG_IN, so we need to present a properly-timed serial waveform.
+// ---------------------------------------------------------------------------
+
+struct SoftUARTTX
+{
+    static constexpr int BAUD = 115200;
+    static constexpr int CLOCKS_PER_BIT = SYSCLK_HZ / BAUD;  // 104
+
+    enum State { IDLE, SENDING };
+    State state = IDLE;
+    uint16_t shift_reg = 0;   // 10-bit frame: start(0) + 8 data + stop(1)
+    int bits_remaining = 0;
+    uint64_t next_bit_clock = 0;
+
+    // Queue of bytes waiting to be transmitted
+    static constexpr size_t QUEUE_SIZE = 256;
+    uint8_t queue[QUEUE_SIZE];
+    size_t head = 0;
+    size_t count = 0;
+
+    int current_bit = 1;  // idle = HIGH (mark)
+
+    void enqueue(uint8_t byte)
+    {
+        if (count >= QUEUE_SIZE)
+        {
+            return;  // drop on overflow
+        }
+        queue[(head + count) % QUEUE_SIZE] = byte;
+        count++;
+    }
+
+    // Advance the bitstream to the given clock.  Call before reading current_bit.
+    void advance(uint64_t clock_now)
+    {
+        while (true)
+        {
+            if (state == IDLE)
+            {
+                if (count == 0)
+                {
+                    current_bit = 1;  // idle HIGH
+                    return;
+                }
+                // Start sending next byte
+                uint8_t byte = queue[head % QUEUE_SIZE];
+                head = (head + 1) % QUEUE_SIZE;
+                count--;
+                // Build 10-bit frame: start bit (0), 8 data bits LSB first, stop bit (1)
+                shift_reg = (1 << 9) | (static_cast<uint16_t>(byte) << 1) | 0;
+                bits_remaining = 10;
+                state = SENDING;
+                next_bit_clock = clock_now;
+            }
+
+            if (state == SENDING)
+            {
+                if (clock_now < next_bit_clock)
+                {
+                    return;  // not time for next bit yet
+                }
+                // Shift out current bit
+                current_bit = shift_reg & 1;
+                shift_reg >>= 1;
+                bits_remaining--;
+                next_bit_clock += CLOCKS_PER_BIT;
+                if (bits_remaining == 0)
+                {
+                    state = IDLE;
+                    // Continue loop to check for queued bytes
+                }
+            }
+        }
+    }
+};
+
 // IO_MCU event queue — mirrors the real MCU's event FIFO.
 // Firmware reads IO_MCU_RX_DATA to dequeue; IO_MCU_STATUS reports QUEUE_NOTEMPTY.
 struct IOmcuState
@@ -673,6 +822,8 @@ class GriffinEmulator : public moira::Moira
     mutable IOmcuState io_mcu;
     mutable CFState cf;
     mutable TimerState timer;
+    mutable SystickState systick;
+    mutable SoftUARTTX debug_in_tx;
     mutable bool build_id_phase = false;  // false=high byte, true=low byte
     mutable uint8_t dac_value = 0x0;
 
@@ -686,11 +837,27 @@ class GriffinEmulator : public moira::Moira
     {
         if(is_cf_addr(addr)) {
             return cf.read_reg(addr + IO_BASE);
-        } else if(addr == GLUE_UART_STATUS - IO_BASE) {
-            // Hardware UART is never busy in emulation (instant TX)
-            return 0;
+        } else if(addr == GLUE_SYSTICK_STATUS - IO_BASE) {
+            uint8_t val = systick.read_status();
+            // Deassert systick IRQ when pending is cleared
+            if (!systick.pending)
+            {
+                const_cast<GriffinEmulator*>(this)->setIPL(0);
+            }
+            return val;
         } else if(addr == GLUE_DEBUG_IN - IO_BASE) {
-            return 0;
+            // Eagerly check PTY for incoming data so the bit-bang RX
+            // routine sees the start bit promptly.
+            if (debug_in_tx.count == 0 && debug_in_tx.state == SoftUARTTX::IDLE)
+            {
+                uint8_t ch;
+                if (pty_console.is_data_ready() && pty_console.receive(&ch))
+                {
+                    debug_in_tx.enqueue(ch);
+                }
+            }
+            debug_in_tx.advance(getClock());
+            return debug_in_tx.current_bit & GLUE_DEBUG_IN_MASK;
         } else if(addr == GLUE_BUILD_ID - IO_BASE) {
             uint8_t val = build_id_phase ? (build_id & 0xFF) : (build_id >> 8);
             build_id_phase = !build_id_phase;
@@ -743,11 +910,12 @@ class GriffinEmulator : public moira::Moira
                 if(debug & DEBUG_DEBUG_BIT) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
             }
             debug_out_latch = val;
-        } else if(addr == GLUE_UART_TX_DATA - IO_BASE) {
-            // Hardware UART TX: emit character immediately to stdout
-            printf("%c", val);
-            if(debug & DEBUG_UART) printf("[UART TX: 0x%02X]", val);
-            fflush(stdout);
+        } else if(addr == GLUE_SYSTICK_CONFIG - IO_BASE) {
+            systick.configure(val);
+            if (debug & DEBUG_IO)
+            {
+                printf("[SYSTICK CONFIG: rate=%u reload=%u]\n", systick.rate, systick.reload);
+            }
         } else if(addr == GLUE_CONFIG - IO_BASE) {
             if(val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK)
             {
@@ -1030,27 +1198,49 @@ public:
         return cf.open(path, read_only);
     }
 
-    // Poll the PTY for incoming data and update IPL.
+    // Poll the PTY for incoming data, feed the DEBUG_IN bitstream
+    // synthesizer, tick systick, and update IPL.
     // Call this periodically from the main loop, not on every bus cycle.
-    void poll_io_mcu()
+    void poll_io()
     {
-        io_mcu.poll(pty_console);
-        if(io_mcu.notempty())
+        // Feed PTY input into DEBUG_IN bitstream synthesizer
+        uint8_t ch;
+        while (pty_console.is_data_ready() && pty_console.receive(&ch))
         {
-            setIPL(IO_MCU_IRQ_LEVEL);
+            debug_in_tx.enqueue(ch);
+        }
+
+        // IO MCU is absent (IO_ABSENT=1 in GLUE) — don't poll it.
+        // When IO MCU is eventually working, re-enable:
+        // io_mcu.poll(pty_console);
+
+        // Determine highest active IRQ level
+        // Level 5: systick (IO_MCU disabled while IO_ABSENT)
+        if (systick.pending)
+        {
+            setIPL(IO_MCU_IRQ_LEVEL);  // level 5 (shared with IO_MCU)
         }
         else
         {
             setIPL(0);
         }
     }
+
+    // Tick the systick timer.  Called at the prescaler rate (SYSCLK / 1024).
+    void tick_systick()
+    {
+        systick.tick();
+    }
 };
 
 // Courtesy Claude Opus 4.6
 
 static constexpr int OVERSAMPLE = 16;
-static constexpr int BAUDRATE = 9600;
-static constexpr int SOFT_UART_SAMPLE_INTERVAL = SYSCLK_HZ / (BAUDRATE * OVERSAMPLE);
+static constexpr int BAUDRATE = 115200;
+// Use 16.16 fixed-point to avoid integer truncation drift at high baud rates.
+// At 115200 baud: 12000000 / (115200 * 16) = 6.5104... clocks per sample.
+// Fixed-point: (12000000 << 16) / (115200 * 16) = 426834 (≈ 6.51 * 65536)
+static constexpr uint32_t SOFT_UART_SAMPLE_INTERVAL_FP = ((uint64_t)SYSCLK_HZ << 16) / (BAUDRATE * OVERSAMPLE);
 
 // TODO parameterize this on SYSCLOCK and OVERSAMPLE and BAUDRATE
 struct SoftUART
@@ -1242,15 +1432,17 @@ int main(int argc, const char** argv)
         exit(EXIT_FAILURE);
     }
 
-    SoftUART debug_uart(emulator.get_debug_latch()); // This represents an FTDI 232 attached to the debug out pin
+    SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
 
     emulator.setDasmSyntax(moira::Syntax::GNU_MIT);
     emulator.reset();
     emulator.governor.reset(emulator.getClock(), emulator.clock_hz);
 
-    uint64_t previous_uart_sample = 0;
-    uint64_t previous_io_mcu_poll = 0;
-    static constexpr uint64_t IO_MCU_POLL_INTERVAL = SYSCLK_HZ / 1000; // ~1ms
+    uint64_t previous_uart_sample_fp = 0; // 16.16 fixed-point clock
+    uint64_t previous_io_poll = 0;
+    static constexpr uint64_t IO_POLL_INTERVAL = SYSCLK_HZ / 1000; // ~1ms
+    uint64_t previous_systick_tick = 0;
+    static constexpr uint64_t SYSTICK_TICK_INTERVAL = 1024; // SYSCLK / 1024 prescaler
 
     auto clock_then = emulator.getClock();
     auto then = time(0);
@@ -1284,16 +1476,34 @@ int main(int argc, const char** argv)
             throttle_counter = 0;
         }
 
-        while(clock_now / SOFT_UART_SAMPLE_INTERVAL != previous_uart_sample / SOFT_UART_SAMPLE_INTERVAL)
         {
-            debug_uart.clock(emulator.get_debug_latch());
-            previous_uart_sample = previous_uart_sample + SOFT_UART_SAMPLE_INTERVAL;
+            uint64_t clock_now_fp = clock_now << 16;
+            // If we've fallen too far behind (e.g. halt-settle loop), skip ahead
+            // rather than churning through thousands of idle samples.
+            // 16 * 10 bit-times at 115200 = ~1389 clocks is plenty of margin.
+            uint64_t max_behind_fp = (uint64_t)SOFT_UART_SAMPLE_INTERVAL_FP * OVERSAMPLE * 10;
+            if (clock_now_fp > previous_uart_sample_fp + max_behind_fp)
+            {
+                previous_uart_sample_fp = clock_now_fp - max_behind_fp;
+            }
+            while (previous_uart_sample_fp + SOFT_UART_SAMPLE_INTERVAL_FP <= clock_now_fp)
+            {
+                debug_uart.clock(emulator.get_debug_latch() & 1);
+                previous_uart_sample_fp += SOFT_UART_SAMPLE_INTERVAL_FP;
+            }
         }
 
-        if(clock_now - previous_io_mcu_poll >= IO_MCU_POLL_INTERVAL)
+        // Tick systick at prescaler rate (every 1024 SYSCLK cycles)
+        while (clock_now - previous_systick_tick >= SYSTICK_TICK_INTERVAL)
         {
-            emulator.poll_io_mcu();
-            previous_io_mcu_poll = clock_now;
+            emulator.tick_systick();
+            previous_systick_tick += SYSTICK_TICK_INTERVAL;
+        }
+
+        if (clock_now - previous_io_poll >= IO_POLL_INTERVAL)
+        {
+            emulator.poll_io();
+            previous_io_poll = clock_now;
         }
 
         if(now != then)
