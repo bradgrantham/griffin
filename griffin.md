@@ -72,7 +72,25 @@ How much design file can be in YAML or in Python?  Generate from YAML:
   * Need holes for retainer feet for headphone jack  
   * Rca jack needs to be past end of board for retainer feet?  Or square holes for pressure fit?  
 * No connection from VIDEO to supply DTACK to GLUE, and no signal back to VIDEO to IACK.  Are these important?
-* If the CPU clock was gated through GLUE, other peripherals (mostly thinking ENGINE) could perform fast bus operations while stalling CPU clock.
+* If the CPU clock was gated through GLUE, other peripherals (mostly thinking ENGINE) could perform fast bus operations while stalling CPU clock. -> GLUE has access to HALT, so it can stop the CPU if that works out.
+* IO MCU doesn't work.  Something on the board is driving the data bus when IO MCU is trying to respond via P2 weak pullups.
+  * AT89S52 P2 reads back 0x3C when nothing should be driving D0-D7 (expected 0xFF from weak pull-ups).  0x3C correlates with ROM instruction stream content near current PC, but ROM is verified not driving (see below).
+  * Scope shows one device driving D0 to ~5V and another to ~4.5V; MCU P2 weak pull-up (~50µA) cannot overcome whatever is holding D0/D1 low.  Math suggests ~1-2KΩ resistive path to GND would explain all three voltage levels.
+  * When board was running abnormally slowly (logic analyzer interference with CLK), IO MCU communication worked correctly including IDENTITY event and string.
+  * Verified NOT the cause:
+    * ROM: nROM_SELECT (TP14) is HIGH (+5V) during IO MCU cycles; confirmed at both test point and U2 pin 20.
+    * RAM: all nRAM_x_SEL confirmed deasserted during IO MCU cycles.
+    * CF card: physically removed from connector.
+    * Audio 74HC373 (U23): physically pulled from socket.
+    * VIDEO CPLD (U17): reflashed with explicit D[15:0] tristate (`assign D = ~nVIDEO_SELECT ? 16'd0 : 16'bz`); no change.
+    * ENGINE CPLD (U13): not populated.
+    * GLUE address decoding: all chip selects verified mutually exclusive and gated by `bus_cycle`; IO MCU region (0xF8xxxx) cannot overlap any other select.
+    * GLUE D bus: tristated unless `glue_read_active` (glue register read), which requires glue_segment (0xF0xxxx), not io_segment (0xF8xxxx).
+    * No visible chip select going low during IO MCU cycles on scope.
+  * Added 100-iteration NOP delay loop between P2=data and DTACK assertion to extend strong pull-up window; no improvement.
+  * For PCB Rev1, may have to fall back to DEBUG_IN UART RX and not use the IO MCU.
+  * Rev2 should add 74HC245 buffer between AT89S52 P2 and D[7:0] (DIR=R/W, nOE=nIO_SELECT).
+
 
 ## Need to buy
 
@@ -107,12 +125,12 @@ DEBUG\_OUT LED:
   - [ ] Pullup on DTACK so missing peripherals can't spuriously ACK
   - [ ] 4.7K Pullup on HALT
   - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
-  - [ ] Dump SPI for IO MCU - just use an ISP header or something
+  - [ ] Dump GLUE SPI for IO MCU - move IO_{SELECT,DTACK,IRQ} to P1.{0,1,2}, run out to a header
   - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
   - [ ] More signals between GLUE, VIDEO, ENGINE
     - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
   - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
-  - [ ] GND, +5V, D0-D15, A1-A10, WRITE_LO, WRITE_HI to test points
+  - [ ] GND, +5V, D0-D15, A1-A10, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points - use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
   - [ ] Pullups on PS/2 clock lines
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
