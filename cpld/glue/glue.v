@@ -116,7 +116,6 @@ module glue (
 
     wire glue_segment  = io_region & (address_io_segment == 4'h0);
     wire cf_segment    = io_region & (address_io_segment == 4'h4);
-    wire io_segment    = io_region & (address_io_segment == 4'h8);
     wire audio_segment = io_region & (address_io_segment == 4'hc);
 
     wire cf_register_bank0 = (A_lo[4] == 0);
