@@ -89,9 +89,9 @@ How much design file can be in YAML or in Python?  Generate from YAML:
     * No visible chip select going low during IO MCU cycles on scope.
   * Added 100-iteration NOP delay loop between P2=data and DTACK assertion to extend strong pull-up window; no improvement.
   * For PCB Rev1, may have to fall back to DEBUG_IN UART RX and not use the IO MCU.  Likely way forward:
-    * bitbang UART TX using GLUE_TIMER for deterministic output - disable interrupts or set flow control pin
-    * Sampled UART RX using GLUE_TIMER, may only do polling or may have first bit be an interrupt (and set TIMER?)
-    * *Need to get to reliable serial so I can send and receive data to some kind of network device e.g. esp32*
+    * *working* UART TX using GLUE_TIMER for deterministic output - disable interrupts or set flow control pin
+    * *working* UART RX using GLUE_TIMER, may only do polling or may have first bit be an interrupt (and set TIMER?)
+    * *Need to get to reliable streaming serial so I can send and receive data to some kind of network device e.g. esp32*
     * VIDEO does 60Hz timer; will that be enough for EmuTOS?
     * PS/2 clock latches the data line and causes interrupt, PS/2 shares an interrupt and exposes which clk through status register
   * Rev2 should add 74HC245 buffer between AT89S52 P2 and D[7:0] (DIR=R/W, nOE=nIO_SELECT) if there is one
