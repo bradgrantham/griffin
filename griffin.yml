@@ -38,26 +38,27 @@ peripherals:
         name: SYSTICK_CONFIG
         access: write
         width: 8
-        description: "Systick timer rate configuration"
+        description: |
+          Systick timer rate selection.  Timer always runs; software
+          divides in the ISR for lower rates (e.g. ÷4 for 50 Hz).
         bits:
-          - bit: "2:0"
+          - bit: "0"
             name: RATE
-            description: "Tick rate selection"
+            description: "0 = ~200 Hz (default), 1 = ~180 Hz"
             values:
-              - { value: 0, name: "OFF",    description: "Systick disabled" }
-              - { value: 1, name: "HZ_50",  description: "50 Hz systick" }
-              - { value: 2, name: "HZ_60",  description: "60 Hz systick" }
-              - { value: 3, name: "HZ_100", description: "100 Hz systick" }
-              - { value: 4, name: "HZ_200", description: "200 Hz systick" }
+              - { value: 0, name: "HZ_200", description: "~200 Hz (reload 57, actual 202.05 Hz)" }
+              - { value: 1, name: "HZ_180", description: "~180 Hz (reload 64, actual 180.29 Hz)" }
       - offset: 0x07
         name: CONFIG
         access: write
         width: 8
         description: "GLUE configuration register"
         bits:
-          - { bit: "0", name: ROM_OVERLAY_DISABLE,
+          - { bit: "0", name: ROM_OVERLAY_DISABLE, default: 0,
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
-          - { bit: "2", name: VIDEO_STALL_ENABLE,
+          - { bit: "1", name: SYSTICK_IRQ_ENABLE, default: 0,
+              description: "Write 1 to enable systick interrupt on nIPL; default 0 masks the IRQ (timer still runs, pending flag still sets)" }
+          - { bit: "2", name: VIDEO_STALL_ENABLE, default: 0,
               description: "Write 1 to allow VIDEO_STALL to block DTACK; default 0 ignores VIDEO_STALL so system boots without VIDEO" }
       - offset: 0x09
         name: TIMER

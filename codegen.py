@@ -84,6 +84,20 @@ def dtack_penalty(ws):
     return dtack_threshold(ws) - 2
 
 
+def reg_default(reg):
+    """Compute the power-on default for a register from its bits' 'default' fields.
+    Returns (value, True) if any bit has a default, else (0, False)."""
+    has_default = False
+    val = 0
+    for bf in reg.get('bits', []):
+        d = bf.get('default')
+        if d is not None:
+            has_default = True
+            _, lo = parse_bit_spec(bf['bit'])
+            val |= parse_int(d) << lo
+    return val, has_default
+
+
 # ---------------------------------------------------------------------------
 # C / C++ header
 # ---------------------------------------------------------------------------
@@ -193,6 +207,10 @@ def write_c_header(hw: dict, path: Path) -> None:
                     comment = f"  // {vdesc}" if vdesc else ""
                     w(f"static constexpr uint32_t {prefix}_{vname} = {vraw}U;{comment}")
 
+            dval, has_def = reg_default(reg)
+            if has_def:
+                w(f"static constexpr uint32_t {pname}_{rname}_DEFAULT = {fmt_hex(dval)}U;")
+
         w("")
 
     # Synthesize IO_BASE / IO_SIZE from peripherals with no linker section
@@ -279,6 +297,10 @@ def write_asm_include(hw: dict, path: Path) -> None:
                     vraw  = parse_int(ev['value'])
                     w(f".equ {prefix}_{vname}, {vraw}")
 
+            dval, has_def = reg_default(reg)
+            if has_def:
+                w(f".equ {pname}_{rname}_DEFAULT, {fmt_hex(dval)}")
+
         w("")
 
     if consts:
@@ -336,6 +358,9 @@ def write_ld_include(hw: dict, path: Path) -> None:
             rname  = reg['name']
             addr   = base + offset
             w(f"{pname}_{rname} = {fmt_hex(addr, 6)};")
+            dval, has_def = reg_default(reg)
+            if has_def:
+                w(f"{pname}_{rname}_DEFAULT = {fmt_hex(dval)};")
 
     w("")
 
@@ -417,6 +442,11 @@ def write_verilog_include(hw: dict, path: Path) -> None:
                     vraw  = parse_int(ev['value'])
                     w(f"`define {prefix}_{vname} {vraw}")
 
+            dval, has_def = reg_default(reg)
+            if has_def:
+                reg_width = parse_int(reg.get('width', 8))
+                w(f"`define {pname}_{rname}_DEFAULT {reg_width}'h{dval:02X}")
+
         w("")
 
     if consts:
@@ -487,6 +517,10 @@ def write_mcs51_header(hw: dict, path: Path) -> None:
                     vdesc = ev.get('description', '')
                     comment = f"  /* {vdesc} */" if vdesc else ""
                     w(f"#define {prefix}_{vname}  {vraw}{comment}")
+
+            dval, has_def = reg_default(reg)
+            if has_def:
+                w(f"#define {pname}_{rname}_DEFAULT  {fmt_hex(dval)}")
 
         w("")
 
