@@ -12,7 +12,6 @@ module glue (
     input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
     input  wire        nENGINE_DTACK, // pin 17: ENGINE CPLD asserts when ready
     input  wire        nIO_DTACK,     // pin 16: IO MCU asserts when ready
-    input  wire        nIO_IRQ,       // pin 18: IO MCU interrupt request (active low)
     input  wire        nENGINE_IRQ,   // pin 20: ENGINE CPLD interrupt request (active low)
     input  wire        nAS,
     input  wire        [23:18] A_hi,
@@ -154,18 +153,14 @@ module glue (
     // Priority levels (from griffin.yml / griffin.md):
     //   7: VIDEO    (~VIDEO_IRQ,  pin 1)   — nIPL = 000
     //   6: ENGINE   (~ENGINE_IRQ, pin 20)  — nIPL = 001
-    //   5: IO/SYSTICK (~IO_IRQ | systick)  — nIPL = 010
     //   none:                              — nIPL = 111
     // ----------------------------------------------------------------
 
     wire engine_irq_active  = ~ENGINE_ABSENT & ~nENGINE_IRQ;
-    wire io_irq_active      = ~IO_ABSENT     & ~nIO_IRQ;
     wire systick_irq_active = systick_pending;
 
     assign nIPL = ~nVIDEO_IRQ       ? 3'b000 :  // level 7
                   engine_irq_active  ? 3'b001 :  // level 6
-                  (io_irq_active | systick_irq_active)
-                                     ? 3'b010 :  // level 5
                                        3'b111;   // no interrupt
 
     wire glue_select = glue_segment & bus_cycle;
@@ -539,5 +534,4 @@ endmodule
 //PIN: nENGINE_SELECT : 15
 //PIN: nIO_DTACK  : 16
 //PIN: nENGINE_DTACK : 17
-//PIN: nIO_IRQ    : 18
 //PIN: nENGINE_IRQ : 20
