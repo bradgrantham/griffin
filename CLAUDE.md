@@ -13,7 +13,7 @@
 
 ## Definition
 
-* The project is defined by griffin.md and griffin.yml and the KiCAD board design follows closely but is about as authoritative.
+* The project is defined by griffin.md and griffin.yml and the KiCAD board design follows closely but is slightly less authoritative.
   * KICAD board design is in board/ but has progressed significantly from rev 1.
     * A print of the PCB and schematic of Rev 1 are in board_rev_1_pcb.pdf and board_rev_1_schematic.pdf
     * The PCB Rev 1 netlist is in board/board-pcb-rev-1.distilled.txt except with bodges applied as noted in griffin.yml, produced with kicad_netlist_summary_2.py
@@ -23,10 +23,10 @@
   * Makefile for both GLUE and VIDEO in cpld
   * 68000 ROM in firmware/{crt0.s,linker.ld,rom.cpp,Makefile} and associated other files in firmware
   * 68000 bringup ROM in sanity/{sanity.s,linker.ld,Makefile}
-  * IO_MCU firmware in io-mcu/{Makefile,main.c} and generated Python script to flash over SPI in io-mcu/at89s52_isp.py
-  * emulator in emulator/ and the intent is to at least emulate the 68000 and MMIO accesses.  TBD whether to emulate the ATF1508's using Verilator or emulate the AT89S52 itself.
+  * There is currently IO_MCU firmware in io-mcu/{Makefile,main.c} and generated Python script to flash over SPI in io-mcu/at89s52_isp.py, but the IO_MCU has turned out to be a problem for PCB Rev 1; ignore it for now.
+  * emulator in emulator/ and the intent is to at least emulate the 68000 and MMIO accesses.  TBD whether to emulate the ATF1508's using Verilator.
 
-* When possible, store new hardware definitions in griffin.yml; register addresses, bits and bitfields, constants, protocol between 68000 and IO-MCU, etc, and generate included headers.
+* When possible, store new hardware definitions in griffin.yml; register addresses, bits and bitfields, constants, protocol between peripherals, constants, and then generate included headers.
 
 * Keep in mind for instruction-counted loops that there are ROM wait states.
 
@@ -47,6 +47,10 @@
 
 * sanity/sanity.bin and firmware/rom.bin should execute in emulator/emulator/build/emulator.
   * note that IO-MCU UART TX and RX is through a PTY.
+
+## General design guidelines
+
+* Prefer correction by construction, but not through unreasonable complexity.
 
 ## Claude Code Guidelines
 
