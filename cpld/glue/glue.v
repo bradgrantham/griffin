@@ -50,6 +50,7 @@ module glue (
     localparam IO_ABSENT     = 1;    // Set to 1 when IO MCU is not populated
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
+    reg systick_irq_enable;     // power-on state 0 = systick IRQ masked
     reg video_stall_enable;     // power-on state 0 = VIDEO_STALL ignored
 
     wire read = R_nW;
@@ -138,7 +139,7 @@ module glue (
     // if no peripheral has responded with DTACK.  Causes the 68000 to take
     // a bus error exception instead of hanging forever on unmapped access.
     // Exclude interrupt acknowledge cycles (FC=111) which use VPA, not DTACK.
-    // Exclude handshake peripherals (IO MCU, ENGINE) — they drive DTACK
+    // Exclude handshake peripherals (ENGINE) — they drive DTACK
     // externally and may take much longer than 15 clocks to respond.
     wire handshake_cycle = (~nENGINE_SELECT & ~ENGINE_ABSENT);
     assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle & ~handshake_cycle);
@@ -149,14 +150,16 @@ module glue (
     // Priority levels (from griffin.yml / griffin.md):
     //   7: VIDEO    (~VIDEO_IRQ,  pin 1)   — nIPL = 000
     //   6: ENGINE   (~ENGINE_IRQ, pin 20)  — nIPL = 001
+    //   5: SYSTICK  (pending & irq_enable) — nIPL = 010
     //   none:                              — nIPL = 111
     // ----------------------------------------------------------------
 
     wire engine_irq_active  = ~ENGINE_ABSENT & ~nENGINE_IRQ;
-    wire systick_irq_active = systick_pending;
+    wire systick_irq_active = systick_pending & systick_irq_enable;
 
     assign nIPL = ~nVIDEO_IRQ       ? 3'b000 :  // level 7
                   engine_irq_active  ? 3'b001 :  // level 6
+                  systick_irq_active ? 3'b010 :  // level 5
                                        3'b111;   // no interrupt
 
     wire glue_select = glue_segment & bus_cycle;
@@ -186,8 +189,9 @@ module glue (
     //   0xF00001  — DEBUG_IN         (read,  bit 0 = DEBUG_IN pin state)
     //   0xF00001  — DEBUG_OUT        (write, bit 0 = OUT)
     //   0xF00003  — SYSTICK_STATUS   (read,  bit 0 = pending; read clears)
-    //   0xF00003  — SYSTICK_CONFIG   (write, bits 2:0 = rate)
+    //   0xF00003  — SYSTICK_CONFIG   (write, bit 0 = rate: 0=200Hz, 1=180Hz)
     //   0xF00007  — CONFIG           (write, bit 0 = ROM_OVERLAY_DISABLE,
+    //                                        bit 1 = SYSTICK_IRQ_ENABLE,
     //                                        bit 2 = VIDEO_STALL_ENABLE)
     //
     // A_lo[5:1] selects the word address within the segment.
@@ -239,12 +243,14 @@ module glue (
     always @(posedge SYSCLK) begin
         if(RESET) begin
             rom_overlay_disable <= 0;
+            systick_irq_enable  <= 0;
             video_stall_enable  <= 0;
             debug_out_reg       <= 0;
         end else begin
             if (glue_select & lo_byte_selected & write
                 & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1])) begin
                 rom_overlay_disable <= D[0];
+                systick_irq_enable  <= D[`GLUE_CONFIG_SYSTICK_IRQ_ENABLE_SHIFT];
                 video_stall_enable  <= D[`GLUE_CONFIG_VIDEO_STALL_ENABLE_SHIFT];
             end
             if (debug_out_select)
@@ -260,26 +266,26 @@ module glue (
     // ----------------------------------------------------------------
     // Shared ÷8 prescaler for both GLUE_TIMER and systick
     //
-    // The 3-bit prescaler free-runs whenever the bit-bang timer or
-    // systick is active.  Writing GLUE_TIMER resets it to 7 for
-    // precise UART timing; the systick tolerates the occasional
-    // glitch (sub-µs jitter on a 5–20 ms tick).
+    // The 3-bit prescaler free-runs (systick is always active).
+    // Writing GLUE_TIMER resets it to 7 for precise UART timing;
+    // the systick tolerates the occasional glitch (sub-µs jitter
+    // on a 5–20 ms tick).
     // ----------------------------------------------------------------
     reg [2:0] timer_prescale;
     reg [4:0] timer_period;
     reg [4:0] timer_cnt;
     reg       timer_armed;
 
-    // Systick state
+    // Systick state — timer always runs, IRQ gated by CONFIG.SYSTICK_IRQ_ENABLE
     reg [6:0]  systick_subdiv;       // ÷128 on top of ÷8 → ÷1024
     reg [7:0]  systick_cnt;          // countdown counter
-    reg [7:0]  systick_reload;       // registered reload (0 = disabled)
+    reg        systick_rate;         // 0 = 200 Hz (reload 57), 1 = 180 Hz (reload 64)
     reg        systick_pending;      // IRQ pending flag
+
+    wire [7:0] systick_reload = systick_rate ? 8'd64 : 8'd57;
 
     wire prescale_tick    = (timer_prescale == 3'd0);
     wire timer_zero       = (timer_cnt == 5'd0);
-    wire systick_enabled  = (systick_reload != 8'd0);
-    wire prescaler_active = (timer_period != 5'd0) | systick_enabled;
     wire systick_tick     = prescale_tick & (systick_subdiv == 7'd0);
 
     // ----------------------------------------------------------------
@@ -300,21 +306,18 @@ module glue (
     // ----------------------------------------------------------------
 
     // ----------------------------------------------------------------
-    // Systick timer — configurable periodic interrupt (level 5)
+    // Systick timer — always-running periodic interrupt (level 5)
     //
     // Shares the ÷8 prescaler with GLUE_TIMER, then divides by
     // 128 more via systick_subdiv → effective ÷1024 from SYSCLK
-    // (11718.75 Hz at 12 MHz).  Rates are approximate (<1% error).
+    // (11718.75 Hz at 12 MHz).
     //
-    // Rate     Reload   Actual Hz    Error
-    //  OFF       0        —           —
-    //  HZ_50    233      50.08       +0.16%
-    //  HZ_60    194      60.10       +0.17%
-    //  HZ_100   116     100.16       +0.16%
-    //  HZ_200    57     202.05       +1.03%
+    // SYSTICK_CONFIG bit 0 selects rate:
+    //   0 → reload 57,  202.05 Hz (+1.03%)   — ÷2=100, ÷4=50
+    //   1 → reload 64,  180.29 Hz (+0.16%)   — ÷3=60,  ÷9=20
     //
-    // SYSTICK_CONFIG (write): bits 2:0 = rate selection
-    // SYSTICK_STATUS (read):  bit 0 = pending; reading clears flag
+    // IRQ is gated by CONFIG.SYSTICK_IRQ_ENABLE (default off).
+    // SYSTICK_STATUS (read): bit 0 = pending; reading clears flag.
     // ----------------------------------------------------------------
 
     always @(posedge SYSCLK) begin
@@ -325,15 +328,15 @@ module glue (
             timer_armed     <= 1'b0;
             systick_subdiv  <= 7'd0;
             systick_cnt     <= 8'd0;
-            systick_reload  <= 8'd0;
+            systick_rate    <= 1'b0;
             systick_pending <= 1'b0;
         end else begin
-            // --- Prescaler: shared ÷8, resets on timer period load ---
+            // --- Prescaler: shared ÷8, always free-runs (systick always active) ---
             if (timer_write_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
                 timer_prescale <= 3'd7;
                 timer_period   <= D[4:0];
                 timer_cnt      <= D[4:0];
-            end else if (prescaler_active) begin
+            end else begin
                 timer_prescale <= timer_prescale - 3'd1;
                 // --- GLUE_TIMER countdown ---
                 if (prescale_tick & (timer_period != 5'd0)) begin
@@ -347,11 +350,11 @@ module glue (
             end
 
             // --- Systick ÷128 sub-divider (free-running on prescale_tick) ---
-            if (prescale_tick & systick_enabled)
+            if (prescale_tick)
                 systick_subdiv <= systick_subdiv - 7'd1;
 
             // --- Systick countdown ---
-            if (systick_tick & systick_enabled) begin
+            if (systick_tick) begin
                 if (systick_cnt == 8'd0) begin
                     systick_cnt     <= systick_reload;
                     systick_pending <= 1'b1;
@@ -360,15 +363,9 @@ module glue (
                 end
             end
 
-            // --- Systick config write ---
+            // --- Systick config write (1-bit rate select) ---
             if (systick_config_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
-                case (D[2:0])
-                    `GLUE_SYSTICK_CONFIG_RATE_HZ_50:  systick_reload <= 8'd233;
-                    `GLUE_SYSTICK_CONFIG_RATE_HZ_60:  systick_reload <= 8'd194;
-                    `GLUE_SYSTICK_CONFIG_RATE_HZ_100: systick_reload <= 8'd116;
-                    `GLUE_SYSTICK_CONFIG_RATE_HZ_200: systick_reload <= 8'd57;
-                    default:                          systick_reload <= 8'd0;
-                endcase
+                systick_rate   <= D[0];
                 systick_subdiv <= 7'd0;
                 systick_cnt    <= 8'd0;
             end

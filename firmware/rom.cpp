@@ -310,6 +310,10 @@ asm(
     "    jmp monitor_panic\n"
 );
 
+// GLUE CONFIG shadow access — defined in crt0.s
+extern "C" void glue_config_set_bits(uint8_t mask);
+extern "C" void glue_config_clear_bits(uint8_t mask);
+
 extern "C" {
 
 void debug_printf(const char *fmt, ...)

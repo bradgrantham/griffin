@@ -69,8 +69,12 @@ _start:
     jmp     timer_puts
 .Lret3:
 
-    /* Switch out ROM */
-    move.b #(GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK), GLUE_CONFIG
+    /* Switch out ROM overlay — must be a raw write because RAM is not
+       writable while the overlay is active (reads come from ROM).
+       Initialize the shadow afterwards to match what hardware now has:
+       the codegen'd default with ROM_OVERLAY_DISABLE forced on. */
+    move.b  #(GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK), GLUE_CONFIG
+    move.b  #(GLUE_CONFIG_DEFAULT + GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK), glue_config_shadow
 
     /* Copy ROM vector table to RAM */
     lea     vector_table, %a0
@@ -623,6 +627,43 @@ systick_isr:
     move.l  (%sp)+, %d0
     rte
 
+| ====================================================================
+| GLUE CONFIG shadow register access
+|
+| glue_config_shadow is initialized in _start after ROM overlay is
+| disabled.  All subsequent CONFIG modifications must go through
+| these routines to keep the shadow in sync with hardware.
+|
+| Both routines save/restore SR to mask interrupts across the
+| read-modify-write so an ISR cannot race on the shadow.
+| ====================================================================
+
+| glue_config_set_bits: set bits in GLUE CONFIG
+| Input:  d0.b = mask of bits to set
+| Clobbers: none (d0 preserved)
+    .global glue_config_set_bits
+glue_config_set_bits:
+    move.w  %sr, -(%sp)
+    ori.w   #0x0700, %sr
+    or.b    %d0, glue_config_shadow
+    move.b  glue_config_shadow, GLUE_CONFIG
+    move.w  (%sp)+, %sr
+    rts
+
+| glue_config_clear_bits: clear bits in GLUE CONFIG
+| Input:  d0.b = mask of bits to clear
+| Clobbers: none (d0 preserved)
+    .global glue_config_clear_bits
+glue_config_clear_bits:
+    move.w  %sr, -(%sp)
+    ori.w   #0x0700, %sr
+    not.b   %d0
+    and.b   %d0, glue_config_shadow
+    not.b   %d0
+    move.b  glue_config_shadow, GLUE_CONFIG
+    move.w  (%sp)+, %sr
+    rts
+
 .global _init
 .global _fini
 _init:
@@ -660,6 +701,11 @@ memory_256k:
     .string	"Memory: 256KB\n"
     
 .section .monitor_data, "aw", @nobits
+    .align	2
+    .global glue_config_shadow
+glue_config_shadow:
+    .skip 1
+
     .align	2
     .global memory_size
 memory_size:
