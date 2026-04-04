@@ -186,7 +186,7 @@ module glue (
     //   0xF00001  — DEBUG_IN         (read,  bit 0 = DEBUG_IN pin state)
     //   0xF00001  — DEBUG_OUT        (write, bit 0 = OUT)
     //   0xF00003  — SYSTICK_STATUS   (read,  bit 0 = pending; read clears)
-    //   0xF00003  — SYSTICK_RELOAD   (write, 8-bit reload value; 0 = off)
+    //   0xF00003  — SYSTICK_CONFIG   (write, bits 2:0 = rate)
     //   0xF00007  — CONFIG           (write, bit 0 = ROM_OVERLAY_DISABLE,
     //                                        bit 2 = VIDEO_STALL_ENABLE)
     //
@@ -203,7 +203,7 @@ module glue (
                                  & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
     wire debug_in_select       = glue_select & lo_byte_selected & read
                                  & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
-    wire systick_reload_select = glue_select & lo_byte_selected & write
+    wire systick_config_select = glue_select & lo_byte_selected & write
                                  & (A_lo[5:1] == GLUE_SYSTICK_ADDR[5:1]);
     wire systick_stat_select   = glue_select & lo_byte_selected & read
                                  & (A_lo[5:1] == GLUE_SYSTICK_ADDR[5:1]);
@@ -304,14 +304,16 @@ module glue (
     //
     // Shares the ÷8 prescaler with GLUE_TIMER, then divides by
     // 128 more via systick_subdiv → effective ÷1024 from SYSCLK
-    // (11718.75 Hz at 12 MHz).
+    // (11718.75 Hz at 12 MHz).  Rates are approximate (<1% error).
     //
-    // CPU writes reload value directly to SYSTICK_RELOAD (8 bits).
-    // Actual Hz = 11718.75 / (reload + 1).  Writing 0 disables.
+    // Rate     Reload   Actual Hz    Error
+    //  OFF       0        —           —
+    //  HZ_50    233      50.08       +0.16%
+    //  HZ_60    194      60.10       +0.17%
+    //  HZ_100   116     100.16       +0.16%
+    //  HZ_200    57     202.05       +1.03%
     //
-    // Common values:  233→50 Hz, 194→60 Hz, 116→100 Hz, 57→200 Hz
-    //
-    // SYSTICK_RELOAD (write): 8-bit reload value (0 = disabled)
+    // SYSTICK_CONFIG (write): bits 2:0 = rate selection
     // SYSTICK_STATUS (read):  bit 0 = pending; reading clears flag
     // ----------------------------------------------------------------
 
@@ -358,9 +360,15 @@ module glue (
                 end
             end
 
-            // --- Systick reload write (direct 8-bit value from CPU) ---
-            if (systick_reload_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
-                systick_reload <= D[7:0];
+            // --- Systick config write ---
+            if (systick_config_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
+                case (D[2:0])
+                    `GLUE_SYSTICK_CONFIG_RATE_HZ_50:  systick_reload <= 8'd233;
+                    `GLUE_SYSTICK_CONFIG_RATE_HZ_60:  systick_reload <= 8'd194;
+                    `GLUE_SYSTICK_CONFIG_RATE_HZ_100: systick_reload <= 8'd116;
+                    `GLUE_SYSTICK_CONFIG_RATE_HZ_200: systick_reload <= 8'd57;
+                    default:                          systick_reload <= 8'd0;
+                endcase
                 systick_subdiv <= 7'd0;
                 systick_cnt    <= 8'd0;
             end

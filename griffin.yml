@@ -35,23 +35,20 @@ peripherals:
         bits:
           - { bit: "0", name: PENDING, description: "Tick interrupt pending (read clears)" }
       - offset: 0x03
-        name: SYSTICK_RELOAD
+        name: SYSTICK_CONFIG
         access: write
         width: 8
-        description: |
-          Systick timer reload value (direct 8-bit write).
-          The effective tick base is SYSCLK ÷ 1024 (11718.75 Hz at 12 MHz).
-          Actual frequency = 11718.75 / (reload + 1).
-          Writing 0 disables the systick timer and clears the counter.
-          Common values:
-            233 → 50.08 Hz (+0.16%)
-            194 → 60.10 Hz (+0.17%)
-            116 → 100.16 Hz (+0.16%)
-             57 → 202.05 Hz (+1.03%)
+        description: "Systick timer rate configuration"
         bits:
-          - bit: "7:0"
-            name: VALUE
-            description: "Reload value (0 = disabled, 1-255 = active)"
+          - bit: "2:0"
+            name: RATE
+            description: "Tick rate selection"
+            values:
+              - { value: 0, name: "OFF",    description: "Systick disabled" }
+              - { value: 1, name: "HZ_50",  description: "50 Hz systick" }
+              - { value: 2, name: "HZ_60",  description: "60 Hz systick" }
+              - { value: 3, name: "HZ_100", description: "100 Hz systick" }
+              - { value: 4, name: "HZ_200", description: "200 Hz systick" }
       - offset: 0x07
         name: CONFIG
         access: write
