@@ -11,7 +11,6 @@ module glue (
     input  wire        OE2_pin,
     input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
     input  wire        nENGINE_DTACK, // pin 17: ENGINE CPLD asserts when ready
-    input  wire        nIO_DTACK,     // pin 16: IO MCU asserts when ready
     input  wire        nENGINE_IRQ,   // pin 20: ENGINE CPLD interrupt request (active low)
     input  wire        nAS,
     input  wire        [23:18] A_hi,
@@ -413,7 +412,6 @@ module glue (
     //
     // Handshake peripherals (no fixed wait states):
     //   ENGINE:  DTACK from ~ENGINE_DTACK (pin 17)
-    //   IO MCU:  DTACK from ~IO_DTACK    (pin 16)
     //
     // VIDEO_STALL (pin 84, active high):
     //   When asserted by the VIDEO CPLD, blocks ALL DTACK generation
@@ -444,7 +442,6 @@ module glue (
         ((~nENGINE_SELECT)  & ~ENGINE_ABSENT & ~nENGINE_DTACK) |  // ENGINE: handshake
         (glue_select        & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
         (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
-        ((~nIO_SELECT)      & ~IO_ABSENT & ~nIO_DTACK) |  // IO MCU: handshake
         (nAUDIO_LE          & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO (nAUDIO_LE is active-high despite name)
 
     // VIDEO_STALL OR'd into nDTACK: when VIDEO_STALL is high and
@@ -532,6 +529,5 @@ endmodule
 //PIN: FC_1       : 49
 //PIN: FC_2       : 50
 //PIN: nENGINE_SELECT : 15
-//PIN: nIO_DTACK  : 16
 //PIN: nENGINE_DTACK : 17
 //PIN: nENGINE_IRQ : 20
