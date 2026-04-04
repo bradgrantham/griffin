@@ -32,7 +32,6 @@ module glue (
     output wire        nWRITE_HI,
     output wire        DEBUG_OUT,
     output wire        nAUDIO_LE,
-    output wire        nIO_SELECT,
     output wire        nCF_CS0,
     output wire        nCF_CS1,
 
@@ -142,8 +141,7 @@ module glue (
     // Exclude interrupt acknowledge cycles (FC=111) which use VPA, not DTACK.
     // Exclude handshake peripherals (IO MCU, ENGINE) — they drive DTACK
     // externally and may take much longer than 15 clocks to respond.
-    wire handshake_cycle = (~nIO_SELECT & ~IO_ABSENT) |
-                           (~nENGINE_SELECT & ~ENGINE_ABSENT);
+    wire handshake_cycle = (~nENGINE_SELECT & ~ENGINE_ABSENT);
     assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle & ~handshake_cycle);
 
     // ----------------------------------------------------------------
@@ -167,7 +165,6 @@ module glue (
     // Drive LE high during audio writes so data passes through,
     // low otherwise so the DAC holds the last written sample.
     assign nAUDIO_LE = audio_segment & bus_cycle;
-    assign nIO_SELECT = ~(io_segment & bus_cycle);
     // CF chip selects are active-low on the card (-CE pins).
     // PCB nets are crossed: CPLD nCF_CS0 → CF /CS1, CPLD nCF_CS1 → CF /CS0.
     // Swap bank assignments here so bank0 (task file) → CF /CS0 and
@@ -520,7 +517,6 @@ endmodule
 //PIN: nIPL_0     : 48
 //PIN: nVPA       : 75
 //PIN: nAUDIO_LE  : 68
-//PIN: nIO_SELECT : 12
 //PIN: nVIDEO_SELECT : 74
 //PIN: nCF_CS0     : 76
 //PIN: nCF_CS1     : 77
