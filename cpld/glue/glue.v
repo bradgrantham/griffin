@@ -198,9 +198,6 @@ module glue (
     localparam [23:0] GLUE_SYSTICK_ADDR      = `GLUE_SYSTICK_STATUS;
     localparam [23:0] GLUE_TIMER_ADDR        = `GLUE_TIMER;
     localparam [23:0] GLUE_TIMER_ARM_ADDR    = `GLUE_TIMER_ARM;
-    localparam [23:0] GLUE_BUILD_ID_ADDR     = `GLUE_BUILD_ID;
-
-    `include "build_id.vh"
 
     wire debug_out_select      = glue_select & lo_byte_selected & write
                                  & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
@@ -214,8 +211,6 @@ module glue (
                               & (A_lo[5:1] == GLUE_TIMER_ADDR[5:1]);
     wire timer_arm_select   = glue_select & lo_byte_selected & write
                               & (A_lo[5:1] == GLUE_TIMER_ARM_ADDR[5:1]);
-    wire build_id_select    = glue_select & lo_byte_selected
-                              & (A_lo[5:1] == GLUE_BUILD_ID_ADDR[5:1]);
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -223,13 +218,7 @@ module glue (
     // All other times the pins are tristated so the CPU, ROM, RAM,
     // etc. can drive the bus.
     // ----------------------------------------------------------------
-    wire glue_read_active = debug_in_select | systick_stat_select
-                          | (build_id_select & read);
-
-    // ----------------------------------------------------------------
-    // BUILD_ID — 8-bit build counter (0-255, auto-incremented).
-    // Reduced from 16-bit to free macrocells for CF CS hold logic.
-    // ----------------------------------------------------------------
+    wire glue_read_active = debug_in_select | systick_stat_select;
 
     reg [7:0] glue_read_data;
     always @(*) begin
@@ -238,8 +227,6 @@ module glue (
             glue_read_data = {7'd0, DEBUG_IN};
         else if (systick_stat_select)
             glue_read_data = {7'd0, systick_pending};
-        else if (build_id_select & read)
-            glue_read_data = BUILD_ID[7:0];
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;

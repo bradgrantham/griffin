@@ -69,8 +69,8 @@ _start:
     jmp     timer_puts
 .Lret3:
 
-    /* Switch out ROM and release IO_MCU from reset */
-    move.b #(GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK + GLUE_CONFIG_IO_RESET_RELEASE_MASK), GLUE_CONFIG
+    /* Switch out ROM */
+    move.b #(GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK), GLUE_CONFIG
 
     /* Copy ROM vector table to RAM */
     lea     vector_table, %a0
@@ -665,18 +665,18 @@ memory_256k:
 memory_size:
     .skip 4
 
-    .equ IO_EVT_QUEUE_SIZE, 256     | must be power of 2
+    .equ EVT_QUEUE_SIZE, 256     | must be power of 2
 
     .align 2
-    .global io_evt_queue
-    .global io_evt_head
-    .global io_evt_tail
-    .global io_evt_overflow
-io_evt_queue:
-    .skip IO_EVT_QUEUE_SIZE
-io_evt_head:
+    .global evt_queue
+    .global evt_head
+    .global evt_tail
+    .global evt_overflow
+evt_queue:
+    .skip EVT_QUEUE_SIZE
+evt_head:
     .skip 4
-io_evt_tail:
+evt_tail:
     .skip 4
-io_evt_overflow:
+evt_overflow:
     .skip 1

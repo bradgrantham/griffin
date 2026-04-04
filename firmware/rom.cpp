@@ -331,12 +331,12 @@ extern uint32_t memory_size;
 extern const char *build_date;
 extern const char *build_provenance;
 
-// IO_MCU event ring buffer (written by ISR in crt0.s, read by main)
-constexpr size_t IO_EVT_QUEUE_SIZE = 256;  // must match crt0.s
-extern volatile uint8_t io_evt_queue[IO_EVT_QUEUE_SIZE];
-extern volatile uint32_t io_evt_head;
-extern volatile uint32_t io_evt_tail;
-extern volatile uint8_t io_evt_overflow;
+// event ring buffer (written by ISR in crt0.s, read by main)
+constexpr size_t EVT_QUEUE_SIZE = 256;  // must match crt0.s
+extern volatile uint8_t evt_queue[EVT_QUEUE_SIZE];
+extern volatile uint32_t evt_head;
+extern volatile uint32_t evt_tail;
+extern volatile uint8_t evt_overflow;
 
 // Timer tick handler — called from ISR context at IPL 5
 void timer_tick()
@@ -539,38 +539,23 @@ static void play_audio(const int8_t *buf, uint32_t len, uint32_t sample_rate)
     dac = 0x80;  // silence (center)
 }
 
-static volatile uint8_t &io_mcu_tx = *reinterpret_cast<volatile uint8_t *>(Griffin::IO_MCU_TX_DATA);
-
-static void io_mcu_putchar(uint8_t ch)
-{
-    io_mcu_tx = ch;
-}
-
 // Pop one byte from the event ring buffer.  Returns false if empty.
 // No interrupt masking needed — head is only modified here (single consumer).
 static bool evt_pop(uint8_t *out)
 {
-    uint32_t h = io_evt_head;
-    if(h == io_evt_tail)
+    uint32_t h = evt_head;
+    if(h == evt_tail)
     {
         return false;
     }
-    *out = io_evt_queue[h];
-    io_evt_head = (h + 1) & (IO_EVT_QUEUE_SIZE - 1);
+    *out = evt_queue[h];
+    evt_head = (h + 1) & (EVT_QUEUE_SIZE - 1);
     return true;
 }
-
-static uint8_t glue_read_build_id()
-{
-    volatile uint8_t &build_id_reg = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_BUILD_ID);
-    return build_id_reg;
-}
-
 
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
-    debug_printf("GLUE build ID: %d\n", glue_read_build_id());
 
     volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
 
@@ -580,7 +565,7 @@ int main()
 
     cf_mount_and_list();
 
-    // IO MCU pulled — bit-bang UART RX loop via DEBUG_IN
+    // bit-bang UART RX loop via DEBUG_IN
     for (;;)
     {
         int ch = debug_getchar();
