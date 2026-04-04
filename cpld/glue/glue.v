@@ -46,8 +46,6 @@ module glue (
 
     output wire        nR_W,
 
-    output wire        IO_RESET,  // Active high reset to AT89S52
-
     output wire        ENGINE_TDI // Currently to pin OE1, OE2, GCLK
 );
 
@@ -102,26 +100,6 @@ module glue (
 
     // Make OE2 busy (OE1/pin 84 is now VIDEO_STALL, GCLR/pin 1 is now nVIDEO_IRQ)
     assign ENGINE_TDI = OE2_pin;
-
-    // ----------------------------------------------------------------
-    // IO MCU reset (AT89S52 RST is active high)
-    //
-    // IO_RESET defaults high (held in reset) via external pull-up R9.
-    // The 68000 firmware clears it by writing CONFIG bit 1 = 1 to
-    // release the IO MCU after the crystal has had time to stabilize.
-    // On system RESET, IO_RESET is reasserted (high).
-    // ----------------------------------------------------------------
-    reg io_reset_released;
-
-    always @(posedge SYSCLK) begin
-        if (RESET)
-            io_reset_released <= 1'b0;
-        else if (glue_select & lo_byte_selected & write
-                 & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1]))
-            io_reset_released <= D[`GLUE_CONFIG_IO_RESET_RELEASE_SHIFT];
-    end
-
-    assign IO_RESET = ~io_reset_released;
 
     assign nR_W = ~R_nW;
     assign nWRITE_LO = ~(lo_byte_selected & write);
@@ -220,7 +198,6 @@ module glue (
     //   0xF00003  — SYSTICK_STATUS   (read,  bit 0 = pending; read clears)
     //   0xF00003  — SYSTICK_CONFIG   (write, bits 2:0 = rate)
     //   0xF00007  — CONFIG           (write, bit 0 = ROM_OVERLAY_DISABLE,
-    //                                        bit 1 = IO_RESET_RELEASE,
     //                                        bit 2 = VIDEO_STALL_ENABLE)
     //
     // A_lo[5:1] selects the word address within the segment.
@@ -564,4 +541,3 @@ endmodule
 //PIN: nENGINE_DTACK : 17
 //PIN: nIO_IRQ    : 18
 //PIN: nENGINE_IRQ : 20
-//PIN: IO_RESET   : 69
