@@ -191,23 +191,398 @@ def parse_fit_file(fit_path):
 # Signal name resolution
 # ---------------------------------------------------------------------------
 
-def resolve_name(signal, id_map):
-    """Resolve a fitter signal name to a Verilog name using the EDIF map."""
+def resolve_name(signal, id_map, annotations=None):
+    """Resolve a fitter signal name to a Verilog name using the EDIF map.
+    If annotations is provided, append heuristic label for abc: nodes."""
     # Strip suffixes like Q, QN for lookup
     bare = re.sub(r'(Q|QN)$', '', signal)
     if bare in id_map:
         suffix = signal[len(bare):]
         name = id_map[bare]
         if suffix == 'QN' and '(QN)' not in name:
-            return name + " (inv)"
+            name = name + " (inv)"
+        if annotations and name.startswith('abc:') or (annotations and '(QN)' in name and name.replace(' (QN)', '').replace(' (inv)', '').startswith('abc:')):
+            base = name.replace(' (QN)', '').replace(' (inv)', '')
+            if base in annotations:
+                name = name + '  «' + annotations[base] + '»'
         return name
     # XXL_ and Com_Ctrl_ are yosys-internal; just return as-is
     return signal
 
 
-def resolve_signals(signals, id_map):
+def resolve_signals(signals, id_map, annotations=None):
     """Resolve a list of signals, returning list of (original, resolved) tuples."""
-    return [(s, resolve_name(s, id_map)) for s in signals]
+    return [(s, resolve_name(s, id_map, annotations)) for s in signals]
+
+
+# ---------------------------------------------------------------------------
+# Heuristic annotation of ABC optimizer nodes
+# ---------------------------------------------------------------------------
+
+# Signals that form the bus-cycle / address-decode vocabulary
+ADDR_SIGNALS = {
+    'A_hi_0', 'A_hi_1', 'A_hi_2', 'A_hi_3', 'A_hi_4', 'A_hi_5',
+    'A_lo_0', 'A_lo_1', 'A_lo_2', 'A_lo_3', 'A_lo_4',
+    'nAS', 'nLDS', 'nUDS', 'R_nW', 'FC_0', 'FC_1', 'FC_2',
+}
+
+SYSTICK_SIGNALS = re.compile(r'systick_')
+TIMER_SIGNALS = re.compile(r'timer_')
+WS_SIGNALS = re.compile(r'ws_cnt_')
+PRESCALE_SIGNALS = re.compile(r'timer_prescale_')
+
+
+def _extract_refs(eq_text):
+    """Extract all signal names referenced in an equation string."""
+    # Match word-like tokens including abc:nXXX forms, strip .Q/.QN/.PIN suffixes
+    refs = set()
+    for tok in re.findall(r'[A-Za-z_]\w*(?::\w+)?(?:\.\w+)?', eq_text):
+        base = re.sub(r'\.(Q|QN|PIN)$', '', tok)
+        refs.add(base)
+    return refs
+
+
+def _decode_address_from_pt(pt_text):
+    """Try to decode an address from a single product term's A_hi/A_lo bits.
+    Returns (addr_hi, addr_lo, has_lo) or None if not enough address bits."""
+    hi_bits = {}  # bit_num → 0 or 1
+    lo_bits = {}
+    for m in re.finditer(r'(!?)A_hi_(\d)', pt_text):
+        hi_bits[int(m.group(2))] = 0 if m.group(1) == '!' else 1
+    for m in re.finditer(r'(!?)A_lo_(\d)', pt_text):
+        lo_bits[int(m.group(2))] = 0 if m.group(1) == '!' else 1
+
+    if len(hi_bits) < 3:
+        return None
+
+    # A_hi maps to A23:A18 (hi_5=A23, hi_0=A18)
+    addr_hi = 0
+    for bit, val in hi_bits.items():
+        addr_hi |= val << (bit + 18)
+
+    addr_lo = 0
+    has_lo = len(lo_bits) > 0
+    for bit, val in lo_bits.items():
+        # A_lo maps to A4:A0 (lo_4=A4, lo_0=A0) — register offset bits
+        addr_lo |= val << (bit + 1)  # byte addresses: A_lo_0 is A1
+
+    return addr_hi, addr_lo, has_lo
+
+
+def _describe_address(addr_hi, addr_lo, has_lo, is_read, is_write):
+    """Produce a short human label for a decoded address."""
+    # Known peripheral ranges from griffin.yml
+    peripherals = [
+        (0x000000, 0x100000, "RAM1"),
+        (0x100000, 0x100000, "RAM2"),
+        (0x200000, 0x100000, "RAM3"),
+        (0x300000, 0x100000, "RAM4"),
+        (0xC00000, 0x100000, "ROM"),
+        (0xD00000, 0x100000, "ENGINE"),
+        (0xE00000, 0x100000, "VIDEO"),
+        (0xF00000, 0x040000, "GLUE"),
+        (0xF40000, 0x040000, "CF"),
+        (0xFC0000, 0x040000, "AUDIO"),
+    ]
+
+    periph = None
+    for base, size, name in peripherals:
+        if base <= addr_hi < base + size:
+            periph = name
+            break
+
+    rw = ""
+    if is_read and not is_write:
+        rw = " RD"
+    elif is_write and not is_read:
+        rw = " WR"
+
+    if periph == "GLUE" and has_lo:
+        # GLUE is 8-bit on low data byte (nLDS), so A_lo bits give even
+        # byte addresses; actual register offsets are odd (addr | 1)
+        glue_regs = {
+            0x00: "DEBUG",     # reg offset 0x01
+            0x02: "SYSTICK",   # reg offset 0x03
+            0x06: "CONFIG",    # reg offset 0x07
+            0x08: "TIMER",     # reg offset 0x09
+            0x0A: "TIMER_ARM", # reg offset 0x0B
+        }
+        offset = addr_lo & 0x1F
+        reg = glue_regs.get(offset, f"@0x{offset|1:02X}")
+        return f"GLUE {reg}{rw} decode"
+
+    if periph:
+        if has_lo:
+            return f"{periph} @0x{addr_lo:02X}{rw} decode"
+        return f"{periph} select{rw}"
+
+    return f"addr 0x{addr_hi:06X}{rw} decode"
+
+
+def annotate_abc_nodes(equations, id_map):
+    """Generate heuristic labels for abc:nXXX nodes based on equation analysis.
+
+    Returns dict: 'abc:nXXX' → short descriptive string.
+    """
+    annotations = {}
+
+    # Build resolved equation lookup: resolved_name → (eq_text, pt_count)
+    eq_by_resolved = {}
+    for name, eq, pt in equations:
+        rname = resolve_name(name.split('.')[0], id_map)
+        suffix = name[name.index('.'):] if '.' in name else ''
+        eq_by_resolved[rname + suffix] = (eq, pt)
+        eq_by_resolved[rname] = (eq, pt)
+
+    # Also build raw-name lookup
+    eq_by_raw = {name: (eq, pt) for name, eq, pt in equations}
+
+    # Pre-resolve all equations for reference analysis
+    def _resolve_eq_for_refs(eq_text):
+        """Resolve fitter IDs in equation text to mapped names for analysis."""
+        def replace_id(m):
+            bare = re.sub(r'(Q|QN)$', '', m.group(0))
+            r = id_map.get(bare, m.group(0))
+            return r.replace(' (QN)', '')
+        return re.sub(r'id\d+(?:Q|QN)?', replace_id, eq_text)
+
+    for name, eq, pt in equations:
+        rname = resolve_name(name.split('.')[0], id_map)
+        if not rname.startswith('abc:'):
+            continue
+        # Strip (QN) for annotation key
+        base = rname.replace(' (QN)', '')
+        if base in annotations:
+            continue
+
+        resolved_eq = _resolve_eq_for_refs(eq)
+        refs = _extract_refs(resolved_eq)
+
+        # --- Address decode detection ---
+        non_addr = refs - ADDR_SIGNALS - {''}
+        # Allow abc:nXXX refs, id refs, and rom_overlay_disable in address terms
+        non_addr_non_abc = {s for s in non_addr
+                           if not s.startswith('abc') and not s.startswith('id')
+                           and s not in ('rom_overlay_disable', 'nreset_sync2',
+                                         'PIN', 'Q', 'QN')}
+        is_addr_decode = len(non_addr_non_abc) == 0 and len(refs & ADDR_SIGNALS) >= 3
+
+        if is_addr_decode:
+            # Decode from first product term (use resolved_eq for the terms)
+            first_pt = resolved_eq.split('#')[0] if '#' in resolved_eq else resolved_eq
+            decoded = _decode_address_from_pt(first_pt)
+            is_read = 'R_nW' in refs and '!R_nW' not in first_pt
+            is_write = '!R_nW' in first_pt
+            if decoded:
+                addr_hi, addr_lo, has_lo = decoded
+                annotations[base] = _describe_address(
+                    addr_hi, addr_lo, has_lo, is_read, is_write)
+            else:
+                # Partial decode — describe what we can
+                hi_bits = {}
+                for m in re.finditer(r'(!?)A_hi_(\d)', first_pt):
+                    hi_bits[int(m.group(2))] = 0 if m.group(1) == '!' else 1
+                if hi_bits:
+                    addr = sum(v << (b + 18) for b, v in hi_bits.items())
+                    # Try to describe the range
+                    desc = _describe_address(addr, 0, False, is_read, is_write)
+                    if desc.startswith("addr"):
+                        annotations[base] = f"addr 0x{addr:06X} partial decode"
+                    else:
+                        annotations[base] = desc
+                else:
+                    annotations[base] = "addr decode"
+            continue
+
+        # --- Signal family classification ---
+        systick_refs = {s for s in refs if SYSTICK_SIGNALS.match(s)}
+        timer_refs = {s for s in refs if TIMER_SIGNALS.match(s)}
+        ws_refs = {s for s in refs if WS_SIGNALS.match(s)}
+        prescale_refs = {s for s in refs if PRESCALE_SIGNALS.match(s)}
+
+        # Prescaler bits are shared between systick chain and timer
+        # so count them toward whichever has more other refs
+        if systick_refs and not timer_refs - prescale_refs:
+            systick_refs |= prescale_refs
+        elif timer_refs and not systick_refs:
+            timer_refs |= prescale_refs
+
+        total = len(refs)
+        if total == 0:
+            continue
+
+        # Check consumers to refine the label
+        raw_name_base = name.split('.')[0]
+        consumers_systick = 0
+        consumers_timer = 0
+        consumers_dtack = 0
+        for cn, ceq, cpt in equations:
+            if raw_name_base in ceq:
+                crname = resolve_name(cn.split('.')[0], id_map)
+                if 'systick' in crname or 'systick' in cn:
+                    consumers_systick += 1
+                if 'timer' in crname or 'timer' in cn:
+                    consumers_timer += 1
+                if 'DTACK' in crname or 'DTACK' in cn:
+                    consumers_dtack += 1
+
+        # Mostly systick signals?
+        if len(systick_refs) >= 4 and len(systick_refs) > len(timer_refs - prescale_refs):
+            if all(('subdiv' in s or 'prescale' in s) for s in systick_refs | prescale_refs if s in refs):
+                annotations[base] = "systick prescale+subdiv zero"
+            elif any('cnt' in s for s in systick_refs):
+                cnt_refs = {s for s in systick_refs if 'cnt' in s}
+                subdiv_refs = {s for s in systick_refs if 'subdiv' in s}
+                if subdiv_refs and cnt_refs:
+                    annotations[base] = "systick reload detect"
+                elif cnt_refs:
+                    annotations[base] = "systick cnt partial"
+                else:
+                    annotations[base] = "systick chain"
+            else:
+                annotations[base] = "systick chain"
+            continue
+
+        # Mostly timer signals?
+        if len(timer_refs) >= 3 and len(timer_refs) > len(systick_refs):
+            period_refs = {s for s in timer_refs if 'period' in s}
+            cnt_refs = {s for s in timer_refs if 'cnt' in s}
+            if period_refs and not cnt_refs:
+                annotations[base] = "timer period nonzero"
+            elif cnt_refs and not period_refs:
+                annotations[base] = "timer cnt partial"
+            elif period_refs and cnt_refs:
+                annotations[base] = "timer cnt!=period"
+            elif prescale_refs and not period_refs and not cnt_refs:
+                annotations[base] = "timer prescale zero"
+            else:
+                annotations[base] = "timer logic"
+            continue
+
+        # Wait-state related?
+        if ws_refs and len(ws_refs) >= len(refs) / 2:
+            annotations[base] = "wait-state counter"
+            continue
+
+        # Mixed: DTACK / wait-state / bus logic
+        if consumers_dtack > 0 and (ws_refs or 'rom_overlay_disable' in refs):
+            annotations[base] = "DTACK generation"
+            continue
+
+        # Has address decode bits and feeds selects?
+        if refs & {'nAS', 'A_hi_3', 'A_hi_4', 'A_hi_5'}:
+            if consumers_dtack:
+                annotations[base] = "bus cycle decode (DTACK path)"
+            else:
+                annotations[base] = "bus cycle decode"
+            continue
+
+        # Fallback: describe by dominant consumer
+        if consumers_systick > consumers_timer and consumers_systick > 0:
+            annotations[base] = "systick gate"
+        elif consumers_timer > 0:
+            annotations[base] = "timer gate"
+
+    # --- Second pass: annotate abc nodes that appear only as references ---
+    # These have no equation of their own in the .fit file but are referenced
+    # in other equations.  Classify by consumer families.
+    all_abc_refs = set()
+    for name, eq, pt in equations:
+        for m in re.finditer(r'(abc:n\d+)', resolve_name(name.split('.')[0], id_map)):
+            all_abc_refs.add(m.group(1))
+        # Also scan equation text for id→abc mappings
+        for m in re.finditer(r'id\d+', eq):
+            bare = re.sub(r'(Q|QN)$', '', m.group(0))
+            mapped = id_map.get(bare, '')
+            if mapped.startswith('abc:'):
+                all_abc_refs.add(mapped.replace(' (QN)', ''))
+
+    for name, eq, pt in equations:
+        eq_resolved = eq
+        for m_id in re.finditer(r'id\d+', eq):
+            bare = re.sub(r'(Q|QN)$', '', m_id.group(0))
+            mapped = id_map.get(bare, '')
+            if mapped.startswith('abc:'):
+                base = mapped.replace(' (QN)', '')
+                all_abc_refs.add(base)
+
+    for abc_name in all_abc_refs:
+        if abc_name in annotations:
+            continue
+
+        # Find all equations that reference this abc node
+        # We need to search for the raw fitter ID
+        raw_ids = []
+        for fid, mapped in id_map.items():
+            base = mapped.replace(' (QN)', '')
+            if base == abc_name:
+                raw_ids.append(fid)
+
+        if not raw_ids:
+            continue
+
+        consumers_systick = 0
+        consumers_timer = 0
+        consumers_dtack = 0
+        consumers_subdiv = 0
+        consumer_names = []
+        for eq_name, eq_text, pt in equations:
+            used = False
+            for rid in raw_ids:
+                if rid in eq_text:
+                    used = True
+                    break
+            if not used:
+                continue
+            rn = resolve_name(eq_name.split('.')[0], id_map)
+            consumer_names.append(rn)
+            if 'systick_subdiv' in eq_name or 'systick_subdiv' in rn:
+                consumers_subdiv += 1
+            if 'systick' in eq_name or 'systick' in rn:
+                consumers_systick += 1
+            if 'timer' in eq_name or 'timer' in rn:
+                consumers_timer += 1
+            if 'DTACK' in eq_name or 'DTACK' in rn:
+                consumers_dtack += 1
+
+        # Check for address-decode / bus-cycle consumers
+        consumers_addr = 0
+        for eq_name, eq_text, pt in equations:
+            used = False
+            for rid in raw_ids:
+                if rid in eq_text:
+                    used = True
+                    break
+            if not used:
+                continue
+            rn = resolve_name(eq_name.split('.')[0], id_map)
+            # Check both the resolved name and its annotation
+            rn_base = rn.replace(' (QN)', '')
+            ann_text = annotations.get(rn_base, '')
+            combined = rn + ' ' + ann_text
+            if any(x in combined for x in ('select', 'SELECT', 'DTACK', 'addr', 'GLUE', 'decode', 'gate', 'generation')):
+                consumers_addr += 1
+
+        if consumers_systick == 0 and consumers_timer == 0 and consumers_dtack == 0 and consumers_addr == 0:
+            continue
+
+        if consumers_dtack and consumers_timer:
+            annotations[abc_name] = "timer zero (DTACK+reload)"
+        elif consumers_dtack:
+            annotations[abc_name] = "DTACK gate"
+        elif consumers_subdiv > consumers_systick / 2 and consumers_subdiv > 0:
+            annotations[abc_name] = "systick subdiv gate"
+        elif consumers_systick > consumers_timer:
+            if consumers_systick >= 6:
+                annotations[abc_name] = "systick tick gate"
+            else:
+                annotations[abc_name] = "systick partial"
+        elif consumers_timer > consumers_systick:
+            annotations[abc_name] = "timer partial"
+        elif consumers_addr > 0:
+            annotations[abc_name] = "bus cycle gate"
+
+    return annotations
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +614,9 @@ def generate_report(fit_data, id_map):
     equations = fit_data['equations']
     summary = fit_data['summary']
 
+    # Compute heuristic annotations for abc: nodes
+    annotations = annotate_abc_nodes(equations, id_map)
+
     # --- Header ---
     w("=" * 72)
     w("ATF1508 Fitter Report")
@@ -259,7 +637,7 @@ def generate_report(fit_data, id_map):
     lab_placements = defaultdict(lambda: {'pins': [], 'feedback': [], 'foldback': []})
     for signal, ptype, mc, node in placements:
         lab = mc_to_lab(mc)
-        name = resolve_name(signal, id_map)
+        name = resolve_name(signal, id_map, annotations)
         entry = f"MC{mc:3d}  {name}"
         if ptype == 'pin':
             lab_placements[lab]['pins'].append((mc, name, node))
@@ -323,7 +701,7 @@ def generate_report(fit_data, id_map):
         w("  Signals replicated as foldbacks (most replicas first):")
         w("")
         for signal, locations in sorted(by_source.items(), key=lambda x: -len(x[1])):
-            name = resolve_name(signal, id_map)
+            name = resolve_name(signal, id_map, annotations)
             labs = [lab for _, lab in locations]
             w(f"    {name:40s}  {len(locations)} copies  "
               f"in LABs: {', '.join(labs)}")
@@ -341,7 +719,7 @@ def generate_report(fit_data, id_map):
             consumers = []
             for eq_name, eq_text, pt in equations:
                 if signal in eq_text:
-                    eq_resolved = resolve_name(eq_name.split('.')[0], id_map)
+                    eq_resolved = resolve_name(eq_name.split('.')[0], id_map, annotations)
                     suffix = eq_name[eq_name.index('.'):] if '.' in eq_name else ''
                     consumers.append(eq_resolved + suffix)
             if consumers:
@@ -355,7 +733,7 @@ def generate_report(fit_data, id_map):
         lab_imports = defaultdict(list)
         for signal, node, mc in foldbacks:
             lab = mc_to_lab(mc)
-            name = resolve_name(signal, id_map)
+            name = resolve_name(signal, id_map, annotations)
             lab_imports[lab].append(name)
 
         for lab in LAB_LETTERS:
@@ -375,7 +753,7 @@ def generate_report(fit_data, id_map):
         signals = fi.get('signals', [])
         w(f"  LAB {lab}: {count}/40 inputs")
         if signals:
-            resolved = resolve_signals(signals, id_map)
+            resolved = resolve_signals(signals, id_map, annotations)
             # Categorize: pins vs internal
             pins = [(o, r) for o, r in resolved if not o.startswith('id') and not o.startswith('XXL') and not o.startswith('Com_')]
             internal = [(o, r) for o, r in resolved if o.startswith('id') or o.startswith('XXL') or o.startswith('Com_')]
@@ -397,7 +775,7 @@ def generate_report(fit_data, id_map):
     heavy.sort(key=lambda x: -x[2])
     if heavy:
         for name, eq, pt in heavy:
-            resolved = resolve_name(name.split('.')[0], id_map)
+            resolved = resolve_name(name.split('.')[0], id_map, annotations)
             suffix = name[name.index('.'):] if '.' in name else ''
             display = resolved + suffix if resolved != name.split('.')[0] else name
             w(f"  {pt:2d} PTs  {display}")
@@ -409,7 +787,7 @@ def generate_report(fit_data, id_map):
     w("ALL EQUATIONS")
     w("-" * 72)
     for name, eq, pt in equations:
-        resolved = resolve_name(name.split('.')[0], id_map)
+        resolved = resolve_name(name.split('.')[0], id_map, annotations)
         suffix = name[name.index('.'):] if '.' in name else ''
         display = resolved + suffix if resolved != name.split('.')[0] else name
 
