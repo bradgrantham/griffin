@@ -569,7 +569,7 @@ int main()
 
     cf_mount_and_list();
 
-    // bit-bang UART RX loop via DEBUG_IN
+    // Polled UART RX loop via DEBUG_IN
     for (;;)
     {
         int ch = debug_getchar();
