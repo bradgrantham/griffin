@@ -90,11 +90,10 @@ How much design file can be in YAML or in Python?  Generate from YAML:
   * Added 100-iteration NOP delay loop between P2=data and DTACK assertion to extend strong pull-up window; no improvement.
   * For PCB Rev1, may have to fall back to DEBUG_IN UART RX and not use the IO MCU.  Likely way forward:
     * *working* UART TX using GLUE_TIMER for deterministic output - disable interrupts or set flow control pin
-    * *working* UART RX using GLUE_TIMER, may only do polling or may have first bit be an interrupt (and set TIMER?)
+    * *working* UART RX polling using GLUE_TIMER
     * *Need to get to reliable streaming serial so I can send and receive data to some kind of network device e.g. esp32*
-    * VIDEO does 60Hz timer; will that be enough for EmuTOS?
+    * *Untested* SYSTICK at ~183MHz from GLUE - then dither down to needed frequency
     * PS/2 clock latches the data line and causes interrupt, PS/2 shares an interrupt and exposes which clk through status register
-  * Rev2 should add 74HC245 buffer between AT89S52 P2 and D[7:0] (DIR=R/W, nOE=nIO_SELECT) if there is one
 
 
 ## Need to buy
@@ -109,67 +108,6 @@ DEBUG\_OUT LED:
 * small NPN like a 2N3904 or SOT-23 MMBT3904. Collector to \+5V through the LED and resistor, base to the DEBUG\_OUT pad through a 1K–10K resistor, emitter to ground. The base current is microamps so it won't load the serial line at all, and the LED gets a clean 5V drive independent of your logic levels.  
 * You could dead-bug it right across the two pads - body of the transistor sitting on top, legs bent to reach the resistor and LED. A little ugly but perfectly functional for a dev board.
 * See also bodges in [griffin.yml](griffin.yml)
-
-
-# Rev 2
-
-- [ ] Schematic (+PCB if necessary)
-  - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
-  - [ ] Determine a more available ROM technology and design around that.
-    - [ ] CPLD with I2C ROM?
-    - [ ] RP2350?
-    - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
-    - [ ] https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614 is a 256K x 16 ROM, 40DIP, 90ns (more wait states but maybe okay) for about $10 and they have 142 of them at the moment.
-  - [ ] IO MCU interface is fragile
-    - [ ] Put it behind a 68681?
-      - [ ] 68681 manages UART and timers
-      - [ ] 8051 manages PS/2 and uses a serial protocol to 68681
-    - [ ] 8051 has weird signaling - **at least put a 74HC245 between it and CPU**
-  - [ ] Swap MCU RX and TX - wrong pins!!
-  - [ ] Pullups on JTAG lines
-  - [ ] Pullup on DTACK so missing peripherals can't spuriously ACK
-  - [ ] 4.7K Pullup on HALT
-  - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
-  - [ ] Dump GLUE SPI for IO MCU - move IO_{SELECT,DTACK,IRQ} to P1.{0,1,2}, run out to a header
-  - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
-  - [ ] More signals between GLUE, VIDEO, ENGINE
-    - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
-  - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
-  - [ ] GND, +5V, D0-D15, A1-A10, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points - use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
-  - [ ] Pullups on PS/2 clock lines
-  - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
-  - [ ] Make audio stereo - one 16-bit write
-    - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
-  - [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
-  - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
-  - [ ] Put USB-C with PD on the board
-  - [ ] Much more attention to analog components - redesign composite and VGA analog circuitry to be robust
-  - [ ] Maybe
-    - [ ] Put two FTDI's on the board with USB-C for debug output and for 8051 serial console
-    - [ ] Audio input
-    - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
-  - [ ] CF symbol is junk - redo it.
-  - [ ] CF card IOWR should be gated by AS.
-    - [ ] CF card latches on rise of IOWR
-    - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
-  - [ ] CF card to 16 bits?  Routing those pins will be annoying, but possible.
-  - [ ] Slap an ESP on it or a Pico for networking?  Moving to a Pico for UART, keyboard, mouse, timer, and wifi would knock a lot of stuff over in one shot, but unclear whether 3.3V would be a problem.
-- [ ] PCB only
-  - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
-  - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
-  - [ ] PS2 stabs - move footprint  
-  - [ ] Headphone jack pads - drill partial holes?  
-  - [ ] RCA jack retainer feet - drill partial holes?
-  - [x] Swap MOUSE\_CLK and KBD\_DATA  
-  - [x] Route A18 to GLUE instead of A6  
-  - [x] Wire GLUE VPA back to the CPU in place of ENGINE\_IACK
-  - [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
-  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
-  - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
-  - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
-    - [ ] Is there a castellenated version I could solder on?
-    - [ ] Is there a better version, something smaller with fewer pins?
-  - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
 
 
 
@@ -321,7 +259,7 @@ Dedicated ATF1508 CPLD for:
   * Reads a test point input  
 * Registers: see [griffin.yml](griffin.yml).
 
-## VIDEO or “PLUME” (Griffin plumage = display)
+## VIDEO
 
 [Griffin Video Mode Throughput](https://docs.google.com/spreadsheets/d/1jpam0LNxlgqLVfV4WW1wBMNDqXu4QpefYhichfac1WE/edit?usp=sharing)
 
@@ -381,7 +319,7 @@ Keyboard, mouse, serial port through 8051-compatible AT89S52
 * Could you get one, put it on a breadboard, and test it using a couple PS/2 breakouts?  Either drive it with Pico or just print the keycodes on the UART?  
 * I screwed up; kbd and mouse clocks needed to go to P3.2 and P3.3, and I moved them to non-interrupt-capable pins without thinking about it. them.
 
-## Application-specific engine - ENGINE or TALON
+## ENGINE - DMA 
 
 third ATF1508
 
@@ -389,12 +327,8 @@ third ATF1508
 * ENGINE\_{DTACK,SELECT,IRQ,IACK} to and from GLUE for control as a peripheral  
 * ENGINE\_{TMS,TCK,TDI,TDO} from GLUE for bitfile loading  
 * CPU signals for memory-mapped access (low 20 bits) and bus mastering (all 24 bits): R/W, AS, LDS, UDS, DTACK  
-* E.g. application comes with bitfile that is bitbanged through the GLUE.  Bitfile is loaded with e.g. fread and passed off to a system call  
-* Possibilities include:  
-  * Drive bus snooping for video generation at a higher rate with corresponding spin of VIDEO, e.g. 320\*480@8bpp or 640\*480@4bpp  
-  * Rudimentary fixed-point ray-box intersection  
-  * Mandelbrot accelerator  
-* Probably will end up dedicated to “enhanced DMA” from memory to fill the video pixel generator on VIDEO.
+* Drive bus snooping for video generation at a higher rate with corresponding spin of VIDEO, e.g. 320\*480@8bpp or 640\*480@4bpp
+* Fetch and then write audio data
 
 ## Latched 8-bit audio
 
@@ -403,6 +337,64 @@ third ATF1508
 * 8-bit R2R  
 * [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp  
 * Will need to see how much noise and distortion is caused by timing variation.  Maybe I can add blocking DTACK to a timer tick or something
+
+# Rev 2
+
+- [ ] Schematic (+PCB if necessary)
+  - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
+  - [ ] Determine a more available ROM technology and design around that.
+    - [ ] CPLD with I2C ROM?
+    - [ ] RP2350?
+    - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
+    - [ ] https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614 is a 256K x 16 ROM, 40DIP, 90ns (more wait states but maybe okay) for about $10 and they have 142 of them at the moment
+  - [ ] Swap MCU RX and TX - wrong pins!!
+  - [ ] Pullups on JTAG lines
+  - [ ] Pullup on DTACK so missing peripherals can't spuriously ACK
+  - [ ] 4.7K Pullup on HALT
+  - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
+  - [ ] Dump GLUE SPI for IO MCU - move IO_{SELECT,DTACK,IRQ} to P1.{0,1,2}, run out to a header
+  - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
+  - [ ] More signals between GLUE, VIDEO, ENGINE
+    - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
+  - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
+  - [ ] GND, +5V, D0-D15, A1-A10, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points - use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
+  - [ ] Pullups on PS/2 clock lines
+  - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
+  - [ ] Make audio stereo - one 16-bit write
+    - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
+  - [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
+  - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
+  - [ ] Put USB-C with PD on the board
+  - [ ] Much more attention to analog components - redesign composite and VGA analog circuitry to be robust
+  - [ ] Maybe
+    - [ ] Put two FTDI's on the board with USB-C for debug output and for 8051 serial console
+    - [ ] Audio input
+    - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
+    - [ ] Maybe add a 68681 for high-speed reliable dual UART
+    - [ ] Slap an ESP on it or a Pico for networking?  Moving to a Pico for UART, keyboard, mouse, timer, and wifi would knock a lot of stuff over in one shot, but unclear whether 3.3V would be a problem.
+  - [ ] CF symbol is junk - redo it.
+  - [ ] CF card IOWR should be gated by AS.
+    - [ ] CF card latches on rise of IOWR
+    - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
+  - [ ] CF card to 16 bits?  Routing those pins will be annoying, but possible.
+- [ ] PCB only
+  - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
+  - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
+  - [ ] PS2 stabs - move footprint  
+  - [ ] Headphone jack pads - drill partial holes?  
+  - [ ] RCA jack retainer feet - drill partial holes?
+  - [x] Swap MOUSE\_CLK and KBD\_DATA  
+  - [x] Route A18 to GLUE instead of A6  
+  - [x] Wire GLUE VPA back to the CPU in place of ENGINE\_IACK
+  - [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
+  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
+  - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
+  - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
+    - [ ] Is there a castellenated version I could solder on?
+    - [ ] Is there a better version, something smaller with fewer pins?
+  - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
+
+
 
 ---
 
