@@ -88,18 +88,19 @@ How much design file can be in YAML or in Python?  Generate from YAML:
     * GLUE D bus: tristated unless `glue_read_active` (glue register read), which requires glue_segment (0xF0xxxx), not io_segment (0xF8xxxx).
     * No visible chip select going low during IO MCU cycles on scope.
   * Added 100-iteration NOP delay loop between P2=data and DTACK assertion to extend strong pull-up window; no improvement.
-  * For PCB Rev1, may have to fall back to DEBUG_IN UART RX and not use the IO MCU.  Likely way forward:
-    * *working* UART TX using GLUE_TIMER for deterministic output - disable interrupts or set flow control pin
-    * *working* UART RX polling using GLUE_TIMER
+  * For PCB Rev1, IO MCU is bypassed; UART is via GLUE bit-bang on DEBUG_OUT/DEBUG_IN.  Current status:
+    * *Working* UART TX at 115200 via GLUE_TIMER + DEBUG_OUT (`timer_putchar`)
+    * *Working* UART RX at 115200 via GLUE_TIMER + DEBUG_IN polling (`debug_getchar_asm`)
+    * *Working* SYSTICK at ~183Hz from GLUE (SYSCLK/65536) - IRQ gated by CONFIG register
+    * *Working* CF card with FatFs - can mount and list FAT filesystem
     * *Need to get to reliable streaming serial so I can send and receive data to some kind of network device e.g. esp32*
-    * *Untested* SYSTICK at ~183MHz from GLUE - then dither down to needed frequency
+    * GLUE can generate level-4 IRQ on DEBUG_IN falling edge (start bit) for interrupt-driven RX
     * PS/2 clock latches the data line and causes interrupt, PS/2 shares an interrupt and exposes which clk through status register
 
 
 ## Need to buy
 
-* Programmer for 1508s  
-* Programmer for MCU?
+* crystal for 68681
 
 # Bodges for rev 1 Board
 
@@ -108,8 +109,6 @@ DEBUG\_OUT LED:
 * small NPN like a 2N3904 or SOT-23 MMBT3904. Collector to \+5V through the LED and resistor, base to the DEBUG\_OUT pad through a 1K–10K resistor, emitter to ground. The base current is microamps so it won't load the serial line at all, and the LED gets a clean 5V drive independent of your logic levels.  
 * You could dead-bug it right across the two pads - body of the transistor sitting on top, legs bent to reach the resistor and LED. A little ugly but perfectly functional for a dev board.
 * See also bodges in [griffin.yml](griffin.yml)
-
-
 
 # Software
 
@@ -146,7 +145,7 @@ DEBUG\_OUT LED:
 
 # Debug the GLUE
 
-Bodge pullups on JTAG TMS, 
+Bodge pullups on JTAG TMS 
 
 Try to set fitter parameters to disable GCLR, OE1, OE2
 
@@ -232,31 +231,28 @@ Dedicated ATF1508 CPLD for:
 * Address decode: ~ROM\_SELECT, ~RAM\_BANK\_{n}\_SELECT, ~IO\_SELECT\_MOSI, ~VIDEO\_SELECT, ~CF\_CS0, ~CF\_CS1, ~AUDIO\_LE, ~ENGINE\_SELECT  
 * Invert R/~W to output ~R/W  
 * Decode ~UDS and ~LDS and R/~W into ~WRITE\_LO and ~WRITE\_HI  
-* Incorporate a hard-coded 115200 UART TX and RX on DEBUG_OUT, DEBUG_IN
-* Claude says *with autovectors, GLUE just needs to assert ~VPA instead of ~DTACK during an IACK cycle (FC=111). The CPU then uses the fixed autovector table (vectors 25-31, one per IPL level).*  So I’ll need to wire VPA back from GLUE to the CPU.  Replace ENGINE\_IACK, since that is no longer necessary.  
+* GLUE_TIMER: 5-bit auto-reload timer with ÷8 prescaler (shared with systick).  Writing a non-zero value to TIMER loads the period and starts a free-running countdown; period = (N+1) × 8 SYSCLK cycles (N=1..31, range 16..256 clocks).  Writing 0 stops it.  Writing TIMER_ARM sets an armed flag that blocks ALL bus DTACK (freezing the CPU) until the timer countdown reaches zero, then auto-clears.  This provides deterministic bit timing for UART without cycle-counting.
+* UART TX at 115200 baud via GLUE_TIMER + DEBUG_OUT: firmware sets TIMER period to 12 ((12+1)×8=104 clocks ≈ 115384 baud at 12 MHz), then for each bit arms the timer and writes DEBUG_OUT.  The arm stall absorbs variable instruction timing so each bit is exactly 104 clocks.  Implemented in crt0.s `timer_putchar`. A fallback 9600 baud bitbang TX (`early_putchar`) exists for pre-timer debugging.
+* UART RX at 115200 baud via GLUE_TIMER + DEBUG_IN: firmware polls DEBUG_IN for start bit, then uses TIMER arm to sample each data bit at the correct interval.  Implemented in crt0.s `debug_getchar_asm`.  
+* Systick: always-running ~183 Hz periodic interrupt (SYSCLK ÷ 65536, sharing the ÷8 prescaler then dividing by 8192).  IRQ gated by CONFIG.SYSTICK_IRQ_ENABLE; timer always runs and pending flag always sets regardless.  Reading SYSTICK_STATUS clears the pending flag and deasserts the IRQ.
+* Autovectors: GLUE asserts ~VPA instead of ~DTACK during IACK cycles (FC=111).  Bodge wires freed GLUE pin 75 to CPU ~VPA.
   * 7: VIDEO  
   * 6: ENGINE  
   * 5: IO  
-  * 4: DEBUG\_IN uart byte received
 * ROM initially overlaid at 0x0X\_XXXX, RAM bank 1 not selected  
 * DTACK generation logic  
-  * Count off for internal registers, RAM, ROM, AUDIO, hard-coded in HDL assuming 20MHz crystal  
-  * Assume GLUE’s own access and VIDEO and ENGINE are instantaneous?  
-  * What DTACK delay for CF?  
+  * Count off for internal registers, RAM, ROM, AUDIO, CF, generated from YAML
+  * Assume GLUE’s own access and VIDEO and ENGINE are instantaneous?
   * OR with ENGINE\_DTACK, IO\_DTACK to stall until video expansion or io releases bus  
   * AND result with VIDEO\_STALL on data access so any DTACK is blocked until 16-bit VIDEO shift register in CPLD is ready to be loaded  
 * BERR after some number of cycles if DTACK not asserted.  Have one timeout counter for BERR for everything else, like 8 cycles, and then crazy long BERR like 256 for IO\_DTACK  
-* ~~Registers for negotiating SPI to the IO MCU~~  
-* ~~Registers for writing JTAG to the ENGINE CPLD~~  
-* ~~IO\_RESET and SPI programming for IO processor~~  
-  * ~~hold IO\_RESET low on RESET a little bit~~  
-  * ~~Programming IO processors - IO\_RESET, IO\_SELECT\_MOSI, IO\_DTACK\_MISO, IO\_IACK\_SCK~~  
 * DEBUG\_OUT  
-  * Sets or clears debug LED and test point output (clip an FTDI, bitbang serial for diagnostics)  
-  * Can bit-bang serial output to debug IO board  
-  * Claude tells me that debug output to LED and also FTDI will probably be marginal.  See [Bodges]()  
+  * Sets or clears debug LED and test point output  
+  * Primary UART TX output — clip FTDI RX to test point, 115200 8N1 via GLUE_TIMER  
 * DEBUG_IN
-  * Reads a test point input  
+  * Reads test point input  
+  * Primary UART RX input — clip FTDI TX to test point, 115200 8N1 via GLUE_TIMER  
+  * Can generate level-4 autovector IRQ on falling edge (start bit detection)
 * Registers: see [griffin.yml](griffin.yml).
 
 ## VIDEO
@@ -307,6 +303,8 @@ NTSC, VGA pixel and timing generation - second ATF1508
 
 Keyboard, mouse, serial port through 8051-compatible AT89S52
 
+**Unlikely to work on Rev 1 PCB.**  The AT89S52's P2 port uses weak internal pull-ups (~50 uA) to drive D0-D7, and something on the board is driving the data bus during IO MCU cycles that the pull-ups cannot overcome.  Extensive debugging has ruled out every other chip on the bus (see "Continuing Board Design To-Do" for full debug log).  Communication only worked when the board was running abnormally slowly due to logic analyzer interference with CLK.  For Rev 1, UART is handled by GLUE bit-bang via DEBUG_OUT/DEBUG_IN at 115200 baud.  Rev 2 should add a 74HC245 buffer between AT89S52 P2 and D[7:0], or replace the AT89S52 with a part that has proper bus drivers (e.g. 68681 DUART).
+
 * [AT89S52-24PU Microchip Technology | Integrated Circuits (ICs) | DigiKey](https://www.digikey.com/en/products/detail/microchip-technology/AT89S52-24PU/1008597)  
 * 5V UART, just TX, RX  
 * 2 PS2  
@@ -316,8 +314,7 @@ Keyboard, mouse, serial port through 8051-compatible AT89S52
 * Program either in jig or by GLUE control signals  
 * ISR for UART, PS2  
 * Got that old PS/2 software from PIC for Alice 2  
-* Could you get one, put it on a breadboard, and test it using a couple PS/2 breakouts?  Either drive it with Pico or just print the keycodes on the UART?  
-* I screwed up; kbd and mouse clocks needed to go to P3.2 and P3.3, and I moved them to non-interrupt-capable pins without thinking about it. them.
+* I screwed up; kbd and mouse clocks needed to go to P3.2 and P3.3, and I moved them to non-interrupt-capable pins without thinking about it.
 
 ## ENGINE - DMA 
 
@@ -347,12 +344,12 @@ third ATF1508
     - [ ] RP2350?
     - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
     - [ ] https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614 is a 256K x 16 ROM, 40DIP, 90ns (more wait states but maybe okay) for about $10 and they have 142 of them at the moment
-  - [ ] Swap MCU RX and TX - wrong pins!!
+  - [ ] Replace AT89S52 with 68681 DUART (same DIP-40 socket) — see below
   - [ ] Pullups on JTAG lines
   - [ ] Pullup on DTACK so missing peripherals can't spuriously ACK
   - [ ] 4.7K Pullup on HALT
   - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
-  - [ ] Dump GLUE SPI for IO MCU - move IO_{SELECT,DTACK,IRQ} to P1.{0,1,2}, run out to a header
+  - [ ] Rework GLUE IO MCU signals for 68681: ~IO_SELECT becomes ~CS, ~IO_DTACK becomes a pass-through input (68681 drives DTACK), ~IO_IRQ stays as interrupt input; drop ~IO_IACK (tie 68681 ~IACK high, use autovectors, read ISR to clear)
   - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
   - [ ] More signals between GLUE, VIDEO, ENGINE
     - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
@@ -366,11 +363,20 @@ third ATF1508
   - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
   - [ ] Put USB-C with PD on the board
   - [ ] Much more attention to analog components - redesign composite and VGA analog circuitry to be robust
+  - [ ] 68681 DUART replacing AT89S52 (same DIP-40 socket, proper bus drivers, two UARTs, counter/timer, parallel I/O)
+    - [ ] Wire D0-D7, R/~W directly to 68681
+    - [ ] Wire A1-A4 to RS1-RS4 (16 registers, 4 select lines)
+    - [ ] Wire ~RESET directly from ~RESET net (active-low; AT89S52 RST was active-high via IO_RESET from GLUE — no longer needed)
+    - [ ] 3.6864 MHz crystal on X1/X2 for clean baud rate division (replaces MCU Y2 crystal)
+    - [ ] Tie ~IACK high (autovectors); frees one GLUE pin
+    - [ ] Channel A: terminal UART (replaces DEBUG_OUT/DEBUG_IN bit-bang); Channel B: ESP32 or other network device
+    - [ ] IP0-IP3 have input-change-detect interrupt — could use for PS/2 clock edge detection
+    - [ ] OP0-OP7 directly drive RTS/CTS flow control and other active-low output signals
+    - [ ] PS/2 keyboard/mouse: 68681 IP/OP pins are not bidirectional open-drain, so PS/2 may still need external open-drain buffers or a separate solution
   - [ ] Maybe
-    - [ ] Put two FTDI's on the board with USB-C for debug output and for 8051 serial console
+    - [ ] Put two FTDI's on the board with USB-C for debug output and for 68681 serial console
     - [ ] Audio input
-    - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?  
-    - [ ] Maybe add a 68681 for high-speed reliable dual UART
+    - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?
     - [ ] Slap an ESP on it or a Pico for networking?  Moving to a Pico for UART, keyboard, mouse, timer, and wifi would knock a lot of stuff over in one shot, but unclear whether 3.3V would be a problem.
   - [ ] CF symbol is junk - redo it.
   - [ ] CF card IOWR should be gated by AS.
