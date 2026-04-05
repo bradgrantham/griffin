@@ -10,16 +10,23 @@
 // Bodge wires required on Rev 1:
 //   ENGINE pin 2  (OE2)  <-- VIDEO: NEED_WORD (VIDEO shift reg needs data)
 //   ENGINE pin 8         <-- VIDEO: SOF       (start of frame, reset pointer)
+//   ENGINE pin 10        <-- VIDEO: EOL       (end of line, advance to next row)
 //   ENGINE pin 40        --> VIDEO: LATCH     (D[15:0] stable, capture now)
 //   ENGINE pin 6  (was ~ENGINE_IACK) --> GLUE: HALT_REQ (request CPU halt)
 //   ENGINE pin 9         <-- GLUE:  BUS_FREE  (CPU halted, bus available)
 //
 // CPU registers at ENGINE_BASE (0xD00000):
-//   +0x00 CONTROL   [W]  bit 0 = DMA enable
-//   +0x02 FB_BASE   [W]  bits [7:0] = A[23:16], 64KB-aligned base in 4MB space
-//   +0x04 ROW_WORDS [W]  bits [5:0] = active words per scanline
-//   +0x06 STATUS    [R]  bit 0 = enabled, bit 1 = running, bit 2 = frame_done
-//                   [W]  any write clears frame_done / IRQ
+//   +0x00 CONTROL    [W]  bit 0 = DMA enable
+//   +0x02 FB_BASE    [W]  bits [7:0] = A[23:16], 64KB-aligned base in 4MB space
+//   +0x04 ROW_STRIDE [W]  bits [1:0] = (stride / 64) - 1
+//                         0 = 64 words,  1 = 128 words
+//                         2 = 192 words, 3 = 256 words
+//                         Progressive 640x1bpp: 0 (64 words, 40 active)
+//                         Interlaced 640x1bpp:  1 (128 words, skip other field)
+//   +0x06 STATUS     [R]  bit 0 = overrun (NEED_WORD while DMA still busy)
+//                    [W]  any write clears sticky error bits
+//   +0x08 ADVANCE    [W]  write-only: advance fb_ptr to next row start
+//                         Use in VSYNC ISR to offset field 1 by one line
 
 module Engine
 (
@@ -51,7 +58,7 @@ module Engine
     // ----------------------------------------------------------------
     input  wire        nENGINE_SELECT,  // pin 84 (OE1) — GLUE address decode
     output reg         nENGINE_DTACK,   // pin 4  — handshake DTACK back to GLUE
-    output wire        nENGINE_IRQ,     // pin 5  — level 6 interrupt
+    output wire        nENGINE_IRQ,     // pin 5  — active high = no IRQ (unused)
 
     // ----------------------------------------------------------------
     // Bus arbitration — directly wired to CPU, unused in HALT scheme.
@@ -67,6 +74,7 @@ module Engine
     // ----------------------------------------------------------------
     input  wire        NEED_WORD,       // pin 2  (OE2/GCLK2) — VIDEO needs data
     input  wire        SOF,             // pin 8  — start of frame
+    input  wire        EOL,             // pin 10 — end of line, advance row
     output reg         LATCH,           // pin 40 — capture D[15:0] now
 
     // ----------------------------------------------------------------
@@ -89,18 +97,17 @@ module Engine
     // ================================================================
     reg        dma_enable;              // CONTROL bit 0
     reg [7:0]  fb_base;                 // A[23:16] of framebuffer, 64KB-aligned
-    reg [5:0]  row_words;               // active words per scanline (1–63)
+    reg [1:0]  stride_field;            // (stride / 64) - 1; 0=64, 1=128, 2=192, 3=256
 
     // ================================================================
     // DMA working state
     // ================================================================
     // Framebuffer pointer: word offset within the 64KB-aligned page.
-    //   Bits [14:6] = row index (up to 512 rows, covers 480)
-    //   Bits [5:0]  = column (word within row, stride = 64 words)
+    //   Bits [14:6] = row position (always 64-word aligned)
+    //   Bits [5:0]  = column (word within current row)
     // Full SRAM address = {fb_base[7:0], fb_ptr[14:0]}
     reg [14:0] fb_ptr;
-    reg [5:0]  row_col;                 // counts 0 .. row_words-1
-    reg        frame_done;
+    reg        overrun;                 // sticky: NEED_WORD while DMA busy
 
     // ================================================================
     // State machine
@@ -135,25 +142,14 @@ module Engine
     wire cpu_reading  = cpu_selected & R_nW;
     wire cpu_writing  = cpu_selected & ~R_nW & ~nLDS;
 
-    // Register read mux (active only during CPU read cycles)
-    reg [15:0] reg_read_data;
-    always @(*)
-    begin
-        case (A[3:1])
-            3'd0:    reg_read_data = {15'd0, dma_enable};
-            3'd1:    reg_read_data = {8'd0, fb_base};
-            3'd2:    reg_read_data = {10'd0, row_words};
-            3'd3:    reg_read_data = {13'd0, frame_done, (state != ST_IDLE), dma_enable};
-            default: reg_read_data = 16'hDEAD;
-        endcase
-    end
-
-    assign D = cpu_reading ? reg_read_data : 16'bz;
+    // Status register read — only +0x06 is readable
+    wire status_read = cpu_reading & (A[3:1] == 3'd3);
+    assign D = status_read ? {15'd0, overrun} : 16'bz;
 
     // ================================================================
-    // IRQ — directly asserts (active low) on frame_done
+    // IRQ — unused, hold deasserted (active-low, so drive high)
     // ================================================================
-    assign nENGINE_IRQ = ~frame_done;
+    assign nENGINE_IRQ = 1'b1;
 
     // ================================================================
     // CPU write edge detect
@@ -225,6 +221,28 @@ module Engine
         end
     end
 
+    reg eol_sync1, eol_sync2, eol_prev;
+    always @(posedge CPUCLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            eol_sync1 <= 1'b0;
+            eol_sync2 <= 1'b0;
+            eol_prev  <= 1'b0;
+        end
+        else
+        begin
+            eol_sync1 <= EOL;
+            eol_sync2 <= eol_sync1;
+            eol_prev  <= eol_sync2;
+        end
+    end
+    wire eol_edge = eol_sync2 & ~eol_prev;
+
+    // Row advance: clear low 6 bits, add (stride_field + 1) to upper 9 bits
+    // Same operation for EOL and ADVANCE register write
+    wire [14:0] row_advanced = {fb_ptr[14:6] + {7'd0, stride_field + 2'd1}, 6'd0};
+
     // ================================================================
     // Main state machine + register writes
     // ================================================================
@@ -232,12 +250,11 @@ module Engine
     begin
         if (RESET)
         begin
-            dma_enable <= 1'b0;
-            fb_base    <= 8'd0;
-            row_words  <= 6'd40;        // default: 640 pixels / 16 = 40 words
-            fb_ptr     <= 15'd0;
-            row_col    <= 6'd0;
-            frame_done <= 1'b0;
+            dma_enable   <= 1'b0;
+            fb_base      <= 8'd0;
+            stride_field <= 2'd0;       // default: 64 words (640px @ 1bpp)
+            fb_ptr       <= 15'd0;
+            overrun      <= 1'b0;
             state      <= ST_IDLE;
             HALT_REQ   <= 1'b0;
             LATCH      <= 1'b0;
@@ -250,14 +267,11 @@ module Engine
             if (cpu_write_edge)
             begin
                 case (A[3:1])
-                    3'd0: begin
-                        dma_enable <= D[0];
-                        if (D[0] & ~dma_enable)
-                            frame_done <= 1'b0;
-                    end
-                    3'd1: fb_base   <= D[7:0];
-                    3'd2: row_words <= D[5:0];
-                    3'd3: frame_done <= 1'b0;   // any write clears IRQ
+                    3'd0: dma_enable   <= D[0];
+                    3'd1: fb_base      <= D[7:0];
+                    3'd2: stride_field <= D[1:0];
+                    3'd3: overrun      <= 1'b0;   // any write clears errors
+                    3'd4: fb_ptr       <= row_advanced;  // ADVANCE
                     default: ;
                 endcase
             end
@@ -266,10 +280,19 @@ module Engine
             // SOF resets framebuffer pointer (in any running state)
             // --------------------------------------------------------
             if (sof_edge & dma_enable)
-            begin
-                fb_ptr  <= 15'd0;
-                row_col <= 6'd0;
-            end
+                fb_ptr <= 15'd0;
+
+            // --------------------------------------------------------
+            // EOL advances to next row start (clear column, add stride)
+            // --------------------------------------------------------
+            if (eol_edge & dma_enable)
+                fb_ptr <= row_advanced;
+
+            // --------------------------------------------------------
+            // Overrun detection: NEED_WORD while DMA is busy
+            // --------------------------------------------------------
+            if (need_sync2 & dma_enable & (state != ST_IDLE) & (state != ST_WAIT_NEED))
+                overrun <= 1'b1;
 
             // --------------------------------------------------------
             // DMA state machine
@@ -309,22 +332,9 @@ module Engine
 
                 ST_LATCH: begin
                     // SRAM data stable on D[15:0] — tell VIDEO to capture
-                    LATCH <= 1'b1;
-
-                    // Advance framebuffer pointer
-                    if (row_col == row_words - 6'd1)
-                    begin
-                        // End of row: jump to next 64-word stride boundary
-                        fb_ptr  <= {fb_ptr[14:6] + 9'd1, 6'd0};
-                        row_col <= 6'd0;
-                    end
-                    else
-                    begin
-                        fb_ptr  <= fb_ptr + 15'd1;
-                        row_col <= row_col + 6'd1;
-                    end
-
-                    state <= ST_RELEASE;
+                    LATCH  <= 1'b1;
+                    fb_ptr <= fb_ptr + 15'd1;
+                    state  <= ST_RELEASE;
                 end
 
                 ST_RELEASE: begin
@@ -422,6 +432,7 @@ endmodule
 // Bodge: ENGINE <-> VIDEO
 //PIN: NEED_WORD      : 2
 //PIN: SOF            : 8
+//PIN: EOL            : 10
 //PIN: LATCH          : 40
 //
 // Bodge: ENGINE <-> GLUE
