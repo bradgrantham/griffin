@@ -33,9 +33,9 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "jtag newtap tap1 tap -irlen 10 -expected-id 0x0150803f" \
     -c init
 
-.PHONY: all glue clean
+.PHONY: all glue video engine clean
 
-all: glue video
+all: glue video engine
 
 # ------------------------------------------------------------
 # GLUE (ATF1508AS)
@@ -73,6 +73,25 @@ video/video.jed: video/video.edif
 
 video/video.svf: video/video.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/video/video.jed $(CURDIR)/video/video.svf
+
+# ------------------------------------------------------------
+# ENGINE (ATF1508AS)
+# ------------------------------------------------------------
+
+engine: engine/engine.svf
+
+engine/engine.edif: engine/engine.v ../griffin.generated.vh
+	cd engine && $(YOSYS) engine
+
+engine/engine.jed: engine/engine.edif
+	cd engine && $(FITTER) engine -preassign keep -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy debug = on -strategy power_reset on -strategy JTAG = on
+
+engine/engine.svf: engine/engine.jed
+	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/engine/engine.jed $(CURDIR)/engine/engine.svf
+
+# No flash-engine target yet — ENGINE is not in the JTAG chain on Rev 1
+
+# ------------------------------------------------------------
 
 flash-video: video/video.svf
 	$(OPENOCD_JTAG) \
@@ -113,4 +132,6 @@ read-video: video/video-verify.svf
 
 clean:
 	rm -f glue/glue.edif glue/glue.fit glue/glue.jed glue/glue.vo
+	rm -f video/video.edif video/video.fit video/video.jed video/video.vo
+	rm -f engine/engine.edif engine/engine.fit engine/engine.jed engine/engine.vo
 	rm -f glue/glue-verify.svf video/video-verify.svf
