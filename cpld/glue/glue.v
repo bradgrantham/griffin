@@ -31,7 +31,7 @@ module glue (
     output wire        nWRITE_LO,
     output wire        nWRITE_HI,
     output wire        DEBUG_OUT,
-    output wire        nAUDIO_LE,
+    output wire        AUDIO_LE,
     output wire        nCF_CS0,
     output wire        nCF_CS1,
 
@@ -163,10 +163,9 @@ module glue (
                                        3'b111;   // no interrupt
 
     wire glue_select = glue_segment & bus_cycle;
-    // 74HC373 LE is active-high: LE=1 transparent, LE=0 latched.
     // Drive LE high during audio writes so data passes through,
     // low otherwise so the DAC holds the last written sample.
-    assign nAUDIO_LE = audio_segment & bus_cycle;
+    assign AUDIO_LE = audio_segment & bus_cycle;
     // CF chip selects are active-low on the card (-CE pins).
     // PCB nets are crossed: CPLD nCF_CS0 → CF /CS1, CPLD nCF_CS1 → CF /CS0.
     // Swap bank assignments here so bank0 (task file) → CF /CS0 and
@@ -422,7 +421,7 @@ module glue (
         ((~nENGINE_SELECT)  & ~ENGINE_ABSENT & ~nENGINE_DTACK) |  // ENGINE: handshake
         (glue_select        & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
         (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
-        (nAUDIO_LE          & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO (nAUDIO_LE is active-high despite name)
+        (AUDIO_LE          & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO
 
     // VIDEO_STALL OR'd into nDTACK: when VIDEO_STALL is high and
     // video_stall_enable is set, nDTACK stays deasserted (high)
@@ -499,7 +498,7 @@ endmodule
 //PIN: nIPL_1     : 45
 //PIN: nIPL_0     : 48
 //PIN: nVPA       : 75
-//PIN: nAUDIO_LE  : 68
+//PIN: AUDIO_LE  : 68
 //PIN: nVIDEO_SELECT : 74
 //PIN: nCF_CS0     : 76
 //PIN: nCF_CS1     : 77
