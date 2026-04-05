@@ -18,8 +18,9 @@
     * A print of the PCB and schematic of Rev 1 are in board_rev_1_pcb.pdf and board_rev_1_schematic.pdf
     * The PCB Rev 1 netlist is in board/board-pcb-rev-1.distilled.txt except with bodges applied as noted in griffin.yml, produced with kicad_netlist_summary_2.py
     * Rev 1 gerbers are in board/board-gerb
-  * GLUE Verilog in cpld/glue
-  * VIDEO Verilog in cpld/video
+  * GLUE Verilog for ATF1508AS in cpld/glue
+  * VIDEO Verilog for ATF1508AS in cpld/video
+  * A third ATF1508, "ENGINE", is for reading video memory which will then be snooped by VIDEO and maybe reading and writing audio data if there are logic cells left over.
   * Makefile for both GLUE and VIDEO in cpld
   * 68000 ROM in firmware/{crt0.s,linker.ld,rom.cpp,Makefile} and associated other files in firmware
   * 68000 bringup ROM in sanity/{sanity.s,linker.ld,Makefile}
