@@ -236,15 +236,67 @@ peripherals:
 
   ENGINE:
     part: ATF1508AS
-    description: "Application-specific accelerator"
+    description: "HALT-based bus-stealing DMA controller for video and audio"
     address_range:
       base: 0xD00000
       size: 0x100000
-      width: [8, 16]
+      width: 16
     interrupt:
       level: 6
-      signal: ~ENGINE_IRQ
+      signal: ~ENGINE_IRQ  # wired but unused; held deasserted
     dtack: ~ENGINE_DTACK  # handshake: ENGINE drives this signal to assert DTACK
+    bodge_signals:
+      - { pin: 2,  dir: in,  from: VIDEO, name: NEED_WORD, description: "VIDEO shift register needs data" }
+      - { pin: 8,  dir: in,  from: VIDEO, name: SOF,       description: "Start of frame, resets fb pointer" }
+      - { pin: 10, dir: in,  from: VIDEO, name: EOL,       description: "End of line, advance to next row" }
+      - { pin: 40, dir: out, to: VIDEO,   name: LATCH,     description: "D[15:0] stable, capture now" }
+      - { pin: 6,  dir: out, to: GLUE,    name: HALT_REQ,  description: "Request CPU halt for DMA" }
+      - { pin: 9,  dir: in,  from: GLUE,  name: BUS_FREE,  description: "CPU halted, bus available" }
+    registers:
+      - offset: 0x00
+        name: CONTROL
+        access: write
+        width: 16
+        description: "DMA enable control"
+        bits:
+          - { bit: "0", name: ENABLE, description: "1 = DMA enabled, 0 = idle" }
+      - offset: 0x02
+        name: FB_BASE
+        access: write
+        width: 16
+        description: "Framebuffer base address A[23:16], 64KB-aligned"
+        bits:
+          - { bit: "7:0", name: BASE, description: "Upper 8 bits of 24-bit framebuffer base address" }
+      - offset: 0x04
+        name: ROW_STRIDE
+        access: write
+        width: 16
+        description: >
+          Row stride in multiples of 64 words (128 bytes).
+          Progressive 640x1bpp: 0 (64 words). Interlaced 640x1bpp: 1 (128 words).
+        bits:
+          - bit: "1:0"
+            name: STRIDE
+            description: "(stride / 64) - 1"
+            values:
+              - { value: 0, name: STRIDE_64,  description: "64 words (128 bytes)" }
+              - { value: 1, name: STRIDE_128, description: "128 words (256 bytes)" }
+              - { value: 2, name: STRIDE_192, description: "192 words (384 bytes)" }
+              - { value: 3, name: STRIDE_256, description: "256 words (512 bytes)" }
+      - offset: 0x06
+        name: STATUS
+        access: rw
+        width: 16
+        description: "Read: error flags. Write: any write clears all sticky error bits."
+        bits:
+          - { bit: "0", name: OVERRUN, description: "Sticky: NEED_WORD asserted while DMA still busy (read-only)" }
+      - offset: 0x08
+        name: ADVANCE
+        access: write
+        width: 16
+        description: >
+          Write-only command: advance fb_ptr to next row start (same operation as EOL).
+          Use in VSYNC ISR to offset field 1 by one framebuffer line before enabling DMA.
 
   CF:
     part: "Compact Flash (True IDE)"
@@ -317,3 +369,9 @@ bodges:
   - "Pull up CPU HALT with 4.7K to nearby CPU +5V"
   - "Swap MOUSE_CLK and KBD_DATA at MCU so MOUSE_CLK ends up on P3.2"
   - "Swap UART TX and RX on MCU"
+  - "ENGINE pin 2 (OE2) <-- VIDEO NEED_WORD"
+  - "ENGINE pin 8 <-- VIDEO SOF"
+  - "ENGINE pin 10 <-- VIDEO EOL"
+  - "ENGINE pin 40 --> VIDEO LATCH"
+  - "ENGINE pin 6 (was ~ENGINE_IACK) --> GLUE HALT_REQ"
+  - "ENGINE pin 9 <-- GLUE BUS_FREE"

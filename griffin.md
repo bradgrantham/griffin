@@ -316,21 +316,31 @@ Keyboard, mouse, serial port through 8051-compatible AT89S52
 * Got that old PS/2 software from PIC for Alice 2  
 * I screwed up; kbd and mouse clocks needed to go to P3.2 and P3.3, and I moved them to non-interrupt-capable pins without thinking about it.
 
-## ENGINE - DMA 
+## ENGINE - DMA
 
-third ATF1508
+Third ATF1508AS.  HALT-based bus-stealing DMA controller for video (and audio).
 
-* A, D signals  
-* ENGINE\_{DTACK,SELECT,IRQ,IACK} to and from GLUE for control as a peripheral  
-* ENGINE\_{TMS,TCK,TDI,TDO} from GLUE for bitfile loading  
-* CPU signals for memory-mapped access (low 20 bits) and bus mastering (all 24 bits): R/W, AS, LDS, UDS, DTACK  
-* Drive bus snooping for video generation at a higher rate with corresponding spin of VIDEO, e.g. 320\*480@8bpp or 640\*480@4bpp
-* Fetch and then write audio data
+* Reads framebuffer data from SRAM and signals VIDEO to latch D[15:0] directly from the data bus
+* Uses HALT-based bus stealing: ENGINE asks GLUE to halt the CPU, then drives the address bus to perform an SRAM read while VIDEO snoops D[15:0] via LATCH signal
+* ENGINE does not know or care about pixel format — it is a word pump.  VIDEO controls how many words per line via NEED\_WORD, and signals EOL to advance ENGINE to the next row
+* Audio: VIDEO requests one extra ENGINE transfer at end of line and asserts AUDIO\_LE instead of LATCH, so the audio DAC captures D[15:0].  The audio sample sits at the end of each row's active pixel words in the framebuffer.  ENGINE does not need to know audio exists.
+* Row stride is always a multiple of 64 words (128 bytes).  CPU configures stride via a 2-bit field: 0=64, 1=128, 2=192, 3=256 words.  Progressive uses stride = smallest multiple of 64 >= active words.  Interlaced uses 2x that to skip the other field's line in a line-sequential framebuffer.
+* ADVANCE register (write-only command) performs the same row-advance operation as EOL; used by VSYNC ISR to offset field 1 by one line
+
+Bodge wires required on Rev 1 (6 total):
+
+* ENGINE pin 2 (OE2) <-- VIDEO: NEED\_WORD (VIDEO shift reg needs data)
+* ENGINE pin 8 <-- VIDEO: SOF (start of frame, reset pointer)
+* ENGINE pin 10 <-- VIDEO: EOL (end of line, advance to next row)
+* ENGINE pin 40 --> VIDEO: LATCH (D[15:0] stable, capture now)
+* ENGINE pin 6 (was \~ENGINE\_IACK) --> GLUE: HALT\_REQ (request CPU halt)
+* ENGINE pin 9 <-- GLUE: BUS\_FREE (CPU halted, bus available)
+
+Fits 108/128 macrocells (84%) with current register set.
 
 ## Latched 8-bit audio
 
-* CPU needs to update it in VBLANK ISR per line and per-blanking-line ISR  
-* Or ENGINE CPLD performs a read to get it  
+* VIDEO triggers ENGINE to read an audio sample at end of each visible line and asserts AUDIO\_LE to latch D[15:0] into the audio DAC
 * 8-bit R2R  
 * [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp  
 * Will need to see how much noise and distortion is caused by timing variation.  Maybe I can add blocking DTACK to a timer tick or something
