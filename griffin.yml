@@ -31,23 +31,9 @@ peripherals:
         name: SYSTICK_STATUS
         access: read
         width: 8
-        description: "Systick timer status; reading clears the pending flag and deasserts the IRQ"
+        description: "Systick timer status (fixed ~183 Hz = SYSCLK/65536); reading clears the pending flag and deasserts the IRQ"
         bits:
           - { bit: "0", name: PENDING, description: "Tick interrupt pending (read clears)" }
-      - offset: 0x03
-        name: SYSTICK_CONFIG
-        access: write
-        width: 8
-        description: |
-          Systick timer rate selection.  Timer always runs; software
-          divides in the ISR for lower rates (e.g. ÷4 for 50 Hz).
-        bits:
-          - bit: "0"
-            name: RATE
-            description: "0 = ~200 Hz (default), 1 = ~180 Hz"
-            values:
-              - { value: 0, name: "HZ_200", description: "~200 Hz (reload 57, actual 202.05 Hz)" }
-              - { value: 1, name: "HZ_180", description: "~180 Hz (reload 64, actual 180.29 Hz)" }
       - offset: 0x07
         name: CONFIG
         access: write
