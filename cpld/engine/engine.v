@@ -17,12 +17,12 @@
 //
 // CPU registers at ENGINE_BASE (0xD00000):
 //   +0x00 CONTROL    [W]  bit 0 = DMA enable
-//   +0x02 FB_BASE    [W]  bits [7:0] = A[23:16], 64KB-aligned base in 4MB space
-//   +0x04 ROW_STRIDE [W]  bits [1:0] = (stride / 64) - 1
-//                         0 = 64 words,  1 = 128 words
-//                         2 = 192 words, 3 = 256 words
-//                         Progressive 640x1bpp: 0 (64 words, 40 active)
-//                         Interlaced 640x1bpp:  1 (128 words, skip other field)
+//   +0x02 FB_BASE    [W]  bits [7:0] = A[21:14], 16KB-aligned base in RAM (A[23:22]=00)
+//   +0x04 ROW_STRIDE [W]  bits [1:0] = stride / 64
+//                         0 = 0 words (same line repeats),  1 = 64 words
+//                         2 = 128 words, 3 = 192 words
+//                         Progressive 640x1bpp: 1 (64 words, 40 active)
+//                         Interlaced 640x1bpp:  2 (128 words, skip other field)
 //   +0x06 STATUS     [R]  bit 0 = overrun (NEED_WORD while DMA still busy)
 //                    [W]  any write clears sticky error bits
 //   +0x08 ADVANCE    [W]  write-only: advance fb_ptr to next row start
@@ -96,8 +96,8 @@ module Engine
     // Configuration registers (written by CPU via ENGINE_SELECT)
     // ================================================================
     reg        dma_enable;              // CONTROL bit 0
-    reg [7:0]  fb_base;                 // A[23:16] of framebuffer, 64KB-aligned
-    reg [1:0]  stride_field;            // (stride / 64) - 1; 0=64, 1=128, 2=192, 3=256
+    reg [7:0]  fb_base;                 // A[21:14] of framebuffer, 16KB-aligned, RAM only
+    reg [1:0]  stride_field;            // stride / 64; 0=0, 1=64, 2=128, 3=192 words
 
     // ================================================================
     // DMA working state
@@ -105,7 +105,10 @@ module Engine
     // Framebuffer pointer: word offset within the 64KB-aligned page.
     //   Bits [14:6] = row position (always 64-word aligned)
     //   Bits [5:0]  = column (word within current row)
-    // Full SRAM address = {fb_base[7:0], fb_ptr[14:0]}
+    // Full SRAM address A[23:1]:
+    //   A[23:22] = 2'b00 (RAM only, first 4MB)
+    //   A[21:1]  = {fb_base, 13'd0} + fb_ptr
+    //            = {fb_base + fb_ptr[14:13], fb_ptr[12:0]}
     reg [14:0] fb_ptr;
     reg        overrun;                 // sticky: NEED_WORD while DMA busy
 
@@ -126,7 +129,7 @@ module Engine
     // ================================================================
     wire dma_bus_drive = (state == ST_DRIVE_ADDR) | (state == ST_LATCH);
 
-    wire [23:1] dma_addr = {fb_base, fb_ptr};
+    wire [23:1] dma_addr = {2'b00, fb_base + {6'd0, fb_ptr[14:13]}, fb_ptr[12:0]};
 
     assign A    = dma_bus_drive ? dma_addr : 23'bz;
     assign nAS  = dma_bus_drive ? 1'b0     : 1'bz;
@@ -220,7 +223,7 @@ module Engine
 
     // Row advance: clear low 6 bits, add (stride_field + 1) to upper 9 bits
     // Same operation for EOL and ADVANCE register write
-    wire [14:0] row_advanced = {fb_ptr[14:6] + {7'd0, stride_field + 2'd1}, 6'd0};
+    wire [14:0] row_advanced = {fb_ptr[14:6] + {7'd0, stride_field}, 6'd0};
 
     // ================================================================
     // Main state machine + register writes

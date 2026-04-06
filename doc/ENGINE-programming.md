@@ -9,8 +9,8 @@ All registers are at ENGINE\_BASE (0xD00000), 16-bit write unless noted.
 | Offset | Name       | Access | Description |
 |--------|------------|--------|-------------|
 | +0x00  | CONTROL    | W      | Bit 0 = DMA enable |
-| +0x02  | FB\_BASE   | W      | Bits [7:0] = A[23:16], 64KB-aligned framebuffer base |
-| +0x04  | ROW\_STRIDE| W      | Bits [1:0] = (stride / 64) - 1.  See table below. |
+| +0x02  | FB\_BASE   | W      | Bits [7:0] = A[21:14], 16KB-aligned framebuffer base (RAM only) |
+| +0x04  | ROW\_STRIDE| W      | Bits [1:0] = stride / 64.  See table below. |
 | +0x06  | STATUS     | R/W    | Read: bit 0 = overrun.  Write: clears all sticky errors. |
 | +0x08  | ADVANCE    | W      | Write-only command: advance fb\_ptr by current ROW\_STRIDE |
 
@@ -18,16 +18,16 @@ All registers are at ENGINE\_BASE (0xD00000), 16-bit write unless noted.
 
 | Value | Stride (words) | Stride (bytes) | Use case |
 |-------|----------------|----------------|----------|
-| 0     | 64             | 128            | Progressive 640x1bpp (40 active words) |
-| 1     | 128            | 256            | Interlaced 640x1bpp (skip other field) |
-| 2     | 192            | 384            | Future wider modes |
-| 3     | 256            | 512            | Future 8bpp modes |
+| 0     | 0              | 0              | Same line repeats (no row advance) |
+| 1     | 64             | 128            | Progressive 640x1bpp (40 active words) |
+| 2     | 128            | 256            | Interlaced 640x1bpp (skip other field) |
+| 3     | 192            | 384            | Future wider modes |
 
 ## Framebuffer memory layout
 
 Row stride is always a multiple of 64 words (128 bytes). Active pixel words occupy the first N words of each row; remaining words up to the stride boundary are available for audio samples or padding.
 
-Example for 640x480 @ 1bpp, stride = 64 words:
+Example for 640x480 @ 1bpp, ROW\_STRIDE = 1 (64 words):
 
 ```
 Word  0..39:  pixel data (640 pixels / 16 bits per word)
@@ -56,9 +56,9 @@ Total: 480 * 128 bytes = 60 KB
 ```c
 void engine_init_progressive(uint32_t fb_addr)
 {
-    // fb_addr must be 64KB-aligned (low 16 bits = 0)
-    *(volatile uint16_t *)(ENGINE_BASE + 0x02) = fb_addr >> 16;  // FB_BASE
-    *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 0;              // ROW_STRIDE = 64
+    // fb_addr must be 16KB-aligned (low 14 bits = 0) and in RAM (< 0x400000)
+    *(volatile uint16_t *)(ENGINE_BASE + 0x02) = fb_addr >> 14;  // FB_BASE = A[21:14]
+    *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 1;              // ROW_STRIDE = 64 words
     *(volatile uint16_t *)(ENGINE_BASE + 0x06) = 0;              // clear errors
     *(volatile uint16_t *)(ENGINE_BASE + 0x00) = 1;              // enable DMA
 }
@@ -93,7 +93,7 @@ Line 3 at word offset 192   (field 1, screen line 3)
 Total: 480 * 128 bytes = 60 KB (same as progressive)
 ```
 
-ROW\_STRIDE = 1 (128 words) so ENGINE skips every other line:
+ROW\_STRIDE = 2 (128 words) so ENGINE skips every other line:
 
 ```
 Field 0 reads offsets: 0, 128, 256, 384, ...  (even lines)
@@ -105,8 +105,9 @@ Field 1 reads offsets: 64, 192, 320, 448, ... (odd lines)
 ```c
 void engine_init_interlaced(uint32_t fb_addr)
 {
-    *(volatile uint16_t *)(ENGINE_BASE + 0x02) = fb_addr >> 16;  // FB_BASE
-    *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 1;              // ROW_STRIDE = 128
+    // fb_addr must be 16KB-aligned (low 14 bits = 0) and in RAM (< 0x400000)
+    *(volatile uint16_t *)(ENGINE_BASE + 0x02) = fb_addr >> 14;  // FB_BASE = A[21:14]
+    *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 2;              // ROW_STRIDE = 128 words
     *(volatile uint16_t *)(ENGINE_BASE + 0x06) = 0;              // clear errors
     *(volatile uint16_t *)(ENGINE_BASE + 0x00) = 1;              // enable DMA
 }
@@ -139,9 +140,9 @@ void vsync_isr_interlaced(void)
         // Field 1: temporarily set stride to 64 words (one physical
         // line), advance fb_ptr from 0 to 64, then restore stride
         // to 128 words for the interlaced scan.
-        *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 0;  // stride = 64
+        *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 1;  // stride = 64
         *(volatile uint16_t *)(ENGINE_BASE + 0x08) = 0;  // ADVANCE (+64)
-        *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 1;  // stride = 128
+        *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 2;  // stride = 128
     }
     current_field ^= 1;
 }

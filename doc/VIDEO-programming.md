@@ -110,8 +110,9 @@ The current VIDEO implementation requires no CPU register writes — timing is h
 void video_init_progressive(uint32_t fb_addr)
 {
     // Set up ENGINE for progressive scan
-    *(volatile uint16_t *)(ENGINE_BASE + 0x02) = fb_addr >> 16;  // FB_BASE
-    *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 0;              // ROW_STRIDE = 64 words
+    // fb_addr must be 16KB-aligned (low 14 bits = 0) and in RAM (< 0x400000)
+    *(volatile uint16_t *)(ENGINE_BASE + 0x02) = fb_addr >> 14;  // FB_BASE = A[21:14]
+    *(volatile uint16_t *)(ENGINE_BASE + 0x04) = 1;              // ROW_STRIDE = 64 words
     *(volatile uint16_t *)(ENGINE_BASE + 0x06) = 0;              // clear errors
     *(volatile uint16_t *)(ENGINE_BASE + 0x00) = 1;              // enable DMA
 

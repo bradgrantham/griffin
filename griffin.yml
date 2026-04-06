@@ -243,15 +243,22 @@ peripherals:
       width: 16
     interrupt:
       level: 6
-      signal: ~ENGINE_IRQ  # wired but unused; held deasserted
-    dtack: ~ENGINE_DTACK  # handshake: ENGINE drives this signal to assert DTACK
+      signal: ~ENGINE_IRQ  # not currently wired; pin 5 reused for BUS_FREE
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 0
+    glue_signals:
+      # These use existing PCB traces (repurposed from ENGINE_DTACK / ENGINE_IRQ)
+      - { pin: 4,  dir: out, to: GLUE,    name: HALT_REQ,  description: "Request CPU halt for DMA (PCB trace: was ~ENGINE_DTACK)" }
+      - { pin: 5,  dir: in,  from: GLUE,  name: BUS_FREE,  description: "CPU halted, bus available (PCB trace: was ~ENGINE_IRQ)" }
     bodge_signals:
       - { pin: 2,  dir: in,  from: VIDEO, name: NEED_WORD, description: "VIDEO shift register needs data" }
       - { pin: 8,  dir: in,  from: VIDEO, name: SOF,       description: "Start of frame, resets fb pointer" }
       - { pin: 10, dir: in,  from: VIDEO, name: EOL,       description: "End of line, advance to next row" }
       - { pin: 40, dir: out, to: VIDEO,   name: LATCH,     description: "D[15:0] stable, capture now" }
-      - { pin: 6,  dir: out, to: GLUE,    name: HALT_REQ,  description: "Request CPU halt for DMA" }
-      - { pin: 9,  dir: in,  from: GLUE,  name: BUS_FREE,  description: "CPU halted, bus available" }
     registers:
       - offset: 0x00
         name: CONTROL
@@ -264,25 +271,26 @@ peripherals:
         name: FB_BASE
         access: write
         width: 16
-        description: "Framebuffer base address A[23:16], 64KB-aligned"
+        description: "Framebuffer base address A[21:14], 16KB-aligned, RAM only (A[23:22]=00)"
         bits:
-          - { bit: "7:0", name: BASE, description: "Upper 8 bits of 24-bit framebuffer base address" }
+          - { bit: "7:0", name: BASE, description: "A[21:14] of framebuffer base address" }
       - offset: 0x04
         name: ROW_STRIDE
         access: write
         width: 16
         description: >
           Row stride in multiples of 64 words (128 bytes).
-          Progressive 640x1bpp: 0 (64 words). Interlaced 640x1bpp: 1 (128 words).
+          Progressive 640x1bpp: 1 (64 words). Interlaced 640x1bpp: 2 (128 words).
+          Setting 0 repeats the same line (no row advance on EOL).
         bits:
           - bit: "1:0"
             name: STRIDE
-            description: "(stride / 64) - 1"
+            description: "stride / 64"
             values:
-              - { value: 0, name: STRIDE_64,  description: "64 words (128 bytes)" }
-              - { value: 1, name: STRIDE_128, description: "128 words (256 bytes)" }
-              - { value: 2, name: STRIDE_192, description: "192 words (384 bytes)" }
-              - { value: 3, name: STRIDE_256, description: "256 words (512 bytes)" }
+              - { value: 0, name: STRIDE_0,    description: "0 words (same line repeats)" }
+              - { value: 1, name: STRIDE_64,   description: "64 words (128 bytes)" }
+              - { value: 2, name: STRIDE_128,  description: "128 words (256 bytes)" }
+              - { value: 3, name: STRIDE_192,  description: "192 words (384 bytes)" }
       - offset: 0x06
         name: STATUS
         access: rw
