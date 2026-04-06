@@ -20,11 +20,10 @@
     * Rev 1 gerbers are in board/board-gerb
   * GLUE Verilog for ATF1508AS in cpld/glue
   * VIDEO Verilog for ATF1508AS in cpld/video
-  * A third ATF1508, "ENGINE", is for reading video memory which will then be snooped by VIDEO and maybe reading and writing audio data if there are logic cells left over.
+  * ENGINE Verilog for ATF1508AS in cpld/engine
   * Makefile for both GLUE and VIDEO in cpld
   * 68000 ROM in firmware/{crt0.s,linker.ld,rom.cpp,Makefile} and associated other files in firmware
   * 68000 bringup ROM in sanity/{sanity.s,linker.ld,Makefile}
-  * There is currently IO_MCU firmware in io-mcu/{Makefile,main.c} and generated Python script to flash over SPI in io-mcu/at89s52_isp.py, but the IO_MCU has turned out to be a problem for PCB Rev 1; ignore it for now.
   * emulator in emulator/ and the intent is to at least emulate the 68000 and MMIO accesses.  TBD whether to emulate the ATF1508's using Verilator.
 
 * When possible, store new hardware definitions in griffin.yml; register addresses, bits and bitfields, constants, protocol between peripherals, constants, and then generate included headers.
@@ -35,19 +34,26 @@
 
 * I don't have "timeout", use a perl one-liner instead.
 
+### Hardware and Software balance
+
+* ATF1508 CPLD's are best at deterministic behavior, parallel processing, and high-speed response/signaling, but have limited real-estate so functionality must be kept as minimal as possible
+* The 68000 CPU is configurable and flexible but instructions take variable time, flow may be stalled by DTACK and interrupts, and real-time response is difficult.
+* Therefore carefully split responsibility between the CPLDs and CPU. Examples:
+  * A complete UART RX and TX doesn't fit in GLUE, but GLUE implements a free-running reloaded "TIMER" so that CPU code can have more deterministic hard timing and perform UART RX and TX in a loop.
+  * Rather than encoding progressive versus interlaced DMA in ENGINE, just have a "row stride" that the CPU can set and also add once in the video blank ISR to set up field 1.
+
 ## Building components
 
 * Generate C++, Verilog, and assembly includes for components with `make` at project root.
-* Build glue and video in cpld/ with `make glue` or `make video` or `make` (for both)
-* Configure emulator CMake in cpld/ with `cmake -Bbuild .` and build with `cmake --build build`
+* Build glue and video and engine in cpld/ with `make glue` or `make video` or `make engine` (or `make` for all)
+* Configure emulator CMake in emulator/ with `cmake -Bbuild .` and build with `cmake --build build`
 * Build the ROM in firmware/ with `make`.  The toolchain is made from a Docker image of an Ubuntu 24 build of crosstool-ng for m68k-unknown-elf for 68000 and not for 68832; see firmware/m68k-crosstool-ng.config, firmware/m68k-{g++,gcc,objcopy,objdump}, BUILD_TOOLCHAIN_CONTAINER, Dockerfile.  The toolchain .tar.gz might not be in git.
 * Build the sanity test ROM image in firmware/ with `make`.  Same toolchain as firmware/.  (Probably should unify the toolchains between firmware and rom at some point...)
-* Build the IO MCU firmware in io-mcu/ with `make`, requires `sdcc`.
 
 ## Testing components
 
 * sanity/sanity.bin and firmware/rom.bin should execute in emulator/emulator/build/emulator.
-  * note that IO-MCU UART TX and RX is through a PTY.
+  * note that UART TX and RX is through a PTY.
 
 ## General design guidelines
 
