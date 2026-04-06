@@ -276,7 +276,7 @@ module Video
     end
 
     // Combinational pixel select: index into word_reg by pixel_cnt
-    wire current_pixel = word_reg[pixel_cnt];
+    wire current_pixel = word_reg[4'd15 - pixel_cnt];
 
     // ----------------------------------------------------------------
     // NEED_WORD generation (PIXEL_CLK domain)
@@ -288,16 +288,23 @@ module Video
     // Also assert during back porch to prefetch the first word.
     // ----------------------------------------------------------------
 
-    wire prefetch = (h_cnt >= H_TOTAL - 10'd32) & v_active;
+    wire prefetch = (h_cnt == H_TOTAL - 10'd32) & v_active;
     wire word_request = (active_video & (pixel_cnt == 4'd0) &
                          (word_col < WORDS_PER_LINE)) | prefetch;
 
+    reg word_request_d1;
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
         if (RESET)
+        begin
             NEED_WORD <= 1'b0;
+            word_request_d1 <= 1'b0;
+        end
         else
-            NEED_WORD <= word_request;
+        begin
+            word_request_d1 <= word_request;
+            NEED_WORD <= word_request | word_request_d1;
+        end
     end
 
     // ----------------------------------------------------------------

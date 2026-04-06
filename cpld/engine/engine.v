@@ -12,8 +12,8 @@
 //   ENGINE pin 8         <-- VIDEO: SOF       (start of frame, reset pointer)
 //   ENGINE pin 10        <-- VIDEO: EOL       (end of line, advance to next row)
 //   ENGINE pin 40        --> VIDEO: LATCH     (D[15:0] stable, capture now)
-//   ENGINE pin 6  (was ~ENGINE_IACK) --> GLUE: HALT_REQ (request CPU halt)
-//   ENGINE pin 9         <-- GLUE:  BUS_FREE  (CPU halted, bus available)
+//   ENGINE pin 4  (was ~ENGINE_DTACK) --> GLUE: HALT_REQ (request CPU halt)
+//   ENGINE pin 5  (was ~ENGINE_IRQ)  <-- GLUE: BUS_FREE  (CPU halted, bus available)
 //
 // CPU registers at ENGINE_BASE (0xD00000):
 //   +0x00 CONTROL    [W]  bit 0 = DMA enable
@@ -111,6 +111,7 @@ module Engine
     //            = {fb_base + fb_ptr[14:13], fb_ptr[12:0]}
     reg [14:0] fb_ptr;
     reg        overrun;                 // sticky: NEED_WORD while DMA busy
+    reg        eol_pending;             // EOL captured, apply in ST_WAIT_NEED
 
     // ================================================================
     // State machine
@@ -234,9 +235,10 @@ module Engine
         begin
             dma_enable   <= 1'b0;
             fb_base      <= 8'd0;
-            stride_field <= 2'd0;       // default: 64 words (640px @ 1bpp)
+            stride_field <= 2'd0;       // default: 0 (no row advance; firmware must set before enabling DMA)
             fb_ptr       <= 15'd0;
             overrun      <= 1'b0;
+            eol_pending  <= 1'b0;
             state      <= ST_IDLE;
             HALT_REQ   <= 1'b0;
             LATCH      <= 1'b0;
@@ -259,16 +261,11 @@ module Engine
             end
 
             // --------------------------------------------------------
-            // SOF resets framebuffer pointer (in any running state)
-            // --------------------------------------------------------
-            if (sof_edge & dma_enable)
-                fb_ptr <= 15'd0;
-
-            // --------------------------------------------------------
-            // EOL advances to next row start (clear column, add stride)
+            // EOL captured into pending flag — applied in ST_WAIT_NEED
+            // to avoid priority conflict with fb_ptr++ in ST_LATCH
             // --------------------------------------------------------
             if (eol_edge & dma_enable)
-                fb_ptr <= row_advanced;
+                eol_pending <= 1'b1;
 
             // --------------------------------------------------------
             // Overrun detection: NEED_WORD while DMA is busy
@@ -289,6 +286,18 @@ module Engine
 
                 ST_WAIT_NEED: begin
                     LATCH <= 1'b0;
+                    // SOF/EOL adjust fb_ptr here where it can't
+                    // conflict with fb_ptr++ in ST_LATCH
+                    if (sof_edge)
+                    begin
+                        fb_ptr      <= 15'd0;
+                        eol_pending <= 1'b0;
+                    end
+                    else if (eol_pending)
+                    begin
+                        fb_ptr      <= row_advanced;
+                        eol_pending <= 1'b0;
+                    end
                     if (~dma_enable)
                     begin
                         state <= ST_IDLE;
