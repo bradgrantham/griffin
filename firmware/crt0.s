@@ -613,6 +613,30 @@ timer_hex4:
     addi.b  #'0', %d0
     jmp     timer_putchar
 
+| ====================================================================
+| VIDEO / ENGINE DMA control — C-callable wrappers
+|
+| m68k-elf stack ABI: return address at (%sp), first arg (promoted
+| to 32-bit) at 4(%sp), second at 8(%sp).  16-bit value is at
+| offset +2 within the 32-bit slot (big-endian).
+| ====================================================================
+
+| video_start_dma: configure ENGINE and start DMA
+| void video_start_dma(uint16_t fb_base_val, uint16_t stride_val);
+    .global video_start_dma
+video_start_dma:
+    move.w  6(%sp), ENGINE_FB_BASE      | A[21:14] of framebuffer
+    move.w  10(%sp), ENGINE_ROW_STRIDE  | stride / 64 words
+    move.w  #ENGINE_CONTROL_ENABLE_MASK, ENGINE_CONTROL
+    rts
+
+| video_stop_dma: disable ENGINE DMA
+| void video_stop_dma(void);
+    .global video_stop_dma
+video_stop_dma:
+    clr.w   ENGINE_CONTROL
+    rts
+
 | systick_isr: GLUE systick timer interrupt handler (level 5)
 | Reads SYSTICK_STATUS to clear the pending flag, then calls timer_tick.
     .global systick_isr

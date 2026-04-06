@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <cstdarg>
 #include <cstring>
+#include <cstdlib>
 
 #include "../griffin.generated.h"
+#include "splash.h"
 
 extern "C" {
 #include "ff.h"
@@ -314,6 +316,10 @@ asm(
 extern "C" void glue_config_set_bits(uint8_t mask);
 extern "C" void glue_config_clear_bits(uint8_t mask);
 
+// ENGINE DMA control — defined in crt0.s
+extern "C" void video_start_dma(uint16_t fb_base_val, uint16_t stride_val);
+extern "C" void video_stop_dma(void);
+
 extern "C" {
 
 void debug_printf(const char *fmt, ...)
@@ -560,6 +566,48 @@ static bool evt_pop(uint8_t *out)
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
+
+    // -----------------------------------------------------------------
+    // Display splash bitmap via ENGINE DMA
+    // -----------------------------------------------------------------
+    {
+        static constexpr int STRIDE_WORDS = 64;
+        static constexpr int STRIDE_BYTES = STRIDE_WORDS * 2;
+        static constexpr int WORDS_PER_LINE = SPLASH_WIDTH / 16;  // 40
+        static constexpr int FB_SIZE = STRIDE_BYTES * SPLASH_HEIGHT;
+        static constexpr uint32_t FB_ALIGN = 16384;  // ENGINE_FB_BASE is A[21:14]
+
+        // Allocate framebuffer with room to align to 16KB
+        uint8_t *raw = static_cast<uint8_t *>(malloc(FB_SIZE + FB_ALIGN - 1));
+        if (!raw)
+        {
+            debug_printf("Video: framebuffer malloc failed\n");
+        }
+        else
+        {
+            auto raw_addr = reinterpret_cast<uintptr_t>(raw);
+            auto fb_addr = (raw_addr + FB_ALIGN - 1) & ~(FB_ALIGN - 1);
+            volatile uint16_t *fb = reinterpret_cast<volatile uint16_t *>(fb_addr);
+            const uint16_t *src = splash_bitmap;
+
+            for (int y = 0; y < SPLASH_HEIGHT; y++)
+            {
+                for (int x = 0; x < WORDS_PER_LINE; x++)
+                {
+                    fb[x] = src[x];
+                }
+                for (int x = WORDS_PER_LINE; x < STRIDE_WORDS; x++)
+                {
+                    fb[x] = 0;
+                }
+                src += WORDS_PER_LINE;
+                fb += STRIDE_WORDS;
+            }
+
+            video_start_dma(fb_addr >> 14, Griffin::ENGINE_ROW_STRIDE_STRIDE_64);
+            debug_printf("Video: splash displayed at 0x%06lX\n", (unsigned long)fb_addr);
+        }
+    }
 
     volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
 
