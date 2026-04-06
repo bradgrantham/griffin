@@ -57,8 +57,6 @@ module Engine
     // CPU register interface
     // ----------------------------------------------------------------
     input  wire        nENGINE_SELECT,  // pin 84 (OE1) — GLUE address decode
-    output reg         nENGINE_DTACK,   // pin 4  — handshake DTACK back to GLUE
-    output wire        nENGINE_IRQ,     // pin 5  — active high = no IRQ (unused)
 
     // ----------------------------------------------------------------
     // Bus arbitration — directly wired to CPU, unused in HALT scheme.
@@ -78,10 +76,12 @@ module Engine
     output reg         LATCH,           // pin 40 — capture D[15:0] now
 
     // ----------------------------------------------------------------
-    // Bodge: ENGINE <-> GLUE
+    // ENGINE <-> GLUE (existing PCB traces, repurposed)
+    //   Pin 4 was nENGINE_DTACK — now HALT_REQ (GLUE does 0-WS DTACK)
+    //   Pin 5 was nENGINE_IRQ   — now BUS_FREE (ENGINE IRQ unused)
     // ----------------------------------------------------------------
-    output reg         HALT_REQ,        // pin 6  (was nENGINE_IACK) — halt CPU
-    input  wire        BUS_FREE         // pin 9  — bus available
+    output reg         HALT_REQ,        // pin 4  — request CPU halt for DMA
+    input  wire        BUS_FREE         // pin 5  — CPU halted, bus available
 );
 
     wire RESET = ~nRESET;
@@ -146,10 +146,7 @@ module Engine
     wire status_read = cpu_reading & (A[3:1] == 3'd3);
     assign D = status_read ? {15'd0, overrun} : 16'bz;
 
-    // ================================================================
-    // IRQ — unused, hold deasserted (active-low, so drive high)
-    // ================================================================
-    assign nENGINE_IRQ = 1'b1;
+    // IRQ — pin 5 repurposed as BUS_FREE input; no IRQ output needed.
 
     // ================================================================
     // CPU write edge detect
@@ -164,26 +161,8 @@ module Engine
     end
     wire cpu_write_edge = cpu_writing & ~cpu_writing_prev;
 
-    // ================================================================
-    // DTACK generation for CPU register access
-    // ================================================================
-    reg selected_prev;
-    always @(posedge CPUCLK or posedge RESET)
-    begin
-        if (RESET)
-        begin
-            selected_prev <= 1'b0;
-            nENGINE_DTACK <= 1'b1;
-        end
-        else
-        begin
-            selected_prev <= cpu_selected;
-            if (cpu_selected & ~selected_prev)
-                nENGINE_DTACK <= 1'b0;
-            else if (~cpu_selected)
-                nENGINE_DTACK <= 1'b1;
-        end
-    end
+    // DTACK for CPU register access is now handled by GLUE (0 wait states).
+    // Pin 4 (was nENGINE_DTACK) is repurposed as HALT_REQ output.
 
     // ================================================================
     // Cross-domain synchronizers (PIXEL_CLK -> CPUCLK)
@@ -368,9 +347,9 @@ endmodule
 //PIN: nENGINE_SELECT : 84
 //PIN: nDTACK_BUS     : 81
 //
-// CPU register interface
-//PIN: nENGINE_DTACK  : 4
-//PIN: nENGINE_IRQ    : 5
+// ENGINE <-> GLUE (repurposed PCB traces)
+//PIN: HALT_REQ       : 4
+//PIN: BUS_FREE       : 5
 //
 // Bus arbitration (directly to CPU, unused — active-high hold)
 //PIN: nBG            : 76
@@ -435,6 +414,5 @@ endmodule
 //PIN: EOL            : 10
 //PIN: LATCH          : 40
 //
-// Bodge: ENGINE <-> GLUE
-//PIN: HALT_REQ       : 6
-//PIN: BUS_FREE       : 9
+// Pin 6 (was nENGINE_IACK bodge) and pin 9 now free — HALT_REQ/BUS_FREE
+// moved to pins 4/5 (existing PCB traces to GLUE).

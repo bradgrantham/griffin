@@ -179,53 +179,64 @@ module Video
     assign nVIDEO_IRQ = ~in_vsync;
 
     // ----------------------------------------------------------------
-    // Pixel shift register and word request logic (PIXEL_CLK domain)
+    // Double-buffered pixel data (hold_reg + word_reg)
     //
     // Flow:
-    //   1. At pixel_cnt == 15 (last pixel of current word), assert
-    //      NEED_WORD to tell ENGINE we need the next word.
+    //   1. At pixel_cnt == 0, VIDEO loads word_reg from hold_reg and
+    //      asserts NEED_WORD to request the next word from ENGINE.
     //   2. ENGINE does DMA, asserts LATCH when D[15:0] is stable.
-    //   3. VIDEO captures D[15:0] into holding register on LATCH edge.
-    //   4. At pixel_cnt == 0 (word boundary), load shift_reg from
-    //      holding register.
-    //   5. Shift LSB out each pixel clock.
+    //   3. VIDEO captures D[15:0] into hold_reg on LATCH rising edge.
+    //   4. VIDEO continues displaying from word_reg[pixel_cnt].
+    //   5. At next pixel_cnt == 0, word_reg loads from hold_reg and
+    //      the cycle repeats.
+    //
+    // This gives ENGINE a full 16-pixel-clock window (~1.1 µs at
+    // 14.318 MHz) to complete the HALT handshake and SRAM read,
+    // instead of the 4-pixel window (~280 ns) of a single-buffer
+    // design.
     //
     // For audio: after the last pixel word of a line, VIDEO requests
-    // one more word and asserts AUDIO_LE instead of signaling LATCH
-    // capture.  (Future — not yet implemented in this initial version.)
+    // one more word and asserts AUDIO_LE instead of loading hold_reg.
+    // (Future — not yet implemented in this initial version.)
     // ----------------------------------------------------------------
 
     // ----------------------------------------------------------------
-    // Word register (SYSCLK domain)
+    // Holding register (SYSCLK domain)
     //   Captures D[15:0] when ENGINE asserts LATCH.  LATCH is
     //   synchronous to SYSCLK so no synchronizer needed.  Once
-    //   loaded, word_reg is stable until the next LATCH — safe
-    //   to read combinationally from PIXEL_CLK domain.
+    //   loaded, hold_reg is stable until the next LATCH — safe
+    //   to read from PIXEL_CLK domain at word boundaries since
+    //   ENGINE will have finished well before then.
     // ----------------------------------------------------------------
-    reg [15:0] word_reg;
+    reg [15:0] hold_reg;
 
     reg latch_prev;
     always @(posedge SYSCLK or posedge RESET)
     begin
         if (RESET)
         begin
-            word_reg   <= 16'd0;
+            hold_reg   <= 16'd0;
             latch_prev <= 1'b0;
         end
         else
         begin
             latch_prev <= LATCH;
             if (LATCH & ~latch_prev)
-                word_reg <= D;
+                hold_reg <= D;
         end
     end
 
     // ----------------------------------------------------------------
-    // Pixel counter (PIXEL_CLK domain)
-    //   Counts 0..15 within each 16-pixel word during active video.
-    //   pixel_cnt[3:0] selects the current bit from word_reg.
+    // Display register and pixel counter (PIXEL_CLK domain)
+    //   word_reg holds the 16 pixels currently being displayed.
+    //   pixel_cnt counts 0..15 within each word.
     //   word_col counts completed words for NEED_WORD control.
+    //
+    //   word_reg loads from hold_reg at every word boundary
+    //   (pixel_cnt == 15 → 0) and continuously during blanking
+    //   so the prefetched first word is ready when active starts.
     // ----------------------------------------------------------------
+    reg [15:0] word_reg;
     reg [3:0]  pixel_cnt;               // 0..15 within a 16-pixel word
     reg [5:0]  word_col;                // counts words 0..WORDS_PER_LINE-1
 
@@ -233,6 +244,7 @@ module Video
     begin
         if (RESET)
         begin
+            word_reg  <= 16'd0;
             pixel_cnt <= 4'd0;
             word_col  <= 6'd0;
         end
@@ -243,6 +255,7 @@ module Video
                 if (pixel_cnt == 4'd15)
                 begin
                     pixel_cnt <= 4'd0;
+                    word_reg  <= hold_reg;
                     if (word_col == WORDS_PER_LINE - 6'd1)
                         word_col <= 6'd0;
                     else
@@ -257,26 +270,26 @@ module Video
             begin
                 pixel_cnt <= 4'd0;
                 word_col  <= 6'd0;
+                word_reg  <= hold_reg;  // prefetch lands here
             end
         end
     end
 
     // Combinational pixel select: index into word_reg by pixel_cnt
-    // word_reg is stable (SYSCLK domain, changes only on LATCH edge
-    // which doesn't happen during the 16-pixel output window)
     wire current_pixel = word_reg[pixel_cnt];
 
     // ----------------------------------------------------------------
     // NEED_WORD generation (PIXEL_CLK domain)
     //
-    // Pulse NEED_WORD high when we need ENGINE to fetch the next word.
-    // Assert at pixel_cnt == 12 (4 pixels before word boundary) to
-    // give ENGINE ~280ns at 14.318MHz to complete the DMA cycle.
+    // Pulse NEED_WORD at pixel_cnt == 0 (just after loading word_reg
+    // from hold_reg) to request the next word from ENGINE.  ENGINE
+    // has a full 16-pixel-clock window (~1.1 µs) to complete the
+    // HALT handshake and SRAM read before the next word boundary.
     // Also assert during back porch to prefetch the first word.
     // ----------------------------------------------------------------
 
     wire prefetch = (h_cnt >= H_TOTAL - 10'd32) & v_active;
-    wire word_request = (active_video & (pixel_cnt == 4'd12) &
+    wire word_request = (active_video & (pixel_cnt == 4'd0) &
                          (word_col < WORDS_PER_LINE)) | prefetch;
 
     always @(posedge PIXEL_CLK or posedge RESET)

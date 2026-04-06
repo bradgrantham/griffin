@@ -10,8 +10,8 @@ module glue (
     input  wire        VIDEO_STALL, // pin 84: VIDEO CPLD stalls all DTACK (active high)
     input  wire        OE2_pin,
     input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
-    input  wire        nENGINE_DTACK, // pin 17: ENGINE CPLD asserts when ready
-    input  wire        nENGINE_IRQ,   // pin 20: ENGINE CPLD interrupt request (active low)
+    input  wire        HALT_REQ,      // pin 17: ENGINE requests CPU halt for DMA
+    output reg         BUS_FREE,      // pin 20: CPU halted, bus available for ENGINE
     input  wire        nAS,
     input  wire        [23:18] A_hi,
     input  wire        [5:1]   A_lo,
@@ -46,7 +46,6 @@ module glue (
     output wire        ENGINE_TDI // Currently to pin OE1, OE2, GCLK
 );
 
-    localparam ENGINE_ABSENT = 1;    // Set to 0 when ENGINE CPLD is populated
     localparam IO_ABSENT     = 1;    // Set to 1 when IO MCU is not populated
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
@@ -82,19 +81,31 @@ module glue (
     // nHALT — open-drain style bidirectional
     //
     // During reset: drive low (assert HALT to CPU).
-    // After reset: tristate so the CPU can assert it on double bus
+    // During DMA: drive low when ENGINE asserts HALT_REQ.
+    // Otherwise: tristate so the CPU can self-halt on double bus
     // fault.  External pull-up required.
     //
     // Uses synchronized RESET so RC ringing on nRESET cannot cause
     // glitch pulses on nHALT after reset releases.
-    //
-    // TODO: Double bus fault detection stubbed out to reduce CPLD
-    // resource usage and allow the fitter to honor pin constraints.
-    // Revisit when there is headroom (settling counter + blink
-    // counter used ~28 FFs + product terms).
     // ----------------------------------------------------------------
+    assign nHALT = (RESET | HALT_REQ) ? 1'b0 : 1'bz;
 
-    assign nHALT = RESET ? 1'b0 : 1'bz;
+    // ----------------------------------------------------------------
+    // BUS_FREE — tells ENGINE the CPU has released the bus
+    //
+    // Asserted one SYSCLK after HALT_REQ is seen with nAS high (bus
+    // idle).  The one-clock delay ensures CPU bus drivers have fully
+    // tristated.  Deasserted when ENGINE drops HALT_REQ.
+    // ----------------------------------------------------------------
+    always @(posedge SYSCLK)
+    begin
+        if (RESET)
+            BUS_FREE <= 1'b0;
+        else if (HALT_REQ & nAS)
+            BUS_FREE <= 1'b1;
+        else if (~HALT_REQ)
+            BUS_FREE <= 1'b0;
+    end
 
     // Make OE2 busy (OE1/pin 84 is now VIDEO_STALL, GCLR/pin 1 is now nVIDEO_IRQ)
     assign ENGINE_TDI = OE2_pin;
@@ -139,10 +150,7 @@ module glue (
     // if no peripheral has responded with DTACK.  Causes the 68000 to take
     // a bus error exception instead of hanging forever on unmapped access.
     // Exclude interrupt acknowledge cycles (FC=111) which use VPA, not DTACK.
-    // Exclude handshake peripherals (ENGINE) — they drive DTACK
-    // externally and may take much longer than 15 clocks to respond.
-    wire handshake_cycle = (~nENGINE_SELECT & ~ENGINE_ABSENT);
-    assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle & ~handshake_cycle);
+    assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle);
 
     // ----------------------------------------------------------------
     // Interrupt priority encoder (active-low nIPL to 68000)
@@ -154,11 +162,11 @@ module glue (
     //   none:                              — nIPL = 111
     // ----------------------------------------------------------------
 
-    wire engine_irq_active  = ~ENGINE_ABSENT & ~nENGINE_IRQ;
     wire systick_irq_active = systick_pending & systick_irq_enable;
 
+    // ENGINE IRQ (level 6) not currently wired — its pin is reused for
+    // BUS_FREE.  If ENGINE IRQ is needed later, bodge a free GLUE pin.
     assign nIPL = ~nVIDEO_IRQ       ? 3'b000 :  // level 7
-                  engine_irq_active  ? 3'b001 :  // level 6
                   systick_irq_active ? 3'b010 :  // level 5
                                        3'b111;   // no interrupt
 
@@ -368,8 +376,8 @@ module glue (
     // by codegen.py into griffin.generated.vh as *_DTACK_THRESHOLD defines.
     // Formula: threshold = min(2 + 2*ws, 14) where ws is from the YAML.
     //
-    // Handshake peripherals (no fixed wait states):
-    //   ENGINE:  DTACK from ~ENGINE_DTACK (pin 17)
+    // ENGINE uses 0 wait states for CPU register access (pin 17 is
+    // now HALT_REQ, not ENGINE_DTACK).
     //
     // VIDEO_STALL (pin 84, active high):
     //   When asserted by the VIDEO CPLD, blocks ALL DTACK generation
@@ -397,7 +405,7 @@ module glue (
         ((~nRAM_4_SEL)   & (ws_cnt >= `RAM_BANK_4_DTACK_THRESHOLD))  |  // RAM bank 4
         ((~nROM_SELECT)     & (ws_cnt >= `ROM_DTACK_THRESHOLD))  |  // ROM
         ((~nVIDEO_SELECT)   & (ws_cnt >= `VIDEO_DTACK_THRESHOLD))  |  // VIDEO (register access)
-        ((~nENGINE_SELECT)  & ~ENGINE_ABSENT & ~nENGINE_DTACK) |  // ENGINE: handshake
+        ((~nENGINE_SELECT)  & (ws_cnt >= `VIDEO_DTACK_THRESHOLD)) |  // ENGINE: 0 WS (same as VIDEO)
         (glue_select        & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
         (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
         (AUDIO_LE          & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO
@@ -486,5 +494,5 @@ endmodule
 //PIN: FC_1       : 49
 //PIN: FC_2       : 50
 //PIN: nENGINE_SELECT : 15
-//PIN: nENGINE_DTACK : 17
-//PIN: nENGINE_IRQ : 20
+//PIN: HALT_REQ    : 17
+//PIN: BUS_FREE    : 20
