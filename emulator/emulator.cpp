@@ -25,15 +25,14 @@ constexpr uint32_t DEBUG_BUS = 0x0001;
 constexpr uint32_t DEBUG_IO = 0x0002;
 constexpr uint32_t DEBUG_UART = 0x0004;
 constexpr uint32_t DEBUG_DISASSEMBLE = 0x0008;
-constexpr uint32_t DEBUG_IO_MCU = 0x0010;
 constexpr uint32_t DEBUG_DEBUG_BIT = 0x0020;
 constexpr uint32_t DEBUG_CF = 0x0040;
 constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
 
-// PTY-based console for IO_MCU serial emulation.
-// The master fd acts like the IO_MCU's UART: write() sends to the terminal,
+// PTY-based console for serial emulation.
+// The master fd acts like the UART: write() sends to the terminal,
 // read() receives keystrokes.  Works on macOS and Linux.
 struct PTYConsole
 {
@@ -47,7 +46,7 @@ struct PTYConsole
             perror("openpty");
             return false;
         }
-        fprintf(stderr, "IO_MCU console PTY: %s\n", ttyname(slave_fd));
+        fprintf(stderr, "Console PTY: %s\n", ttyname(slave_fd));
         close(slave_fd);
         fcntl(master_fd, F_SETFL, O_NONBLOCK);
         return true;
@@ -543,65 +542,23 @@ struct TimerState
 };
 
 // ---------------------------------------------------------------------------
-// Systick timer — shares the ÷8 prescaler with GLUE_TIMER.
-// Hardware uses ÷128 subdiv on prescaler → ÷1024 total from SYSCLK (11718.75 Hz).
-// Approximate rates: 50.08/60.10/100.16/202.05 Hz (all <1% error).
+// Systick timer — fixed rate ~183 Hz = SYSCLK / 65536.
+// The pending flag sets every 65536 SYSCLK cycles.  Reading
+// SYSTICK_STATUS clears pending and deasserts the IRQ.
+// SYSTICK_IRQ_ENABLE in GLUE_CONFIG gates the IRQ output but the
+// timer always runs and the pending flag always sets.
 // ---------------------------------------------------------------------------
 
 struct SystickState
 {
-    uint8_t rate = 0;       // GLUE_SYSTICK_CONFIG_RATE value
-    uint8_t reload = 0;     // auto-reload value (depends on rate)
-    uint8_t counter = 0;    // countdown counter
-    bool pending = false;   // IRQ pending flag (read-to-clear)
-    bool enabled = false;
+    static constexpr uint64_t PERIOD = 65536;  // SYSCLK / 65536 ≈ 183 Hz
+    bool pending = false;
+    bool irq_enabled = false;
 
-    // Prescaler base frequency = SYSCLK / 1024 = 11718.75 Hz
-    // Reload values chosen so that (reload+1) divides 11718.75 to approximate target rate.
-    static uint8_t reload_for_rate(uint8_t r)
+    // Called once per PERIOD clocks.
+    void tick()
     {
-        switch (r)
-        {
-            case GLUE_SYSTICK_CONFIG_RATE_HZ_50:  return 233;  // 11718.75/234 ≈ 50.08
-            case GLUE_SYSTICK_CONFIG_RATE_HZ_60:  return 194;  // 11718.75/195 ≈ 60.10
-            case GLUE_SYSTICK_CONFIG_RATE_HZ_100: return 116;  // 11718.75/117 ≈ 100.16
-            case GLUE_SYSTICK_CONFIG_RATE_HZ_200: return 57;   // 11718.75/58  ≈ 202.05
-            default: return 0;
-        }
-    }
-
-    void configure(uint8_t val)
-    {
-        rate = val & GLUE_SYSTICK_CONFIG_RATE_MASK;
-        enabled = (rate != GLUE_SYSTICK_CONFIG_RATE_OFF);
-        if (enabled)
-        {
-            reload = reload_for_rate(rate);
-            counter = reload;
-        }
-        else
-        {
-            reload = 0;
-            counter = 0;
-        }
-    }
-
-    // Called at the prescaler tick rate (SYSCLK / 1024).
-    // Returns true when the counter wraps (IRQ fires).
-    bool tick()
-    {
-        if (!enabled)
-        {
-            return false;
-        }
-        if (counter == 0)
-        {
-            counter = reload;
-            pending = true;
-            return true;
-        }
-        counter--;
-        return false;
+        pending = true;
     }
 
     uint8_t read_status()
@@ -691,89 +648,6 @@ struct SoftUARTTX
     }
 };
 
-// IO_MCU event queue — mirrors the real MCU's event FIFO.
-// Firmware reads IO_MCU_RX_DATA to dequeue; IO_MCU_STATUS reports QUEUE_NOTEMPTY.
-struct IOmcuState
-{
-    static constexpr size_t QUEUE_SIZE = 256;
-    uint8_t queue[QUEUE_SIZE];
-    size_t head = 0;
-    size_t count = 0;
-    bool overflow = false;
-    bool io_reset_released = false;
-
-    void push(uint8_t byte)
-    {
-        if(count >= QUEUE_SIZE)
-        {
-            overflow = true;
-            return;
-        }
-        queue[(head + count) % QUEUE_SIZE] = byte;
-        count++;
-    }
-
-    uint8_t pop()
-    {
-        if(count == 0)
-        {
-            return IO_MCU_EVT_EMPTY;
-        }
-        uint8_t byte = queue[head % QUEUE_SIZE];
-        head = (head + 1) % QUEUE_SIZE;
-        count--;
-        return byte;
-    }
-
-    bool notempty() const
-    {
-        return count > 0;
-    }
-
-    uint8_t status() const
-    {
-        uint8_t s = 0;
-        if(notempty())
-        {
-            s |= IO_MCU_STATUS_QUEUE_NOTEMPTY_MASK;
-        }
-        s |= IO_MCU_STATUS_TX_READY_MASK; // TX is always ready in emulation
-        if(overflow)
-        {
-            s |= IO_MCU_STATUS_OVERFLOW_MASK;
-        }
-        return s;
-    }
-
-    // Poll the PTY and enqueue any received bytes as UART_RX events.
-    void poll(const PTYConsole &pty)
-    {
-        if(!io_reset_released)
-        {
-            return;
-        }
-        uint8_t ch;
-        while(pty.is_data_ready() && pty.receive(&ch))
-        {
-            push(IO_MCU_EVT_UART_RX);
-            push(ch);
-        }
-    }
-
-    // Initialize and enqueue ID
-    IOmcuState()
-    {
-        static const char id[] = "IO MCU EMU";
-        push(IO_MCU_EVT_IDENTITY);
-        push(sizeof(id));
-        for(int i = 0; i < sizeof(id); i++)
-        {
-            push(id[i]);
-        }
-    }
-
-};
-
 // ---------------------------------------------------------------------------
 // Real-time clock governor
 //
@@ -819,12 +693,27 @@ class GriffinEmulator : public moira::Moira
     mutable int debug_out_latch = 0;
     mutable bool ROMoverlay = true;
     PTYConsole pty_console;
-    mutable IOmcuState io_mcu;
     mutable CFState cf;
     mutable TimerState timer;
     mutable SystickState systick;
     mutable SoftUARTTX debug_in_tx;
     mutable uint8_t dac_value = 0x0;
+
+    // VIDEO register shadow state (minimal — just enough to not crash)
+    mutable uint8_t video_mode = 0;
+    mutable uint8_t video_mode2 = 0;
+    mutable uint8_t video_words_start = 0;
+    mutable uint8_t video_border_pixel = 0;
+    mutable uint8_t video_lines_start = 0;
+    mutable uint16_t video_lines_count = 0;
+    mutable uint16_t video_palette = 0;
+    mutable uint16_t video_next_palette = 0;
+
+    // ENGINE register shadow state (minimal — just enough to not crash)
+    mutable uint16_t engine_control = 0;
+    mutable uint16_t engine_fb_base = 0;
+    mutable uint16_t engine_row_stride = 0;
+    mutable uint16_t engine_status = 0;
 
     static bool is_cf_addr(uint32_t io_offset)
     {
@@ -857,20 +746,6 @@ class GriffinEmulator : public moira::Moira
             }
             debug_in_tx.advance(getClock());
             return debug_in_tx.current_bit & GLUE_DEBUG_IN_MASK;
-        } else if(addr == IO_MCU_RX_DATA - IO_BASE) {
-            uint8_t val = io_mcu.pop();
-            if(debug & DEBUG_IO_MCU)
-            {
-                printf("[IO_MCU RX_DATA: 0x%02X]\n", val);
-            }
-            // Deassert interrupt immediately when queue drains
-            if(!io_mcu.notempty())
-            {
-                const_cast<GriffinEmulator*>(this)->setIPL(0);
-            }
-            return val;
-        } else if(addr == IO_MCU_STATUS - IO_BASE) {
-            return io_mcu.status();
         }
         if(debug & DEBUG_IO)
         {
@@ -905,22 +780,19 @@ class GriffinEmulator : public moira::Moira
                 if(debug & DEBUG_DEBUG_BIT) printf("debug_out, %" PRIu64 ", %d\n", getClock(), bit);
             }
             debug_out_latch = val;
-        } else if(addr == GLUE_SYSTICK_CONFIG - IO_BASE) {
-            systick.configure(val);
-            if (debug & DEBUG_IO)
-            {
-                printf("[SYSTICK CONFIG: rate=%u reload=%u]\n", systick.rate, systick.reload);
-            }
         } else if(addr == GLUE_CONFIG - IO_BASE) {
             if(val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK)
             {
                 if(debug & DEBUG_IO) printf("ROM overlay disabled\n");
                 ROMoverlay = false;
             }
-            if(val & GLUE_CONFIG_IO_RESET_RELEASE_MASK)
+            systick.irq_enabled = !!(val & GLUE_CONFIG_SYSTICK_IRQ_ENABLE_MASK);
+            if (debug & DEBUG_IO)
             {
-                if(debug & DEBUG_IO) printf("IO_MCU reset released\n");
-                io_mcu.io_reset_released = true;
+                printf("[GLUE CONFIG: 0x%02X overlay=%s systick_irq=%s video_stall=%s]\n", val,
+                       (val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK) ? "off" : "on",
+                       systick.irq_enabled ? "on" : "off",
+                       (val & GLUE_CONFIG_VIDEO_STALL_ENABLE_MASK) ? "on" : "off");
             }
         } else if(addr == GLUE_TIMER - IO_BASE) {
             timer.period = val & 0x1F;
@@ -939,12 +811,6 @@ class GriffinEmulator : public moira::Moira
             {
                 printf("[TIMER ARM: stall=%u clks]\n", stall);
             }
-        } else if(addr == IO_MCU_TX_DATA - IO_BASE) {
-            // IO_MCU UART TX: send to PTY console
-            if(debug & DEBUG_IO_MCU) printf("[IO_MCU TX: 0x%02X]\n", val);
-            pty_console.send(val);
-        } else if(addr == IO_MCU_CONFIG - IO_BASE) {
-            if(debug & DEBUG_IO_MCU) printf("[IO_MCU CONFIG: 0x%02X]\n", val);
         } else if(addr + IO_BASE >= AUDIO_BASE && addr + IO_BASE < AUDIO_BASE + AUDIO_SIZE) {
             dac_value = val;
         } else {
@@ -975,6 +841,124 @@ class GriffinEmulator : public moira::Moira
         }
     }
 
+    // --------------- VIDEO register stubs ---------------
+
+    uint8_t VIDEO_read8(uint32_t addr) const
+    {
+        if(addr == VIDEO_MODE) {
+            return video_mode;
+        } else if(addr == VIDEO_MODE2) {
+            return video_mode2;
+        } else if(addr == VIDEO_BORDER_PIXEL) {
+            return video_border_pixel;
+        }
+        if(debug & DEBUG_IO)
+        {
+            printf("read of uint8_t at unhandled VIDEO %06X\n", addr);
+        }
+        return 0;
+    }
+
+    uint16_t VIDEO_read16(uint32_t addr) const
+    {
+        if(debug & DEBUG_IO)
+        {
+            printf("read of uint16_t at unhandled VIDEO %06X\n", addr);
+        }
+        return 0;
+    }
+
+    void VIDEO_write8(uint32_t addr, uint8_t val) const
+    {
+        if(addr == VIDEO_MODE) {
+            video_mode = val;
+        } else if(addr == VIDEO_MODE2) {
+            video_mode2 = val;
+        } else if(addr == VIDEO_WORDS_START) {
+            video_words_start = val;
+        } else if(addr == VIDEO_BORDER_PIXEL) {
+            video_border_pixel = val;
+        } else if(addr == VIDEO_LINES_START) {
+            video_lines_start = val;
+        } else {
+            if(debug & DEBUG_IO)
+            {
+                printf("write of uint8_t %02X at unhandled VIDEO %06X\n", val, addr);
+            }
+        }
+    }
+
+    void VIDEO_write16(uint32_t addr, uint16_t val) const
+    {
+        if(addr == VIDEO_LINES_COUNT) {
+            video_lines_count = val;
+        } else if(addr == VIDEO_PALETTE) {
+            video_palette = val;
+        } else if(addr == VIDEO_NEXT_PALETTE) {
+            video_next_palette = val;
+        } else if(addr == VIDEO_ARM_SNOOP || addr == VIDEO_DISARM_SNOOP) {
+            // snoop arm/disarm — no-op in emulator
+        } else if(addr == VIDEO_PIXEL_DATA) {
+            // pixel data write — no-op without video output emulation
+        } else {
+            if(debug & DEBUG_IO)
+            {
+                printf("write of uint16_t %04X at unhandled VIDEO %06X\n", val, addr);
+            }
+        }
+    }
+
+    // --------------- ENGINE register stubs ---------------
+
+    uint16_t ENGINE_read16(uint32_t addr) const
+    {
+        if(addr == ENGINE_STATUS) {
+            return engine_status;
+        }
+        if(debug & DEBUG_IO)
+        {
+            printf("read of uint16_t at unhandled ENGINE %06X\n", addr);
+        }
+        return 0;
+    }
+
+    uint8_t ENGINE_read8(uint32_t addr) const
+    {
+        if(debug & DEBUG_IO)
+        {
+            printf("read of uint8_t at unhandled ENGINE %06X\n", addr);
+        }
+        return 0;
+    }
+
+    void ENGINE_write16(uint32_t addr, uint16_t val) const
+    {
+        if(addr == ENGINE_CONTROL) {
+            engine_control = val;
+        } else if(addr == ENGINE_FB_BASE) {
+            engine_fb_base = val;
+        } else if(addr == ENGINE_ROW_STRIDE) {
+            engine_row_stride = val;
+        } else if(addr == ENGINE_STATUS) {
+            engine_status = 0;  // write clears sticky error bits
+        } else if(addr == ENGINE_ADVANCE) {
+            // advance command — no-op without DMA emulation
+        } else {
+            if(debug & DEBUG_IO)
+            {
+                printf("write of uint16_t %04X at unhandled ENGINE %06X\n", val, addr);
+            }
+        }
+    }
+
+    void ENGINE_write8(uint32_t addr, uint8_t val) const
+    {
+        if(debug & DEBUG_IO)
+        {
+            printf("write of uint8_t %02X at unhandled ENGINE %06X\n", val, addr);
+        }
+    }
+
     // Wait state penalty (extra SYSCLK cycles) for a memory access,
     // derived from griffin.yml dtack entries via codegen.py.
     // Note: read16 for RAM calls read8 twice, but RAM penalty is 0
@@ -985,6 +969,14 @@ class GriffinEmulator : public moira::Moira
             (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW))
         {
             return ROM_DTACK_PENALTY;
+        }
+        if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE)
+        {
+            return ENGINE_DTACK_PENALTY;
+        }
+        if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE)
+        {
+            return VIDEO_DTACK_PENALTY;
         }
         if (addr >= IO_BASE && addr < IO_BASE + IO_SIZE)
         {
@@ -1073,6 +1065,10 @@ public:
             }
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return ROM[(addr - ROM_BASE) % ROM_SIZE];
+        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
+            return ENGINE_read8(addr);
+        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
+            return VIDEO_read8(addr);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read8(addr - IO_BASE);
         } else {
@@ -1097,6 +1093,10 @@ public:
             return (read8(addr) << 8) | read8(addr + 1);
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return (ROM[(addr - ROM_BASE) % ROM_SIZE] << 8) | ROM[(addr - ROM_BASE + 1) % ROM_SIZE];
+        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
+            return ENGINE_read16(addr);
+        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
+            return VIDEO_read16(addr);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read16(addr - IO_BASE);
         } else {
@@ -1127,6 +1127,10 @@ public:
             } 
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
+        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
+            ENGINE_write8(addr, val);
+        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
+            VIDEO_write8(addr, val);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write8(addr - IO_BASE, val);
         } else {
@@ -1146,24 +1150,28 @@ public:
             if(RAM_bank1.size() != 0) {
                 RAM_bank1[RAM_BANK_1.offset(addr) % RAM_bank1.size()] = high;
                 RAM_bank1[RAM_BANK_1.offset(addr + 1) % RAM_bank1.size()] = low;
-            } 
+            }
         } else if (RAM_BANK_2.contains(addr)) {
             if(RAM_bank2.size() != 0) {
                 RAM_bank2[RAM_BANK_2.offset(addr) % RAM_bank2.size()] = high;
                 RAM_bank2[RAM_BANK_2.offset(addr + 1) % RAM_bank2.size()] = low;
-            } 
+            }
         } else if (RAM_BANK_3.contains(addr)) {
             if(RAM_bank3.size() != 0) {
                 RAM_bank3[RAM_BANK_3.offset(addr) % RAM_bank3.size()] = high;
                 RAM_bank3[RAM_BANK_3.offset(addr + 1) % RAM_bank3.size()] = low;
-            } 
+            }
         } else if (RAM_BANK_4.contains(addr)) {
             if(RAM_bank4.size() != 0) {
                 RAM_bank4[RAM_BANK_4.offset(addr) % RAM_bank4.size()] = high;
                 RAM_bank4[RAM_BANK_4.offset(addr + 1) % RAM_bank4.size()] = low;
-            } 
+            }
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
+        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
+            ENGINE_write16(addr, val);
+        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
+            VIDEO_write16(addr, val);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write16(addr - IO_BASE, val);
         } else {
@@ -1191,7 +1199,7 @@ public:
     }
 
     // Poll the PTY for incoming data, feed the DEBUG_IN bitstream
-    // synthesizer, tick systick, and update IPL.
+    // synthesizer, and update IPL.
     // Call this periodically from the main loop, not on every bus cycle.
     void poll_io()
     {
@@ -1202,15 +1210,10 @@ public:
             debug_in_tx.enqueue(ch);
         }
 
-        // IO MCU is absent (IO_ABSENT=1 in GLUE) — don't poll it.
-        // When IO MCU is eventually working, re-enable:
-        // io_mcu.poll(pty_console);
-
-        // Determine highest active IRQ level
-        // Level 5: systick (IO_MCU disabled while IO_ABSENT)
-        if (systick.pending)
+        // Systick IRQ: only assert if both pending and enabled in GLUE_CONFIG
+        if (systick.pending && systick.irq_enabled)
         {
-            setIPL(IO_MCU_IRQ_LEVEL);  // level 5 (shared with IO_MCU)
+            setIPL(5);
         }
         else
         {
@@ -1218,7 +1221,7 @@ public:
         }
     }
 
-    // Tick the systick timer.  Called at the prescaler rate (SYSCLK / 1024).
+    // Tick the systick timer.  Called every 65536 SYSCLK cycles.
     void tick_systick()
     {
         systick.tick();
@@ -1410,7 +1413,7 @@ int main(int argc, const char** argv)
 
     if(!emulator.init_pty())
     {
-        fprintf(stderr, "Failed to open PTY for IO_MCU console\n");
+        fprintf(stderr, "Failed to open PTY for console\n");
         exit(EXIT_FAILURE);
     }
 
@@ -1424,7 +1427,7 @@ int main(int argc, const char** argv)
     uint64_t previous_io_poll = 0;
     static constexpr uint64_t IO_POLL_INTERVAL = SYSCLK_HZ / 1000; // ~1ms
     uint64_t previous_systick_tick = 0;
-    static constexpr uint64_t SYSTICK_TICK_INTERVAL = 1024; // SYSCLK / 1024 prescaler
+    static constexpr uint64_t SYSTICK_TICK_INTERVAL = SystickState::PERIOD; // SYSCLK / 65536 ≈ 183 Hz
 
     auto clock_then = emulator.getClock();
     auto then = time(0);
