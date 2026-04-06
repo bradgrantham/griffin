@@ -39,7 +39,7 @@ def main():
             for bit in range(16):
                 px = y * width + wx * 16 + bit
                 if pixels[px] > threshold:
-                    word |= (1 << bit)
+                    word |= (1 << (15 - bit))
             words.append(word)
 
     assert len(words) == total_words
