@@ -41,9 +41,7 @@ module glue (
     output wire [2:0]  nIPL,    // Interrupt Priority Level (active low; 111 = none)
     output wire        nVPA,    // Valid Peripheral Address (autovector ack)
 
-    output wire        nR_W,
-
-    output wire        ENGINE_TDI // Currently to pin OE1, OE2, GCLK
+    output wire        nR_W
 );
 
     localparam IO_ABSENT     = 1;    // Set to 1 when IO MCU is not populated
@@ -106,9 +104,6 @@ module glue (
         else if (~HALT_REQ)
             BUS_FREE <= 1'b0;
     end
-
-    // Make OE2 busy (OE1/pin 84 is now VIDEO_STALL, GCLR/pin 1 is now nVIDEO_IRQ)
-    assign ENGINE_TDI = OE2_pin;
 
     assign nR_W = ~R_nW;
     assign nWRITE_LO = ~(lo_byte_selected & write);
@@ -446,7 +441,6 @@ endmodule
 //PIN: VIDEO_STALL : 84
 //PIN: OE2_pin   : 2
 //PIN: nVIDEO_IRQ : 1
-//PIN: ENGINE_TDI  : 40
 //PIN: nROM_SELECT  : 4
 //PIN: nAS        : 60
 // atf15xx_yosys seems to flatten out pins starting > 0, so renumber A_hi
