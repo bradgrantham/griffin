@@ -142,6 +142,8 @@ The final "else" case is typically a recognizable hex sentinel (`32'hdeadbeef`, 
 ##### State machines are linear `localparam` enumerations
 States are numbered `localparam` integers (`5'd00`, `5'd01`, ...) with descriptive names. The state reg width is chosen to fit. State numbering has gaps (e.g., `STATE_RETIRE = 5'd06`, `STATE_FP_WAIT = 5'd16`) -- likely from states being added/removed over time.
 
+**ATF1508 note:** One-hot state encoding was tested on ENGINE and did not save macrocells vs. binary encoding (96% vs. 97%). Use binary encoding for ATF1508 state machines. See CPLD-guidance.md for details.
+
 #### Idioms
 
 ##### `/* verilator public */` annotations
