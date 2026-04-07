@@ -44,8 +44,6 @@ peripherals:
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
           - { bit: "1", name: SYSTICK_IRQ_ENABLE, default: 0,
               description: "Write 1 to enable systick interrupt on nIPL; default 0 masks the IRQ (timer still runs, pending flag still sets)" }
-          - { bit: "2", name: VIDEO_STALL_ENABLE, default: 0,
-              description: "Write 1 to allow VIDEO_STALL to block DTACK; default 0 ignores VIDEO_STALL so system boots without VIDEO" }
       - offset: 0x09
         name: TIMER
         access: write
@@ -147,8 +145,11 @@ peripherals:
 
   VIDEO:
     part: ATF1508AS
-    description: "On-board video generator"
-    clock: [14318181, 25175000]
+    description: >
+      On-board video generator.  Hardcoded VGA 640x480@60 1bpp; the framebuffer
+      is fed by ENGINE DMA over the bodge wires (NEED_WORD/SOF/EOL/LATCH).
+      Each pixel bit indexes a 2-entry R3G3B2 palette loaded by the CPU.
+    clock: [25175000]
     dtack:
       - 12000000: 0
       - 14000000: 0
@@ -163,76 +164,26 @@ peripherals:
       level: 7
       signal: ~VIDEO_IRQ
     registers:
-      - offset: 0x01
-        name: MODE
-        access: rw
+      - offset: 0x07
+        name: STATUS
+        access: read
         width: 8
-        description: >
-          Primary video mode control. To change modes: disable ENBVINT, wait
-          50ms for settling, configure other registers, then write MODE.
+        description: "Read-only scan-position hint for CPU polling"
         bits:
-          - bit: "2:0"
-            name: CLOCK
-            description: "Clock source and output mode selection"
-            values:
-              - { value: "0b000", name: DISABLED,  description: "Video disabled; all outputs Hi-Z, VIDEO_STALL reset" }
-              - { value: "0b100", name: CLK_14MHZ, description: "14.318 MHz pixel clock (NTSC composite)" }
-              - { value: "0b101", name: CLK_25MHZ, description: "25.175 MHz pixel clock (VGA 640x480)" }
-          - { bit: "3", name: PALETTE,
-              description: "0=slow palette (updated at most once per line), 1=fast palette (updated every 16 pixels)" }
-          - { bit: "4", name: FORMAT,
-              description: "0=progressive scan, 1=interlaced" }
-          - { bit: "5", name: ENBVINT,
-              description: "0=disable frame interrupt, 1=enable frame interrupt at start of vblank" }
-          - { bit: "6", name: ENBSNP,
-              description: "0=disable VIDEO_STALL blocking snoop, 1=enable" }
-          - { bit: "7", name: CBURST,
-              description: "0=no colorburst cycles, 1=enable colorburst (composite artifact color)" }
-      - offset: 0x03
-        name: MODE2
-        access: rw
-        width: 8
-        description: "Secondary video mode control; can be changed at any time"
-        bits:
-          - { bit: "0", name: PPC,
-              description: "0=one pixel per clock, 1=one pixel per two clocks" }
-          - { bit: "1", name: ENBLINT,
-              description: "0=disable line interrupt, 1=enable line interrupt outside visible region" }
-      - { offset: 0x05, name: WORDS_START, access: write, width: 8,
-          description: "16-pixel word count from hblank end to first visible output; can change in hblank" }
-      - offset: 0x09
-        name: BORDER_PIXEL
-        access: rw
-        width: 8
-        description: "Pixel value used outside the visible word range; can change at any time"
-        bits:
-          - { bit: "0", name: VALUE, description: "Border pixel bit" }
-      - { offset: 0x0B, name: LINES_START, access: write, width: 8,
-          description: "Visible line start count after vblank end; unblocks VIDEO snoop reads after vsync" }
-      - { offset: 0x0C, name: LINES_COUNT, access: write, width: 16,
-          description: "Number of visible lines" }
+          - { bit: "0", name: LINE_TOGGLE,
+              description: "Toggles every visible line (v_cnt[0]); use for audio busywait pacing or palette-per-line tricks" }
       - offset: 0x0E
         name: PALETTE
         access: write
         width: 16
-        description: "Load palette register immediately; 2x R3G3B2 entries; can change at any time"
+        description: >
+          Two-entry R3G3B2 palette loaded immediately; can be written at any time.
+          A write that lands inside active video may produce a single-pixel
+          color glitch (~40 ns) at the affected scan position.
+          Reset defaults: ENTRY_0=0x00 (black), ENTRY_1=0xFF (white).
         bits:
-          - { bit: "7:0",  name: ENTRY_0, description: "R3G3B2 palette entry 0 (LSB)" }
-          - { bit: "15:8", name: ENTRY_1, description: "R3G3B2 palette entry 1 (MSB)" }
-      - offset: 0x10
-        name: NEXT_PALETTE
-        access: write
-        width: 16
-        description: "Load next-palette buffer; promoted to PALETTE on next shift register reload; can change at any time"
-        bits:
-          - { bit: "7:0",  name: ENTRY_0, description: "R3G3B2 palette entry 0 (LSB)" }
-          - { bit: "15:8", name: ENTRY_1, description: "R3G3B2 palette entry 1 (MSB)" }
-      - { offset: 0x12, name: ARM_SNOOP, access: write, width: 16,
-          description: "Write to arm VIDEO_STALL blocking snoop; write once per visible line before pixel reads" }
-      - { offset: 0x14, name: DISARM_SNOOP, access: write, width: 16,
-          description: "Write to disarm VIDEO_STALL blocking snoop" }
-      - { offset: 0x16, name: PIXEL_DATA, access: write, width: 16,
-          description: "16-bit pixel data; LSB shifted out first. Write stalls via VIDEO_STALL when latch is full." }
+          - { bit: "7:0",  name: ENTRY_0, description: "R3G3B2 color used when pixel bit = 0" }
+          - { bit: "15:8", name: ENTRY_1, description: "R3G3B2 color used when pixel bit = 1" }
 
   ENGINE:
     part: ATF1508AS
@@ -381,4 +332,3 @@ bodges:
   - "VIDEO pin 28 --> ENGINE pin 8: SOF"
   - "VIDEO pin 30 --> ENGINE pin 10: EOL"
   - "ENGINE pin 40 --> VIDEO pin 31: LATCH"
-  - "VIDEO pin 36 --> U23 pin 11: AUDIO_LE"

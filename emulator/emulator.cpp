@@ -686,7 +686,7 @@ struct ClockGovernor
 // ---------------------------------------------------------------------------
 // Video display — tracks VIDEO/ENGINE timing, renders framebuffer to SDL3
 //
-// Derives a line counter from SYSCLK via the 14.318 MHz pixel clock ratio.
+// Derives a line counter from SYSCLK via the 25.175 MHz pixel clock ratio.
 // Each time a line boundary is crossed, the just-completed visible line's
 // framebuffer data is expanded from 1bpp to ARGB8888 in a staging buffer.
 // At frame end the staging buffer is presented to the SDL window.
@@ -694,16 +694,16 @@ struct ClockGovernor
 
 struct VideoDisplay
 {
-    // NTSC 640x240 progressive timing (from video.v)
-    static constexpr uint32_t PIXEL_CLK_HZ = 14318181;
-    static constexpr uint32_t H_TOTAL = 912;
-    static constexpr uint32_t V_TOTAL = 262;
-    static constexpr uint32_t V_ACTIVE = 240;
-    static constexpr uint32_t V_SYNC_START = 244;
-    static constexpr uint32_t V_SYNC_END = 247;
+    // VGA 640x480@60 progressive timing (from video.v)
+    static constexpr uint32_t PIXEL_CLK_HZ = 25175000;
+    static constexpr uint32_t H_TOTAL = 800;
+    static constexpr uint32_t V_TOTAL = 525;
+    static constexpr uint32_t V_ACTIVE = 480;
+    static constexpr uint32_t V_SYNC_START = 490;
+    static constexpr uint32_t V_SYNC_END = 492;
     static constexpr uint32_t WORDS_PER_LINE = 40;
     static constexpr uint32_t WIDTH = 640;
-    static constexpr uint32_t HEIGHT = 240;
+    static constexpr uint32_t HEIGHT = 480;
 
     // Fixed-point pixel/SYSCLK ratio (32.16): pixels per SYSCLK cycle
     static constexpr uint32_t PIXEL_RATIO_FP =
@@ -721,7 +721,7 @@ struct VideoDisplay
     uint16_t stride_field = 0;   // 2-bit stride / 64
     uint16_t fb_ptr = 0;         // 15-bit word offset, mirrors engine.v
 
-    // Staging buffer (640x240 ARGB8888)
+    // Staging buffer (640x480 ARGB8888)
     uint32_t staging[HEIGHT][WIDTH];
 
     // SDL handles
@@ -731,7 +731,7 @@ struct VideoDisplay
 
     bool init()
     {
-        window = SDL_CreateWindow("Griffin", WIDTH, HEIGHT * 2, 0);
+        window = SDL_CreateWindow("Griffin", WIDTH, HEIGHT, 0);
         if (!window)
         {
             fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
@@ -916,10 +916,9 @@ class GriffinEmulator : public moira::Moira
             systick.irq_enabled = !!(val & GLUE_CONFIG_SYSTICK_IRQ_ENABLE_MASK);
             if (debug & DEBUG_IO)
             {
-                printf("[GLUE CONFIG: 0x%02X overlay=%s systick_irq=%s video_stall=%s]\n", val,
+                printf("[GLUE CONFIG: 0x%02X overlay=%s systick_irq=%s]\n", val,
                        (val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK) ? "off" : "on",
-                       systick.irq_enabled ? "on" : "off",
-                       (val & GLUE_CONFIG_VIDEO_STALL_ENABLE_MASK) ? "on" : "off");
+                       systick.irq_enabled ? "on" : "off");
             }
         } else if(addr == GLUE_TIMER - IO_BASE) {
             timer.period = val & 0x1F;

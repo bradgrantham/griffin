@@ -7,7 +7,6 @@ module glue (
     input  wire        SYSCLK,
     input  wire        nRESET,
     input  wire        DEBUG_IN,    // pin 83: UART RX input (GCLK1)
-    input  wire        VIDEO_STALL, // pin 84: VIDEO CPLD stalls all DTACK (active high)
     input  wire        OE2_pin,
     input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
     input  wire        HALT_REQ,      // pin 17: ENGINE requests CPU halt for DMA
@@ -48,7 +47,6 @@ module glue (
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
     reg systick_irq_enable;     // power-on state 0 = systick IRQ masked
-    reg video_stall_enable;     // power-on state 0 = VIDEO_STALL ignored
 
     wire read = R_nW;
     wire write = ~read;
@@ -243,14 +241,12 @@ module glue (
         if(RESET) begin
             rom_overlay_disable <= 0;
             systick_irq_enable  <= 0;
-            video_stall_enable  <= 0;
             debug_out_reg       <= 0;
         end else begin
             if (glue_select & lo_byte_selected & write
                 & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1])) begin
                 rom_overlay_disable <= D[0];
                 systick_irq_enable  <= D[`GLUE_CONFIG_SYSTICK_IRQ_ENABLE_SHIFT];
-                video_stall_enable  <= D[`GLUE_CONFIG_VIDEO_STALL_ENABLE_SHIFT];
             end
             if (debug_out_select)
                 debug_out_reg <= D[0];
@@ -374,14 +370,6 @@ module glue (
     // ENGINE uses 0 wait states for CPU register access (pin 17 is
     // now HALT_REQ, not ENGINE_DTACK).
     //
-    // VIDEO_STALL (pin 84, active high):
-    //   When asserted by the VIDEO CPLD, blocks ALL DTACK generation
-    //   to stall the CPU while the 1-bit pixel shift register is being
-    //   shifted out and cannot yet accept new data into the pixel latch.
-    //   VIDEO_STALL is OR'd into nDTACK so any bus cycle is held off.
-    //   TODO: Not yet driven by VIDEO CPLD — pin must be held low
-    //   (active low pull-down or direct ground) until VIDEO firmware
-    //   implements the stall protocol.
     // ----------------------------------------------------------------
 
     reg [3:0] ws_cnt;
@@ -405,18 +393,12 @@ module glue (
         (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
         (AUDIO_LE          & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO
 
-    // VIDEO_STALL OR'd into nDTACK: when VIDEO_STALL is high and
-    // video_stall_enable is set, nDTACK stays deasserted (high)
-    // regardless of dtack_comb, stalling the CPU.  Default after reset
-    // is disabled so the system boots even if VIDEO_STALL is floating.
-    //
     // Timer armed gate: when armed and timer is not at zero, block
     // ALL DTACK to freeze the CPU until the next zero-crossing.
     // Timer stall: block DTACK while armed, release on the prescale
     // tick where the counter reaches zero (timer_zero AND prescale_tick
     // — the moment the armed flag clears).
     assign nDTACK = ~dtack_comb
-                  | (VIDEO_STALL & video_stall_enable)
                   | (timer_armed & ~(timer_zero & prescale_tick));
 
 
@@ -438,7 +420,6 @@ endmodule
 //PIN: nHALT     : 36
 //PIN: DEBUG_IN  : 83
 //PIN: DEBUG_OUT     : 67
-//PIN: VIDEO_STALL : 84
 //PIN: OE2_pin   : 2
 //PIN: nVIDEO_IRQ : 1
 //PIN: nROM_SELECT  : 4
