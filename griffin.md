@@ -323,7 +323,7 @@ Third ATF1508AS.  HALT-based bus-stealing DMA controller for video (and audio).
 * Reads framebuffer data from SRAM and signals VIDEO to latch D[15:0] directly from the data bus
 * Uses HALT-based bus stealing: ENGINE asks GLUE to halt the CPU, then drives the address bus to perform an SRAM read while VIDEO snoops D[15:0] via LATCH signal
 * ENGINE does not know or care about pixel format — it is a word pump.  VIDEO controls how many words per line via NEED\_WORD, and signals EOL to advance ENGINE to the next row
-* Audio: VIDEO requests one extra ENGINE transfer at end of line and asserts AUDIO\_LE instead of LATCH, so the audio DAC captures D[15:0].  The audio sample sits at the end of each row's active pixel words in the framebuffer.  ENGINE does not need to know audio exists.
+* Audio: not handled by ENGINE in Rev 1.  The original plan (VIDEO requests an extra ENGINE transfer per line and asserts AUDIO\_LE instead of LATCH, so the audio DAC captures D[15:0], with the sample stashed at the end of each row) was abandoned because every usable rate tightly couples to HSYNC and the framebuffer layout gets awkward.  See "CPU-driven 8-bit audio" below.
 * Row stride is always a multiple of 64 words (128 bytes).  CPU configures stride via a 2-bit field: 0=64, 1=128, 2=192, 3=256 words.  Progressive uses stride = smallest multiple of 64 >= active words.  Interlaced uses 2x that to skip the other field's line in a line-sequential framebuffer.
 * ADVANCE register (write-only command) performs the same row-advance operation as EOL; used by VSYNC ISR to offset field 1 by one line
 
@@ -338,12 +338,18 @@ Bodge wires required on Rev 1 (6 total):
 
 Fits 108/128 macrocells (84%) with current register set.
 
-## Latched 8-bit audio
+## CPU-driven 8-bit audio
 
-* VIDEO triggers ENGINE to read an audio sample at end of each visible line and asserts AUDIO\_LE to latch D[15:0] into the audio DAC
-* 8-bit R2R  
-* [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp  
-* Will need to see how much noise and distortion is caused by timing variation.  Maybe I can add blocking DTACK to a timer tick or something
+The '373 audio latch is clocked by GLUE's ~AUDIO\_LE on CPU writes to the audio address; there is no hardware FIFO or DMA engine.  Driving the DAC is a CPU timing problem, with two supported patterns:
+
+* **ISR-driven (OS-friendly, ~8-11 kHz).**  GLUE timer (or a future VIDEO line IRQ) fires periodically; ISR writes one sample and returns.  Ceiling is set by ISR overhead on the 12 MHz 68000 with ROM wait states — probably 8-11 kHz before the ISR eats most of the CPU.  Good enough for a general-purpose OS that must also do other work (CP/M-68K, Fuzix).
+* **Busywait-driven (game-friendly, up to ~31/15/10 kHz).**  VIDEO exposes a STATUS register whose bit 0 toggles once per visible line (v\_cnt[0]; 31.469 kHz at VGA 640x480@60).  Code polls the toggle, then writes AUDIO.  1x coupling = 31.469 kHz (one sample per flip).  /2 or /3 rate by skipping 1 or 2 lines.  A game that gives up its main loop to audio-plus-framebuffer-writes can spend every non-rendering cycle on audio.
+
+This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; future revisions may repurpose the pin.
+
+* 8-bit R2R
+* [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp
+* Timing jitter from variable instruction execution and ENGINE-induced HALT will modulate audio; expect audible noise during heavy ENGINE activity.  Mitigations: (a) keep the audio write at the same position inside the busywait loop so HALT-induced jitter is constant per-sample, (b) one-pole RC filter on DAC output, or (c) disable rendering during audio-critical moments.
 
 # Rev 2
 
