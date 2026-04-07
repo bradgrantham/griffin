@@ -115,31 +115,8 @@ _start:
 
     | ---- Startup banner (GLUE UART 115200, no stack) ----
     lea     msg_banner(%pc), %a0
-    lea     print_build_id(%pc), %a6
+    lea     ram_test(%pc), %a6
     jmp     glue_puts
-
-    | ---- Print GLUE build ID ----
-print_build_id:
-    lea     msg_build_id(%pc), %a0
-    lea     .pbi_read(%pc), %a6
-    jmp     glue_puts
-.pbi_read:
-    | Reset phase to high byte, then read hi:lo
-    move.b  #0, GLUE_BUILD_ID
-    move.b  GLUE_BUILD_ID, %d0
-    lsl.w   #8, %d0
-    move.b  GLUE_BUILD_ID, %d0
-    | %d0.w = 16-bit build ID
-    lea     .pbi_crlf(%pc), %a3
-    jmp     glue_hex16
-.pbi_crlf:
-    move.b  #0x0D, %d0
-    lea     .pbi_lf(%pc), %a5
-    jmp     glue_putc
-.pbi_lf:
-    move.b  #0x0A, %d0
-    lea     ram_test(%pc), %a5
-    jmp     glue_putc
 
     | ---- RAM test ----
     | %d7 = failure flag (0 = all pass so far)
