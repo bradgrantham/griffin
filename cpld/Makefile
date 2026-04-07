@@ -91,11 +91,20 @@ engine/engine.svf: engine/engine.jed
 
 # No flash-engine target yet — ENGINE is not in the JTAG chain on Rev 1
 
-# ------------------------------------------------------------
-
 flash-video: video/video.svf
 	$(OPENOCD_JTAG) \
 	    -c "svf video/video.svf -tap tap0.tap" \
+	    -c shutdown
+
+# ------------------------------------------------------------
+
+flash-engine: engine/engine.svf
+	sudo openocd -f interface/ftdi/um232h.cfg \
+	    -c "adapter speed 500" \
+	    -c "transport select jtag" \
+	    -c "jtag newtap tap0 tap -irlen 10 -expected-id 0x0150803f" \
+	    -c init \
+	    -c "svf engine/engine.svf -tap tap0.tap" \
 	    -c shutdown
 
 # ------------------------------------------------------------
