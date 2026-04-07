@@ -683,6 +683,136 @@ struct ClockGovernor
     }
 };
 
+// ---------------------------------------------------------------------------
+// Video display — tracks VIDEO/ENGINE timing, renders framebuffer to SDL3
+//
+// Derives a line counter from SYSCLK via the 14.318 MHz pixel clock ratio.
+// Each time a line boundary is crossed, the just-completed visible line's
+// framebuffer data is expanded from 1bpp to ARGB8888 in a staging buffer.
+// At frame end the staging buffer is presented to the SDL window.
+// ---------------------------------------------------------------------------
+
+struct VideoDisplay
+{
+    // NTSC 640x240 progressive timing (from video.v)
+    static constexpr uint32_t PIXEL_CLK_HZ = 14318181;
+    static constexpr uint32_t H_TOTAL = 912;
+    static constexpr uint32_t V_TOTAL = 262;
+    static constexpr uint32_t V_ACTIVE = 240;
+    static constexpr uint32_t V_SYNC_START = 244;
+    static constexpr uint32_t V_SYNC_END = 247;
+    static constexpr uint32_t WORDS_PER_LINE = 40;
+    static constexpr uint32_t WIDTH = 640;
+    static constexpr uint32_t HEIGHT = 240;
+
+    // Fixed-point pixel/SYSCLK ratio (32.16): pixels per SYSCLK cycle
+    static constexpr uint32_t PIXEL_RATIO_FP =
+        ((uint64_t)PIXEL_CLK_HZ << 16) / SYSCLK_HZ;
+
+    // Timing state
+    uint64_t prev_sysclk = 0;
+    uint64_t pixel_accum_fp = 0;  // 48.16 fixed-point absolute pixel count
+    uint64_t abs_line = 0;        // monotonically increasing line counter
+    bool irq_active = false;
+
+    // ENGINE DMA mirror state
+    bool dma_enabled = false;
+    uint8_t fb_base = 0;         // A[21:14] of framebuffer base
+    uint16_t stride_field = 0;   // 2-bit stride / 64
+    uint16_t fb_ptr = 0;         // 15-bit word offset, mirrors engine.v
+
+    // Staging buffer (640x240 ARGB8888)
+    uint32_t staging[HEIGHT][WIDTH];
+
+    // SDL handles
+    SDL_Window *window = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    SDL_Texture *texture = nullptr;
+
+    bool init()
+    {
+        window = SDL_CreateWindow("Griffin", WIDTH, HEIGHT * 2, 0);
+        if (!window)
+        {
+            fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
+            return false;
+        }
+        renderer = SDL_CreateRenderer(window, nullptr);
+        if (!renderer)
+        {
+            fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
+            return false;
+        }
+        SDL_SetRenderVSync(renderer, 0);
+        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                    SDL_TEXTUREACCESS_STREAMING, WIDTH, HEIGHT);
+        if (!texture)
+        {
+            fprintf(stderr, "SDL_CreateTexture: %s\n", SDL_GetError());
+            return false;
+        }
+        SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+        memset(staging, 0, sizeof(staging));
+        return true;
+    }
+
+    void shutdown()
+    {
+        if (texture)
+        {
+            SDL_DestroyTexture(texture);
+            texture = nullptr;
+        }
+        if (renderer)
+        {
+            SDL_DestroyRenderer(renderer);
+            renderer = nullptr;
+        }
+        if (window)
+        {
+            SDL_DestroyWindow(window);
+            window = nullptr;
+        }
+    }
+
+    // Compute RAM byte address from ENGINE fb_base + fb_ptr
+    // Matches engine.v: dma_addr = {2'b00, fb_base + fb_ptr[14:13], fb_ptr[12:0]}
+    static uint32_t fb_byte_addr(uint8_t base, uint16_t ptr)
+    {
+        uint32_t hi = ((uint32_t)base + (ptr >> 13)) & 0xFF;
+        uint32_t lo = ptr & 0x1FFF;
+        return (hi << 14) | (lo << 1);
+    }
+
+    // EOL advance — matches engine.v row_advanced wire
+    void eol_advance()
+    {
+        uint16_t row_part = (fb_ptr >> 6) + stride_field;
+        fb_ptr = (row_part << 6) & 0x7FFF;
+    }
+
+    void present()
+    {
+        if (!texture)
+        {
+            return;
+        }
+        void *pixels;
+        int pitch;
+        if (SDL_LockTexture(texture, nullptr, &pixels, &pitch))
+        {
+            for (uint32_t y = 0; y < HEIGHT; y++)
+            {
+                memcpy((uint8_t *)pixels + y * pitch, staging[y], WIDTH * 4);
+            }
+            SDL_UnlockTexture(texture);
+        }
+        SDL_RenderClear(renderer);
+        SDL_RenderTexture(renderer, texture, nullptr, nullptr);
+        SDL_RenderPresent(renderer);
+    }
+};
+
 class GriffinEmulator : public moira::Moira
 {
     mutable std::vector<uint8_t> RAM_bank1;
@@ -697,6 +827,7 @@ class GriffinEmulator : public moira::Moira
     mutable TimerState timer;
     mutable SystickState systick;
     mutable SoftUARTTX debug_in_tx;
+    mutable VideoDisplay video_display;
     mutable uint8_t dac_value = 0x0;
 
     // VIDEO register shadow state (minimal — just enough to not crash)
@@ -727,11 +858,7 @@ class GriffinEmulator : public moira::Moira
             return cf.read_reg(addr + IO_BASE);
         } else if(addr == GLUE_SYSTICK_STATUS - IO_BASE) {
             uint8_t val = systick.read_status();
-            // Deassert systick IRQ when pending is cleared
-            if (!systick.pending)
-            {
-                const_cast<GriffinEmulator*>(this)->setIPL(0);
-            }
+            const_cast<GriffinEmulator*>(this)->update_ipl();
             return val;
         } else if(addr == GLUE_DEBUG_IN - IO_BASE) {
             // Eagerly check PTY for incoming data so the bit-bang RX
@@ -935,14 +1062,17 @@ class GriffinEmulator : public moira::Moira
     {
         if(addr == ENGINE_CONTROL) {
             engine_control = val;
+            video_display.dma_enabled = !!(val & ENGINE_CONTROL_ENABLE_MASK);
         } else if(addr == ENGINE_FB_BASE) {
             engine_fb_base = val;
+            video_display.fb_base = val & 0xFF;
         } else if(addr == ENGINE_ROW_STRIDE) {
             engine_row_stride = val;
+            video_display.stride_field = val & ENGINE_ROW_STRIDE_MASK;
         } else if(addr == ENGINE_STATUS) {
             engine_status = 0;  // write clears sticky error bits
         } else if(addr == ENGINE_ADVANCE) {
-            // advance command — no-op without DMA emulation
+            video_display.eol_advance();
         } else {
             if(debug & DEBUG_IO)
             {
@@ -1210,8 +1340,49 @@ public:
             debug_in_tx.enqueue(ch);
         }
 
-        // Systick IRQ: only assert if both pending and enabled in GLUE_CONFIG
-        if (systick.pending && systick.irq_enabled)
+        update_ipl();
+    }
+
+    // Tick the systick timer.  Called every 65536 SYSCLK cycles.
+    void tick_systick()
+    {
+        systick.tick();
+    }
+
+    // ----------------------------------------------------------------
+    // Video display
+    // ----------------------------------------------------------------
+
+    // Read a byte directly from RAM without bus penalties (for DMA emulation)
+    uint8_t read_ram_direct(uint32_t addr) const
+    {
+        if (addr < RAM_BANK_1_BASE + RAM_BANK_1_SIZE)
+        {
+            return RAM_bank1.size() > 0 ? RAM_bank1[addr % RAM_bank1.size()] : 0;
+        }
+        if (addr < RAM_BANK_2_BASE + RAM_BANK_2_SIZE)
+        {
+            return RAM_bank2.size() > 0 ? RAM_bank2[(addr - RAM_BANK_2_BASE) % RAM_bank2.size()] : 0;
+        }
+        if (addr < RAM_BANK_3_BASE + RAM_BANK_3_SIZE)
+        {
+            return RAM_bank3.size() > 0 ? RAM_bank3[(addr - RAM_BANK_3_BASE) % RAM_bank3.size()] : 0;
+        }
+        if (addr < RAM_BANK_4_BASE + RAM_BANK_4_SIZE)
+        {
+            return RAM_bank4.size() > 0 ? RAM_bank4[(addr - RAM_BANK_4_BASE) % RAM_bank4.size()] : 0;
+        }
+        return 0;
+    }
+
+    // Unified IPL management — picks highest active interrupt source
+    void update_ipl()
+    {
+        if (video_display.irq_active)
+        {
+            setIPL(7);
+        }
+        else if (systick.pending && systick.irq_enabled)
         {
             setIPL(5);
         }
@@ -1221,10 +1392,86 @@ public:
         }
     }
 
-    // Tick the systick timer.  Called every 65536 SYSCLK cycles.
-    void tick_systick()
+    // Process a single video line crossing
+    void process_video_line(uint32_t vline)
     {
-        systick.tick();
+        if (vline < VideoDisplay::V_ACTIVE && video_display.dma_enabled)
+        {
+            // Read 40 words (80 bytes) from framebuffer, expand 1bpp to ARGB
+            uint32_t base_addr = VideoDisplay::fb_byte_addr(
+                video_display.fb_base, video_display.fb_ptr);
+            uint32_t *row = video_display.staging[vline];
+            for (uint32_t word = 0; word < VideoDisplay::WORDS_PER_LINE; word++)
+            {
+                uint32_t addr = base_addr + word * 2;
+                uint8_t hi = read_ram_direct(addr);
+                uint8_t lo = read_ram_direct(addr + 1);
+                uint16_t pixels = (hi << 8) | lo;
+                // MSB first: video.v word_reg[15 - pixel_cnt]
+                for (int bit = 15; bit >= 0; bit--)
+                {
+                    *row++ = (pixels & (1 << bit)) ? 0xFFFFFFFF : 0xFF000000;
+                }
+            }
+            video_display.eol_advance();
+        }
+        else if (vline < VideoDisplay::V_ACTIVE)
+        {
+            // DMA disabled — black
+            memset(video_display.staging[vline], 0, VideoDisplay::WIDTH * 4);
+        }
+
+        // SOF at vsync start — reset fb_ptr, assert VIDEO IRQ
+        if (vline == VideoDisplay::V_SYNC_START)
+        {
+            video_display.fb_ptr = 0;
+            video_display.irq_active = true;
+            update_ipl();
+        }
+        else if (vline == VideoDisplay::V_SYNC_END)
+        {
+            video_display.irq_active = false;
+            update_ipl();
+        }
+    }
+
+    // Advance video timing to current SYSCLK, process any crossed lines
+    void advance_video()
+    {
+        uint64_t sysclk = getClock();
+        uint64_t elapsed = sysclk - video_display.prev_sysclk;
+        video_display.prev_sysclk = sysclk;
+        video_display.pixel_accum_fp += elapsed * VideoDisplay::PIXEL_RATIO_FP;
+
+        uint64_t cur_abs_line =
+            (video_display.pixel_accum_fp >> 16) / VideoDisplay::H_TOTAL;
+
+        while (video_display.abs_line < cur_abs_line)
+        {
+            video_display.abs_line++;
+            uint32_t vline = video_display.abs_line % VideoDisplay::V_TOTAL;
+            if (vline == 0)
+            {
+                video_display.present();
+            }
+            process_video_line(vline);
+        }
+    }
+
+    bool init_video()
+    {
+        if (!SDL_Init(SDL_INIT_VIDEO))
+        {
+            fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+            return false;
+        }
+        return video_display.init();
+    }
+
+    void shutdown_video()
+    {
+        video_display.shutdown();
+        SDL_Quit();
     }
 };
 
@@ -1417,6 +1664,12 @@ int main(int argc, const char** argv)
         exit(EXIT_FAILURE);
     }
 
+    if(!emulator.init_video())
+    {
+        fprintf(stderr, "Failed to initialize video display\n");
+        exit(EXIT_FAILURE);
+    }
+
     SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
 
     emulator.setDasmSyntax(moira::Syntax::GNU_MIT);
@@ -1439,13 +1692,16 @@ int main(int argc, const char** argv)
     uint64_t clock_next_audio = sysclk_per_audio;
     FILE *audio = fopen("audio.raw", "wb");
 
-    while (1) {
+    bool running = true;
+
+    while (running) {
         if(debug & DEBUG_DISASSEMBLE) {
             static char str[1024];
             emulator.disassemble(str, emulator.getPC());
             printf("%04X: %s\n", emulator.getPC(), str);
         }
         emulator.execute();
+        emulator.advance_video();
         auto clock_now = emulator.getClock();
         auto now = time(0);
 
@@ -1489,6 +1745,15 @@ int main(int argc, const char** argv)
         {
             emulator.poll_io();
             previous_io_poll = clock_now;
+
+            SDL_Event event;
+            while (SDL_PollEvent(&event))
+            {
+                if (event.type == SDL_EVENT_QUIT)
+                {
+                    running = false;
+                }
+            }
         }
 
         if(now != then)
@@ -1498,4 +1763,11 @@ int main(int argc, const char** argv)
             then = now;
         }
     }
+
+    if (audio)
+    {
+        fclose(audio);
+    }
+    emulator.shutdown_video();
+    return 0;
 }
