@@ -563,6 +563,38 @@ static bool evt_pop(uint8_t *out)
     return true;
 }
 
+static constexpr uint32_t FB_ALIGN = 16384;  // ENGINE_FB_BASE is A[21:14]
+uint8_t *framebuffer_allocation;
+extern volatile uint32_t framebuffer_stride_words;
+extern volatile uint32_t framebuffer_height_lines;
+extern volatile uint32_t framebuffer_width_pixels;
+extern volatile uint32_t framebuffer_width_words;
+extern volatile uint16_t *framebuffer_base;
+
+bool video_configure(/* mode parameters */)
+{
+    framebuffer_stride_words = 64;
+    framebuffer_width_pixels = 640;
+    framebuffer_width_words = 40;
+    framebuffer_height_lines = 240;
+    auto framebuffer_size = framebuffer_stride_words * framebuffer_height_lines;
+    // Allocate framebuffer with room to align to 16KB
+    uint8_t *framebuffer_allocation = static_cast<uint8_t *>(malloc(framebuffer_size + FB_ALIGN - 1));
+    if (!framebuffer_allocation)
+    {
+        debug_printf("video: framebuffer allocation failed\n");
+        return false;
+    }
+    auto raw_addr = reinterpret_cast<uintptr_t>(framebuffer_allocation);
+    auto fb_addr = (raw_addr + FB_ALIGN - 1) & ~(FB_ALIGN - 1);
+    framebuffer_base = reinterpret_cast<volatile uint16_t *>(fb_addr);
+
+    video_start_dma(fb_addr >> 14, Griffin::ENGINE_ROW_STRIDE_STRIDE_64);
+    debug_printf("video: splash displayed at 0x%06lX\n", (unsigned long)fb_addr);
+
+    return true;
+}
+
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
@@ -571,41 +603,32 @@ int main()
     // Display splash bitmap via ENGINE DMA
     // -----------------------------------------------------------------
     {
-        static constexpr int STRIDE_WORDS = 64;
-        static constexpr int STRIDE_BYTES = STRIDE_WORDS * 2;
+        int STRIDE_BYTES = framebuffer_stride_words * 2;
         static constexpr int WORDS_PER_LINE = SPLASH_WIDTH / 16;  // 40
-        static constexpr int FB_SIZE = STRIDE_BYTES * SPLASH_HEIGHT;
-        static constexpr uint32_t FB_ALIGN = 16384;  // ENGINE_FB_BASE is A[21:14]
 
-        // Allocate framebuffer with room to align to 16KB
-        uint8_t *raw = static_cast<uint8_t *>(malloc(FB_SIZE + FB_ALIGN - 1));
-        if (!raw)
+        bool success = video_configure(/* ... */);
+        if(!success)
         {
-            debug_printf("Video: framebuffer malloc failed\n");
+            debug_printf("video configuration failed\n");
         }
         else
         {
-            auto raw_addr = reinterpret_cast<uintptr_t>(raw);
-            auto fb_addr = (raw_addr + FB_ALIGN - 1) & ~(FB_ALIGN - 1);
-            volatile uint16_t *fb = reinterpret_cast<volatile uint16_t *>(fb_addr);
+            volatile uint16_t *fb = framebuffer_base;
             const uint16_t *src = splash_bitmap;
 
             for (int y = 0; y < SPLASH_HEIGHT; y++)
             {
-                for (int x = 0; x < WORDS_PER_LINE; x++)
+                for (int x = 0; x < framebuffer_width_words; x++)
                 {
                     fb[x] = src[x];
                 }
-                for (int x = WORDS_PER_LINE; x < STRIDE_WORDS; x++)
+                for (int x = framebuffer_width_words; x < framebuffer_stride_words; x++)
                 {
                     fb[x] = 0;
                 }
                 src += WORDS_PER_LINE;
-                fb += STRIDE_WORDS;
+                fb += framebuffer_stride_words;
             }
-
-            video_start_dma(fb_addr >> 14, Griffin::ENGINE_ROW_STRIDE_STRIDE_64);
-            debug_printf("Video: splash displayed at 0x%06lX\n", (unsigned long)fb_addr);
         }
     }
 

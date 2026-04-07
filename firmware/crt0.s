@@ -750,3 +750,20 @@ evt_tail:
     .skip 4
 evt_overflow:
     .skip 1
+
+    .align 2
+    .global framebuffer_stride_words
+    .global framebuffer_height_lines
+    .global framebuffer_width_pixels
+    .global framebuffer_width_words
+    .global framebuffer_base
+framebuffer_stride_words:
+    .skip 4
+framebuffer_height_lines:
+    .skip 4
+framebuffer_width_pixels:
+    .skip 4
+framebuffer_width_words:
+    .skip 4
+framebuffer_base:
+    .skip 4
