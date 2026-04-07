@@ -3,7 +3,7 @@ M68K_OBJCOPY = ./m68k-objcopy
 
 REAL_SOURCES = crt0.s rom.cpp splash.cpp syscalls.c ff.c diskio.c
 SOURCES = $(REAL_SOURCES) build_info.c
-OBJECTS = startup_audio.o
+OBJECTS = # startup_audio.o
 LDSCRIPT = linker.ld
 
 rom_even.bin rom_odd.bin: rom.bin
