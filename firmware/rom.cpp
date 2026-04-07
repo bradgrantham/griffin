@@ -571,7 +571,7 @@ extern volatile uint32_t framebuffer_width_pixels;
 extern volatile uint32_t framebuffer_width_words;
 extern volatile uint16_t *framebuffer_base;
 
-bool video_configure(/* mode parameters */)
+bool video_allocate(/* mode parameters */)
 {
     framebuffer_stride_words = 64;
     framebuffer_width_pixels = 640;
@@ -589,10 +589,20 @@ bool video_configure(/* mode parameters */)
     auto fb_addr = (raw_addr + FB_ALIGN - 1) & ~(FB_ALIGN - 1);
     framebuffer_base = reinterpret_cast<volatile uint16_t *>(fb_addr);
 
-    video_start_dma(fb_addr >> 14, Griffin::ENGINE_ROW_STRIDE_STRIDE_64);
     debug_printf("video: splash displayed at 0x%06lX\n", (unsigned long)fb_addr);
 
     return true;
+}
+
+void video_start()
+{
+    auto fb_addr = reinterpret_cast<uintptr_t>(framebuffer_base);
+    video_start_dma(fb_addr >> 14, Griffin::ENGINE_ROW_STRIDE_STRIDE_64);
+}
+
+void video_stop()
+{
+    video_stop_dma();
 }
 
 int main()
@@ -606,7 +616,7 @@ int main()
         int STRIDE_BYTES = framebuffer_stride_words * 2;
         static constexpr int WORDS_PER_LINE = SPLASH_WIDTH / 16;  // 40
 
-        bool success = video_configure(/* ... */);
+        bool success = video_allocate(/* ... */);
         if(!success)
         {
             debug_printf("video configuration failed\n");
@@ -629,6 +639,7 @@ int main()
                 src += WORDS_PER_LINE;
                 fb += framebuffer_stride_words;
             }
+            video_start();
         }
     }
 
