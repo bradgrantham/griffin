@@ -359,6 +359,7 @@ Fits 108/128 macrocells (84%) with current register set.
   - [ ] Pullup on DTACK so missing peripherals can't spuriously ACK
   - [ ] 4.7K Pullup on HALT
   - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
+  - [ ] Kill ENGINE BGACK, BG, BR, DTACK, IACK, FC lines; it stops CPU through GLUE through HALT and reads memory assuming a particular access speed, CPU autohvectors
   - [ ] Rework GLUE IO MCU signals for 68681: ~IO_SELECT becomes ~CS, ~IO_DTACK becomes a pass-through input (68681 drives DTACK), ~IO_IRQ stays as interrupt input; drop ~IO_IACK (tie 68681 ~IACK high, use autovectors, read ISR to clear)
   - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
   - [ ] More signals between GLUE, VIDEO, ENGINE
