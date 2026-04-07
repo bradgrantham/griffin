@@ -576,7 +576,7 @@ bool video_allocate(/* mode parameters */)
     framebuffer_stride_words = 64;
     framebuffer_width_pixels = 640;
     framebuffer_width_words = 40;
-    framebuffer_height_lines = 240;
+    framebuffer_height_lines = 480;
     auto framebuffer_size = framebuffer_stride_words * framebuffer_height_lines;
     // Allocate framebuffer with room to align to 16KB
     uint8_t *framebuffer_allocation = static_cast<uint8_t *>(malloc(framebuffer_size + FB_ALIGN - 1));
