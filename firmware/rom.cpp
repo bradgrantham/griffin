@@ -30,9 +30,10 @@ struct cf_info
 static constexpr uint32_t CF_POLL_LIMIT = 500000;
 
 // Power-on poll limit for cf_init.  CF spec allows up to 31 seconds
-// for BSY to clear after power-on; 2 seconds covers most cards.
-// Each iteration is ~50 SYSCLK (~4 µs at 12 MHz), so 600K ≈ 2.4 s.
-static constexpr uint32_t CF_INIT_POLL_LIMIT = 600000;
+// for BSY to clear after power-on; ~2 seconds covers most cards.
+// Each iteration is ~50 SYSCLK; scale the count from SYSCLK_HZ so the
+// wall-clock duration stays constant if the system clock changes.
+static constexpr uint32_t CF_INIT_POLL_LIMIT = (Griffin::SYSCLK_HZ / 50) * 2;
 
 static volatile uint8_t &cf_data       = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_DATA);
 static volatile uint8_t &cf_error_reg  = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_ERROR);
@@ -605,6 +606,17 @@ void video_stop()
     video_stop_dma();
 }
 
+static inline uint8_t rgb332(uint8_t r, uint8_t g, uint8_t b)
+{
+    return (uint8_t)(((r & 0xE0)) | ((g & 0xE0) >> 3) | ((b & 0xC0) >> 6));
+}
+
+static inline void video_set_palette(uint8_t bg, uint8_t fg)
+{
+    // ENTRY_0 in low byte (pixel=0), ENTRY_1 in high byte (pixel=1).
+    *(volatile uint16_t *)(Griffin::VIDEO_PALETTE) = ((uint16_t)fg << 8) | bg;
+}
+
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
@@ -652,6 +664,7 @@ int main()
     cf_mount_and_list();
 
     // Polled UART RX loop via DEBUG_IN
+    int qq = 0;
     for (;;)
     {
         int ch = debug_getchar();
@@ -659,6 +672,18 @@ int main()
         {
             debug_printf("received: 0x%02X '%c'\n", ch,
                          (ch >= 0x20 && ch < 0x7F) ? ch : '.');
+        }
+        // Amber on black (Hercules-ish).
+        qq++;
+        if(qq > 1000) {
+            if(qq % 3 == 0)
+            {
+                video_set_palette(rgb332(0, 0, 0), rgb332(255, 0, 0));
+            } else if(qq % 3 == 1) {
+                video_set_palette(rgb332(0, 0, 0), rgb332(0, 255, 0));
+            } else {
+                video_set_palette(rgb332(0, 0, 0), rgb332(0, 0, 255));
+            }
         }
     }
 }

@@ -259,48 +259,46 @@ module glue (
     assign DEBUG_OUT = debug_out_reg;
 
     // ----------------------------------------------------------------
-    // Shared ÷8 prescaler for both GLUE_TIMER and systick
+    // GLUE_TIMER — 8-bit auto-reload timer running directly on SYSCLK
     //
-    // The 3-bit prescaler free-runs (systick is always active).
-    // Writing GLUE_TIMER resets it to 7 for precise UART timing;
-    // the systick tolerates the occasional glitch (sub-µs jitter
-    // on a 5–20 ms tick).
+    // Effective period = (N+1) SYSCLK (N = 1..255).  Direct SYSCLK
+    // resolution lets bit-bang UART pick a per-bit count within 1
+    // SYSCLK of any target baud, e.g. 115200 baud at 14 MHz wants
+    // 121 or 122 SYSCLK/bit (~0.4 % error vs the old 5-bit /8 timer
+    // which only managed ~1.3 % at 14 MHz).
+    //
+    // Writing GLUE_TIMER loads the period and starts a free-running
+    // countdown that auto-reloads on zero.  Writing 0 stops it.
+    // GLUE_TIMER_ARM blocks all DTACK until the next zero-crossing.
+    //
+    //   move.b  #120, TIMER       ; (120+1) = 121 SYSCLK per tick
+    // .loop:
+    //   <set up next bit>
+    //   move.b  #0, TIMER_ARM     ; arm — next bus cycle stalls
+    //   move.b  d0, DEBUG_OUT     ; toggles exactly 121 SYSCLK apart
+    //   dbra    d1, .loop
+    //   move.b  #0, TIMER         ; stop
     // ----------------------------------------------------------------
-    reg [2:0] timer_prescale;
-    reg [4:0] timer_period;
-    reg [4:0] timer_cnt;
+    reg [7:0] timer_period;
+    reg [7:0] timer_cnt;
     reg       timer_armed;
+
+    wire timer_zero = (timer_cnt == 8'd0);
 
     // Systick state — timer always runs, IRQ gated by CONFIG.SYSTICK_IRQ_ENABLE
     reg [6:0]  systick_subdiv;       // ÷128 on top of ÷8 → ÷1024
     reg [5:0]  systick_cnt;          // ÷64 on top of ÷1024 → ÷65536 total (~183 Hz)
     reg        systick_pending;      // IRQ pending flag
 
-    wire prescale_tick    = (timer_prescale == 3'd0);
-    wire timer_zero       = (timer_cnt == 5'd0);
+    // Systick prescaler
+    reg [2:0] systick_prescale;
+    wire prescale_tick    = (systick_prescale == 3'd0);
     wire systick_tick     = prescale_tick & (systick_subdiv == 7'd0);
-
-    // ----------------------------------------------------------------
-    // 5-bit auto-reload timer with arm gate (GLUE_TIMER)
-    //
-    // Effective period = (N+1) × 8 SYSCLK (N = 1..31).
-    // Writing GLUE_TIMER loads period, resets prescaler, starts
-    // countdown.  Writing 0 stops it.  GLUE_TIMER_ARM blocks all
-    // DTACK until the next zero-crossing.
-    //
-    //   move.b  #12, TIMER        ; (12+1)*8 = 104 clocks (115200 baud)
-    // .loop:
-    //   <set up next bit>
-    //   move.b  #0, TIMER_ARM     ; arm — next bus cycle stalls
-    //   move.b  d0, DEBUG_OUT     ; toggles exactly 104 clocks apart
-    //   dbra    d1, .loop
-    //   move.b  #0, TIMER         ; stop
-    // ----------------------------------------------------------------
 
     // ----------------------------------------------------------------
     // Systick timer — always-running periodic interrupt (level 5)
     //
-    // Shares the ÷8 prescaler with GLUE_TIMER, then divides by
+    //  /8 prescaler, then divides by
     // 128 (systick_subdiv) and 64 (systick_cnt) → ÷65536 total.
     // At 12 MHz: 12000000 / 65536 ≈ 183.1 Hz.
     //
@@ -310,31 +308,27 @@ module glue (
 
     always @(posedge SYSCLK) begin
         if (RESET) begin
-            timer_prescale  <= 3'd0;
-            timer_period    <= 5'd0;
-            timer_cnt       <= 5'd0;
-            timer_armed     <= 1'b0;
+            timer_period     <= 8'd0;
+            timer_cnt        <= 8'd0;
+            timer_armed      <= 1'b0;
+            systick_prescale <= 3'd0;
             systick_subdiv  <= 7'd0;
             systick_cnt     <= 6'd0;
-            systick_pending <= 1'b0;
+            systick_pending  <= 1'b0;
         end else begin
-            // --- Prescaler: shared ÷8, always free-runs (systick always active) ---
             if (timer_write_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
-                timer_prescale <= 3'd7;
-                timer_period   <= D[4:0];
-                timer_cnt      <= D[4:0];
-            end else begin
-                timer_prescale <= timer_prescale - 3'd1;
-                // --- GLUE_TIMER countdown ---
-                if (prescale_tick & (timer_period != 5'd0)) begin
-                    if (timer_zero) begin
-                        timer_cnt   <= timer_period;
-                        timer_armed <= 1'b0;
-                    end else begin
-                        timer_cnt <= timer_cnt - 5'd1;
-                    end
+                timer_period <= D[7:0];
+                timer_cnt    <= D[7:0];
+            end else if (timer_period != 8'd0) begin
+                if (timer_zero) begin
+                    timer_cnt   <= timer_period;
+                    timer_armed <= 1'b0;
+                end else begin
+                    timer_cnt <= timer_cnt - 8'd1;
                 end
             end
+
+            systick_prescale <= systick_prescale - 3'd1;
 
             // --- Systick ÷128 sub-divider (free-running on prescale_tick) ---
             if (prescale_tick)
@@ -346,7 +340,7 @@ module glue (
                 if (systick_cnt == 6'd0)
                     systick_pending <= 1'b1;
             end
-
+ 
             // --- Arm flag (GLUE_TIMER) ---
             if (timer_arm_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))
                 timer_armed <= 1'b1;
@@ -395,11 +389,10 @@ module glue (
 
     // Timer armed gate: when armed and timer is not at zero, block
     // ALL DTACK to freeze the CPU until the next zero-crossing.
-    // Timer stall: block DTACK while armed, release on the prescale
-    // tick where the counter reaches zero (timer_zero AND prescale_tick
-    // — the moment the armed flag clears).
+    // The timer ticks every SYSCLK, so the stall releases the cycle
+    // the counter reaches zero (the same cycle the armed flag clears).
     assign nDTACK = ~dtack_comb
-                  | (timer_armed & ~(timer_zero & prescale_tick));
+                  | (timer_armed & ~timer_zero);
 
 
 endmodule

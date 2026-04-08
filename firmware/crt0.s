@@ -61,7 +61,13 @@ _start:
     move.b #0x01, GLUE_DEBUG_OUT
     move.b #0x00, GLUE_DEBUG_OUT
     move.b #0x01, GLUE_DEBUG_OUT
-    /* Leave DEBUG_OUT high — UART idle state */
+    /* Leave DEBUG_OUT high — UART idle state.
+       Hold idle long enough (~12 bit times at 115200 ≈ 1500 SYSCLK)
+       for any UART receiver that mistook the bring-up pulses for a
+       start bit to flush its mid-frame state and return to idle. */
+    move.w  #199, %d0
+.Luart_idle_settle:
+    dbra    %d0, .Luart_idle_settle
 
     /* Hello via hardware UART */
     lea     hellostr, %a1
@@ -338,8 +344,24 @@ debug_puts:
 | Input:  d0.b = character to send
 | Return: jmp (a5)
 | Clobbers: d0, d1, a0
+|
+| Masks all IRQs (except level 7) for the duration of the byte so a
+| vsync IRQ cannot fire between bits and stretch one bit period past the
+| timer's next zero-crossing — which would re-arm to the *following* zero
+| and corrupt the frame.
+|
+| SR is saved/restored in the upper word of d1 rather than on the stack:
+| timer_putchar runs from the very first hello message in _start, before
+| RAM has been probed and SP has been set, so (sp) is not safe.  d1's
+| lower word is reused as the bit counter; dbra is a word op so the
+| upper word is preserved across the loop.
     .global timer_putchar
 timer_putchar:
+    | Stash SR in upper word of d1, then mask all IRQs.
+    move.w  %sr, %d1
+    swap    %d1
+    ori.w   #0x0700, %sr
+
     lea     GLUE_DEBUG_OUT, %a0
 
     | Build 10-bit frame: start(0) + 8 data bits + stop(1)
@@ -349,19 +371,23 @@ timer_putchar:
 
     move.b  #TIMER_FULL_BIT, GLUE_TIMER
 
-    move.w  #9, %d1             | 10 bits (0..9)
+    move.w  #9, %d1             | low word: 10 bits (0..9); high word: saved SR
 
 .Ltx_bit:
     move.b  #0, GLUE_TIMER_ARM | arm — next bus access stalls
     move.b  %d0, (%a0)         | stalled write; only bit 0 reaches DEBUG_OUT
     lsr.w   #1, %d0            | shift to next bit
-    dbra    %d1, .Ltx_bit
+    dbra    %d1, .Ltx_bit      | word op — upper word of d1 (saved SR) preserved
 
     | Hold stop bit for one full bit time
     move.b  #0, GLUE_TIMER_ARM
     tst.b   (%a0)              | stall (dummy read, discard)
 
     move.b  #0, GLUE_TIMER     | stop timer
+
+    | Restore SR from upper word of d1 (low word is 0xFFFF after dbra exit).
+    swap    %d1
+    move.w  %d1, %sr
     jmp     (%a5)
 
 | timer_puts: send null-terminated string at (a1) via timer bitbang
@@ -383,8 +409,10 @@ timer_puts:
 | Return: jmp (a5)
 | Clobbers: d0, d1, d2, a0
 
-    .equ TIMER_FULL_BIT, 12         /* (12+1)*8 = 104 clocks = 115200 baud */
-    .equ RX_TIMEOUT_COUNT, 500      /* ~1ms at 12 MHz with ROM wait states */
+    /* GLUE TIMER period: (N+1) SYSCLK per tick → N = round(SYSCLK_HZ/BAUD) - 1 */
+    .equ TIMER_FULL_BIT, (SYSCLK_HZ + 115200 / 2) / 115200 - 1
+    /* ~1 ms timeout: each poll iteration is roughly 24 SYSCLK with ROM wait states */
+    .equ RX_TIMEOUT_COUNT, SYSCLK_HZ / 24000
 
     .global debug_getchar_asm
 debug_getchar_asm:

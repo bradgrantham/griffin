@@ -27,6 +27,7 @@ constexpr uint32_t DEBUG_UART = 0x0004;
 constexpr uint32_t DEBUG_DISASSEMBLE = 0x0008;
 constexpr uint32_t DEBUG_DEBUG_BIT = 0x0020;
 constexpr uint32_t DEBUG_CF = 0x0040;
+constexpr uint32_t DEBUG_VIDEO = 0x0080;
 constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
@@ -516,12 +517,12 @@ struct CFState
 
 struct TimerState
 {
-    uint8_t period = 0;       // 5-bit register value (0 = stopped)
+    uint8_t period = 0;       // 8-bit register value (0 = stopped)
     uint64_t start_clock = 0; // SYSCLK when timer was last loaded
 
     bool running() const { return period != 0; }
-    // Hardware counts N+1 states (N down to 0), so effective period = (N+1)*8
-    uint32_t period_clocks() const { return (static_cast<uint32_t>(period) + 1) * 8; }
+    // Hardware counts N+1 states (N down to 0), so effective period = (N+1) SYSCLK
+    uint32_t period_clocks() const { return static_cast<uint32_t>(period) + 1; }
 
     // Cycles from 'now' until the next zero-crossing.
     // Returns 0 if stopped or exactly on a zero-crossing.
@@ -660,7 +661,7 @@ static constexpr int THROTTLE_INTERVAL = 1000;
 struct ClockGovernor
 {
     uint64_t base_clock = 0;
-    double clock_hz = 12e6;
+    double clock_hz = SYSCLK_HZ;
     std::chrono::steady_clock::time_point base_time;
 
     void reset(uint64_t emu_clock, uint32_t hz)
@@ -831,14 +832,21 @@ class GriffinEmulator : public moira::Moira
     mutable uint8_t dac_value = 0x0;
 
     // VIDEO register shadow state (minimal — just enough to not crash)
-    mutable uint8_t video_mode = 0;
-    mutable uint8_t video_mode2 = 0;
-    mutable uint8_t video_words_start = 0;
-    mutable uint8_t video_border_pixel = 0;
-    mutable uint8_t video_lines_start = 0;
-    mutable uint16_t video_lines_count = 0;
-    mutable uint16_t video_palette = 0;
-    mutable uint16_t video_next_palette = 0;
+    // Reset defaults: ENTRY_0=0x00 (black), ENTRY_1=0xFF (white)
+    mutable uint16_t video_palette = 0xFF00;
+
+    // Expand an R3G3B2 palette entry to ARGB8888 (opaque).
+    static uint32_t rgb332_to_argb(uint8_t c)
+    {
+        uint8_t r3 = (c >> 5) & 0x7;
+        uint8_t g3 = (c >> 2) & 0x7;
+        uint8_t b2 = c & 0x3;
+        // Replicate high bits into low bits for full 0..255 range
+        uint8_t r = (r3 << 5) | (r3 << 2) | (r3 >> 1);
+        uint8_t g = (g3 << 5) | (g3 << 2) | (g3 >> 1);
+        uint8_t b = (b2 << 6) | (b2 << 4) | (b2 << 2) | b2;
+        return 0xFF000000u | (r << 16) | (g << 8) | b;
+    }
 
     // ENGINE register shadow state (minimal — just enough to not crash)
     mutable uint16_t engine_control = 0;
@@ -921,7 +929,7 @@ class GriffinEmulator : public moira::Moira
                        systick.irq_enabled ? "on" : "off");
             }
         } else if(addr == GLUE_TIMER - IO_BASE) {
-            timer.period = val & 0x1F;
+            timer.period = val;
             timer.start_clock = getClock();
             if (debug & DEBUG_IO)
             {
@@ -971,13 +979,6 @@ class GriffinEmulator : public moira::Moira
 
     uint8_t VIDEO_read8(uint32_t addr) const
     {
-        if(addr == VIDEO_MODE) {
-            return video_mode;
-        } else if(addr == VIDEO_MODE2) {
-            return video_mode2;
-        } else if(addr == VIDEO_BORDER_PIXEL) {
-            return video_border_pixel;
-        }
         if(debug & DEBUG_IO)
         {
             printf("read of uint8_t at unhandled VIDEO %06X\n", addr);
@@ -996,36 +997,20 @@ class GriffinEmulator : public moira::Moira
 
     void VIDEO_write8(uint32_t addr, uint8_t val) const
     {
-        if(addr == VIDEO_MODE) {
-            video_mode = val;
-        } else if(addr == VIDEO_MODE2) {
-            video_mode2 = val;
-        } else if(addr == VIDEO_WORDS_START) {
-            video_words_start = val;
-        } else if(addr == VIDEO_BORDER_PIXEL) {
-            video_border_pixel = val;
-        } else if(addr == VIDEO_LINES_START) {
-            video_lines_start = val;
-        } else {
-            if(debug & DEBUG_IO)
-            {
-                printf("write of uint8_t %02X at unhandled VIDEO %06X\n", val, addr);
-            }
+        if(debug & DEBUG_IO)
+        {
+            printf("write of uint8_t %02X at unhandled VIDEO %06X\n", val, addr);
         }
     }
 
     void VIDEO_write16(uint32_t addr, uint16_t val) const
     {
-        if(addr == VIDEO_LINES_COUNT) {
-            video_lines_count = val;
-        } else if(addr == VIDEO_PALETTE) {
+        if(addr == VIDEO_PALETTE) {
+            if(debug & DEBUG_VIDEO)
+            {
+                printf("write of uint16_t %04X to video palette\n", val);
+            }
             video_palette = val;
-        } else if(addr == VIDEO_NEXT_PALETTE) {
-            video_next_palette = val;
-        } else if(addr == VIDEO_ARM_SNOOP || addr == VIDEO_DISARM_SNOOP) {
-            // snoop arm/disarm — no-op in emulator
-        } else if(addr == VIDEO_PIXEL_DATA) {
-            // pixel data write — no-op without video output emulation
         } else {
             if(debug & DEBUG_IO)
             {
@@ -1133,7 +1118,7 @@ class GriffinEmulator : public moira::Moira
 
 public:
 
-    uint32_t clock_hz = 12000000;
+    uint32_t clock_hz = SYSCLK_HZ;
     ClockGovernor governor;
 
     enum RAMConfig {RAM_1_BANK_256K, RAM_1M, RAM_2M, RAM_3M, RAM_4M };
@@ -1379,7 +1364,7 @@ public:
     {
         if (video_display.irq_active)
         {
-            setIPL(7);
+            setIPL(VIDEO_IRQ_LEVEL);
         }
         else if (systick.pending && systick.irq_enabled)
         {
@@ -1396,6 +1381,9 @@ public:
     {
         if (vline < VideoDisplay::V_ACTIVE && video_display.dma_enabled)
         {
+            // Sample palette at line start (firmware may rewrite per-line).
+            uint32_t color0 = rgb332_to_argb(video_palette & 0xFF);
+            uint32_t color1 = rgb332_to_argb((video_palette >> 8) & 0xFF);
             // Read 40 words (80 bytes) from framebuffer, expand 1bpp to ARGB
             uint32_t base_addr = VideoDisplay::fb_byte_addr(
                 video_display.fb_base, video_display.fb_ptr);
@@ -1409,15 +1397,20 @@ public:
                 // MSB first: video.v word_reg[15 - pixel_cnt]
                 for (int bit = 15; bit >= 0; bit--)
                 {
-                    *row++ = (pixels & (1 << bit)) ? 0xFFFFFFFF : 0xFF000000;
+                    *row++ = (pixels & (1 << bit)) ? color1 : color0;
                 }
             }
             video_display.eol_advance();
         }
         else if (vline < VideoDisplay::V_ACTIVE)
         {
-            // DMA disabled — black
-            memset(video_display.staging[vline], 0, VideoDisplay::WIDTH * 4);
+            // DMA disabled — fill with ENTRY_0
+            uint32_t color0 = rgb332_to_argb(video_palette & 0xFF);
+            uint32_t *row = video_display.staging[vline];
+            for (uint32_t i = 0; i < VideoDisplay::WIDTH; i++)
+            {
+                row[i] = color0;
+            }
         }
 
         // SOF at vsync start — reset fb_ptr, assert VIDEO IRQ
@@ -1479,8 +1472,7 @@ public:
 static constexpr int OVERSAMPLE = 16;
 static constexpr int BAUDRATE = 115200;
 // Use 16.16 fixed-point to avoid integer truncation drift at high baud rates.
-// At 115200 baud: 12000000 / (115200 * 16) = 6.5104... clocks per sample.
-// Fixed-point: (12000000 << 16) / (115200 * 16) = 426834 (≈ 6.51 * 65536)
+// Sample interval = SYSCLK_HZ / (BAUDRATE * OVERSAMPLE), in 16.16 fixed point.
 static constexpr uint32_t SOFT_UART_SAMPLE_INTERVAL_FP = ((uint64_t)SYSCLK_HZ << 16) / (BAUDRATE * OVERSAMPLE);
 
 // TODO parameterize this on SYSCLOCK and OVERSAMPLE and BAUDRATE
@@ -1538,6 +1530,12 @@ struct SoftUART
                         printf("%c", shift_reg);
                         if(debug & DEBUG_UART) printf("(%d)", shift_reg);
                         fflush(stdout);
+                    } else {
+                        // Framing error — surface it instead of silently dropping
+                        fprintf(stderr,
+                            "\n[SoftUART: framing error, stop=0, partial SR=0x%02X '%c']\n",
+                            shift_reg, isprint(shift_reg) ? shift_reg : '?');
+                        fflush(stderr);
                     }
                     state = 0;
                 }

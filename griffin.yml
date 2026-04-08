@@ -1,7 +1,7 @@
 project:
   name: Griffin
   cpu: MC68000
-  clock_hz: 12000000
+  clock_hz: 14000000
   interrupt_mode: autovector
 
 peripherals:
@@ -12,6 +12,9 @@ peripherals:
       base: 0xF00000
       size: 0x040000
       width: 8
+    interrupt:
+      level: 5
+      signal: ~ENGINE_IRQ  # not currently wired; pin 5 reused for BUS_FREE
     registers:
       - offset: 0x01
         name: DEBUG_OUT
@@ -49,17 +52,17 @@ peripherals:
         access: write
         width: 8
         description: |
-          5-bit auto-reload timer period with ÷8 prescaler (bits 4:0).
+          8-bit auto-reload timer period (bits 7:0), ticks every SYSCLK.
           Counter counts N+1 states (N down to 0 inclusive), so
-          effective period = (N+1) × 8 SYSCLK cycles (N = 1..31,
-          range 16..256 clocks, 1.33..21.3 µs at 12 MHz).  Writing a non-zero
-          value loads the period register, resets the prescaler, and
-          starts a free-running countdown that auto-reloads on reaching
-          0.  Writing 0 stops the timer.  Use with TIMER_ARM to create
-          deterministic periodic I/O timing without cycle counting.
-          For periods > 248, chain multiple TIMER_ARM writes.
+          effective period = (N+1) SYSCLK cycles (N = 1..255, range
+          2..256 clocks, ~143 ns..18.3 µs at 14 MHz).  Writing a non-zero
+          value loads the period register and starts a free-running
+          countdown that auto-reloads on reaching 0.  Writing 0 stops
+          the timer.  Use with TIMER_ARM to create deterministic
+          periodic I/O timing without cycle counting.  For periods > 256,
+          chain multiple TIMER_ARM writes.
         bits:
-          - { bit: "4:0", name: PERIOD, description: "Countdown period in units of 8 SYSCLK cycles (1-31)" }
+          - { bit: "7:0", name: PERIOD, description: "Countdown period in SYSCLK cycles (1-255)" }
       - offset: 0x0B
         name: TIMER_ARM
         access: write
@@ -161,7 +164,7 @@ peripherals:
       size: 0x100000
       width: [8, 16]
     interrupt:
-      level: 7
+      level: 6
       signal: ~VIDEO_IRQ
     registers:
       - offset: 0x07
@@ -192,9 +195,6 @@ peripherals:
       base: 0xD00000
       size: 0x100000
       width: 16
-    interrupt:
-      level: 6
-      signal: ~ENGINE_IRQ  # not currently wired; pin 5 reused for BUS_FREE
     dtack:
       - 12000000: 0
       - 14000000: 0
