@@ -347,13 +347,16 @@ The '373 audio latch is clocked by GLUE's ~AUDIO\_LE on CPU writes to the audio 
 
 This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; future revisions may repurpose the pin.
 
-* 8-bit R2R
-* [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp
+* 8-bit R2R  
+* [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp  
 * Timing jitter from variable instruction execution and ENGINE-induced HALT will modulate audio; expect audible noise during heavy ENGINE activity.  Mitigations: (a) keep the audio write at the same position inside the busywait loop so HALT-induced jitter is constant per-sample, (b) one-pole RC filter on DAC output, or (c) disable rendering during audio-critical moments.
 
 # Rev 2
 
 - [ ] Schematic (+PCB if necessary)
+  - [ ] Split VIDEO into PIXEL and TIMING CPLDs to give more flexibility
+    - [ ] TIMING could handle more complex timing modes (like what?  There's a 25MHz oscillator) or possibly DMA modes
+    - [ ] PIXEL could handle more pixel formats, deeper FIFO, more palette modes
   - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
   - [ ] Determine a more available ROM technology and design around that.
     - [ ] CPLD with I2C ROM?
