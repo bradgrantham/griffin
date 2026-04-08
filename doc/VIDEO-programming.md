@@ -8,16 +8,6 @@ Hardcoded VESA 640x480@60: 25.175 MHz pixel clock, 800x525 raster, negative HSyn
 
 The only CPU-visible registers are STATUS (read) and PALETTE (write).
 
-## Signal Flow
-
-```
-VIDEO ──NEED_WORD──> ENGINE    "I need the next 16-pixel word"
-VIDEO ──SOF────────> ENGINE    "Start of frame, reset fb_ptr"
-VIDEO ──EOL────────> ENGINE    "End of visible line, advance to next row"
-ENGINE ─LATCH──────> VIDEO     "D[15:0] is stable, capture now"
-VIDEO ──nVIDEO_IRQ─> GLUE      "Active-low interrupt during vsync"
-```
-
 ## Timing Parameters (Fixed)
 
 | Parameter       | Value | Description |
@@ -38,7 +28,7 @@ Words per visible line: 640 / 16 = 40. Line rate: 31.469 kHz. Frame rate: 59.94 
 
 ## Pixel Data Protocol
 
-VIDEO shifts out 16 pixels per word, one per PIXEL\_CLK. Pixel order within a word is MSB-first: word\_reg[15] is the leftmost pixel, word\_reg[0] the rightmost.
+VIDEO shifts out 16 pixels per word, one per pixel clock. Pixel order within a word is MSB-first: word\_reg[15] is the leftmost pixel, word\_reg[0] the rightmost.
 
 VIDEO uses a double-buffered word pipeline (`hold_reg` ← LATCH, `word_reg` ← hold\_reg at each word boundary). For each word:
 
@@ -69,21 +59,11 @@ nVIDEO\_IRQ is active-low and directly driven by vsync timing:
 nVIDEO_IRQ = ~in_vsync
 ```
 
-It is asserted for the full 2-line vsync interval (V\_SYNC\_START through V\_SYNC\_END − 1), level-sensitive, wired to IPL level 7. Because it is level-sensitive (not edge-triggered), the ISR must either return before vsync ends or mask further interrupts to avoid re-entry. The 2-line vsync window plus the surrounding 10-line front porch and 33-line back porch give the ISR ~45 lines (~1.43 ms) of vblank to do its work.
-
-## VGA Outputs
-
-| Signal     | Pin | Description |
-|------------|-----|-------------|
-| VGA\_HSYNC | 46  | Horizontal sync, negative polarity |
-| VGA\_VSYNC | 29  | Vertical sync, negative polarity |
-| VGA\_R2..R0 | 6,8,4 | Red DAC ladder (3 bits) |
-| VGA\_G2..G0 | 81,77,76 | Green DAC ladder (3 bits) |
-| VGA\_B1..B0 | 75,74 | Blue DAC ladder (2 bits) |
-
-The 8 color bits are an R3G3B2 unpacking of the selected palette entry. Outside active video all 8 bits are forced low (black border).
+It is asserted for the full 2-line vsync interval (V\_SYNC\_START through V\_SYNC\_END − 1), level-sensitive, wired to IPL level 6. Because it is level-sensitive (not edge-triggered), the ISR must either return before vsync ends or mask further interrupts to avoid re-entry. The 2-line vsync window plus the surrounding 10-line front porch and 33-line back porch give the ISR ~45 lines (~1.43 ms) of vblank to do its work.
 
 ## Registers
+
+The 8 color bits are an R3G3B2 unpacking of the selected palette entry. Outside active video all 8 bits are forced low (black border).
 
 | Offset | Name    | Access | Width | Description |
 |--------|---------|--------|-------|-------------|

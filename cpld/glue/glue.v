@@ -149,8 +149,7 @@ module glue (
     // Interrupt priority encoder (active-low nIPL to 68000)
     //
     // Priority levels (from griffin.yml / griffin.md):
-    //   7: VIDEO    (~VIDEO_IRQ,  pin 1)   — nIPL = 000
-    //   6: ENGINE   (~ENGINE_IRQ, pin 20)  — nIPL = 001
+    //   6: VIDEO    (~VIDEO_IRQ,  pin 1)   — nIPL = 001
     //   5: SYSTICK  (pending & irq_enable) — nIPL = 010
     //   none:                              — nIPL = 111
     // ----------------------------------------------------------------
@@ -159,7 +158,7 @@ module glue (
 
     // ENGINE IRQ (level 6) not currently wired — its pin is reused for
     // BUS_FREE.  If ENGINE IRQ is needed later, bodge a free GLUE pin.
-    assign nIPL = ~nVIDEO_IRQ       ? 3'b000 :  // level 7
+    assign nIPL = ~nVIDEO_IRQ       ? 3'b001 :  // level 6
                   systick_irq_active ? 3'b010 :  // level 5
                                        3'b111;   // no interrupt
 
