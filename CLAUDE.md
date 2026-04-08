@@ -48,6 +48,7 @@
 
 ## Testing components
 
+* If changing Verilog, verify it fits the CPLD (or improves utilization if that's the task) before making other source changes.  If the change doesn't fit there's no point in updating the source.
 * sanity/sanity.bin and firmware/rom.bin should execute in emulator/emulator/build/emulator.
   * note that UART TX and RX is through a PTY.
 
