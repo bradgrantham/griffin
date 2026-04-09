@@ -63,42 +63,20 @@ How much design file can be in YAML or in Python?  Generate from YAML:
 * **Nah.**  
 * **Use USB\_C and print a case.**
 
-# Continuing Board Design To-Do
+# How To Get To Reliable / Ready for Rev 2
 
-* Silk screen for items esp test points  
-* Need BOM output but some way to select “I have these already”.  
-* Footprint issues  
-  * PS2 stab lock pins and need wider strain relief drill  
-  * Need holes for retainer feet for headphone jack  
-  * Rca jack needs to be past end of board for retainer feet?  Or square holes for pressure fit?  
-* No connection from VIDEO to supply DTACK to GLUE, and no signal back to VIDEO to IACK.  Are these important?
-* If the CPU clock was gated through GLUE, other peripherals (mostly thinking ENGINE) could perform fast bus operations while stalling CPU clock. -> GLUE has access to HALT, so it can stop the CPU if that works out.
-* IO MCU doesn't work.  Something on the board is driving the data bus when IO MCU is trying to respond via P2 weak pullups.
-  * AT89S52 P2 reads back 0x3C when nothing should be driving D0-D7 (expected 0xFF from weak pull-ups).  0x3C correlates with ROM instruction stream content near current PC, but ROM is verified not driving (see below).
-  * Scope shows one device driving D0 to ~5V and another to ~4.5V; MCU P2 weak pull-up (~50µA) cannot overcome whatever is holding D0/D1 low.  Math suggests ~1-2KΩ resistive path to GND would explain all three voltage levels.
-  * When board was running abnormally slowly (logic analyzer interference with CLK), IO MCU communication worked correctly including IDENTITY event and string.
-  * Verified NOT the cause:
-    * ROM: nROM_SELECT (TP14) is HIGH (+5V) during IO MCU cycles; confirmed at both test point and U2 pin 20.
-    * RAM: all nRAM_x_SEL confirmed deasserted during IO MCU cycles.
-    * CF card: physically removed from connector.
-    * Audio 74HC373 (U23): physically pulled from socket.
-    * VIDEO CPLD (U17): reflashed with explicit D[15:0] tristate (`assign D = ~nVIDEO_SELECT ? 16'd0 : 16'bz`); no change.
-    * ENGINE CPLD (U13): not populated.
-    * GLUE address decoding: all chip selects verified mutually exclusive and gated by `bus_cycle`; IO MCU region (0xF8xxxx) cannot overlap any other select.
-    * GLUE D bus: tristated unless `glue_read_active` (glue register read), which requires glue_segment (0xF0xxxx), not io_segment (0xF8xxxx).
-    * No visible chip select going low during IO MCU cycles on scope.
-  * Added 100-iteration NOP delay loop between P2=data and DTACK assertion to extend strong pull-up window; no improvement.
-  * For PCB Rev1, IO MCU is bypassed; UART is via GLUE bit-bang on DEBUG_OUT/DEBUG_IN.  Current status:
-    * *Working* UART TX at 115200 via GLUE_TIMER + DEBUG_OUT (`timer_putchar`)
-    * *Working* UART RX at 115200 via GLUE_TIMER + DEBUG_IN polling (`debug_getchar_asm`)
-    * *Working* SYSTICK at ~183Hz from GLUE (SYSCLK/65536) - IRQ gated by CONFIG register
-    * *Working* CF card with FatFs - can mount and list FAT filesystem
-    * *Need to get to reliable streaming serial so I can send and receive data to some kind of network device e.g. esp32*
-    * GLUE can generate level-4 IRQ on DEBUG_IN falling edge (start bit) for interrupt-driven RX
-    * PS/2 clock latches the data line and causes interrupt, PS/2 shares an interrupt and exposes which clk through status register
+Stop changing multiple variables
+
+* Merge engine-investigation but then drop GLUE back to standalone and depopulate VIDEO and ENGINE, debug it just up to booting with UART RX/TX
+
+HALT circuit  - use reset button and order some supervisors and work those into rev 1 to prove out.
+
+Clock - why does it look like 3.7V?  Are oscillators lying, or fan out is too great?
+
+Start tagging source when something works and check it and tag it often
 
 
-## Need to buy
+# Need to buy
 
 * crystal for 68681
 
@@ -142,14 +120,6 @@ DEBUG\_OUT LED:
       * Drop back to DEBUG\_IN serial output for duration
 
   * Check CF card boot partition for boot kernel name or information and boot it
-
-# Debug the GLUE
-
-Bodge pullups on JTAG TMS 
-
-Try to set fitter parameters to disable GCLR, OE1, OE2
-
-Maybe set Verilog to 
 
 # Components
 
@@ -262,35 +232,19 @@ Dedicated ATF1508 CPLD for:
 NTSC, VGA pixel and timing generation - second ATF1508
 
 * CPLD 16-bit shift register clocks out 1 bit, expands to R3G3B2 through internal pair of palette registers  
+
 * Count off hsync and vsync to provide HSYNC and VSYNC signals and exit-VBLANK interrupt (through GLUE)  
+
 * Registers: see [griffin.yml](griffin.yml). All config registers default to 0 (video disabled). Some can be changed at any time but in practice CPU is in a tight pixel loop during visible lines, so changes happen in hblank or vblank.
-* MODE: To change modes, disable ENBVINT, wait at least 50ms for settling, configure other registers, then write MODE.
-* MODE2 PPC: Realistically upgrading to a 68EC000@20 will be needed to get 640×480.
-* ARM\_SNOOP: Write to arm blocking snoop (VIDEO\_STALL to GLUE after CPU releases \~AS). Must be written once per visible line.  
-  * Snooped bus user data (FC2:FC0 == 101\) in “slow palette” mode expects 16bits of pixel data (16 pixels) repeated through visible pixels  
-  * Snooped bus data in “fast palette” mode expects 16 bits of palette (2x R3G3B2) and then 16bits of pixel data (16 pixels) repeated through visible pixels and then one more 16-bits palette  
-    * Would need something like looped or unrolled “move.l (A0)+, D0”, transfer two 16-bit words in 12 cycles. - works for 68000 @ 12MHz\!  
-    * Palette data loaded into “next palette”  
-    * Next palette loaded into palette when shift register is loaded  
-    * If there is no waiting pixel data, shift register and palette are loaded from border pixel and next palette.  
-  * CPLD holds VIDEO\_STALL until shift register is empty  
-    * Latches 16 bit shift register from data lines on PIXEL\_CLOCK signal  
-    * Releases VIDEO\_STALL on next CPU\_CLOCK cycle so GLUE ~DTACK is asserted, then asserts VIDEO\_STALL when CPU releases ~AS  
-  * If VIDEO\_STALL is disabled, CPU is responsible for managing timing, or maybe framebuffer is used as visual debugger  
-  * Must be written once per visible line  
-  * Notes  
-    * For VGA only, "slow palette" is the palette is updated at most once per line, or perhaps as slow as set once and never set again.  "Fast palette" is the palette is updated every 16 pixels. For composite, the pixels are just 0 and 1 and I might add a colorburst mode so I can get artifact colors.  
-    * 16-bit "pixel shift register", "palette register", "next 16 pixels" register, and "next palette" register. The LSBit of the pixel shift register is the current pixel, and selects from the two 8-bit values in the palette register for VGA.  Or it is black or white voltage for composite video.  Every pixel clock the pixel shift register shifts right.  On the starting pixel clock (multiple of 16\) and every 16 clocks through the end of visible pixels, the pixel shift register would be loaded from the "next 16 pixels" and the palette register would be loaded from "next palette".  After the visible pixels range, every 16 clocks until visible pixels starts again, the shift would be filled with border pixel (maybe set or cleared) and the palette register would be loaded from VIDEO\_BORDER\_PALETTE. The implication is that all lines will be multiples of 16 and I'm okay with that.  
-    * in "slow palette" mode, stall the next bus access (expecting a CPU read from framebuffer) until the pixel shift register is loaded from the previous "next 16 pixels", at which point the "next 16 pixels" are loaded from the snoop, the bus D lines are loaded into "next 16 pixels" and STALL is released.  Thus a line of "slow palette" can optionally set the "next" palette register to set border colors for the line, write `VIDEO_ARM_SNOOP`, then just read N words. Next palette register isn't set during the line so it can still get loaded into "palette register" every 16 clocks.  
+
+* Snooped bus user data (FC2:FC0 == 101\) in “slow palette” mode expects 16bits of pixel data (16 pixels) repeated through visible pixels  
+
+* Snooped bus data in “fast palette” mode expects 16 bits of palette (2x R3G3B2) and then 16bits of pixel data (16 pixels) repeated through visible pixels and then one more 16-bits palette  (not implemented)
+  * For VGA only, "slow palette" is the palette is updated at most once per line, or perhaps as slow as set once and never set again.  "Fast palette" is the palette is updated every 16 pixels. For composite, the pixels are just 0 and 1 and I might add a colorburst mode so I can get artifact colors.  
+
+  * * 16-bit "pixel shift register", "palette register", "next 16 pixels" register, and "next palette" register. The LSBit of the pixel shift register is the current pixel, and selects from the two 8-bit values in the palette register for VGA.  Or it is black or white voltage for composite video.  Every pixel clock the pixel shift register shifts right.  On the starting pixel clock (multiple of 16\) and every 16 clocks through the end of visible pixels, the pixel shift register would be loaded from the "next 16 pixels" and the palette register would be loaded from "next palette".  After the visible pixels range, every 16 clocks until visible pixels starts again, the shift would be filled with border pixel (maybe set or cleared) and the palette register would be loaded from VIDEO\_BORDER\_PALETTE. The implication is that all lines will be multiples of 16 and I'm okay with that.  
+    * in "slow palette" mode, stall the next bus access (expecting a CPU read from framebuffer) until the pixel shift register is loaded from the previous "next 16 pixels", at which point the "next 16 pixels" are loaded from the snoop, the bus D lines are loaded into "next 16 pixels" and STALL is released.  Thus a line of "slow palette" can optionally set the "next" palette register to set border colors for the line.
     * In "fast palette" the snoops also set the "next palette register" first, so a line of "fast palette" writes `VIDEO_ARM_SNOOP`, then reads N\*2 words made of a palette read and a pixel read, likely a move.l which will then perform two word reads. The first load will not stall but will be immediately loaded into "next palette". The second read will stall until the shift is loaded from the "next 16 pixels", the bus D lines are loaded into "next 16 pixels" and STALL is released.  
-* DISARM\_SNOOP: Write to disarm blocking snoop.
-* Just before beginning of frame VIDEO interrupts CPU so that CPU enters “framebuffer” ISR, doing N (e.g. N is 200, 240, 400, 480\) tight loops to write rows and then check IO MCU, etc in HBLANK, exits ISR at end of visible rows   
-  * Tight loop writes out 16 bits at a time for 320 or 640 pixels, eg MOVE.W (An+), D0  
-  * CPU does busy wait on vblank todo per frame processing  
-  * CPU ISR sets some word in memory at vblank  
-  * CPU out-of-ISR loop waits on that word, then clears it, then does vblank processing  
-* In HBLANK / HSYNC:  
-  * Maybe check UART/PS2, dequeue byte - but what if IO MCU is in an ISR of its own, that could take 10s to 100s of 68000 cycles to finish…  Probably just have long queues in the MC and let vblank processing drain queues.
 
 ## Compact Flash interface
 
@@ -299,64 +253,81 @@ NTSC, VGA pixel and timing generation - second ATF1508
 * GLUE manages DTACK, will need to hard-code wait states as necessary (7@12MHz, 12@20MHz)  
 * Registers: see [griffin.yml](griffin.yml).
 
-## IO processor
+## IO processor - PS/2 Keyboard and Mouse, UART, System tick interrupt
 
-Keyboard, mouse, serial port through 8051-compatible AT89S52
+For PCB Rev1, IO is GLUE-assisted bit-bang on DEBUG_OUT/DEBUG_IN.  Current status:
 
-**Unlikely to work on Rev 1 PCB.**  The AT89S52's P2 port uses weak internal pull-ups (~50 uA) to drive D0-D7, and something on the board is driving the data bus during IO MCU cycles that the pull-ups cannot overcome.  Extensive debugging has ruled out every other chip on the bus (see "Continuing Board Design To-Do" for full debug log).  Communication only worked when the board was running abnormally slowly due to logic analyzer interference with CLK.  For Rev 1, UART is handled by GLUE bit-bang via DEBUG_OUT/DEBUG_IN at 115200 baud.  Rev 2 should add a 74HC245 buffer between AT89S52 P2 and D[7:0], or replace the AT89S52 with a part that has proper bus drivers (e.g. 68681 DUART).
+* *Working* UART TX at 115200 via GLUE_TIMER + DEBUG_OUT (`timer_putchar`)
+* *Working* UART RX at 115200 via GLUE_TIMER + DEBUG_IN polling (`debug_getchar_asm`)
+  * Need to get to reliable streaming serial so I can send and receive data to some kind of network device e.g. esp32
+* *Working* SYSTICK at ~183Hz from GLUE (SYSCLK/65536) - IRQ gated by CONFIG register
+* Want:* GLUE can generate level-4 IRQ on DEBUG_IN falling edge (start bit) for interrupt-driven RX (maybe)
+* *Want:* PS/2 clock latches the data line and causes interrupt, PS/2 shares an interrupt and exposes which clk through status register
+
+Previous intent: Keyboard, mouse, serial port through 8051-compatible AT89S52
+
+* **Unlikely to work on Rev 1 PCB.**  The AT89S52's P2 port uses weak internal pull-ups (~50 uA) to drive D0-D7, and something on the board is driving the data bus during IO MCU cycles that the pull-ups cannot overcome.  Extensive debugging has ruled out every other chip on the bus (see "Continuing Board Design To-Do" for full debug log).  Communication only worked when the board was running abnormally slowly due to logic analyzer interference with CLK.  For Rev 1, UART is handled by GLUE bit-bang via DEBUG_OUT/DEBUG_IN at 115200 baud.  Rev 2 should add a 74HC245 buffer between AT89S52 P2 and D[7:0], or replace the AT89S52 with a part that has proper bus drivers (e.g. 68681 DUART).
 
 * [AT89S52-24PU Microchip Technology | Integrated Circuits (ICs) | DigiKey](https://www.digikey.com/en/products/detail/microchip-technology/AT89S52-24PU/1008597)  
-* 5V UART, just TX, RX  
-* 2 PS2  
+
+* 5V UART, just TX, RX, 2 PS2  through GPIO
+
 * AT89S52 Continuously polls IO\_SELECT\_MOSI from GLUE chip: if detected, disable interrupts, do 68000 bus cycle including putting data on data bus, lowering DTACK, then waiting for AS to rise and releasing DTACK, enable interrupts  
+
 * Need FIFO for all inputs so CPU doesn't need to do anything during visible row scanout ISR  
+
 * Registers: see [griffin.yml](griffin.yml).
+
 * Program either in jig or by GLUE control signals  
+
 * ISR for UART, PS2  
+
 * Got that old PS/2 software from PIC for Alice 2  
+
 * I screwed up; kbd and mouse clocks needed to go to P3.2 and P3.3, and I moved them to non-interrupt-capable pins without thinking about it.
 
-## ENGINE - DMA
+* IO MCU doesn't work.  Something on the board is driving the data bus when IO MCU is trying to respond via P2 weak pullups.
 
-Third ATF1508AS.  HALT-based bus-stealing DMA controller for video (and audio).
+  * AT89S52 P2 reads back 0x3C when nothing should be driving D0-D7 (expected 0xFF from weak pull-ups).  0x3C correlates with ROM instruction stream content near current PC, but ROM is verified not driving (see below).
+  * Scope shows one device driving D0 to ~5V and another to ~4.5V; MCU P2 weak pull-up (~50µA) cannot overcome whatever is holding D0/D1 low.  Math suggests ~1-2KΩ resistive path to GND would explain all three voltage levels.
+  * When board was running abnormally slowly (logic analyzer interference with CLK), IO MCU communication worked correctly including IDENTITY event and string.
+  * Verified NOT the cause:
+    * ROM: nROM_SELECT (TP14) is HIGH (+5V) during IO MCU cycles; confirmed at both test point and U2 pin 20.
+    * RAM: all nRAM_x_SEL confirmed deasserted during IO MCU cycles.
+    * CF card: physically removed from connector.
+    * Audio 74HC373 (U23): physically pulled from socket.
+    * VIDEO CPLD (U17): reflashed with explicit D[15:0] tristate (`assign D = ~nVIDEO_SELECT ? 16'd0 : 16'bz`); no change.
+    * ENGINE CPLD (U13): not populated.
+    * GLUE address decoding: all chip selects verified mutually exclusive and gated by `bus_cycle`; IO MCU region (0xF8xxxx) cannot overlap any other select.
+    * GLUE D bus: tristated unless `glue_read_active` (glue register read), which requires glue_segment (0xF0xxxx), not io_segment (0xF8xxxx).
+    * No visible chip select going low during IO MCU cycles on scope.
+  * Added 100-iteration NOP delay loop between P2=data and DTACK assertion to extend strong pull-up window; no improvement.
 
-* Reads framebuffer data from SRAM and signals VIDEO to latch D[15:0] directly from the data bus
-* Uses HALT-based bus stealing: ENGINE asks GLUE to halt the CPU, then drives the address bus to perform an SRAM read while VIDEO snoops D[15:0] via LATCH signal
-* ENGINE does not know or care about pixel format — it is a word pump.  VIDEO controls how many words per line via NEED\_WORD, and signals EOL to advance ENGINE to the next row
-* Audio: not handled by ENGINE in Rev 1.  The original plan (VIDEO requests an extra ENGINE transfer per line and asserts AUDIO\_LE instead of LATCH, so the audio DAC captures D[15:0], with the sample stashed at the end of each row) was abandoned because every usable rate tightly couples to HSYNC and the framebuffer layout gets awkward.  See "CPU-driven 8-bit audio" below.
-* Row stride is always a multiple of 64 words (128 bytes).  CPU configures stride via a 2-bit field: 0=64, 1=128, 2=192, 3=256 words.  Progressive uses stride = smallest multiple of 64 >= active words.  Interlaced uses 2x that to skip the other field's line in a line-sequential framebuffer.
-* ADVANCE register (write-only command) performs the same row-advance operation as EOL; used by VSYNC ISR to offset field 1 by one line
+  Move instead to 68681, bus interface is reliable and hardcoded, UART reliable and high-speed with flow control, may be able to do PS/2 through interrupts on input pins
 
-Bodge wires required on Rev 1 (6 total):
+## ENGINE - DMA 
 
-* ENGINE pin 2 (OE2) <-- VIDEO: NEED\_WORD (VIDEO shift reg needs data)
-* ENGINE pin 8 <-- VIDEO: SOF (start of frame, reset pointer)
-* ENGINE pin 10 <-- VIDEO: EOL (end of line, advance to next row)
-* ENGINE pin 40 --> VIDEO: LATCH (D[15:0] stable, capture now)
-* ENGINE pin 6 (was \~ENGINE\_IACK) --> GLUE: HALT\_REQ (request CPU halt)
-* ENGINE pin 9 <-- GLUE: BUS\_FREE (CPU halted, bus available)
+third ATF1508
 
-Fits 108/128 macrocells (84%) with current register set.
+* A, D signals  
+* ENGINE\_{DTACK,SELECT,IRQ,IACK} to and from GLUE for control as a peripheral  
+* ENGINE\_{TMS,TCK,TDI,TDO} from GLUE for bitfile loading  
+* CPU signals for memory-mapped access (low 20 bits) and bus mastering (all 24 bits): R/W, AS, LDS, UDS, DTACK  
+* Drive bus snooping for video generation at a higher rate with corresponding spin of VIDEO, e.g. 320\*480@8bpp or 640\*480@4bpp
+* Fetch and then write audio data
 
-## CPU-driven 8-bit audio
+## Latched 8-bit audio
 
-The '373 audio latch is clocked by GLUE's ~AUDIO\_LE on CPU writes to the audio address; there is no hardware FIFO or DMA engine.  Driving the DAC is a CPU timing problem, with two supported patterns:
-
-* **ISR-driven (OS-friendly, ~8-11 kHz).**  GLUE timer (or a future VIDEO line IRQ) fires periodically; ISR writes one sample and returns.  Ceiling is set by ISR overhead on the 12 MHz 68000 with ROM wait states — probably 8-11 kHz before the ISR eats most of the CPU.  Good enough for a general-purpose OS that must also do other work (CP/M-68K, Fuzix).
-* **Busywait-driven (game-friendly, up to ~31/15/10 kHz).**  VIDEO exposes a STATUS register whose bit 0 toggles once per visible line (v\_cnt[0]; 31.469 kHz at VGA 640x480@60).  Code polls the toggle, then writes AUDIO.  1x coupling = 31.469 kHz (one sample per flip).  /2 or /3 rate by skipping 1 or 2 lines.  A game that gives up its main loop to audio-plus-framebuffer-writes can spend every non-rendering cycle on audio.
-
-This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; future revisions may repurpose the pin.
-
+* CPU needs to update it in VBLANK ISR per line and per-blanking-line ISR  
+* Or ENGINE CPLD performs a read to get it  
 * 8-bit R2R  
 * [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp  
-* Timing jitter from variable instruction execution and ENGINE-induced HALT will modulate audio; expect audible noise during heavy ENGINE activity.  Mitigations: (a) keep the audio write at the same position inside the busywait loop so HALT-induced jitter is constant per-sample, (b) one-pole RC filter on DAC output, or (c) disable rendering during audio-critical moments.
+* Will need to see how much noise and distortion is caused by timing variation.  Maybe I can add blocking DTACK to a timer tick or something
 
 # Rev 2
 
 - [ ] Schematic (+PCB if necessary)
-  - [ ] Split VIDEO into PIXEL and TIMING CPLDs to give more flexibility
-    - [ ] TIMING could handle more complex timing modes (like what?  There's a 25MHz oscillator) or possibly DMA modes
-    - [ ] PIXEL could handle more pixel formats, deeper FIFO, more palette modes
+  - [ ] Need BOM output but some way to select “I have these already”.  
   - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
   - [ ] Determine a more available ROM technology and design around that.
     - [ ] CPLD with I2C ROM?
@@ -368,15 +339,12 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
   - [ ] Pullup on DTACK so missing peripherals can't spuriously ACK
   - [ ] 4.7K Pullup on HALT
   - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
-  - [ ] Kill ENGINE BGACK, BG, BR, DTACK, IACK, FC lines; it stops CPU through GLUE through HALT and reads memory assuming a particular access speed, CPU autohvectors
   - [ ] Rework GLUE IO MCU signals for 68681: ~IO_SELECT becomes ~CS, ~IO_DTACK becomes a pass-through input (68681 drives DTACK), ~IO_IRQ stays as interrupt input; drop ~IO_IACK (tie 68681 ~IACK high, use autovectors, read ISR to clear)
   - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
   - [ ] More signals between GLUE, VIDEO, ENGINE
     - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
   - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
-  - [ ] GND, +5V, D0-D15, A1-A10, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA, nBERR to test points
-    - [ ] use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
-    - [ ] Make the pin header be 2xN, down each side silk screen the signal at the pin
+  - [ ] GND, +5V, D, A, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points - use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe - basically bring out every inter-IC signal.
   - [ ] Pullups on PS/2 clock lines
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
@@ -415,13 +383,12 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
   - [x] Route A18 to GLUE instead of A6  
   - [x] Wire GLUE VPA back to the CPU in place of ENGINE\_IACK
   - [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
-  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - need ZIF footprint
+  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
   - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
   - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
     - [ ] Is there a castellenated version I could solder on?
     - [ ] Is there a better version, something smaller with fewer pins?
   - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
-  - [ ] Put in lots of holes for ground test points around the board
 
 
 
