@@ -12,6 +12,12 @@ peripherals:
       base: 0xF00000
       size: 0x040000
       width: 8
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 0
     interrupt:
       level: 5
       signal: ~ENGINE_IRQ  # not currently wired; pin 5 reused for BUS_FREE
