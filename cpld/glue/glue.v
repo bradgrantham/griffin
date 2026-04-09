@@ -9,7 +9,7 @@ module glue (
     input  wire        DEBUG_IN,    // pin 83: UART RX input (GCLK1)
     input  wire        OE2_pin,
     input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
-    input  wire        HALT_REQ,      // pin 17: ENGINE requests CPU halt for DMA
+    // input  wire        HALT_REQ,      // pin 17: ENGINE requests CPU halt for DMA
     output reg         BUS_FREE,      // pin 20: CPU halted, bus available for ENGINE
     input  wire        nAS,
     input  wire        [23:18] A_hi,
@@ -42,8 +42,6 @@ module glue (
 
     output wire        nR_W
 );
-
-    localparam IO_ABSENT     = 1;    // Set to 1 when IO MCU is not populated
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
     reg systick_irq_enable;     // power-on state 0 = systick IRQ masked
@@ -84,7 +82,8 @@ module glue (
     // Uses synchronized RESET so RC ringing on nRESET cannot cause
     // glitch pulses on nHALT after reset releases.
     // ----------------------------------------------------------------
-    assign nHALT = (RESET | HALT_REQ) ? 1'b0 : 1'bz;
+    // XXX debug // assign nHALT = (RESET | HALT_REQ) ? 1'b0 : 1'bz;
+    assign nHALT = RESET ? 1'b0 : 1'bz;
 
     // ----------------------------------------------------------------
     // BUS_FREE — tells ENGINE the CPU has released the bus
@@ -97,10 +96,10 @@ module glue (
     begin
         if (RESET)
             BUS_FREE <= 1'b0;
-        else if (HALT_REQ & nAS)
-            BUS_FREE <= 1'b1;
-        else if (~HALT_REQ)
-            BUS_FREE <= 1'b0;
+        // else if (HALT_REQ & nAS)
+            // BUS_FREE <= 1'b1;
+        // else if (~HALT_REQ)
+            // BUS_FREE <= 1'b0;
     end
 
     assign nR_W = ~R_nW;
@@ -461,5 +460,5 @@ endmodule
 //PIN: FC_1       : 49
 //PIN: FC_2       : 50
 //PIN: nENGINE_SELECT : 15
-//PIN: HALT_REQ    : 17
+// //PIN: HALT_REQ    : 17
 //PIN: BUS_FREE    : 20
