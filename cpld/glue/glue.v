@@ -381,8 +381,8 @@ module glue (
         ((~nRAM_4_SEL)   & (ws_cnt >= `RAM_BANK_4_DTACK_THRESHOLD))  |  // RAM bank 4
         ((~nROM_SELECT)     & (ws_cnt >= `ROM_DTACK_THRESHOLD))  |  // ROM
         ((~nVIDEO_SELECT)   & (ws_cnt >= `VIDEO_DTACK_THRESHOLD))  |  // VIDEO (register access)
-        ((~nENGINE_SELECT)  & (ws_cnt >= `VIDEO_DTACK_THRESHOLD)) |  // ENGINE: 0 WS (same as VIDEO)
-        (glue_select        & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
+        ((~nENGINE_SELECT)  & (ws_cnt >= `ENGINE_DTACK_THRESHOLD)) |  // ENGINE: 0 WS (same as VIDEO)
+        (glue_select        & (ws_cnt >= `GLUE_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
         (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
         (AUDIO_LE          & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO
 
