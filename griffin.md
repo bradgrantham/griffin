@@ -374,7 +374,9 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
   - [ ] More signals between GLUE, VIDEO, ENGINE
     - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
   - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
-  - [ ] GND, +5V, D0-D15, A1-A10, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points - use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
+  - [ ] GND, +5V, D0-D15, A1-A10, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA, nBERR to test points
+    - [ ] use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
+    - [ ] Make the pin header be 2xN, down each side silk screen the signal at the pin
   - [ ] Pullups on PS/2 clock lines
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
@@ -413,12 +415,13 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
   - [x] Route A18 to GLUE instead of A6  
   - [x] Wire GLUE VPA back to the CPU in place of ENGINE\_IACK
   - [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
-  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
+  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - need ZIF footprint
   - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
   - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
     - [ ] Is there a castellenated version I could solder on?
     - [ ] Is there a better version, something smaller with fewer pins?
   - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
+  - [ ] Put in lots of holes for ground test points around the board
 
 
 
