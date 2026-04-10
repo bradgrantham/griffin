@@ -9,38 +9,52 @@ MVP:
 
 * Fuzix or CP/M-68K with an image viewer: NTSC 704\*480i BW, NTSC 176\*480i color (704 sample artifact color) , VGA 640\*480p 2 colors per row from palette of 256, VGA 320\*480p 4 colors per row from palette of 256
 
+Put this on a screen somehow, from Macbeth
+
+* Tomorrow, and tomorrow, and tomorrow,
+
+  Creeps in this petty pace from day to day,
+
+  To the last syllable of recorded time;
+
+  And all our yesterdays have lighted fools
+
+  The way to dusty death. Out, out, brief candle!
+
+  Life's but a walking shadow, a poor player,
+
+  That struts and frets his hour upon the stage,
+
+  And then is heard no more. It is a tale
+
+  Told by an idiot, full of sound and fury,
+
+  Signifying nothing.
+
 # References
 
 68000 cycle counts - [https://gist.github.com/cbmeeks/e759c7061d61ec4ac354a7df44a4a8f1](https://gist.github.com/cbmeeks/e759c7061d61ec4ac354a7df44a4a8f1)	
 
 Use PLD or CPLD devices - **settled on ATF1508 PLCC-84**
 
-* GAL22V10 - [ATF22V10C-10PU Microchip Technology | Integrated Circuits (ICs) | DigiKey](https://www.digikey.com/en/products/detail/microchip-technology/ATF22V10C-10PU/1775078)  
-  * [https://github.com/daveho/GALasm](https://github.com/daveho/GALasm)   
-* CPLDs  
-  * ATF750 - [ATF750CL-15PU Microchip Technology | Integrated Circuits (ICs) | DigiKey](https://www.digikey.com/en/products/detail/microchip-technology/ATF750CL-15PU/1914513)   
-  * [ATF2500C-20PU Microchip Technology | Integrated Circuits (ICs) | DigiKey](https://www.digikey.com/en/products/detail/microchip-technology/ATF2500C-20PU/1008426)   
-  * PLCC-44 [ATF1504A S-10JU44 Microchip Technology | Integrated Circuits (ICs) | DigiKey](https://www.digikey.com/en/products/detail/microchip-technology/ATF1504AS-10JU44/1118923)   
-    * [PLCC-44-AT Adam Technologies PLCC Socket | Jameco](https://www.jameco.com/z/PLCC-44-AT-Adam-Technologies-44-Pin-PLCC-Socket-Soldertail-Through-Hole_71618.html)   
-  * [ATF1508AS | Microchip Technology](https://www.microchip.com/en-us/product/ATF1508AS) - PLCC-84  
-    * Jameco [Socket PLCC 84 Pin Soldertail Through Hole](https://www.jameco.com/z/4000-84D-R-James-Electronics-Socket-PLCC-84-Pin-Soldertail-Through-Hole_2289799.html)   
-  * [GitHub - peterzieba/5Vpld: A collection of scripts and tools for Atmel ATF150x and GAL Programmable logic devices, some of the only standing active 5V programmable logic parts still available.](https://github.com/peterzieba/5Vpld)   
-  * They have a USB programmer but that fits a 2x5 header and I’ve already put a 1x5 header on the board assuming I’d make my own cable  
-  * They have a lot of resources for design and also a Verilog compiler  
-  * Cupl can run under Wine on macOS  
-  * “Bake a JTAG header into the board. A 2x5 0.1" header is the standard pinout and takes almost no space. Get an FT232H board (Adafruit sells one for ~$15), wire it up, and you've got a programmer that works with OpenOCD.”  
-    * [Adafruit FT232H Breakout - General Purpose USB to GPIO, SPI, I2C](https://www.adafruit.com/product/2264)   
-    * No, just put a 1x5 header on and wire from ft232h
-  * If there’s a .si file for the PLD “cupl.exe” will run that simulation and put outputs in .so  
-  * Use pyftdi for toggling gpios and reading the results for test vectors  
-  * **~~Sourcing~~** ~~ATF1508s may be difficult.  May need to stockpile?~~ Plenty at Microchip for now.
-  * [https://www.youtube.com/watch?v=LnGaDpGbbjQ](https://www.youtube.com/watch?v=LnGaDpGbbjQ) has a bunch of details on HDL through Microchip's tools and using these devices  
-  * Really need to write HDL **before** doing the PCB because some pins may need to move.
+* [ATF1508AS | Microchip Technology](https://www.microchip.com/en-us/product/ATF1508AS) - PLCC-84  
+  * Jameco [Socket PLCC 84 Pin Soldertail Through Hole](https://www.jameco.com/z/4000-84D-R-James-Electronics-Socket-PLCC-84-Pin-Soldertail-Through-Hole_2289799.html)   
+* [GitHub - peterzieba/5Vpld: A collection of scripts and tools for Atmel ATF150x and GAL Programmable logic devices, some of the only standing active 5V programmable logic parts still available.](https://github.com/peterzieba/5Vpld)   
+* They have a USB programmer but that fits a 2x5 header and I’ve already put a 1x5 header on the board assuming I’d make my own cable  
+* They have a lot of resources for design and also a Verilog compiler  
+* Cupl can run under Wine on macOS  
+* “Bake a JTAG header into the board. A 2x5 0.1" header is the standard pinout and takes almost no space. Get an FT232H board (Adafruit sells one for ~$15), wire it up, and you've got a programmer that works with OpenOCD.”  
+  * [Adafruit FT232H Breakout - General Purpose USB to GPIO, SPI, I2C](https://www.adafruit.com/product/2264)   
+  * No, just put a 1x5 header on and wire from ft232h
+* If there’s a .si file for the PLD “cupl.exe” will run that simulation and put outputs in .so  
+* Use pyftdi for toggling gpios and reading the results for test vectors  
+* **~~Sourcing~~** ~~ATF1508s may be difficult.  May need to stockpile?~~ Plenty at Microchip for now.
+* [https://www.youtube.com/watch?v=LnGaDpGbbjQ](https://www.youtube.com/watch?v=LnGaDpGbbjQ) has a bunch of details on HDL through Microchip's tools and using these devices  
+* Really need to write HDL **before** doing the PCB because some pins may need to move.
 
 # Design philosophy
 
 Try to do something more long-term sustainable that you can pick up and restart more easily  
-Use Verilog and verilator  
 Find a way to share constants between Verilog, linker.ld, crt0.s, and C++
 
 * Codegen from a master file
@@ -54,22 +68,15 @@ How much design file can be in YAML or in Python?  Generate from YAML:
 
 ~~Maybe target a standard case form factor (e.g. Micro-ATX or Mini-ITX) - use your existing old case?~~
 
-* ~~Could use existing cases and power supplies~~  
-* ~~Need a “PS\_ON” circuit~~  
-* ~~3D print I/O panel snap-in~~  
-* ~~\*could\* have pin-header to screw in slot plate for HCI~~  
-* ~~Most cases have power LED, button on front, USB ports, headphone jack~~  
-* ~~E.g. [https://www.amazon.com/Goodisory-MX01-Fanless-Chassis-Vertical/dp/B07T2HKWZN](https://www.amazon.com/Goodisory-MX01-Fanless-Chassis-Vertical/dp/B07T2HKWZN)~~  
-* **Nah.**  
-* **Use USB\_C and print a case.**
+**Nah.**  
+
+**Use USB\_C and print a case.**
 
 # How To Get To Reliable / Ready for Rev 2
 
-Stop changing multiple variables
+At reliable 14MHz UART TX and CF and RAM and somewhat-working RX in `04092026-14mhz-works-no-engine`
 
-* Merge engine-investigation but then drop GLUE back to standalone and depopulate VIDEO and ENGINE, debug it just up to booting with UART RX/TX
-
-HALT circuit  - use reset button and order some supervisors and work those into rev 1 to prove out.
+HALT circuit  - use reset button for now and order some supervisors and work those into rev 1 to prove out.
 
 Clock - why does it look like 3.7V?  Are oscillators lying, or fan out is too great?
 
@@ -305,46 +312,67 @@ Previous intent: Keyboard, mouse, serial port through 8051-compatible AT89S52
 
   Move instead to 68681, bus interface is reliable and hardcoded, UART reliable and high-speed with flow control, may be able to do PS/2 through interrupts on input pins
 
-## ENGINE - DMA 
+### ENGINE - DMA
 
-third ATF1508
+Third ATF1508AS.  HALT-based bus-stealing DMA controller for video (and audio).
 
-* A, D signals  
-* ENGINE\_{DTACK,SELECT,IRQ,IACK} to and from GLUE for control as a peripheral  
-* ENGINE\_{TMS,TCK,TDI,TDO} from GLUE for bitfile loading  
-* CPU signals for memory-mapped access (low 20 bits) and bus mastering (all 24 bits): R/W, AS, LDS, UDS, DTACK  
-* Drive bus snooping for video generation at a higher rate with corresponding spin of VIDEO, e.g. 320\*480@8bpp or 640\*480@4bpp
-* Fetch and then write audio data
+* Reads framebuffer data from SRAM and signals VIDEO to latch D[15:0] directly from the data bus
+* Uses HALT-based bus stealing: ENGINE asks GLUE to halt the CPU, then drives the address bus to perform an SRAM read while VIDEO snoops D[15:0] via LATCH signal
+* ENGINE does not know or care about pixel format — it is a word pump.  VIDEO controls how many words per line via NEED\_WORD, and signals EOL to advance ENGINE to the next row
+* Audio: not handled by ENGINE in Rev 1.  The original plan (VIDEO requests an extra ENGINE transfer per line and asserts AUDIO\_LE instead of LATCH, so the audio DAC captures D[15:0], with the sample stashed at the end of each row) was abandoned because every usable rate tightly couples to HSYNC and the framebuffer layout gets awkward.  See "CPU-driven 8-bit audio" below.
+* Row stride is always a multiple of 64 words (128 bytes).  CPU configures stride via a 2-bit field: 0=64, 1=128, 2=192, 3=256 words.  Progressive uses stride = smallest multiple of 64 >= active words.  Interlaced uses 2x that to skip the other field's line in a line-sequential framebuffer.
+* ADVANCE register (write-only command) performs the same row-advance operation as EOL; used by VSYNC ISR to offset field 1 by one line
 
-## Latched 8-bit audio
+Bodge wires required on Rev 1 (6 total):
 
-* CPU needs to update it in VBLANK ISR per line and per-blanking-line ISR  
-* Or ENGINE CPLD performs a read to get it  
+* ENGINE pin 2 (OE2) <-- VIDEO: NEED\_WORD (VIDEO shift reg needs data)
+* ENGINE pin 8 <-- VIDEO: SOF (start of frame, reset pointer)
+* ENGINE pin 10 <-- VIDEO: EOL (end of line, advance to next row)
+* ENGINE pin 40 --> VIDEO: LATCH (D[15:0] stable, capture now)
+* ENGINE pin 6 (was \~ENGINE\_IACK) --> GLUE: HALT\_REQ (request CPU halt)
+* ENGINE pin 9 <-- GLUE: BUS\_FREE (CPU halted, bus available)
+
+Fits 108/128 macrocells (84%) with current register set.
+
+## CPU-driven 8-bit audio
+
+The '373 audio latch is clocked by GLUE's ~AUDIO\_LE on CPU writes to the audio address; there is no hardware FIFO or DMA engine.  Driving the DAC is a CPU timing problem, with two supported patterns:
+
+* **ISR-driven (OS-friendly, ~8-11 kHz).**  GLUE timer (or a future VIDEO line IRQ) fires periodically; ISR writes one sample and returns.  Ceiling is set by ISR overhead on the 12 MHz 68000 with ROM wait states — probably 8-11 kHz before the ISR eats most of the CPU.  Good enough for a general-purpose OS that must also do other work (CP/M-68K, Fuzix).
+* **Busywait-driven (game-friendly, up to ~31/15/10 kHz).**  VIDEO exposes a STATUS register whose bit 0 toggles once per visible line (v\_cnt[0]; 31.469 kHz at VGA 640x480@60).  Code polls the toggle, then writes AUDIO.  1x coupling = 31.469 kHz (one sample per flip).  /2 or /3 rate by skipping 1 or 2 lines.  A game that gives up its main loop to audio-plus-framebuffer-writes can spend every non-rendering cycle on audio.
+
+This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; future revisions may repurpose the pin.
+
 * 8-bit R2R  
 * [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp  
-* Will need to see how much noise and distortion is caused by timing variation.  Maybe I can add blocking DTACK to a timer tick or something
 
 # Rev 2
 
 - [ ] Schematic (+PCB if necessary)
-  - [ ] Need BOM output but some way to select “I have these already”.  
+  - [ ] Split VIDEO into PIXEL and TIMING CPLDs to give more flexibility
+    - [ ] TIMING could handle more complex timing modes (like what?  There's a 25MHz oscillator) or possibly DMA modes
+    - [ ] PIXEL could handle more pixel formats, deeper FIFO, more palette modes
+  - [ ] Need BOM output but some way to select “I have these already”.
   - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
   - [ ] Determine a more available ROM technology and design around that.
-    - [ ] CPLD with I2C ROM?
-    - [ ] RP2350?
     - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
     - [ ] https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614 is a 256K x 16 ROM, 40DIP, 90ns (more wait states but maybe okay) for about $10 and they have 142 of them at the moment
   - [ ] Replace AT89S52 with 68681 DUART (same DIP-40 socket) — see below
-  - [ ] Pullups on JTAG lines
-  - [ ] Pullup on DTACK so missing peripherals can't spuriously ACK
-  - [ ] 4.7K Pullup on HALT
-  - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
+  - [ ] Pullups
+    - [ ] JTAG lines
+    - [ ] on DTACK from peripherals (maybe only 68681) so missing peripherals can't spuriously ACK
+    - [ ] 4.7K Pullup on HALT
+    - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
   - [ ] Rework GLUE IO MCU signals for 68681: ~IO_SELECT becomes ~CS, ~IO_DTACK becomes a pass-through input (68681 drives DTACK), ~IO_IRQ stays as interrupt input; drop ~IO_IACK (tie 68681 ~IACK high, use autovectors, read ISR to clear)
-  - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
+  - [ ] Only 25.175MHz into the VIDEO chip
   - [ ] More signals between GLUE, VIDEO, ENGINE
     - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
   - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
-  - [ ] GND, +5V, D, A, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points - use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe - basically bring out every inter-IC signal.
+  - [ ] GND, +5V, D, A, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points
+    - [ ] use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
+    - [ ] basically bring out every inter-IC signal
+    - [ ] Make the pin header be 2xN, down each side silk screen the signal at the pin
+    - [ ] Put in lots of holes for ground test points around the board
   - [ ] Pullups on PS/2 clock lines
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
@@ -373,6 +401,7 @@ third ATF1508
     - [ ] CF card latches on rise of IOWR
     - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
   - [ ] CF card to 16 bits?  Routing those pins will be annoying, but possible.
+  
 - [ ] PCB only
   - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
@@ -383,93 +412,9 @@ third ATF1508
   - [x] Route A18 to GLUE instead of A6  
   - [x] Wire GLUE VPA back to the CPU in place of ENGINE\_IACK
   - [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
-  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF - but if I can program successfully from the GLUE maybe I don't need a ZIF? - need ZIF footprint
+  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF -  need ZIF footprint
   - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
   - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
     - [ ] Is there a castellenated version I could solder on?
     - [ ] Is there a better version, something smaller with fewer pins?
   - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
-
-
-
----
-
-# Older Notes - details
-
-## On board video
-
-* 912 samples \* 262 @ 59.9 is 14.318MHz.  
-  * 1 bpp = 14.318 Mb/sec =  .89 MT/sec  
-* 400 \* 525 (320 \* 480\) is 12.6MHz, repeat lines and double pixels to 640 \* 480  
-  * 1 bpp  = 12.6 Mb/sec = 787 KT/sec  
-  * 4 bpp = 50.4 Mb/sec  = 3.15 MT/sec, tight and need \>= 16MHz 68010 probably  
-  * 8 bpp = = 6.3 MT/sec - not possible  
-* 800 \* 525 @ 60 (640 \* 480\) is 25.2MHz,  
-  * 1 bpp  = 25.2 Mb/sec = 1.574 MT/sec  
-  * 4 bpp = 100.8 Mb/sec  = 6.3 MT/sec, not possible  
-  * 8 bpp = = 12.6 MT/sec - not possible  
-* ~~16-entry 8-bit (R3G3B2) palette - how to write?~~  
-  * ~~4 address bits, 8 data bits through CPLD gated on palette address space~~  
-  * ~~16-entry VGA palette RAM is at 0x20-0x2f~~  
-    * ~~Address lines into palette RAM are out of CPLD, normally part of shift register, but also enabled by writes to 0x20-0x2f~~  
-    * ~~Palette RAM 8-bit data lines will be wired to the data lines out of the CPLD and to the DAC, so must only update the palette RAM during sync when the VGA monitor is not looking at RGB~~  
-    * ~~The smallest cheapest sram is 8k…  Might have enough CPLD pins for a “palette selector” index on higher palette SRAM address pins.~~
-
-Out of scope
-
-* MMU - bail for now  
-  * 5 bits of PID, 4K page size  
-  * 2x 128KByte SRAMs replace the top 12 address bits.  
-  * Pair of ‘245s between CPU and bus and another pair between SRAMs and bus  
-  * CPLD controls whether CPU or SRAM sends address, CPU on boot  
-  * CPLD also writes config to SRAMs, adds wait states  
-* Networking  
-  * Claude suggested these chipsets:  
-    * RTL8019/8029 (NE2000-compatible ISA chips)  
-    * SMC91C92/91C111 (LAN91C111 family)—this is promising  
-    * CS8900A (Cirrus Logic, used in some Atari ethernet adapters like the EtherNEC and NetUSBee)
-
-HCI board
-
-* ~~NTSC monochrome, artifact color~~  
-  * ~~Drive a 19-bit counter for pixels - 3 are for shift register or 8-to-1 for pixels, 16 are for ROM and RAM byte address~~  
-  * ~~128K timing / signal ROM can do monochrome 912x525 progressive in lower 64K, interlaced in upper 64K~~  
-  * ~~704 pixels means 88 bytes are active but 912 samples means 114 bytes per row~~  
-  * ~~Could clock out a byte to latch and audio R2R DAC at byte 88~~  
-  * ~~Could clock in a byte from audio ADC0804 at byte 89~~  
-  * ~~Signals for progressive sync, blank, restart counter, start ADC, latch ADC, latch DAC, gate colorburst~~  
-  * ~~AND with a latched bit or a pin output from IO MCU to enable color~~  
-  * ~~Set ROM so that start of vblank is start of ROM, so then “reset counter” can be routed to VIDEO\_IRQ, need another latched bit to enable that~~  
-* Or go to 8bpp 640x480 @ 25MHz  
-  * Probably generate timing and VRAM fetch in a couple of CPLDs at system clock to reduce fetch time  
-  * Latch 16 bits at a time  
-  * Use an 8-bit-to-R5G6B5 lookup from a couple of 256x8 SRAMs or one 256x16 SRAM  
-  * Do audio some other way, I guess  
-* Pi Pico 2 W for 2 USB host ports for USB keyboard and mouse, and other fun tricks maybe
-
-There’s a possibility of a DMA-like engine for SD bulk read - basically use the video clock as SPI CK, and use the video address as an SRAM I/O buffer address; very tricky to get right, but could start to approach 7MB/sec if things lined up
-
-Need to buy
-
-* All BOM parts except RAM, ROM, CPU  
-  * Later upgrade to 68010 or 68HC000  
-  * Later upgrade to 2x 512K for 1MB  
-* 12Mhz oscillator  
-* Sockets for all RAM, ROM, CPU, GLUE, oscillator  
-* FT232H for programing CPLDs  
-* PS/2 keyboard and mouse - [this one?](https://www.amazon.com/Perixx-PERIDUO-117P-Wired-Standard-Keyboard/dp/B0D94MSGNN/ref=sr_1_3?dib=eyJ2IjoiMSJ9.LRaxez2V-DpYXp0UCBV0SGJrAaWfAyFnSy3nBKu6lU2RXJ8jcWVSuGXRhg7eOw-LlzjQwTGonOzpmOIRUlO4jboEF7H26-dHbffLu_FfBjingncwnN4dhwBlWajfALYHy5cRK0YODxJTHcMjxZrshLZ_Cr7rwzQw5RKDyVQi8mSikm-0FkQoGJ08SXWYWMnOuitpjsoed0ryTUh9DSe74cYj_tCOqy-fWE48P8dp-CU.40WtxEBchDloWqPv6jQ788EwaTTCnW6wNm0vHkN5Z2M&dib_tag=se&keywords=Ps%2F2+Keyboard&qid=1769668870&sr=8-3)  
-* Adafruit 4090
-
-Hm, 640 \* 480 @ 60?
-
-* 512K VRAM - 19-bit counter in CPLD  
-* R3G3B2 - direct pass through to DAC  
-* monochrome1 bpp - 1-of-8 selection  
-  * But then RAM addressing needs to be /8…  
-* Need 19 CPU address bits and 8 data bits into VRAM, both gated by VRAM\_SELECT - that’s 4 8-bit buffers  
-  * And cannot access except during blanking  
-* Note that issues are similar in some ways to palette SRAM except fewer address pins, may be able to gate palette address and data through CPLD  
-* Could latch pixel row  
-  * 10 bit address latch in CPLD, forces addresses to VRAM to be 20 bits  
-* Could there be a RAM row populated in hblank from system RAM? 1Kx8 SRAM, need 640 transfers - have (800 - 640\) \* (1 / 25.2) S = 6.34µS = 76 machine cycles at 12MHz, so **no**
-
