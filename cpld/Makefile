@@ -44,8 +44,6 @@ all: glue video engine
 glue: glue/glue.svf
 
 glue/glue.edif: glue/glue.v glue/build_id.vh ../griffin.generated.vh
-	@perl -i -pe 's/(BUILD_ID\s*=\s*8\x27d)(\d+)/$$1.((($$2+1)&255))/e' glue/build_id.vh
-	@echo "GLUE build ID: $$(perl -ne 'print $$1 if /BUILD_ID\s*=\s*8\x27d(\d+)/' glue/build_id.vh)"
 	cd glue && $(YOSYS) glue
 
 glue/glue.jed: glue/glue.edif
