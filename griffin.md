@@ -9,7 +9,8 @@ MVP:
 
 * Fuzix or CP/M-68K with an image viewer: NTSC 704\*480i BW, NTSC 176\*480i color (704 sample artifact color) , VGA 640\*480p 2 colors per row from palette of 256, VGA 320\*480p 4 colors per row from palette of 256
 
-Put this on a screen somehow, from Macbeth
+
+Put this on a screen somehow, from Macbeth:
 
 * Tomorrow, and tomorrow, and tomorrow,
 
@@ -45,10 +46,9 @@ Use PLD or CPLD devices - **settled on ATF1508 PLCC-84**
 * Cupl can run under Wine on macOS  
 * “Bake a JTAG header into the board. A 2x5 0.1" header is the standard pinout and takes almost no space. Get an FT232H board (Adafruit sells one for ~$15), wire it up, and you've got a programmer that works with OpenOCD.”  
   * [Adafruit FT232H Breakout - General Purpose USB to GPIO, SPI, I2C](https://www.adafruit.com/product/2264)   
-  * No, just put a 1x5 header on and wire from ft232h
+  * **No, just put a 1x5 header on and wire from ft232h**
 * If there’s a .si file for the PLD “cupl.exe” will run that simulation and put outputs in .so  
-* Use pyftdi for toggling gpios and reading the results for test vectors  
-* **~~Sourcing~~** ~~ATF1508s may be difficult.  May need to stockpile?~~ Plenty at Microchip for now.
+* Sourcing~~** ~~ATF1508s may be difficult.  May need to stockpile?~~ Plenty at Microchip for now.
 * [https://www.youtube.com/watch?v=LnGaDpGbbjQ](https://www.youtube.com/watch?v=LnGaDpGbbjQ) has a bunch of details on HDL through Microchip's tools and using these devices  
 * Really need to write HDL **before** doing the PCB because some pins may need to move.
 
@@ -77,8 +77,6 @@ How much design file can be in YAML or in Python?  Generate from YAML:
 At reliable 14MHz UART TX and CF and RAM and somewhat-working RX in `04092026-14mhz-works-no-engine`
 
 HALT circuit  - use reset button for now and order some supervisors and work those into rev 1 to prove out.
-
-Clock - why does it look like 3.7V?  Are oscillators lying, or fan out is too great?
 
 Start tagging source when something works and check it and tag it often
 
@@ -138,11 +136,11 @@ USB-C power with switch inline between supply and USB-C port
 
 ## Power-on reset and user reset button
 
-RC reset/halt trigger - short RC to discharge with reset button
+Supervisor IC
 
 ## System clock
 
-CPUCLK - 12MHz clock or 20 MHz from TTL oscillator, okay to change and reflash GLUE bitfile if clock is changed
+CPUCLK - 16MHz oscillator, okay to change and reflash GLUE bitfile if clock is changed
 
 ## CPU
 
@@ -152,7 +150,7 @@ CPUCLK - 12MHz clock or 20 MHz from TTL oscillator, okay to change and reflash G
 
 ## RTC
 
-completely forgot from the beginning.
+Completely forgot from the beginning.
 
 * Full up on pins in GLUE and in IO MCU, so not easy to add now and board space may not be available  
 * Add a revision later, use the BQ3285 and a coin cell to be somewhat period-appropriate
@@ -169,14 +167,13 @@ completely forgot from the beginning.
 * DTACK responds whether RAM is populated, D will be repeating within partially populated, floating/junk for not-populated  
 * ROM overlaid over RAM bank 1 until write to GLUE config register as described elsewhere  
 * Handle these RAM cases:  
-  * 256K - using the two chips I have now  
   * 1M-4M by MB - populate up to 4 BANKS contiguously with 512K RAMs starting with bank 1  
   * Test procedure  
     * Write to 0xAA55 to 4M - 2, write 0x7733 to 4M - 4, if 4M - 2 == 0xAA55, then 4M  
     * Repeat for 3M, 2M, 1M  
     * Otherwise assume 256K
-
-See [griffin.yml](griffin.yml) for the complete peripheral address map.
+  
+    See [griffin.yml](griffin.yml) for the complete peripheral address map.
 
 ## ROM
 
@@ -346,31 +343,92 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 * 8-bit R2R  
 * [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp  
 
+# Rev 0.Dumb
+
+## Push Back
+
+The idea was to use what I had: 12MHz 68000, 64K ROMs, 128K SRAMs.  That's gotten out of control.  It always turns into a workstation with graphics.  Could I still breadboard something?  USB-C power breakout, 68000P12, 64K 8-bit ROMs, 128K 8-bit SRAMs, bitbang SD card, bitbang UART...  Initial address decoding could be really  simple: 5'bxxxx0 is ROM, 5'b00011 is RAM, 5'b00101 is 68681 with SD card off it.  nDTACK is (nROM AND nRAM AND 68681 nDTACK).  IPL0 is 68681, IPL1 and IPL2 are pulled high. Very few parts and hey presto it's a CP/M-68K board.  Do you count what you have *now* as parts bin?  Or only what you had January 1, 2026?  32 wires to 2 ROMS and 2 RAMs, 24 wires to 68681, two NANDs to get WRITE_LO and WRITE_HI, 12MHZ osc, 3MHz crystal, bypass caps, decoupling caps, pullups on HALT etc.
+
+**That's a LOT of wires, *and is a distraction from pixels***.  If you thought you could do NTSC in software with it, that would be a thing to do.  Could do the bonkers idea with framebuffer packed into MOVEQ instructions in the region A17==1 with 8x1bit pixels in low byte and sync bit in D9 (clobbers D0 or D1) ; need a shift register, some dtack logic, and a divider.  **Even more wires and tricky hacking**.
+
+## Actual board
+
+Could design the boards, send them off, and get them back mostly populated with SMT...  Use SMT for logic, discretes, maybe RAM.  Only items I need to populate are: CPU socket, RAM sockets, ROM ZIF, 68681 socket, composite jack.  Still a lot of soldering.  I get 720x480 monochrome, 180x480 ~16 artifact colors.
+
 # Rev 2
 
+## Investigation Plan
+
+See if you can determine if ATF1508 is tristating correctly through Verilog
+
+Move SYSTICK out of GLUE
+
+68681 - make a daughterboard, test it: UART with high rate and interrupts, system tick
+
+Move PS/2 into GLUE
+
+## Summary
+
+Either drop back to CUPL or get tristating figured out through Verilog
+
+16MHz CPU clock, 16-bit RAM, 16-bit ROM, 16-bit True IDE CF
+
+Really should put an RTC on it.
+
+GLUE ATF1508 has same functionality as Rev 1 minus SYSTICK
+
+* separate DEBUG LED
+* boot serial TX, TIMER gives 8-bit counter on CPU clock with stall for determinism
+* PS/2 input through an IRQ from CLK pin (then read DATA pin), PS/2 output through pulling CLK low for 100uS and then let peripheral drive CLK and update data with IRQ
+
+serial I/O
+
+- boot diagnostic serial output
+- 68681 on-board: 2 UARTs, interrupt-based PS/2, systick timer
+- FT2232H on-board for JTAG programming and console UART
+- pair of pins for 2nd UART for e.g. ESP32 communication
+- 68681 UART out goes through the CPLD so boot serial can be switched out and 68681 in and have one output
+
+640x480x60p VESA through separate SRAM that is on the bus but isolated and clocked out if not being accessed
+
+* 25.175MHz pixel clock 
+* 16-bit wide 512KB RAM
+* 16bpp (68000@16MHz is probably anemic for this, could consider going to PGA 68030@33)
+* 16bpp from the RAM goes into a LUT RAM with 16, 8, 4, 2, or 1 shifts per pixel, if it will fit.  May not fit, in which case just do 16 straight or a 1-bit-shifter-to-monochrome 565
+* LUT RAM also needs to be on the bus, need to be able to switch data into RAM
+* first ATF1508 - manage timing, drive RAM with counter, arbitrate access to VRAM
+  * HSYNC/VSYNC back through a read
+* second ATF1508 - manage 16 bits to shifts through LUT, arbitrate access to LUT RAM
+* Possibly have an external pair of counters that can be reset independently by CPLD if the counter doesn't fit in the 1508
+* *maybe* could have a 2x mode where I get 320*240 so CPU is better matched to the output.
+* VBLANK IRQ
+
+*maybe* Audio with configurable or maybe just 22S/s rate stereo through another CPLD - 1504?
+
+* Want double-buffering, so timer is clocking out one while the other is on the bus - don't need bus arbitration for that, just have two SRAMs and switch them
+* Configure as much as the CPLD can do
+* Get a decent audio DAC, 2x 8 bit - stereo
+* Could I also ADC?  Like flip a high-order bit on writes so low page is out and high page is in?
+* Let memory be 8-bit and in rapid succession latch left, right outputs and then read left, right inputs and write to memory
+
+## Board changes
+
 - [ ] Schematic (+PCB if necessary)
-  - [ ] Split VIDEO into PIXEL and TIMING CPLDs to give more flexibility
-    - [ ] TIMING could handle more complex timing modes (like what?  There's a 25MHz oscillator) or possibly DMA modes
-    - [ ] PIXEL could handle more pixel formats, deeper FIFO, more palette modes
   - [ ] Need BOM output but some way to select “I have these already”.
   - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
   - [ ] Determine a more available ROM technology and design around that.
     - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
-    - [ ] https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614 is a 256K x 16 ROM, 40DIP, 90ns (more wait states but maybe okay) for about $10 and they have 142 of them at the moment
+    - [ ] [https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614](https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614) is a 256K x 16 ROM, 40DIP, 90ns (more wait states but maybe okay) for about $10 and they have 142 of them at the moment
+    - [ ] Would be nice to be able to download a new ROM to it, e.g. flushable
   - [ ] Replace AT89S52 with 68681 DUART (same DIP-40 socket) — see below
   - [ ] Pullups
     - [ ] JTAG lines
-    - [ ] on DTACK from peripherals (maybe only 68681) so missing peripherals can't spuriously ACK
-    - [ ] 4.7K Pullup on HALT
-    - [ ] Pullups on anything between GLUE and VIDEO and ENGINE and IO in the case of any of VIDEO/ENGINE/IO not being populated
+    - [ ] Any CPU lines that may lead or not be driven - 4.7K HALT
+    - [ ] Any inter-IC signals that might cause stalls or floating behavior
   - [ ] Rework GLUE IO MCU signals for 68681: ~IO_SELECT becomes ~CS, ~IO_DTACK becomes a pass-through input (68681 drives DTACK), ~IO_IRQ stays as interrupt input; drop ~IO_IACK (tie 68681 ~IACK high, use autovectors, read ISR to clear)
-  - [ ] Only 25.175MHz into the VIDEO chip
-  - [ ] More signals between GLUE, VIDEO, ENGINE
-    - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
   - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
-  - [ ] GND, +5V, D, A, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points
+  - [ ] GND, +5V, D, A, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points, basically bring out every inter-IC signal
     - [ ] use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
-    - [ ] basically bring out every inter-IC signal
     - [ ] Make the pin header be 2xN, down each side silk screen the signal at the pin
     - [ ] Put in lots of holes for ground test points around the board
   - [ ] Pullups on PS/2 clock lines
@@ -379,6 +437,7 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
     - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
   - [ ] Wire ENGINE CPLD into the JTAG chain, free up GLUE signals to ENGINE JTAG
   - [x] Put in a driver for debug LED so it doesn’t interfere with debug out voltage level  
+    - [ ] small NPN like a 2N3904 or SOT-23 MMBT3904. Collector to \+5V through the LED and resistor, base to the DEBUG\_OUT pad through a 1K–10K resistor, emitter to ground. The base current is microamps so it won't load the serial line at all, and the LED gets a clean 5V drive independent of your logic levels.
   - [ ] Put USB-C with PD on the board
   - [ ] Much more attention to analog components - redesign composite and VGA analog circuitry to be robust
   - [ ] 68681 DUART replacing AT89S52 (same DIP-40 socket, proper bus drivers, two UARTs, counter/timer, parallel I/O)
@@ -391,19 +450,20 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
     - [ ] IP0-IP3 have input-change-detect interrupt — could use for PS/2 clock edge detection
     - [ ] OP0-OP7 directly drive RTS/CTS flow control and other active-low output signals
     - [ ] PS/2 keyboard/mouse: 68681 IP/OP pins are not bidirectional open-drain, so PS/2 may still need external open-drain buffers or a separate solution
-  - [ ] Maybe
-    - [ ] Put two FTDI's on the board with USB-C for debug output and for 68681 serial console
+  - [ ] FT2232R on the board with USB-C for debug output and for 68681 serial console
+    - [ ] boot serial separate from DEBUG_OUT pin
     - [ ] Audio input
     - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?
-    - [ ] Slap an ESP on it or a Pico for networking?  Moving to a Pico for UART, keyboard, mouse, timer, and wifi would knock a lot of stuff over in one shot, but unclear whether 3.3V would be a problem.
-  - [ ] CF symbol is junk - redo it.
-  - [ ] CF card IOWR should be gated by AS.
-    - [ ] CF card latches on rise of IOWR
-    - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
-  - [ ] CF card to 16 bits?  Routing those pins will be annoying, but possible.
-  
+  - [ ] CF card
+    - [ ] symbol is junk - redo it.
+    - [ ] CF card IOWR should be gated by AS.
+      - [ ] CF card latches on rise of IOWR
+      - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
+    - [ ] CF card to 16 bits
 - [ ] PCB only
   - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
+  - [ ] CF card SMT footprint
+  - [ ] RAM SMT footprint, just go to like 8MB RAM
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
   - [ ] PS2 stabs - move footprint  
   - [ ] Headphone jack pads - drill partial holes?  
