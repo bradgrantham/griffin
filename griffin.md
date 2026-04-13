@@ -397,8 +397,7 @@ serial I/O
 - FT2232H on-board for JTAG programming and console UART
 - pair of pins for 2nd UART for e.g. ESP32 communication
 - 68681 UART out goes through the CPLD so boot serial can be switched out and 68681 in and have one output
-
-640x480x60p VESA through separate SRAM that is on the bus but isolated and clocked out if not being accessed
+- 640x480x60p VESA through separate SRAM that is on the bus but isolated and clocked out if not being accessed
 
 * 25.175MHz pixel clock 
 * 16-bit wide 512KB RAM
