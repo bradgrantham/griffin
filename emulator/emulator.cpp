@@ -27,7 +27,7 @@ constexpr uint32_t DEBUG_UART = 0x0004;
 constexpr uint32_t DEBUG_DISASSEMBLE = 0x0008;
 constexpr uint32_t DEBUG_DEBUG_BIT = 0x0020;
 constexpr uint32_t DEBUG_CF = 0x0040;
-constexpr uint32_t DEBUG_VIDEO = 0x0080;
+constexpr uint32_t DEBUG_DUART = 0x0080;
 constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
@@ -543,34 +543,6 @@ struct TimerState
 };
 
 // ---------------------------------------------------------------------------
-// Systick timer — fixed rate ~183 Hz = SYSCLK / 65536.
-// The pending flag sets every 65536 SYSCLK cycles.  Reading
-// SYSTICK_STATUS clears pending and deasserts the IRQ.
-// SYSTICK_IRQ_ENABLE in GLUE_CONFIG gates the IRQ output but the
-// timer always runs and the pending flag always sets.
-// ---------------------------------------------------------------------------
-
-struct SystickState
-{
-    static constexpr uint64_t PERIOD = 65536;  // SYSCLK / 65536 ≈ 183 Hz
-    bool pending = false;
-    bool irq_enabled = false;
-
-    // Called once per PERIOD clocks.
-    void tick()
-    {
-        pending = true;
-    }
-
-    uint8_t read_status()
-    {
-        uint8_t val = pending ? GLUE_SYSTICK_STATUS_PENDING_MASK : 0;
-        pending = false;
-        return val;
-    }
-};
-
-// ---------------------------------------------------------------------------
 // SoftUART TX synthesizer — generates an 8N1 bitstream on DEBUG_IN from
 // bytes received on the PTY.  The emulator's firmware bit-bang RX routine
 // polls DEBUG_IN, so we need to present a properly-timed serial waveform.
@@ -650,6 +622,248 @@ struct SoftUARTTX
 };
 
 // ---------------------------------------------------------------------------
+// 68681 DUART emulation — Channel A UART via PTY, counter/timer, interrupts
+//
+// Minimal subset: Channel A TX/RX through the PTY, counter/timer for
+// periodic interrupts (e.g. 59.95 Hz tick), ISR/IMR for IPL assertion.
+// Channel B, I/O ports, and BRG details are stubs.
+// ---------------------------------------------------------------------------
+
+struct DUARTState
+{
+    // Channel A
+    bool tx_enabled = false;
+    bool rx_enabled = false;
+    int mr_pointer_a = 0;       // 0 = next rw hits MR1, 1 = MR2+
+    uint8_t mr_a[2] = {0, 0};  // stored but not interpreted
+
+    // Channel B (stub)
+    bool tx_enabled_b = false;
+    bool rx_enabled_b = false;
+    int mr_pointer_b = 0;
+    uint8_t mr_b[2] = {0, 0};
+
+    // Interrupt
+    uint8_t imr = 0;
+    bool ctr_ready = false;     // latched; clears on STOPCC read
+
+    // Counter/timer
+    uint8_t acr = 0;
+    uint8_t ctur = 0xFF;
+    uint8_t ctlr = 0xFF;
+    bool ctr_running = false;
+    uint64_t ctr_next_fire = 0; // in SYSCLK units
+
+    // IVR (accepted but unused — autovector mode)
+    uint8_t ivr = 0x0F;
+
+    // Output port
+    uint8_t opcr = 0;
+    uint8_t opr = 0;
+
+    uint16_t preload() const
+    {
+        return (static_cast<uint16_t>(ctur) << 8) | ctlr;
+    }
+
+    // Counter/timer period in SYSCLK cycles.
+    // Real 68681 counts down from preload to 1 at DUART_CLOCK rate.
+    // Convert to SYSCLK: preload * SYSCLK_HZ / DUART_CLOCK.
+    uint64_t ctr_period_sysclk() const
+    {
+        uint32_t p = preload();
+        if (p == 0)
+        {
+            p = 0x10000;  // 68681 treats 0 as 65536
+        }
+        return static_cast<uint64_t>(p) * SYSCLK_HZ / DUART_CLOCK;
+    }
+
+    // Advance timer state — call periodically from poll_io
+    void check_timer(uint64_t clock_now)
+    {
+        if (!ctr_running)
+        {
+            return;
+        }
+        while (clock_now >= ctr_next_fire)
+        {
+            ctr_ready = true;
+            ctr_next_fire += ctr_period_sysclk();
+        }
+    }
+
+    // Compute ISR from live state
+    uint8_t isr(const PTYConsole &pty) const
+    {
+        uint8_t val = 0;
+        if (tx_enabled)
+        {
+            val |= DUART_ISR_TXRDYA_MASK;   // TX always ready
+        }
+        if (rx_enabled && pty.is_data_ready())
+        {
+            val |= DUART_ISR_RXRDYA_MASK;
+        }
+        if (ctr_ready)
+        {
+            val |= DUART_ISR_CTR_READY_MASK;
+        }
+        return val;
+    }
+
+    bool irq_pending(const PTYConsole &pty) const
+    {
+        return (isr(pty) & imr) != 0;
+    }
+
+    // --- Command register decode (shared by CRA and CRB) ---
+    static void apply_command(uint8_t val, bool &tx_en, bool &rx_en,
+                              int &mr_ptr, uint8_t mr[2])
+    {
+        uint8_t ec = (val & DUART_CRA_EC_MASK) >> DUART_CRA_EC_SHIFT;
+        uint8_t tc = (val & DUART_CRA_TC_MASK) >> DUART_CRA_TC_SHIFT;
+        uint8_t mc = (val & DUART_CRA_MC_MASK) >> DUART_CRA_MC_SHIFT;
+
+        if (ec == 1) { rx_en = true; }
+        if (ec == 2) { rx_en = false; }
+        if (tc == 1) { tx_en = true; }
+        if (tc == 2) { tx_en = false; }
+
+        switch (mc)
+        {
+            case 1: mr_ptr = 0; break;                     // reset MR pointer
+            case 2: rx_en = false; break;                   // reset receiver
+            case 3: tx_en = false; break;                   // reset transmitter
+            case 4: break;                                  // reset error status (no-op)
+            case 5: case 6: case 7: break;                  // break commands (no-op)
+        }
+    }
+
+    uint8_t read_reg(uint32_t abs_addr, const PTYConsole &pty)
+    {
+        switch (abs_addr)
+        {
+            case DUART_MR1A:  // MR1A/MR2A share address; pointer auto-advances
+            {
+                uint8_t val = mr_a[mr_pointer_a];
+                if (mr_pointer_a == 0)
+                {
+                    mr_pointer_a = 1;
+                }
+                return val;
+            }
+            case DUART_SRA:
+            {
+                uint8_t val = 0;
+                if (rx_enabled && pty.is_data_ready())
+                {
+                    val |= DUART_SRA_RXRDY_MASK;
+                }
+                if (tx_enabled)
+                {
+                    val |= DUART_SRA_TXRDY_MASK | DUART_SRA_TXEMT_MASK;
+                }
+                return val;
+            }
+            case DUART_RBA:
+            {
+                uint8_t ch = 0;
+                if (rx_enabled)
+                {
+                    pty.receive(&ch);
+                }
+                return ch;
+            }
+            case DUART_IPCR:    return 0;
+            case DUART_ISR:     return isr(pty);
+            case DUART_CUR:     return 0;
+            case DUART_CLR:     return 0;
+            case DUART_MR1B:  // MR1B/MR2B share address
+            {
+                uint8_t val = mr_b[mr_pointer_b];
+                if (mr_pointer_b == 0)
+                {
+                    mr_pointer_b = 1;
+                }
+                return val;
+            }
+            case DUART_SRB:     return 0;
+            case DUART_RBB:     return 0;
+            case DUART_IVR:     return ivr;
+            case DUART_IP:      return 0;
+            case DUART_STARTCC:
+                ctr_running = true;
+                // ctr_next_fire == 0 signals "needs initialization" — caller
+                // sets it using getClock() after this returns.
+                return 0;
+            case DUART_STOPCC:
+                ctr_running = false;
+                ctr_ready = false;
+                ctr_next_fire = 0;
+                return 0;
+            default:
+                return 0;
+        }
+    }
+
+    void write_reg(uint32_t abs_addr, uint8_t val, const PTYConsole &pty)
+    {
+        switch (abs_addr)
+        {
+            case DUART_MR1A:  // MR1A/MR2A share address
+                mr_a[mr_pointer_a] = val;
+                if (mr_pointer_a == 0)
+                {
+                    mr_pointer_a = 1;
+                }
+                break;
+            case DUART_CSRA:
+                break;  // accept and ignore
+            case DUART_CRA:
+                apply_command(val, tx_enabled, rx_enabled, mr_pointer_a, mr_a);
+                if (debug & DEBUG_DUART)
+                {
+                    printf("[DUART CRA: 0x%02X → tx=%d rx=%d]\n", val, tx_enabled, rx_enabled);
+                }
+                break;
+            case DUART_TBA:
+                if (tx_enabled)
+                {
+                    pty.send(val);
+                }
+                break;
+            case DUART_ACR:     acr = val; break;
+            case DUART_IMR:
+                imr = val;
+                if (debug & DEBUG_DUART)
+                {
+                    printf("[DUART IMR: 0x%02X]\n", val);
+                }
+                break;
+            case DUART_CTUR:    ctur = val; break;
+            case DUART_CTLR:    ctlr = val; break;
+            case DUART_MR1B:  // MR1B/MR2B share address
+                mr_b[mr_pointer_b] = val;
+                if (mr_pointer_b == 0)
+                {
+                    mr_pointer_b = 1;
+                }
+                break;
+            case DUART_CSRB:    break;
+            case DUART_CRB:
+                apply_command(val, tx_enabled_b, rx_enabled_b, mr_pointer_b, mr_b);
+                break;
+            case DUART_TBB:     break;
+            case DUART_IVR:     ivr = val; break;
+            case DUART_OPCR:    opcr = val; break;
+            case DUART_OPR_SET: opr |= val; break;
+            case DUART_OPR_CLR: opr &= ~val; break;
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Real-time clock governor
 //
 // Paces emulation to wall-clock speed.  Called every THROTTLE_INTERVAL
@@ -684,136 +898,6 @@ struct ClockGovernor
     }
 };
 
-// ---------------------------------------------------------------------------
-// Video display — tracks VIDEO/ENGINE timing, renders framebuffer to SDL3
-//
-// Derives a line counter from SYSCLK via the 25.175 MHz pixel clock ratio.
-// Each time a line boundary is crossed, the just-completed visible line's
-// framebuffer data is expanded from 1bpp to ARGB8888 in a staging buffer.
-// At frame end the staging buffer is presented to the SDL window.
-// ---------------------------------------------------------------------------
-
-struct VideoDisplay
-{
-    // VGA 640x480@60 progressive timing (from video.v)
-    static constexpr uint32_t PIXEL_CLK_HZ = 25175000;
-    static constexpr uint32_t H_TOTAL = 800;
-    static constexpr uint32_t V_TOTAL = 525;
-    static constexpr uint32_t V_ACTIVE = 480;
-    static constexpr uint32_t V_SYNC_START = 490;
-    static constexpr uint32_t V_SYNC_END = 492;
-    static constexpr uint32_t WORDS_PER_LINE = 40;
-    static constexpr uint32_t WIDTH = 640;
-    static constexpr uint32_t HEIGHT = 480;
-
-    // Fixed-point pixel/SYSCLK ratio (32.16): pixels per SYSCLK cycle
-    static constexpr uint32_t PIXEL_RATIO_FP =
-        ((uint64_t)PIXEL_CLK_HZ << 16) / SYSCLK_HZ;
-
-    // Timing state
-    uint64_t prev_sysclk = 0;
-    uint64_t pixel_accum_fp = 0;  // 48.16 fixed-point absolute pixel count
-    uint64_t abs_line = 0;        // monotonically increasing line counter
-    bool irq_active = false;
-
-    // ENGINE DMA mirror state
-    bool dma_enabled = false;
-    uint8_t fb_base = 0;         // A[21:14] of framebuffer base
-    uint16_t stride_field = 0;   // 2-bit stride / 64
-    uint16_t fb_ptr = 0;         // 15-bit word offset, mirrors engine.v
-
-    // Staging buffer (640x480 ARGB8888)
-    uint32_t staging[HEIGHT][WIDTH];
-
-    // SDL handles
-    SDL_Window *window = nullptr;
-    SDL_Renderer *renderer = nullptr;
-    SDL_Texture *texture = nullptr;
-
-    bool init()
-    {
-        window = SDL_CreateWindow("Griffin", WIDTH, HEIGHT, 0);
-        if (!window)
-        {
-            fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
-            return false;
-        }
-        renderer = SDL_CreateRenderer(window, nullptr);
-        if (!renderer)
-        {
-            fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
-            return false;
-        }
-        SDL_SetRenderVSync(renderer, 0);
-        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                    SDL_TEXTUREACCESS_STREAMING, WIDTH, HEIGHT);
-        if (!texture)
-        {
-            fprintf(stderr, "SDL_CreateTexture: %s\n", SDL_GetError());
-            return false;
-        }
-        SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-        memset(staging, 0, sizeof(staging));
-        return true;
-    }
-
-    void shutdown()
-    {
-        if (texture)
-        {
-            SDL_DestroyTexture(texture);
-            texture = nullptr;
-        }
-        if (renderer)
-        {
-            SDL_DestroyRenderer(renderer);
-            renderer = nullptr;
-        }
-        if (window)
-        {
-            SDL_DestroyWindow(window);
-            window = nullptr;
-        }
-    }
-
-    // Compute RAM byte address from ENGINE fb_base + fb_ptr
-    // Matches engine.v: dma_addr = {2'b00, fb_base + fb_ptr[14:13], fb_ptr[12:0]}
-    static uint32_t fb_byte_addr(uint8_t base, uint16_t ptr)
-    {
-        uint32_t hi = ((uint32_t)base + (ptr >> 13)) & 0xFF;
-        uint32_t lo = ptr & 0x1FFF;
-        return (hi << 14) | (lo << 1);
-    }
-
-    // EOL advance — matches engine.v row_advanced wire
-    void eol_advance()
-    {
-        uint16_t row_part = (fb_ptr >> 6) + stride_field;
-        fb_ptr = (row_part << 6) & 0x7FFF;
-    }
-
-    void present()
-    {
-        if (!texture)
-        {
-            return;
-        }
-        void *pixels;
-        int pitch;
-        if (SDL_LockTexture(texture, nullptr, &pixels, &pitch))
-        {
-            for (uint32_t y = 0; y < HEIGHT; y++)
-            {
-                memcpy((uint8_t *)pixels + y * pitch, staging[y], WIDTH * 4);
-            }
-            SDL_UnlockTexture(texture);
-        }
-        SDL_RenderClear(renderer);
-        SDL_RenderTexture(renderer, texture, nullptr, nullptr);
-        SDL_RenderPresent(renderer);
-    }
-};
-
 class GriffinEmulator : public moira::Moira
 {
     mutable std::vector<uint8_t> RAM_bank1;
@@ -825,34 +909,10 @@ class GriffinEmulator : public moira::Moira
     mutable bool ROMoverlay = true;
     PTYConsole pty_console;
     mutable CFState cf;
+    mutable DUARTState duart;
     mutable TimerState timer;
-    mutable SystickState systick;
     mutable SoftUARTTX debug_in_tx;
-    mutable VideoDisplay video_display;
     mutable uint8_t dac_value = 0x0;
-
-    // VIDEO register shadow state (minimal — just enough to not crash)
-    // Reset defaults: ENTRY_0=0x00 (black), ENTRY_1=0xFF (white)
-    mutable uint16_t video_palette = 0xFF00;
-
-    // Expand an R3G3B2 palette entry to ARGB8888 (opaque).
-    static uint32_t rgb332_to_argb(uint8_t c)
-    {
-        uint8_t r3 = (c >> 5) & 0x7;
-        uint8_t g3 = (c >> 2) & 0x7;
-        uint8_t b2 = c & 0x3;
-        // Replicate high bits into low bits for full 0..255 range
-        uint8_t r = (r3 << 5) | (r3 << 2) | (r3 >> 1);
-        uint8_t g = (g3 << 5) | (g3 << 2) | (g3 >> 1);
-        uint8_t b = (b2 << 6) | (b2 << 4) | (b2 << 2) | b2;
-        return 0xFF000000u | (r << 16) | (g << 8) | b;
-    }
-
-    // ENGINE register shadow state (minimal — just enough to not crash)
-    mutable uint16_t engine_control = 0;
-    mutable uint16_t engine_fb_base = 0;
-    mutable uint16_t engine_row_stride = 0;
-    mutable uint16_t engine_status = 0;
 
     static bool is_cf_addr(uint32_t io_offset)
     {
@@ -860,27 +920,31 @@ class GriffinEmulator : public moira::Moira
         return abs >= CF_BASE && abs < CF_BASE + CF_SIZE;
     }
 
+    static bool is_duart_addr(uint32_t io_offset)
+    {
+        uint32_t abs = io_offset + IO_BASE;
+        return abs >= DUART_BASE && abs < DUART_BASE + DUART_SIZE;
+    }
+
     uint8_t IO_read8(uint32_t addr) const
     {
         if(is_cf_addr(addr)) {
             return cf.read_reg(addr + IO_BASE);
-        } else if(addr == GLUE_SYSTICK_STATUS - IO_BASE) {
-            uint8_t val = systick.read_status();
-            const_cast<GriffinEmulator*>(this)->update_ipl();
-            return val;
-        } else if(addr == GLUE_DEBUG_IN - IO_BASE) {
-            // Eagerly check PTY for incoming data so the bit-bang RX
-            // routine sees the start bit promptly.
-            if (debug_in_tx.count == 0 && debug_in_tx.state == SoftUARTTX::IDLE)
+        }
+        if (is_duart_addr(addr))
+        {
+            uint32_t abs = addr + IO_BASE;
+            uint8_t val = duart.read_reg(abs, pty_console);
+            // STARTCC side-effect: initialize ctr_next_fire with current clock
+            if (abs == DUART_STARTCC && duart.ctr_next_fire == 0)
             {
-                uint8_t ch;
-                if (pty_console.is_data_ready() && pty_console.receive(&ch))
-                {
-                    debug_in_tx.enqueue(ch);
-                }
+                duart.ctr_next_fire = getClock() + duart.ctr_period_sysclk();
             }
-            debug_in_tx.advance(getClock());
-            return debug_in_tx.current_bit & GLUE_DEBUG_IN_MASK;
+            if (debug & DEBUG_DUART)
+            {
+                printf("[DUART read %06X → 0x%02X]\n", abs, val);
+            }
+            return val;
         }
         if(debug & DEBUG_IO)
         {
@@ -896,6 +960,11 @@ class GriffinEmulator : public moira::Moira
             printf("WARNING: 16-bit read from CF at %06X (firmware should use 8-bit only)\n", addr + IO_BASE);
             return cf.read_reg(addr + IO_BASE);
         }
+        if (is_duart_addr(addr))
+        {
+            printf("WARNING: 16-bit read from DUART at %06X (firmware should use 8-bit only)\n", addr + IO_BASE);
+            return duart.read_reg(addr + IO_BASE, pty_console);
+        }
         if(debug & DEBUG_IO)
         {
             printf("read of uint16_t at unhandled IO %06X\n", addr + IO_BASE);
@@ -907,6 +976,12 @@ class GriffinEmulator : public moira::Moira
     {
         if(is_cf_addr(addr)) {
             cf.write_reg(addr + IO_BASE, val);
+        } else if(is_duart_addr(addr)) {
+            if (debug & DEBUG_DUART)
+            {
+                printf("[DUART write %06X ← 0x%02X]\n", addr + IO_BASE, val);
+            }
+            duart.write_reg(addr + IO_BASE, val, pty_console);
         } else if(addr == GLUE_DEBUG_OUT - IO_BASE) {
             auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_MASK;
             auto bit = val & GLUE_DEBUG_OUT_MASK;
@@ -921,12 +996,10 @@ class GriffinEmulator : public moira::Moira
                 if(debug & DEBUG_IO) printf("ROM overlay disabled\n");
                 ROMoverlay = false;
             }
-            systick.irq_enabled = !!(val & GLUE_CONFIG_SYSTICK_IRQ_ENABLE_MASK);
             if (debug & DEBUG_IO)
             {
-                printf("[GLUE CONFIG: 0x%02X overlay=%s systick_irq=%s]\n", val,
-                       (val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK) ? "off" : "on",
-                       systick.irq_enabled ? "on" : "off");
+                printf("[GLUE CONFIG: 0x%02X overlay=%s]\n", val,
+                       (val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK) ? "off" : "on");
             }
         } else if(addr == GLUE_TIMER - IO_BASE) {
             timer.period = val;
@@ -969,107 +1042,15 @@ class GriffinEmulator : public moira::Moira
             cf.write_reg(addr + IO_BASE, val & 0xFF);
             return;
         }
+        if (is_duart_addr(addr))
+        {
+            printf("WARNING: 16-bit write 0x%04X to DUART at %06X (firmware should use 8-bit only)\n", val, addr + IO_BASE);
+            duart.write_reg(addr + IO_BASE, val & 0xFF, pty_console);
+            return;
+        }
         if(debug & DEBUG_IO)
         {
             printf("write of uint16_t %04X at unhandled IO %06X\n", val, addr + IO_BASE);
-        }
-    }
-
-    // --------------- VIDEO register stubs ---------------
-
-    uint8_t VIDEO_read8(uint32_t addr) const
-    {
-        if(debug & DEBUG_IO)
-        {
-            printf("read of uint8_t at unhandled VIDEO %06X\n", addr);
-        }
-        return 0;
-    }
-
-    uint16_t VIDEO_read16(uint32_t addr) const
-    {
-        if(debug & DEBUG_IO)
-        {
-            printf("read of uint16_t at unhandled VIDEO %06X\n", addr);
-        }
-        return 0;
-    }
-
-    void VIDEO_write8(uint32_t addr, uint8_t val) const
-    {
-        if(debug & DEBUG_IO)
-        {
-            printf("write of uint8_t %02X at unhandled VIDEO %06X\n", val, addr);
-        }
-    }
-
-    void VIDEO_write16(uint32_t addr, uint16_t val) const
-    {
-        if(addr == VIDEO_PALETTE) {
-            if(debug & DEBUG_VIDEO)
-            {
-                printf("write of uint16_t %04X to video palette\n", val);
-            }
-            video_palette = val;
-        } else {
-            if(debug & DEBUG_IO)
-            {
-                printf("write of uint16_t %04X at unhandled VIDEO %06X\n", val, addr);
-            }
-        }
-    }
-
-    // --------------- ENGINE register stubs ---------------
-
-    uint16_t ENGINE_read16(uint32_t addr) const
-    {
-        if(addr == ENGINE_STATUS) {
-            return engine_status;
-        }
-        if(debug & DEBUG_IO)
-        {
-            printf("read of uint16_t at unhandled ENGINE %06X\n", addr);
-        }
-        return 0;
-    }
-
-    uint8_t ENGINE_read8(uint32_t addr) const
-    {
-        if(debug & DEBUG_IO)
-        {
-            printf("read of uint8_t at unhandled ENGINE %06X\n", addr);
-        }
-        return 0;
-    }
-
-    void ENGINE_write16(uint32_t addr, uint16_t val) const
-    {
-        if(addr == ENGINE_CONTROL) {
-            engine_control = val;
-            video_display.dma_enabled = !!(val & ENGINE_CONTROL_ENABLE_MASK);
-        } else if(addr == ENGINE_FB_BASE) {
-            engine_fb_base = val;
-            video_display.fb_base = val & 0xFF;
-        } else if(addr == ENGINE_ROW_STRIDE) {
-            engine_row_stride = val;
-            video_display.stride_field = val & ENGINE_ROW_STRIDE_MASK;
-        } else if(addr == ENGINE_STATUS) {
-            engine_status = 0;  // write clears sticky error bits
-        } else if(addr == ENGINE_ADVANCE) {
-            video_display.eol_advance();
-        } else {
-            if(debug & DEBUG_IO)
-            {
-                printf("write of uint16_t %04X at unhandled ENGINE %06X\n", val, addr);
-            }
-        }
-    }
-
-    void ENGINE_write8(uint32_t addr, uint8_t val) const
-    {
-        if(debug & DEBUG_IO)
-        {
-            printf("write of uint8_t %02X at unhandled ENGINE %06X\n", val, addr);
         }
     }
 
@@ -1083,14 +1064,6 @@ class GriffinEmulator : public moira::Moira
             (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW))
         {
             return ROM_DTACK_PENALTY;
-        }
-        if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE)
-        {
-            return ENGINE_DTACK_PENALTY;
-        }
-        if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE)
-        {
-            return VIDEO_DTACK_PENALTY;
         }
         if (addr >= IO_BASE && addr < IO_BASE + IO_SIZE)
         {
@@ -1179,10 +1152,6 @@ public:
             }
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return ROM[(addr - ROM_BASE) % ROM_SIZE];
-        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
-            return ENGINE_read8(addr);
-        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            return VIDEO_read8(addr);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read8(addr - IO_BASE);
         } else {
@@ -1207,10 +1176,6 @@ public:
             return (read8(addr) << 8) | read8(addr + 1);
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return (ROM[(addr - ROM_BASE) % ROM_SIZE] << 8) | ROM[(addr - ROM_BASE + 1) % ROM_SIZE];
-        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
-            return ENGINE_read16(addr);
-        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            return VIDEO_read16(addr);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read16(addr - IO_BASE);
         } else {
@@ -1241,10 +1206,6 @@ public:
             } 
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
-        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
-            ENGINE_write8(addr, val);
-        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            VIDEO_write8(addr, val);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write8(addr - IO_BASE, val);
         } else {
@@ -1282,10 +1243,6 @@ public:
             }
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
-        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
-            ENGINE_write16(addr, val);
-        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            VIDEO_write16(addr, val);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write16(addr - IO_BASE, val);
         } else {
@@ -1313,62 +1270,31 @@ public:
     }
 
     // Poll the PTY for incoming data, feed the DEBUG_IN bitstream
-    // synthesizer, and update IPL.
+    // synthesizer, advance DUART timer, and update IPL.
     // Call this periodically from the main loop, not on every bus cycle.
     void poll_io()
     {
-        // Feed PTY input into DEBUG_IN bitstream synthesizer
-        uint8_t ch;
-        while (pty_console.is_data_ready() && pty_console.receive(&ch))
+        // If DUART RX is enabled, let the DUART handle PTY input directly
+        // via register reads.  Otherwise feed the bit-bang path.
+        if (!duart.rx_enabled)
         {
-            debug_in_tx.enqueue(ch);
+            uint8_t ch;
+            while (pty_console.is_data_ready() && pty_console.receive(&ch))
+            {
+                debug_in_tx.enqueue(ch);
+            }
         }
 
+        duart.check_timer(getClock());
         update_ipl();
-    }
-
-    // Tick the systick timer.  Called every 65536 SYSCLK cycles.
-    void tick_systick()
-    {
-        systick.tick();
-    }
-
-    // ----------------------------------------------------------------
-    // Video display
-    // ----------------------------------------------------------------
-
-    // Read a byte directly from RAM without bus penalties (for DMA emulation)
-    uint8_t read_ram_direct(uint32_t addr) const
-    {
-        if (addr < RAM_BANK_1_BASE + RAM_BANK_1_SIZE)
-        {
-            return RAM_bank1.size() > 0 ? RAM_bank1[addr % RAM_bank1.size()] : 0;
-        }
-        if (addr < RAM_BANK_2_BASE + RAM_BANK_2_SIZE)
-        {
-            return RAM_bank2.size() > 0 ? RAM_bank2[(addr - RAM_BANK_2_BASE) % RAM_bank2.size()] : 0;
-        }
-        if (addr < RAM_BANK_3_BASE + RAM_BANK_3_SIZE)
-        {
-            return RAM_bank3.size() > 0 ? RAM_bank3[(addr - RAM_BANK_3_BASE) % RAM_bank3.size()] : 0;
-        }
-        if (addr < RAM_BANK_4_BASE + RAM_BANK_4_SIZE)
-        {
-            return RAM_bank4.size() > 0 ? RAM_bank4[(addr - RAM_BANK_4_BASE) % RAM_bank4.size()] : 0;
-        }
-        return 0;
     }
 
     // Unified IPL management — picks highest active interrupt source
     void update_ipl()
     {
-        if (video_display.irq_active)
+        if (duart.irq_pending(pty_console))
         {
-            setIPL(VIDEO_IRQ_LEVEL);
-        }
-        else if (systick.pending && systick.irq_enabled)
-        {
-            setIPL(5);
+            setIPL(DUART_IRQ_LEVEL);
         }
         else
         {
@@ -1376,95 +1302,6 @@ public:
         }
     }
 
-    // Process a single video line crossing
-    void process_video_line(uint32_t vline)
-    {
-        if (vline < VideoDisplay::V_ACTIVE && video_display.dma_enabled)
-        {
-            // Sample palette at line start (firmware may rewrite per-line).
-            uint32_t color0 = rgb332_to_argb(video_palette & 0xFF);
-            uint32_t color1 = rgb332_to_argb((video_palette >> 8) & 0xFF);
-            // Read 40 words (80 bytes) from framebuffer, expand 1bpp to ARGB
-            uint32_t base_addr = VideoDisplay::fb_byte_addr(
-                video_display.fb_base, video_display.fb_ptr);
-            uint32_t *row = video_display.staging[vline];
-            for (uint32_t word = 0; word < VideoDisplay::WORDS_PER_LINE; word++)
-            {
-                uint32_t addr = base_addr + word * 2;
-                uint8_t hi = read_ram_direct(addr);
-                uint8_t lo = read_ram_direct(addr + 1);
-                uint16_t pixels = (hi << 8) | lo;
-                // MSB first: video.v word_reg[15 - pixel_cnt]
-                for (int bit = 15; bit >= 0; bit--)
-                {
-                    *row++ = (pixels & (1 << bit)) ? color1 : color0;
-                }
-            }
-            video_display.eol_advance();
-        }
-        else if (vline < VideoDisplay::V_ACTIVE)
-        {
-            // DMA disabled — fill with ENTRY_0
-            uint32_t color0 = rgb332_to_argb(video_palette & 0xFF);
-            uint32_t *row = video_display.staging[vline];
-            for (uint32_t i = 0; i < VideoDisplay::WIDTH; i++)
-            {
-                row[i] = color0;
-            }
-        }
-
-        // SOF at vsync start — reset fb_ptr, assert VIDEO IRQ
-        if (vline == VideoDisplay::V_SYNC_START)
-        {
-            video_display.fb_ptr = 0;
-            video_display.irq_active = true;
-            update_ipl();
-        }
-        else if (vline == VideoDisplay::V_SYNC_END)
-        {
-            video_display.irq_active = false;
-            update_ipl();
-        }
-    }
-
-    // Advance video timing to current SYSCLK, process any crossed lines
-    void advance_video()
-    {
-        uint64_t sysclk = getClock();
-        uint64_t elapsed = sysclk - video_display.prev_sysclk;
-        video_display.prev_sysclk = sysclk;
-        video_display.pixel_accum_fp += elapsed * VideoDisplay::PIXEL_RATIO_FP;
-
-        uint64_t cur_abs_line =
-            (video_display.pixel_accum_fp >> 16) / VideoDisplay::H_TOTAL;
-
-        while (video_display.abs_line < cur_abs_line)
-        {
-            video_display.abs_line++;
-            uint32_t vline = video_display.abs_line % VideoDisplay::V_TOTAL;
-            if (vline == 0)
-            {
-                video_display.present();
-            }
-            process_video_line(vline);
-        }
-    }
-
-    bool init_video()
-    {
-        if (!SDL_Init(SDL_INIT_VIDEO))
-        {
-            fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
-            return false;
-        }
-        return video_display.init();
-    }
-
-    void shutdown_video()
-    {
-        video_display.shutdown();
-        SDL_Quit();
-    }
 };
 
 // Courtesy Claude Opus 4.6
@@ -1661,12 +1498,6 @@ int main(int argc, const char** argv)
         exit(EXIT_FAILURE);
     }
 
-    if(!emulator.init_video())
-    {
-        fprintf(stderr, "Failed to initialize video display\n");
-        exit(EXIT_FAILURE);
-    }
-
     SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
 
     emulator.setDasmSyntax(moira::Syntax::GNU_MIT);
@@ -1676,8 +1507,6 @@ int main(int argc, const char** argv)
     uint64_t previous_uart_sample_fp = 0; // 16.16 fixed-point clock
     uint64_t previous_io_poll = 0;
     static constexpr uint64_t IO_POLL_INTERVAL = SYSCLK_HZ / 1000; // ~1ms
-    uint64_t previous_systick_tick = 0;
-    static constexpr uint64_t SYSTICK_TICK_INTERVAL = SystickState::PERIOD; // SYSCLK / 65536 ≈ 183 Hz
 
     auto clock_then = emulator.getClock();
     auto then = time(0);
@@ -1698,7 +1527,6 @@ int main(int argc, const char** argv)
             printf("%04X: %s\n", emulator.getPC(), str);
         }
         emulator.execute();
-        emulator.advance_video();
         auto clock_now = emulator.getClock();
         auto now = time(0);
 
@@ -1731,13 +1559,6 @@ int main(int argc, const char** argv)
             }
         }
 
-        // Tick systick at prescaler rate (every 1024 SYSCLK cycles)
-        while (clock_now - previous_systick_tick >= SYSTICK_TICK_INTERVAL)
-        {
-            emulator.tick_systick();
-            previous_systick_tick += SYSTICK_TICK_INTERVAL;
-        }
-
         if (clock_now - previous_io_poll >= IO_POLL_INTERVAL)
         {
             emulator.poll_io();
@@ -1765,6 +1586,5 @@ int main(int argc, const char** argv)
     {
         fclose(audio);
     }
-    emulator.shutdown_video();
     return 0;
 }

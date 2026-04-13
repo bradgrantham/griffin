@@ -26,9 +26,9 @@ vector_table:
     .long   _default_handler    | 26: Level 2 autovector
     .long   _default_handler    | 27: Level 3 autovector
     .long   _default_handler    | 28: Level 4 autovector
-    .long   systick_isr         | 29: Level 5 autovector (SYSTICK / IO_MCU)
-    .long   _default_handler    | 30: Level 6 autovector (ENGINE)
-    .long   _default_handler    | 31: Level 7 autovector (VIDEO)
+    .long   _default_handler    | 29: Level 5 autovector 
+    .long   _default_handler    | 30: Level 6 autovector (GLUE, later)
+    .long   _default_handler    | 31: Level 7 autovector
     .rept 16
     .long   _default_handler    | 32-47: TRAP #0-15
     .endr
@@ -340,6 +340,9 @@ debug_puts:
 .Ldone:
     jmp     (%a6)
 
+    /* GLUE TIMER period: (N+1) SYSCLK per tick → N = round(SYSCLK_HZ/BAUD) - 1 */
+    .equ TIMER_FULL_BIT, (SYSCLK_HZ + 115200 / 2) / 115200 - 1
+
 | timer_putchar: send one character at 115200 via GLUE timer + DEBUG_OUT
 | Input:  d0.b = character to send
 | Return: jmp (a5)
@@ -402,55 +405,6 @@ timer_puts:
     bra.s   timer_puts
 .Ltimer_puts_done:
     jmp     (%a6)
-
-| debug_getchar_asm: bit-bang receive one byte at 115200 via GLUE timer
-| Input:  none
-| Output: d0.b = received byte, or d0.l = -1 on timeout (~1ms)
-| Return: jmp (a5)
-| Clobbers: d0, d1, d2, a0
-
-    /* GLUE TIMER period: (N+1) SYSCLK per tick → N = round(SYSCLK_HZ/BAUD) - 1 */
-    .equ TIMER_FULL_BIT, (SYSCLK_HZ + 115200 / 2) / 115200 - 1
-    /* ~1 ms timeout: each poll iteration is roughly 24 SYSCLK with ROM wait states */
-    .equ RX_TIMEOUT_COUNT, SYSCLK_HZ / 24000
-
-    .global debug_getchar_asm
-debug_getchar_asm:
-    lea     GLUE_DEBUG_IN, %a0
-    move.w  #RX_TIMEOUT_COUNT, %d1
-
-.Lrx_poll:
-    btst    #GLUE_DEBUG_IN_SHIFT, (%a0)
-    beq.s   .Lrx_got_start
-    dbra    %d1, .Lrx_poll
-
-    moveq   #-1, %d0
-    jmp     (%a5)
-
-.Lrx_got_start:
-    | Start full-bit timer — detection latency + instruction overhead
-    | (~146 clocks from edge) naturally centers in D0 (center at 156)
-    move.b  #TIMER_FULL_BIT, GLUE_TIMER
-
-    | Sample 8 data bits (LSB first)
-    moveq   #0, %d0
-    moveq   #7, %d2
-
-.Lrx_bit:
-    move.b  #0, GLUE_TIMER_ARM
-    move.b  (%a0), %d1              | stall, then read DEBUG_IN
-    lsr.b   #1, %d1                 | bit 0 -> X flag
-    roxr.b  #1, %d0                 | X -> MSB of d0, shift right
-    dbra    %d2, .Lrx_bit
-
-    | Wait through stop bit
-    move.b  #0, GLUE_TIMER_ARM
-    tst.b   (%a0)
-
-    | Stop timer
-    move.b  #0, GLUE_TIMER
-
-    jmp     (%a5)
 
 | ====================================================================
 | Exception handlers — diagnostic blink loops on DEBUG_OUT
@@ -641,43 +595,6 @@ timer_hex4:
     addi.b  #'0', %d0
     jmp     timer_putchar
 
-| ====================================================================
-| VIDEO / ENGINE DMA control — C-callable wrappers
-|
-| m68k-elf stack ABI: return address at (%sp), first arg (promoted
-| to 32-bit) at 4(%sp), second at 8(%sp).  16-bit value is at
-| offset +2 within the 32-bit slot (big-endian).
-| ====================================================================
-
-| video_start_dma: configure ENGINE and start DMA
-| void video_start_dma(uint16_t fb_base_val, uint16_t stride_val);
-    .global video_start_dma
-video_start_dma:
-    move.w  6(%sp), ENGINE_FB_BASE      | A[21:14] of framebuffer
-    move.w  10(%sp), ENGINE_ROW_STRIDE  | stride / 64 words
-    move.w  #ENGINE_CONTROL_ENABLE_MASK, ENGINE_CONTROL
-    rts
-
-| video_stop_dma: disable ENGINE DMA
-| void video_stop_dma(void);
-    .global video_stop_dma
-video_stop_dma:
-    clr.w   ENGINE_CONTROL
-    rts
-
-| systick_isr: GLUE systick timer interrupt handler (level 5)
-| Reads SYSTICK_STATUS to clear the pending flag, then calls timer_tick.
-    .global systick_isr
-systick_isr:
-    move.l  %d0, -(%sp)
-
-    | Read status to clear IRQ pending flag
-    move.b  GLUE_SYSTICK_STATUS, %d0
-
-    jsr     timer_tick
-
-    move.l  (%sp)+, %d0
-    rte
 
 | ====================================================================
 | GLUE CONFIG shadow register access
@@ -778,20 +695,3 @@ evt_tail:
     .skip 4
 evt_overflow:
     .skip 1
-
-    .align 2
-    .global framebuffer_stride_words
-    .global framebuffer_height_lines
-    .global framebuffer_width_pixels
-    .global framebuffer_width_words
-    .global framebuffer_base
-framebuffer_stride_words:
-    .skip 4
-framebuffer_height_lines:
-    .skip 4
-framebuffer_width_pixels:
-    .skip 4
-framebuffer_width_words:
-    .skip 4
-framebuffer_base:
-    .skip 4

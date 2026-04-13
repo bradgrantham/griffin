@@ -163,6 +163,11 @@ def write_c_header(hw: dict, path: Path) -> None:
         if intr and isinstance(intr, dict) and 'level' in intr:
             w(f"static constexpr uint32_t {pname}_IRQ_LEVEL = {intr['level']}U;")
 
+        # Peripheral clock
+        clk = periph.get('clock')
+        if clk is not None:
+            w(f"static constexpr uint32_t {pname}_CLOCK = {parse_int(clk)}UL;")
+
         # DTACK wait-state constants (for peripherals with fixed wait states)
         ws = get_dtack_ws(periph, proj['clock_hz'])
         if ws is not None:
@@ -276,6 +281,11 @@ def write_asm_include(hw: dict, path: Path) -> None:
         intr = periph.get('interrupt')
         if intr and isinstance(intr, dict) and 'level' in intr:
             w(f".equ {pname}_IRQ_LEVEL, {intr['level']}")
+
+        # Peripheral clock
+        clk = periph.get('clock')
+        if clk is not None:
+            w(f".equ {pname}_CLOCK, {parse_int(clk)}")
 
         for reg in periph.get('registers', []):
             offset = parse_int(reg['offset'])
@@ -414,6 +424,11 @@ def write_verilog_include(hw: dict, path: Path) -> None:
         intr = periph.get('interrupt')
         if intr and isinstance(intr, dict) and 'level' in intr:
             w(f"`define {pname}_IRQ_LEVEL {intr['level']}")
+
+        # Peripheral clock
+        clk = periph.get('clock')
+        if clk is not None:
+            w(f"`define {pname}_CLOCK {parse_int(clk)}")
 
         # DTACK wait-state threshold (for peripherals with fixed wait states)
         ws = get_dtack_ws(periph, proj['clock_hz'])

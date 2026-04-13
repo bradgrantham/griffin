@@ -85,6 +85,17 @@ static FIL files[MAX_FILES];    /* starting with fd=3, so fd 3 through 3 + MAX_F
 #endif /* USE_FATFS */
 
 void debug_serial_putchar(uint8_t ch);
+void duart_putchar(uint8_t ch);
+uint8_t duart_getchar(void);
+
+static void (*putchar_fn)(uint8_t) = debug_serial_putchar;
+static int console_is_duart = 0;
+
+void duart_console_enable(void)
+{
+    putchar_fn = duart_putchar;
+    console_is_duart = 1;
+}
 
 _ssize_t write (int file,  const void *ptr, size_t len)
 {
@@ -96,7 +107,7 @@ _ssize_t write (int file,  const void *ptr, size_t len)
 
         for (DataIdx = 0; DataIdx < len; DataIdx++)
         {
-            debug_serial_putchar(*(const char *)ptr++); // __io_putchar( *ptr++ );
+            putchar_fn(*(const uint8_t *)ptr++);
         }
         return len;
     } else {
@@ -200,7 +211,14 @@ long read(int file, void *__buf, size_t len)
 
         for (DataIdx = 0; DataIdx < len; DataIdx++)
         {
-          *ptr++ = 0; // getchar_timeout_us(1000000); // __io_getchar();
+            if (console_is_duart)
+            {
+                *ptr++ = duart_getchar();
+            }
+            else
+            {
+                *ptr++ = 0;
+            }
         }
         return len;
     } else {

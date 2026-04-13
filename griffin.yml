@@ -19,8 +19,7 @@ peripherals:
       - 16000000: 0
       - 20000000: 0
     interrupt:
-      level: 5
-      signal: ~ENGINE_IRQ  # not currently wired; pin 5 reused for BUS_FREE
+      level: 6
     registers:
       - offset: 0x01
         name: DEBUG_OUT
@@ -36,13 +35,6 @@ peripherals:
         description: "Read DEBUG_IN signal state"
         bits:
           - { bit: "0", name: IN, description: "DEBUG_IN pin state" }
-      - offset: 0x03
-        name: SYSTICK_STATUS
-        access: read
-        width: 8
-        description: "Systick timer status (fixed ~183 Hz = SYSCLK/65536); reading clears the pending flag and deasserts the IRQ"
-        bits:
-          - { bit: "0", name: PENDING, description: "Tick interrupt pending (read clears)" }
       - offset: 0x07
         name: CONFIG
         access: write
@@ -51,8 +43,6 @@ peripherals:
         bits:
           - { bit: "0", name: ROM_OVERLAY_DISABLE, default: 0,
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
-          - { bit: "1", name: SYSTICK_IRQ_ENABLE, default: 0,
-              description: "Write 1 to enable systick interrupt on nIPL; default 0 masks the IRQ (timer still runs, pending flag still sets)" }
       - offset: 0x09
         name: TIMER
         access: write
@@ -155,10 +145,7 @@ peripherals:
   VIDEO:
     part: ATF1508AS
     description: >
-      On-board video generator.  Hardcoded VGA 640x480@60 1bpp; the framebuffer
-      is fed by ENGINE DMA over the bodge wires (NEED_WORD/SOF/EOL/LATCH).
-      Each pixel bit indexes a 2-entry R3G3B2 palette loaded by the CPU.
-    clock: [25175000]
+      Just a pass-through for composite SYNC and PIXEL.
     dtack:
       - 12000000: 0
       - 14000000: 0
@@ -169,99 +156,6 @@ peripherals:
       base: 0xE00000
       size: 0x100000
       width: [8, 16]
-    interrupt:
-      level: 6
-      signal: ~VIDEO_IRQ
-    registers:
-      - offset: 0x07
-        name: STATUS
-        access: read
-        width: 8
-        description: "Read-only scan-position hint for CPU polling"
-        bits:
-          - { bit: "0", name: LINE_TOGGLE,
-              description: "Toggles every visible line (v_cnt[0]); use for audio busywait pacing or palette-per-line tricks" }
-      - offset: 0x0E
-        name: PALETTE
-        access: write
-        width: 16
-        description: >
-          Two-entry R3G3B2 palette loaded immediately; can be written at any time.
-          A write that lands inside active video may produce a single-pixel
-          color glitch (~40 ns) at the affected scan position.
-          Reset defaults: ENTRY_0=0x00 (black), ENTRY_1=0xFF (white).
-        bits:
-          - { bit: "7:0",  name: ENTRY_0, description: "R3G3B2 color used when pixel bit = 0" }
-          - { bit: "15:8", name: ENTRY_1, description: "R3G3B2 color used when pixel bit = 1" }
-
-  ENGINE:
-    part: ATF1508AS
-    description: "HALT-based bus-stealing DMA controller for video and audio"
-    address_range:
-      base: 0xD00000
-      size: 0x100000
-      width: 16
-    dtack:
-      - 12000000: 0
-      - 14000000: 0
-      - 14318181: 0
-      - 16000000: 0
-      - 20000000: 0
-    glue_signals:
-      # These use existing PCB traces (repurposed from ENGINE_DTACK / ENGINE_IRQ)
-      - { pin: 4,  dir: out, to: GLUE,    name: HALT_REQ,  description: "Request CPU halt for DMA (PCB trace: was ~ENGINE_DTACK)" }
-      - { pin: 5,  dir: in,  from: GLUE,  name: BUS_FREE,  description: "CPU halted, bus available (PCB trace: was ~ENGINE_IRQ)" }
-    bodge_signals:
-      - { pin: 2,  dir: in,  from: VIDEO, name: NEED_WORD, description: "VIDEO shift register needs data" }
-      - { pin: 8,  dir: in,  from: VIDEO, name: SOF,       description: "Start of frame, resets fb pointer" }
-      - { pin: 10, dir: in,  from: VIDEO, name: EOL,       description: "End of line, advance to next row" }
-      - { pin: 40, dir: out, to: VIDEO,   name: LATCH,     description: "D[15:0] stable, capture now" }
-    registers:
-      - offset: 0x00
-        name: CONTROL
-        access: write
-        width: 16
-        description: "DMA enable control"
-        bits:
-          - { bit: "0", name: ENABLE, description: "1 = DMA enabled, 0 = idle" }
-      - offset: 0x02
-        name: FB_BASE
-        access: write
-        width: 16
-        description: "Framebuffer base address A[21:14], 16KB-aligned, RAM only (A[23:22]=00)"
-        bits:
-          - { bit: "7:0", name: BASE, description: "A[21:14] of framebuffer base address" }
-      - offset: 0x04
-        name: ROW_STRIDE
-        access: write
-        width: 16
-        description: >
-          Row stride in multiples of 64 words (128 bytes).
-          Progressive 640x1bpp: 1 (64 words). Interlaced 640x1bpp: 2 (128 words).
-          Setting 0 repeats the same line (no row advance on EOL).
-        bits:
-          - bit: "1:0"
-            name: STRIDE
-            description: "stride / 64"
-            values:
-              - { value: 0, name: STRIDE_0,    description: "0 words (same line repeats)" }
-              - { value: 1, name: STRIDE_64,   description: "64 words (128 bytes)" }
-              - { value: 2, name: STRIDE_128,  description: "128 words (256 bytes)" }
-              - { value: 3, name: STRIDE_192,  description: "192 words (384 bytes)" }
-      - offset: 0x06
-        name: STATUS
-        access: rw
-        width: 16
-        description: "Read: error flags. Write: any write clears all sticky error bits."
-        bits:
-          - { bit: "0", name: OVERRUN, description: "Sticky: NEED_WORD asserted while DMA still busy (read-only)" }
-      - offset: 0x08
-        name: ADVANCE
-        access: write
-        width: 16
-        description: >
-          Write-only command: advance fb_ptr to next row start (same operation as EOL).
-          Use in VSYNC ISR to offset field 1 by one framebuffer line before enabling DMA.
 
   CF:
     part: "Compact Flash (True IDE)"
@@ -298,6 +192,109 @@ peripherals:
       - { offset: 0x0F, name: COMMAND,      access: write, width: 8,
           description: "Issue command; write after setting all other registers" }
 
+  DUART:
+    part: 68681
+    description: "serial IO, timers "
+    clock: 3686400
+    address_range:
+      base: 0xF80000
+      size: 0x040000
+      width: 8
+    interrupt:
+      level: 5
+      signal: ~DUART_IRQ
+    dtack: ~DUART_DTACK  # handshake: 68681 drives this signal to assert DTACK
+    berr_timeout: 256
+    registers:
+      - { offset: 0x01, name: MR1A,   access: rw,    width: 8,
+          description: "Channel A mode register 1 (after reset or MR pointer reset)" }
+      - { offset: 0x01, name: MR2A,   access: rw,    width: 8,
+          description: "Channel A mode register 2 (second access after MR pointer reset)" }
+      - offset: 0x03
+        name: SRA
+        access: read
+        width: 8
+        description: "Channel A status register"
+        bits:
+          - { bit: "0", name: RXRDY, description: "Receiver ready" }
+          - { bit: "1", name: FFULL, description: "FIFO full" }
+          - { bit: "2", name: TXRDY, description: "Transmitter ready" }
+          - { bit: "3", name: TXEMT, description: "Transmitter empty" }
+          - { bit: "4", name: OE,    description: "Overrun error" }
+          - { bit: "5", name: PE,    description: "Parity error" }
+          - { bit: "6", name: FE,    description: "Framing error" }
+          - { bit: "7", name: RB,    description: "Received break" }
+      - { offset: 0x03, name: CSRA,   access: write, width: 8,
+          description: "Channel A clock select register" }
+      - offset: 0x05
+        name: CRA
+        access: write
+        width: 8
+        description: "Channel A command register"
+        bits:
+          - { bit: "1:0", name: EC,  description: "Enable command: 0=no action, 1=enable RX, 2=disable RX" }
+          - { bit: "3:2", name: TC,  description: "Transmitter command: 0=no action, 1=enable TX, 2=disable TX" }
+          - { bit: "6:4", name: MC,  description: "Misc command: 1=reset MR ptr, 2=reset RX, 3=reset TX, 4=reset error, 5=reset break, 6=start break, 7=stop break" }
+      - { offset: 0x07, name: RBA,    access: read,  width: 8,
+          description: "Channel A receiver buffer (read to dequeue FIFO)" }
+      - { offset: 0x07, name: TBA,    access: write, width: 8,
+          description: "Channel A transmitter buffer (write to enqueue)" }
+      - { offset: 0x09, name: IPCR,   access: read,  width: 8,
+          description: "Input port change register (read clears interrupt)" }
+      - { offset: 0x09, name: ACR,    access: write, width: 8,
+          description: "Auxiliary control register (timer/counter mode, BRG set select)" }
+      - offset: 0x0B
+        name: ISR
+        access: read
+        width: 8
+        description: "Interrupt status register"
+        bits:
+          - { bit: "0", name: TXRDYA,      description: "Channel A TX ready" }
+          - { bit: "1", name: RXRDYA,      description: "Channel A RX ready/FIFO full" }
+          - { bit: "2", name: DELTA_BRKA,  description: "Channel A break change" }
+          - { bit: "3", name: CTR_READY,   description: "Counter/timer ready" }
+          - { bit: "4", name: TXRDYB,      description: "Channel B TX ready" }
+          - { bit: "5", name: RXRDYB,      description: "Channel B RX ready/FIFO full" }
+          - { bit: "6", name: DELTA_BRKB,  description: "Channel B break change" }
+          - { bit: "7", name: IPC,         description: "Input port change" }
+      - { offset: 0x0B, name: IMR,    access: write, width: 8,
+          description: "Interrupt mask register (same bit layout as ISR; 1=enabled)" }
+      - { offset: 0x0D, name: CUR,    access: read,  width: 8,
+          description: "Counter/timer upper byte (current value)" }
+      - { offset: 0x0D, name: CTUR,   access: write, width: 8,
+          description: "Counter/timer upper preload register" }
+      - { offset: 0x0F, name: CLR,    access: read,  width: 8,
+          description: "Counter/timer lower byte (current value)" }
+      - { offset: 0x0F, name: CTLR,   access: write, width: 8,
+          description: "Counter/timer lower preload register" }
+      - { offset: 0x11, name: MR1B,   access: rw,    width: 8,
+          description: "Channel B mode register 1 (after reset or MR pointer reset)" }
+      - { offset: 0x11, name: MR2B,   access: rw,    width: 8,
+          description: "Channel B mode register 2 (second access after MR pointer reset)" }
+      - { offset: 0x13, name: SRB,    access: read,  width: 8,
+          description: "Channel B status register (same bit layout as SRA)" }
+      - { offset: 0x13, name: CSRB,   access: write, width: 8,
+          description: "Channel B clock select register" }
+      - { offset: 0x15, name: CRB,    access: write, width: 8,
+          description: "Channel B command register (same bit layout as CRA)" }
+      - { offset: 0x17, name: RBB,    access: read,  width: 8,
+          description: "Channel B receiver buffer (read to dequeue FIFO)" }
+      - { offset: 0x17, name: TBB,    access: write, width: 8,
+          description: "Channel B transmitter buffer (write to enqueue)" }
+      - { offset: 0x19, name: IVR,    access: rw,    width: 8,
+          description: "Interrupt vector register" }
+      - { offset: 0x1B, name: IP,     access: read,  width: 8,
+          description: "Input port (unlatched)" }
+      - { offset: 0x1B, name: OPCR,   access: write, width: 8,
+          description: "Output port configuration register" }
+      - { offset: 0x1D, name: STARTCC, access: read, width: 8,
+          description: "Start counter/timer command (read to start; data ignored)" }
+      - { offset: 0x1D, name: OPR_SET, access: write, width: 8,
+          description: "Output port bit set (1 bits set corresponding OP pins)" }
+      - { offset: 0x1F, name: STOPCC,  access: read, width: 8,
+          description: "Stop counter/timer command (read to stop; data ignored)" }
+      - { offset: 0x1F, name: OPR_CLR, access: write, width: 8,
+          description: "Output port bit reset (1 bits clear corresponding OP pins)" }
 
   AUDIO:
     part: "74HC373 + R2R DAC"
@@ -332,9 +329,3 @@ bodges:
   - "Reroute A6 pad on U12 to A18"
   - "Route freed GLUE pin 75 to CPU ~VPA"
   - "Pull up CPU HALT with 4.7K to nearby CPU +5V"
-  - "Swap MOUSE_CLK and KBD_DATA at MCU so MOUSE_CLK ends up on P3.2"
-  - "Swap UART TX and RX on MCU"
-  - "VIDEO pin 9 --> ENGINE pin 2: NEED_WORD"
-  - "VIDEO pin 28 --> ENGINE pin 8: SOF"
-  - "VIDEO pin 30 --> ENGINE pin 10: EOL"
-  - "ENGINE pin 40 --> VIDEO pin 31: LATCH"

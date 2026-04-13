@@ -4,7 +4,7 @@
 
 * This is a homebrew 68000 computer intended to let me use some parts I've had for decades in my bin, including 68000P12, 2x KM681000BLP-7, a bunch of 70ns 27C512, and a handful of discrete parts.  The IC parts bin inventory is at chip-inventory.csv but I also have assorted LEDs, transistors, diodes, and a large selection of capacitors and resistors.
 
-* Goals include display of bitmaps starting with 640*480*1bpp VGA, audio, and CF reading.  Possibly FUZIX, MiNT, EmuTOS, CP/M-68K
+* Goals include display of bitmaps starting with 640*480*1bpp, audio, and CF reading.  Possibly FUZIX, MiNT, EmuTOS, CP/M-68K
 
 ## Definition
 
@@ -15,9 +15,8 @@
     * netlist is in board/board-pcb-rev-1.distilled.txt except with bodges applied as noted in griffin.yml, produced with kicad_netlist_summary_2.py
     * Rev 1 gerbers are in board/board-gerb
   * GLUE Verilog for ATF1508AS in cpld/glue
-  * VIDEO Verilog for ATF1508AS in cpld/video
-  * ENGINE Verilog for ATF1508AS in cpld/engine
-  * Makefile for both GLUE and VIDEO in cpld
+  * 68681 DUART
+  * Makefile for GLUE in cpld
   * 68000 ROM in firmware/{crt0.s,linker.ld,rom.cpp,Makefile} and associated other files in firmware
   * 68000 bringup ROM in sanity/{sanity.s,linker.ld,Makefile}
   * emulator in emulator/ and the intent is to at least emulate the 68000 and MMIO accesses.  TBD whether to emulate the ATF1508's using Verilator.
@@ -36,12 +35,12 @@
 * The 68000 CPU is configurable and flexible but instructions take variable time, flow may be stalled by DTACK and interrupts, and real-time response is difficult.
 * Therefore carefully split responsibility between the CPLDs and CPU. Examples:
   * A complete UART RX and TX doesn't fit in GLUE, but GLUE implements a free-running reloaded "TIMER" so that CPU code can have more deterministic hard timing and perform UART RX and TX in a loop.
-  * Rather than encoding progressive versus interlaced DMA in ENGINE, just have a "row stride" that the CPU can set and also add once in the video blank ISR to set up field 1.
+  * Rather than encoding progressive versus interlaced DMA, just have a "row stride" that the CPU can set and also add once in the video blank ISR to set up field 1. (for future video)
 
 ## Building components
 
 * Generate C++, Verilog, and assembly includes for components with `make` at project root.
-* Build glue and video and engine in cpld/ with `make glue` or `make video` or `make engine` (or `make` for all)
+* Build glue in cpld/ with `make glue` 
 * Configure emulator CMake in emulator/ with `cmake -Bbuild .` and build with `cmake --build build`
 * Build the ROM in firmware/ with `make`.  The toolchain is made from a Docker image of an Ubuntu 24 build of crosstool-ng for m68k-unknown-elf for 68000 and not for 68832; see firmware/m68k-crosstool-ng.config, firmware/m68k-{g++,gcc,objcopy,objdump}, BUILD_TOOLCHAIN_CONTAINER, Dockerfile.  The toolchain .tar.gz might not be in git.
 * Build the sanity test ROM image in firmware/ with `make`.  Same toolchain as firmware/.  (Probably should unify the toolchains between firmware and rom at some point...)

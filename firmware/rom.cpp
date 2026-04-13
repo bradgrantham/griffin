@@ -46,6 +46,22 @@ static volatile uint8_t &cf_drive_head = *reinterpret_cast<volatile uint8_t *>(G
 static volatile uint8_t &cf_status     = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_STATUS);
 static volatile uint8_t &cf_command    = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_COMMAND);
 
+// ---------------------------------------------------------------------------
+// 68681 DUART — register access
+// ---------------------------------------------------------------------------
+
+static volatile uint8_t &duart_mra     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_MR1A);
+static volatile uint8_t &duart_sra     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_SRA);
+static volatile uint8_t &duart_csra    = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CSRA);
+static volatile uint8_t &duart_cra     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CRA);
+static volatile uint8_t &duart_rba     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_RBA);
+static volatile uint8_t &duart_tba     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_TBA);
+static volatile uint8_t &duart_acr     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_ACR);
+static volatile uint8_t &duart_imr     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_IMR);
+static volatile uint8_t &duart_ctur    = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CTUR);
+static volatile uint8_t &duart_ctlr    = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CTLR);
+static volatile uint8_t &duart_startcc = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_STARTCC);
+
 // Wait for BSY to clear.  Returns CF_TIMEOUT if limit exceeded.
 static cf_error cf_wait_ready()
 {
@@ -287,23 +303,6 @@ asm(
     "    rts                  \n"
 );
 
-/**
- * Bit-bang receive one byte at 115200 via DEBUG_IN + GLUE timer.
- * Returns 0–255 on success, -1 on timeout (~1ms).
- */
-extern "C" int debug_getchar(void);
-
-asm(
-    ".global debug_getchar       \n"
-    "debug_getchar:              \n"
-    "    move.l  %d2, -(%sp)     \n"
-    "    lea     .Lret_gc(%pc), %a5 \n"
-    "    jmp     debug_getchar_asm \n"
-    ".Lret_gc:                   \n"
-    "    move.l  (%sp)+, %d2     \n"
-    "    rts                     \n"
-);
-
 extern "C" void panic(const char *s);
 
 asm(
@@ -316,10 +315,6 @@ asm(
 // GLUE CONFIG shadow access — defined in crt0.s
 extern "C" void glue_config_set_bits(uint8_t mask);
 extern "C" void glue_config_clear_bits(uint8_t mask);
-
-// ENGINE DMA control — defined in crt0.s
-extern "C" void video_start_dma(uint16_t fb_base_val, uint16_t stride_val);
-extern "C" void video_stop_dma(void);
 
 extern "C" {
 
@@ -357,6 +352,86 @@ void timer_tick()
 
 }; // extern "C"
 
+// ---------------------------------------------------------------------------
+// 68681 DUART — Channel A console (115200 8N1 via internal timer)
+// ---------------------------------------------------------------------------
+
+// CRA/CRB command encodings
+static constexpr uint8_t DUART_CMD_RESET_MR_PTR = 0x10;  // MC=1
+static constexpr uint8_t DUART_CMD_RESET_RX     = 0x20;  // MC=2
+static constexpr uint8_t DUART_CMD_RESET_TX     = 0x30;  // MC=3
+static constexpr uint8_t DUART_CMD_RESET_ERR    = 0x40;  // MC=4
+static constexpr uint8_t DUART_CMD_ENABLE_TXRX  = 0x05;  // EC=1, TC=1
+
+extern "C" void duart_putchar(uint8_t ch)
+{
+    while (!(duart_sra & Griffin::DUART_SRA_TXRDY_MASK))
+        ;
+    duart_tba = ch;
+}
+
+extern "C" uint8_t duart_getchar()
+{
+    while (!(duart_sra & Griffin::DUART_SRA_RXRDY_MASK))
+        ;
+    return duart_rba;
+}
+
+// Defined in syscalls.c — switches write()/read() to DUART backend
+extern "C" void duart_console_enable();
+
+static void duart_init()
+{
+    debug_printf("DUART: init\n");
+
+    // Reset Channel A
+    duart_cra = DUART_CMD_RESET_RX;
+    duart_cra = DUART_CMD_RESET_TX;
+    duart_cra = DUART_CMD_RESET_MR_PTR;
+
+    // MR1A: 8 data bits, no parity
+    duart_mra = 0x13;
+    // MR2A: 1 stop bit, normal mode (MR pointer auto-advanced)
+    duart_mra = 0x07;
+
+    // Timer mode, X1/CLK undivided, BRG set 2
+    duart_acr = 0xE0;
+
+    // Preload = 1 → timer output = 3.6864 MHz / 2 = 1.8432 MHz
+    duart_ctur = 0x00;
+    duart_ctlr = 0x01;
+
+    // Start the timer (side-effect read)
+    [[maybe_unused]] volatile uint8_t dummy = duart_startcc;
+
+    // Select timer as TX and RX clock source
+    duart_csra = 0xDD;
+
+    // No interrupts (polled console)
+    duart_imr = 0x00;
+
+    // Enable TX and RX
+    duart_cra = DUART_CMD_ENABLE_TXRX;
+
+    // Report status via bit-bang debug path
+    uint8_t sra = duart_sra;
+    debug_printf("DUART: SRA=0x%02X", sra);
+    if (sra & Griffin::DUART_SRA_TXRDY_MASK)
+    {
+        debug_printf(" TXRDY");
+    }
+    if (sra & Griffin::DUART_SRA_TXEMT_MASK)
+    {
+        debug_printf(" TXEMT");
+    }
+    debug_printf("\n");
+
+    if (!(sra & Griffin::DUART_SRA_TXRDY_MASK))
+    {
+        debug_printf("DUART: WARNING — TXRDY not set after init\n");
+    }
+}
+
 static void dump_hex(uint32_t base_addr, const uint8_t *data, int size)
 {
     int offset = 0;
@@ -364,20 +439,20 @@ static void dump_hex(uint32_t base_addr, const uint8_t *data, int size)
     {
         int howmany = (size < 16) ? size : 16;
 
-        debug_printf("  0x%06lX: ", (unsigned long)(base_addr + offset));
+        printf("  0x%06lX: ", (unsigned long)(base_addr + offset));
         for (int i = 0; i < howmany; i++)
         {
-            debug_printf("%02X ", data[i]);
+            printf("%02X ", data[i]);
         }
-        debug_printf("\n");
+        printf("\n");
 
-        debug_printf("            ");
+        printf("            ");
         for (int i = 0; i < howmany; i++)
         {
             char c = data[i];
-            debug_printf(" %c ", (c >= 0x20 && c <= 0x7E) ? c : '.');
+            printf(" %c ", (c >= 0x20 && c <= 0x7E) ? c : '.');
         }
-        debug_printf("\n");
+        printf("\n");
 
         size -= howmany;
         data += howmany;
@@ -392,34 +467,35 @@ static void cf_mount_and_list()
     cf_error err = cf_init();
     if (err != CF_OK)
     {
-        debug_printf("CF: init failed (err=%d) status=0x%02X error=0x%02X\n",
-                     err, cf_status, cf_error_reg);
+        printf("CF: init failed (err=%d) status=0x%02X error=0x%02X\n",
+               err, cf_status, cf_error_reg);
         return;
     }
-    debug_printf("CF: init OK\n");
+    printf("CF: init OK\n");
 
     uint8_t id_buf[512];
     err = cf_identify(id_buf);
     if (err != CF_OK)
     {
-        debug_printf("CF: identify failed (err=%d) status=0x%02X error=0x%02X\n",
-                     err, cf_status, cf_error_reg);
+        printf("CF: identify failed (err=%d) status=0x%02X error=0x%02X\n",
+               err, cf_status, cf_error_reg);
         return;
     }
 
     cf_info info;
     cf_parse_identify(id_buf, &info);
-    debug_printf("CF: %s, firmware %s, serial %s\n", info.model, info.firmware_rev, info.serial);
-    debug_printf("CF: sectors:  %lu, capacity: %lu KB\n", (unsigned long)info.lba_sectors, (unsigned long)(info.lba_sectors / 2));
+    printf("CF: %s, firmware %s, serial %s\n", info.model, info.firmware_rev, info.serial);
+    printf("CF: sectors:  %lu, capacity: %lu KB\n",
+           (unsigned long)info.lba_sectors, (unsigned long)(info.lba_sectors / 2));
 
     // Mount filesystem
     FRESULT res = f_mount(&fatfs, "", 1);
     if (res != FR_OK)
     {
-        debug_printf("CF: mount failed (FatFS err=%d)\n", res);
+        printf("CF: mount failed (FatFS err=%d)\n", res);
         return;
     }
-    debug_printf("CF: filesystem mounted\n");
+    printf("CF: filesystem mounted\n");
 
     // Print volume label
     char label[12];
@@ -429,13 +505,13 @@ static void cf_mount_and_list()
     {
         if (label[0])
         {
-            debug_printf("Volume: %s (S/N %04X-%04X)\n",
-                         label, (unsigned)(vsn >> 16), (unsigned)(vsn & 0xFFFF));
+            printf("Volume: %s (S/N %04X-%04X)\n",
+                   label, (unsigned)(vsn >> 16), (unsigned)(vsn & 0xFFFF));
         }
         else
         {
-            debug_printf("Volume: (no label) (S/N %04X-%04X)\n",
-                         (unsigned)(vsn >> 16), (unsigned)(vsn & 0xFFFF));
+            printf("Volume: (no label) (S/N %04X-%04X)\n",
+                   (unsigned)(vsn >> 16), (unsigned)(vsn & 0xFFFF));
         }
     }
 
@@ -447,7 +523,7 @@ static void cf_mount_and_list()
     {
         unsigned long free_kb = (unsigned long)(free_clust * fs_ptr->csize) / 2;
         unsigned long total_kb = (unsigned long)((fs_ptr->n_fatent - 2) * fs_ptr->csize) / 2;
-        debug_printf("  %lu KB free / %lu KB total\n", free_kb, total_kb);
+        printf("  %lu KB free / %lu KB total\n", free_kb, total_kb);
     }
 
     // List root directory
@@ -456,7 +532,7 @@ static void cf_mount_and_list()
     res = f_opendir(&dir, "/");
     if (res == FR_OK)
     {
-        debug_printf("Root directory:\n");
+        printf("Root directory:\n");
         for (;;)
         {
             res = f_readdir(&dir, &fno);
@@ -464,9 +540,9 @@ static void cf_mount_and_list()
             {
                 break;
             }
-            debug_printf("  %c %7lu  %s\n",
-                         (fno.fattrib & AM_DIR) ? 'd' : '-',
-                         (unsigned long)fno.fsize, fno.fname);
+            printf("  %c %7lu  %s\n",
+                   (fno.fattrib & AM_DIR) ? 'd' : '-',
+                   (unsigned long)fno.fsize, fno.fname);
         }
         f_closedir(&dir);
     }
@@ -564,96 +640,16 @@ static bool evt_pop(uint8_t *out)
     return true;
 }
 
-static constexpr uint32_t FB_ALIGN = 16384;  // ENGINE_FB_BASE is A[21:14]
-uint8_t *framebuffer_allocation;
-extern volatile uint32_t framebuffer_stride_words;
-extern volatile uint32_t framebuffer_height_lines;
-extern volatile uint32_t framebuffer_width_pixels;
-extern volatile uint32_t framebuffer_width_words;
-extern volatile uint16_t *framebuffer_base;
-
-bool video_allocate(/* mode parameters */)
-{
-    framebuffer_stride_words = 64;
-    framebuffer_width_pixels = 640;
-    framebuffer_width_words = 40;
-    framebuffer_height_lines = 480;
-    auto framebuffer_size = framebuffer_stride_words * framebuffer_height_lines;
-    // Allocate framebuffer with room to align to 16KB
-    uint8_t *framebuffer_allocation = static_cast<uint8_t *>(malloc(framebuffer_size + FB_ALIGN - 1));
-    if (!framebuffer_allocation)
-    {
-        debug_printf("video: framebuffer allocation failed\n");
-        return false;
-    }
-    auto raw_addr = reinterpret_cast<uintptr_t>(framebuffer_allocation);
-    auto fb_addr = (raw_addr + FB_ALIGN - 1) & ~(FB_ALIGN - 1);
-    framebuffer_base = reinterpret_cast<volatile uint16_t *>(fb_addr);
-
-    debug_printf("video: splash displayed at 0x%06lX\n", (unsigned long)fb_addr);
-
-    return true;
-}
-
-void video_start()
-{
-    auto fb_addr = reinterpret_cast<uintptr_t>(framebuffer_base);
-    video_start_dma(fb_addr >> 14, Griffin::ENGINE_ROW_STRIDE_STRIDE_64);
-}
-
-void video_stop()
-{
-    video_stop_dma();
-}
-
-static inline uint8_t rgb332(uint8_t r, uint8_t g, uint8_t b)
-{
-    return (uint8_t)(((r & 0xE0)) | ((g & 0xE0) >> 3) | ((b & 0xC0) >> 6));
-}
-
-static inline void video_set_palette(uint8_t bg, uint8_t fg)
-{
-    // ENTRY_0 in low byte (pixel=0), ENTRY_1 in high byte (pixel=1).
-    *(volatile uint16_t *)(Griffin::VIDEO_PALETTE) = ((uint16_t)fg << 8) | bg;
-}
-
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
 
-    // -----------------------------------------------------------------
-    // Display splash bitmap via ENGINE DMA
-    // -----------------------------------------------------------------
-    {
-        int STRIDE_BYTES = framebuffer_stride_words * 2;
-        static constexpr int WORDS_PER_LINE = SPLASH_WIDTH / 16;  // 40
-
-        bool success = video_allocate(/* ... */);
-        if(!success)
-        {
-            debug_printf("video configuration failed\n");
-        }
-        else
-        {
-            volatile uint16_t *fb = framebuffer_base;
-            const uint16_t *src = splash_bitmap;
-
-            for (int y = 0; y < SPLASH_HEIGHT; y++)
-            {
-                for (int x = 0; x < framebuffer_width_words; x++)
-                {
-                    fb[x] = src[x];
-                }
-                for (int x = framebuffer_width_words; x < framebuffer_stride_words; x++)
-                {
-                    fb[x] = 0;
-                }
-                src += WORDS_PER_LINE;
-                fb += framebuffer_stride_words;
-            }
-            video_start();
-        }
-    }
+    // Initialize 68681 DUART and switch console output from bit-bang to DUART.
+    // Everything before this point prints via debug_printf (GLUE bit-bang).
+    // Everything after prints via printf (DUART Channel A, 115200 8N1).
+    duart_init();
+    duart_console_enable();
+    printf("Console on DUART Channel A, 115200 8N1\n");
 
     volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
 
@@ -663,27 +659,8 @@ int main()
 
     cf_mount_and_list();
 
-    // Polled UART RX loop via DEBUG_IN
-    int qq = 0;
     for (;;)
     {
-        int ch = debug_getchar();
-        if (ch >= 0)
-        {
-            debug_printf("received: 0x%02X '%c'\n", ch,
-                         (ch >= 0x20 && ch < 0x7F) ? ch : '.');
-        }
-        // Amber on black (Hercules-ish).
-        qq++;
-        if(qq > 1000) {
-            if(qq % 3 == 0)
-            {
-                video_set_palette(rgb332(0, 0, 0), rgb332(255, 0, 0));
-            } else if(qq % 3 == 1) {
-                video_set_palette(rgb332(0, 0, 0), rgb332(0, 255, 0));
-            } else {
-                video_set_palette(rgb332(0, 0, 0), rgb332(0, 0, 255));
-            }
-        }
+        // Event loop
     }
 }

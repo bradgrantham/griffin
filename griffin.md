@@ -351,21 +351,30 @@ The idea was to use what I had: 12MHz 68000, 64K ROMs, 128K SRAMs.  That's gotte
 
 **That's a LOT of wires, *and is a distraction from pixels***.  If you thought you could do NTSC in software with it, that would be a thing to do.  Could do the bonkers idea with framebuffer packed into MOVEQ instructions in the region A17==1 with 8x1bit pixels in low byte and sync bit in D9 (clobbers D0 or D1) ; need a shift register, some dtack logic, and a divider.  **Even more wires and tricky hacking**.
 
+Why not just put everything into a 1508, no logic?  You already have a CUPL workflow.  Let it manage DTACK, all peripheral SELECT lines, repeat RAM and pick a region which is interpreted as framebuffer, either catch and output sync and pixel or enable a latch and shift...  You have a working 68K, 1MB RAM, ROM, GLUE, CF Card...  Could you prototype this in Griffin Mark I?  Get 68681 working, then get SYSTICK out of GLUE for more macrocells, then manage shift and sync to two lines to...  VIDEO?  Special VIDEO bitfile that passes through VIDEO_STALL and VIDEO_IRQ lines backwards to CPST_PIXEL and CPST_SYNC?
+
 ## Actual board
 
-Could design the boards, send them off, and get them back mostly populated with SMT...  Use SMT for logic, discretes, maybe RAM.  Only items I need to populate are: CPU socket, RAM sockets, ROM ZIF, 68681 socket, composite jack.  Still a lot of soldering.  I get 720x480 monochrome, 180x480 ~16 artifact colors.
+Could design the boards, send them off, and get them back mostly populated with SMT...  Use SMT for 1508 discretes, maybe RAM.  Only items I need to populate are: CPU socket, RAM sockets, ROM ZIF, 68681 socket, composite jack.  Still a lot of soldering.  I get 720x480 monochrome, 180x480 ~16 artifact colors.
 
 # Rev 2
 
 ## Investigation Plan
 
+Clean everything up for Rev 2
+
+* Stub out current ENGINE and VIDEO
+
+* Move SYSTICK out of GLUE
+* Remove notions of bitbanged RX
+
+New features
+
+* 68681 - make a daughterboard, test it: UART with high rate and interrupts, system tick
+* PS/2 - GLUE or 68681
+* bodge 8 more lines to CF card and try 16 bit?
+
 See if you can determine if ATF1508 is tristating correctly through Verilog
-
-Move SYSTICK out of GLUE
-
-68681 - make a daughterboard, test it: UART with high rate and interrupts, system tick
-
-Move PS/2 into GLUE
 
 ## Summary
 
