@@ -26,7 +26,7 @@ vector_table:
     .long   _default_handler    | 26: Level 2 autovector
     .long   _default_handler    | 27: Level 3 autovector
     .long   _default_handler    | 28: Level 4 autovector
-    .long   _default_handler    | 29: Level 5 autovector 
+    .long   _duart_isr          | 29: Level 5 autovector (DUART)
     .long   _default_handler    | 30: Level 6 autovector (GLUE, later)
     .long   _default_handler    | 31: Level 7 autovector
     .rept 16
@@ -476,6 +476,61 @@ _exc_illegal_insn:
     dbra    %d1, .illegal_delay
     bra     .illegal_loop
 
+| ====================================================================
+| _duart_isr: level 5 autovector — 68681 DUART
+|
+| Drains the RX FIFO of Channel A, enqueuing each byte into
+| uart_rx_queue.  Queue is a power-of-2 ring buffer with single
+| producer (this ISR) and single consumer (duart_getchar).
+|
+| The 68681 RX FIFO is 3 deep.  Draining all available bytes on
+| each entry avoids re-taking the exception on the next byte.
+|
+| If the queue is full, the byte is stored into the guard slot
+| (at tail) but tail is not advanced, so the byte is discarded
+| on the next enqueue.  uart_rx_overflow is set.
+|
+| Future: systick (if moved to DUART counter) would share this
+| vector and be distinguished by reading DUART_ISR.
+| ====================================================================
+    .global _duart_isr
+_duart_isr:
+    movem.l %d0-%d1/%a0, -(%sp)
+
+.duart_rx_drain:
+    move.b  DUART_SRA, %d0
+    btst    #DUART_SRA_RXRDY_SHIFT, %d0
+    beq.s   .duart_isr_done
+
+    move.b  DUART_RBA, %d0              | read byte (may clear RXRDY)
+
+    | Store byte at queue[tail] (harmless if queue is full —
+    | the slot at tail is the guard slot).
+    move.l  uart_rx_tail, %d1
+    lea     uart_rx_queue, %a0
+    adda.l  %d1, %a0
+    move.b  %d0, (%a0)
+
+    | next_tail = (tail + 1) & (SIZE - 1)
+    addq.l  #1, %d1
+    andi.l  #(UART_RX_QUEUE_SIZE - 1), %d1
+
+    | Full check: next_tail == head?
+    cmp.l   uart_rx_head, %d1
+    beq.s   .duart_isr_overflow
+
+    | Commit tail, try to drain more
+    move.l  %d1, uart_rx_tail
+    bra.s   .duart_rx_drain
+
+.duart_isr_overflow:
+    move.b  #1, uart_rx_overflow
+    | fall through to done — don't drain further; consumer must catch up
+
+.duart_isr_done:
+    movem.l (%sp)+, %d0-%d1/%a0
+    rte
+
 | _default_handler: catch-all for unexpected exceptions
     .global _default_handler
 _default_handler:
@@ -694,4 +749,20 @@ evt_head:
 evt_tail:
     .skip 4
 evt_overflow:
+    .skip 1
+
+    .equ UART_RX_QUEUE_SIZE, 256 | must be power of 2
+
+    .align 2
+    .global uart_rx_queue
+    .global uart_rx_head
+    .global uart_rx_tail
+    .global uart_rx_overflow
+uart_rx_queue:
+    .skip UART_RX_QUEUE_SIZE
+uart_rx_head:
+    .skip 4
+uart_rx_tail:
+    .skip 4
+uart_rx_overflow:
     .skip 1

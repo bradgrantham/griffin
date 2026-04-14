@@ -344,6 +344,13 @@ extern volatile uint32_t evt_head;
 extern volatile uint32_t evt_tail;
 extern volatile uint8_t evt_overflow;
 
+// UART RX ring buffer (written by _duart_isr in crt0.s, read by duart_getchar)
+constexpr size_t UART_RX_QUEUE_SIZE = 256;  // must match crt0.s
+extern volatile uint8_t uart_rx_queue[UART_RX_QUEUE_SIZE];
+extern volatile uint32_t uart_rx_head;
+extern volatile uint32_t uart_rx_tail;
+extern volatile uint8_t uart_rx_overflow;
+
 // Timer tick handler — called from ISR context at IPL 5
 void timer_tick()
 {
@@ -372,9 +379,15 @@ extern "C" void duart_putchar(uint8_t ch)
 
 extern "C" uint8_t duart_getchar()
 {
-    while (!(duart_sra & Griffin::DUART_SRA_RXRDY_MASK))
+    // Spin until the ISR has deposited a byte.  Head is only advanced
+    // here (single consumer); tail is only advanced by the ISR.  On
+    // the 68000 an aligned long-word read is atomic, so no masking
+    // of interrupts is required around these indices.
+    while (uart_rx_head == uart_rx_tail)
         ;
-    return duart_rba;
+    uint8_t ch = uart_rx_queue[uart_rx_head];
+    uart_rx_head = (uart_rx_head + 1) & (UART_RX_QUEUE_SIZE - 1);
+    return ch;
 }
 
 // Defined in syscalls.c — switches write()/read() to DUART backend
@@ -383,6 +396,12 @@ extern "C" void duart_console_enable();
 static void duart_init()
 {
     debug_printf("DUART: init\n");
+
+    // Initialize RX queue state before enabling any DUART interrupts.
+    // .monitor_data is NOLOAD and not cleared by the BSS init loop.
+    uart_rx_head = 0;
+    uart_rx_tail = 0;
+    uart_rx_overflow = 0;
 
     // Reset Channel A
     duart_cra = DUART_CMD_RESET_RX;
@@ -407,11 +426,12 @@ static void duart_init()
     // Select timer as TX and RX clock source
     duart_csra = 0xDD;
 
-    // No interrupts (polled console)
-    duart_imr = 0x00;
-
     // Enable TX and RX
     duart_cra = DUART_CMD_ENABLE_TXRX;
+
+    // Enable RXRDYA interrupt — ISR drains bytes into uart_rx_queue.
+    // TX stays polled; no TXRDYA interrupt needed.
+    duart_imr = Griffin::DUART_ISR_RXRDYA_MASK;
 
     // Report status via bit-bang debug path
     uint8_t sra = duart_sra;
@@ -640,6 +660,10 @@ static bool evt_pop(uint8_t *out)
     return true;
 }
 
+extern "C" {
+extern long read(int file, void *__buf, size_t len);
+};
+
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
@@ -661,6 +685,13 @@ int main()
 
     for (;;)
     {
+        unsigned char ch;
+        long result = read(0, &ch, 1);
+        if(result == 1)
+        {
+            printf("received: 0x%02X '%c'\n", ch,
+                         (ch >= 0x20 && ch < 0x7F) ? ch : '.');
+        }
         // Event loop
     }
 }

@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>
 
 #include <fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -38,6 +39,8 @@ using namespace Griffin;
 struct PTYConsole
 {
     int master_fd = -1;
+    mutable bool have_pending = false;
+    mutable uint8_t pending = 0;
 
     bool open()
     {
@@ -61,32 +64,43 @@ struct PTYConsole
         }
     }
 
+    // On macOS, FIONREAD on a PTY master is unreliable: it can return a
+    // positive count when no readable bytes are actually available (it
+    // appears to reflect pending master-write data, not master-readable
+    // data).  The resulting non-blocking read() then returns EAGAIN and
+    // the DUART emulation would enqueue spurious 0x00 bytes, drowning
+    // real keystrokes.  Instead, actually attempt a non-blocking read
+    // and cache a single byte.
     bool is_data_ready() const
     {
+        if(have_pending)
+        {
+            return true;
+        }
         if(master_fd < 0)
         {
             return false;
         }
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(master_fd, &fds);
-        struct timeval tv = {0, 0};
-        int result = select(master_fd + 1, &fds, NULL, NULL, &tv);
-        if(result < 0)
+        uint8_t b;
+        ssize_t n = read(master_fd, &b, 1);
+        if(n == 1)
         {
-            if(errno == EINTR)
-            {
-                return false;
-            }
-            perror("select");
-            return false;
+            pending = b;
+            have_pending = true;
+            return true;
         }
-        return result > 0 && FD_ISSET(master_fd, &fds);
+        return false;
     }
 
     // Read one byte.  Returns true if a byte was read.
     bool receive(uint8_t *out) const
     {
+        if(have_pending)
+        {
+            *out = pending;
+            have_pending = false;
+            return true;
+        }
         if(master_fd < 0)
         {
             return false;
