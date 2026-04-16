@@ -11,10 +11,10 @@ rom_even.bin rom_odd.bin: rom.bin
 	$(M68K_OBJCOPY) -I binary -O binary --byte=1 --interleave=2 $< rom_odd.bin
 
 flash-even: rom_even.bin
-	minipro -s -b -p "M27C512@DIP28" -w rom_even.bin
+	minipro -s -b -p "W27C512@DIP28" -w rom_even.bin
 
 flash-odd: rom_odd.bin
-	minipro -s -b -p "M27C512@DIP28" -w rom_odd.bin
+	minipro -s -b -p "W27C512@DIP28" -w rom_odd.bin
 
 
 rom.bin: rom.elf
