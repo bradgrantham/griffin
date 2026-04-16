@@ -303,6 +303,23 @@ asm(
     "    rts                  \n"
 );
 
+/**
+ * Bit-bang receive one byte at 115200 via DEBUG_IN + GLUE timer.
+ * Returns 0–255 on success, -1 on timeout (~1ms).
+ */
+extern "C" int debug_getchar(void);
+
+asm(
+    ".global debug_getchar       \n"
+    "debug_getchar:              \n"
+    "    move.l  %d2, -(%sp)     \n"
+    "    lea     .Lret_gc(%pc), %a5 \n"
+    "    jmp     debug_getchar_asm \n"
+    ".Lret_gc:                   \n"
+    "    move.l  (%sp)+, %d2     \n"
+    "    rts                     \n"
+);
+
 extern "C" void panic(const char *s);
 
 asm(
@@ -672,6 +689,10 @@ int main()
     // Everything before this point prints via debug_printf (GLUE bit-bang).
     // Everything after prints via printf (DUART Channel A, 115200 8N1).
     duart_init();
+    for(auto c: "DUART TX\n")
+    {
+        if(c) duart_putchar(c);
+    }
     duart_console_enable();
     printf("Console on DUART Channel A, 115200 8N1\n");
 
