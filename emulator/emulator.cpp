@@ -26,9 +26,10 @@ constexpr uint32_t DEBUG_BUS = 0x0001;
 constexpr uint32_t DEBUG_IO = 0x0002;
 constexpr uint32_t DEBUG_UART = 0x0004;
 constexpr uint32_t DEBUG_DISASSEMBLE = 0x0008;
-constexpr uint32_t DEBUG_DEBUG_BIT = 0x0020;
-constexpr uint32_t DEBUG_CF = 0x0040;
-constexpr uint32_t DEBUG_DUART = 0x0080;
+constexpr uint32_t DEBUG_DEBUG_BIT = 0x0010;
+constexpr uint32_t DEBUG_CF = 0x0020;
+constexpr uint32_t DEBUG_DUART = 0x0040;
+constexpr uint32_t DEBUG_SPEED = 0x0080;
 constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
@@ -1590,7 +1591,10 @@ int main(int argc, const char** argv)
 
         if(now != then)
         {
-            printf("%" PRIu64 " clocks\n", clock_now - clock_then);
+            if(debug & DEBUG_SPEED)
+            {
+                printf("%" PRIu64 " clocks\n", clock_now - clock_then);
+            }
             clock_then = clock_now;
             then = now;
         }
