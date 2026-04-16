@@ -144,8 +144,7 @@ peripherals:
 
   VIDEO:
     part: ATF1508AS
-    description: >
-      Just a pass-through for composite SYNC and PIXEL.
+    description: "Just a pass-through for composite SYNC and PIXEL at the moment"
     dtack:
       - 12000000: 0
       - 14000000: 0
@@ -194,7 +193,7 @@ peripherals:
 
   DUART:
     part: 68681
-    description: "serial IO, timers "
+    description: "serial IO, maybe some in and out pins"
     clock: 3686400
     address_range:
       base: 0xF80000
