@@ -13,23 +13,14 @@ MVP:
 Put this on a screen somehow, from Macbeth:
 
 * Tomorrow, and tomorrow, and tomorrow,
-
   Creeps in this petty pace from day to day,
-
   To the last syllable of recorded time;
-
   And all our yesterdays have lighted fools
-
   The way to dusty death. Out, out, brief candle!
-
   Life's but a walking shadow, a poor player,
-
   That struts and frets his hour upon the stage,
-
   And then is heard no more. It is a tale
-
   Told by an idiot, full of sound and fury,
-
   Signifying nothing.
 
 # References
@@ -38,19 +29,19 @@ Put this on a screen somehow, from Macbeth:
 
 Use PLD or CPLD devices - **settled on ATF1508 PLCC-84**
 
-* [ATF1508AS | Microchip Technology](https://www.microchip.com/en-us/product/ATF1508AS) - PLCC-84  
-  * Jameco [Socket PLCC 84 Pin Soldertail Through Hole](https://www.jameco.com/z/4000-84D-R-James-Electronics-Socket-PLCC-84-Pin-Soldertail-Through-Hole_2289799.html)   
-* [GitHub - peterzieba/5Vpld: A collection of scripts and tools for Atmel ATF150x and GAL Programmable logic devices, some of the only standing active 5V programmable logic parts still available.](https://github.com/peterzieba/5Vpld)   
-* They have a USB programmer but that fits a 2x5 header and I’ve already put a 1x5 header on the board assuming I’d make my own cable  
-* They have a lot of resources for design and also a Verilog compiler  
-* Cupl can run under Wine on macOS  
-* “Bake a JTAG header into the board. A 2x5 0.1" header is the standard pinout and takes almost no space. Get an FT232H board (Adafruit sells one for ~$15), wire it up, and you've got a programmer that works with OpenOCD.”  
-  * [Adafruit FT232H Breakout - General Purpose USB to GPIO, SPI, I2C](https://www.adafruit.com/product/2264)   
-  * **No, just put a 1x5 header on and wire from ft232h**
-* If there’s a .si file for the PLD “cupl.exe” will run that simulation and put outputs in .so  
+  * [ATF1508AS | Microchip Technology](https://www.microchip.com/en-us/product/ATF1508AS) - PLCC-84  
+    * Jameco [Socket PLCC 84 Pin Soldertail Through Hole](https://www.jameco.com/z/4000-84D-R-James-Electronics-Socket-PLCC-84-Pin-Soldertail-Through-Hole_2289799.html)   
+  * [GitHub - peterzieba/5Vpld: A collection of scripts and tools for Atmel ATF150x and GAL Programmable logic devices, some of the only standing active 5V programmable logic parts still available.](https://github.com/peterzieba/5Vpld)   
+  * They have a USB programmer but that fits a 2x5 header and I’ve already put a 1x5 header on the board assuming I’d make my own cable  
+  * They have a lot of resources for design and also a Verilog compiler  
+  * Cupl can run under Wine on macOS  
+  * “Bake a JTAG header into the board. A 2x5 0.1" header is the standard pinout and takes almost no space. Get an FT232H board (Adafruit sells one for ~$15), wire it up, and you've got a programmer that works with OpenOCD.”  
+    * [Adafruit FT232H Breakout - General Purpose USB to GPIO, SPI, I2C](https://www.adafruit.com/product/2264)   
+    * No, just put a 1x5 header on and wire from ft232h
+  * If there’s a .si file for the PLD “cupl.exe” will run that simulation and put outputs in .so  
 * Sourcing~~** ~~ATF1508s may be difficult.  May need to stockpile?~~ Plenty at Microchip for now.
-* [https://www.youtube.com/watch?v=LnGaDpGbbjQ](https://www.youtube.com/watch?v=LnGaDpGbbjQ) has a bunch of details on HDL through Microchip's tools and using these devices  
-* Really need to write HDL **before** doing the PCB because some pins may need to move.
+  * [https://www.youtube.com/watch?v=LnGaDpGbbjQ](https://www.youtube.com/watch?v=LnGaDpGbbjQ) has a bunch of details on HDL through Microchip's tools and using these devices  
+  * Really need to write HDL **before** doing the PCB because some pins may need to move.
 
 # Design philosophy
 
@@ -75,8 +66,6 @@ How much design file can be in YAML or in Python?  Generate from YAML:
 # How To Get To Reliable / Ready for Rev 2
 
 At reliable 14MHz UART TX and CF and RAM and somewhat-working RX in `04092026-14mhz-works-no-engine`
-
-HALT circuit  - use reset button for now and order some supervisors and work those into rev 1 to prove out.
 
 Start tagging source when something works and check it and tag it often
 
@@ -167,12 +156,13 @@ Completely forgot from the beginning.
 * DTACK responds whether RAM is populated, D will be repeating within partially populated, floating/junk for not-populated  
 * ROM overlaid over RAM bank 1 until write to GLUE config register as described elsewhere  
 * Handle these RAM cases:  
+  * 256K - using the two chips I have now  
   * 1M-4M by MB - populate up to 4 BANKS contiguously with 512K RAMs starting with bank 1  
   * Test procedure  
     * Write to 0xAA55 to 4M - 2, write 0x7733 to 4M - 4, if 4M - 2 == 0xAA55, then 4M  
     * Repeat for 3M, 2M, 1M  
     * Otherwise assume 256K
-  
+
     See [griffin.yml](griffin.yml) for the complete peripheral address map.
 
 ## ROM
@@ -309,28 +299,6 @@ Previous intent: Keyboard, mouse, serial port through 8051-compatible AT89S52
 
   Move instead to 68681, bus interface is reliable and hardcoded, UART reliable and high-speed with flow control, may be able to do PS/2 through interrupts on input pins
 
-### ENGINE - DMA
-
-Third ATF1508AS.  HALT-based bus-stealing DMA controller for video (and audio).
-
-* Reads framebuffer data from SRAM and signals VIDEO to latch D[15:0] directly from the data bus
-* Uses HALT-based bus stealing: ENGINE asks GLUE to halt the CPU, then drives the address bus to perform an SRAM read while VIDEO snoops D[15:0] via LATCH signal
-* ENGINE does not know or care about pixel format — it is a word pump.  VIDEO controls how many words per line via NEED\_WORD, and signals EOL to advance ENGINE to the next row
-* Audio: not handled by ENGINE in Rev 1.  The original plan (VIDEO requests an extra ENGINE transfer per line and asserts AUDIO\_LE instead of LATCH, so the audio DAC captures D[15:0], with the sample stashed at the end of each row) was abandoned because every usable rate tightly couples to HSYNC and the framebuffer layout gets awkward.  See "CPU-driven 8-bit audio" below.
-* Row stride is always a multiple of 64 words (128 bytes).  CPU configures stride via a 2-bit field: 0=64, 1=128, 2=192, 3=256 words.  Progressive uses stride = smallest multiple of 64 >= active words.  Interlaced uses 2x that to skip the other field's line in a line-sequential framebuffer.
-* ADVANCE register (write-only command) performs the same row-advance operation as EOL; used by VSYNC ISR to offset field 1 by one line
-
-Bodge wires required on Rev 1 (6 total):
-
-* ENGINE pin 2 (OE2) <-- VIDEO: NEED\_WORD (VIDEO shift reg needs data)
-* ENGINE pin 8 <-- VIDEO: SOF (start of frame, reset pointer)
-* ENGINE pin 10 <-- VIDEO: EOL (end of line, advance to next row)
-* ENGINE pin 40 --> VIDEO: LATCH (D[15:0] stable, capture now)
-* ENGINE pin 6 (was \~ENGINE\_IACK) --> GLUE: HALT\_REQ (request CPU halt)
-* ENGINE pin 9 <-- GLUE: BUS\_FREE (CPU halted, bus available)
-
-Fits 108/128 macrocells (84%) with current register set.
-
 ## CPU-driven 8-bit audio
 
 The '373 audio latch is clocked by GLUE's ~AUDIO\_LE on CPU writes to the audio address; there is no hardware FIFO or DMA engine.  Driving the DAC is a CPU timing problem, with two supported patterns:
@@ -422,18 +390,21 @@ serial I/O
 ## Board changes
 
 - [ ] Schematic (+PCB if necessary)
-  - [ ] Need BOM output but some way to select “I have these already”.
+  - [ ] Need BOM output but some way to select “I have these already”.  
   - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
   - [ ] Determine a more available ROM technology and design around that.
     - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
     - [ ] [https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614](https://www.digikey.com/en/products/detail/microchip-technology/AT27C4096-90PU/1008614) is a 256K x 16 ROM, 40DIP, 90ns (more wait states but maybe okay) for about $10 and they have 142 of them at the moment
-    - [ ] Would be nice to be able to download a new ROM to it, e.g. flushable
+    - [ ] Would be nice to be able to download a new ROM to it, e.g. flashable
   - [ ] Replace AT89S52 with 68681 DUART (same DIP-40 socket) — see below
   - [ ] Pullups
     - [ ] JTAG lines
     - [ ] Any CPU lines that may lead or not be driven - 4.7K HALT
     - [ ] Any inter-IC signals that might cause stalls or floating behavior
   - [ ] Rework GLUE IO MCU signals for 68681: ~IO_SELECT becomes ~CS, ~IO_DTACK becomes a pass-through input (68681 drives DTACK), ~IO_IRQ stays as interrupt input; drop ~IO_IACK (tie 68681 ~IACK high, use autovectors, read ISR to clear)
+  - [ ] Route oscillators separately into VIDEO for simplicity, if possible  
+  - [ ] More signals between GLUE, VIDEO, ENGINE
+    - [ ] Could I squeeze 16 bits for a bus from ENGINE to VIDEO?  Or even just 8?
   - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
   - [ ] GND, +5V, D, A, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points, basically bring out every inter-IC signal
     - [ ] use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
@@ -458,15 +429,13 @@ serial I/O
     - [ ] IP0-IP3 have input-change-detect interrupt — could use for PS/2 clock edge detection
     - [ ] OP0-OP7 directly drive RTS/CTS flow control and other active-low output signals
     - [ ] PS/2 keyboard/mouse: 68681 IP/OP pins are not bidirectional open-drain, so PS/2 may still need external open-drain buffers or a separate solution
-  - [ ] FT2232R on the board with USB-C for debug output and for 68681 serial console
-    - [ ] boot serial separate from DEBUG_OUT pin
-    - [ ] Audio input
-    - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?
+  - [ ] FT4232H on the board with USB-C: debug console & UART, second UART for whatever, JTAG to CPLDs
+  - [ ] RTC - manage through MCU?  Maybe multiplex through A/D?
   - [ ] CF card
     - [ ] symbol is junk - redo it.
-    - [ ] CF card IOWR should be gated by AS.
-      - [ ] CF card latches on rise of IOWR
-      - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
+  - [ ] CF card IOWR should be gated by AS.
+    - [ ] CF card latches on rise of IOWR
+    - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
     - [ ] CF card to 16 bits
 - [ ] PCB only
   - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
