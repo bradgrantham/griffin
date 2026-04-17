@@ -15,6 +15,7 @@
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/stat.h>
+#include <termios.h>
 #include <unistd.h>
 #ifdef __APPLE__
 #include <util.h>
@@ -637,6 +638,97 @@ struct SoftUARTTX
 };
 
 // ---------------------------------------------------------------------------
+// Raw stdin console for DEBUG_IN bitstream — bypasses PTY/DUART path.
+// Escape sequence: ~. at line start exits (like ssh).
+// ---------------------------------------------------------------------------
+
+struct StdinConsole
+{
+    struct termios orig_termios;
+    bool raw_mode = false;
+    int escape_state = 1;  // 0=normal, 1=line start, 2=saw tilde
+    bool have_pending = false;
+    uint8_t pending = 0;
+
+    bool open()
+    {
+        if (!isatty(STDIN_FILENO))
+        {
+            return false;
+        }
+        tcgetattr(STDIN_FILENO, &orig_termios);
+        struct termios raw = orig_termios;
+        cfmakeraw(&raw);
+        raw.c_oflag |= OPOST | ONLCR;
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+        fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
+        raw_mode = true;
+        fprintf(stderr, "stdin: raw mode, ~. to exit\n");
+        return true;
+    }
+
+    ~StdinConsole()
+    {
+        if (raw_mode)
+        {
+            tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+        }
+    }
+
+    // Returns: 1 = byte in *out, 0 = no data, -1 = exit requested (~.)
+    int poll(uint8_t *out)
+    {
+        if (have_pending)
+        {
+            *out = pending;
+            have_pending = false;
+            return 1;
+        }
+
+        if (!raw_mode)
+        {
+            return 0;
+        }
+
+        uint8_t ch;
+        ssize_t n = ::read(STDIN_FILENO, &ch, 1);
+        if (n != 1)
+        {
+            return 0;
+        }
+
+        if (escape_state == 2)
+        {
+            if (ch == '.')
+            {
+                return -1;
+            }
+            if (ch == '~')
+            {
+                escape_state = 0;
+                *out = '~';
+                return 1;
+            }
+            pending = ch;
+            have_pending = true;
+            escape_state = (ch == '\r' || ch == '\n') ? 1 : 0;
+            *out = '~';
+            return 1;
+        }
+
+        if (escape_state == 1 && ch == '~')
+        {
+            escape_state = 2;
+            return 0;
+        }
+
+        escape_state = (ch == '\r' || ch == '\n') ? 1 : 0;
+        *out = ch;
+        return 1;
+    }
+};
+
+// ---------------------------------------------------------------------------
 // 68681 DUART emulation — Channel A UART via PTY, counter/timer, interrupts
 //
 // Minimal subset: Channel A TX/RX through the PTY, counter/timer for
@@ -927,6 +1019,7 @@ class GriffinEmulator : public moira::Moira
     mutable DUARTState duart;
     mutable TimerState timer;
     mutable SoftUARTTX debug_in_tx;
+    StdinConsole stdin_console;
     mutable uint8_t dac_value = 0x0;
 
     static bool is_cf_addr(uint32_t io_offset)
@@ -960,6 +1053,11 @@ class GriffinEmulator : public moira::Moira
                 printf("[DUART read %06X → 0x%02X]\n", abs, val);
             }
             return val;
+        }
+        if (addr == GLUE_DEBUG_IN - IO_BASE)
+        {
+            debug_in_tx.advance(getClock());
+            return debug_in_tx.current_bit;
         }
         if(debug & DEBUG_IO)
         {
@@ -1107,6 +1205,7 @@ class GriffinEmulator : public moira::Moira
 public:
 
     uint32_t clock_hz = SYSCLK_HZ;
+    bool exit_requested = false;
     ClockGovernor governor;
 
     enum RAMConfig {RAM_1_BANK_256K, RAM_1M, RAM_2M, RAM_3M, RAM_4M };
@@ -1279,6 +1378,11 @@ public:
         return pty_console.open();
     }
 
+    bool init_stdin()
+    {
+        return stdin_console.open();
+    }
+
     bool open_cf(const char *path, bool read_only)
     {
         return cf.open(path, read_only);
@@ -1289,14 +1393,17 @@ public:
     // Call this periodically from the main loop, not on every bus cycle.
     void poll_io()
     {
-        // If DUART RX is enabled, let the DUART handle PTY input directly
-        // via register reads.  Otherwise feed the bit-bang path.
-        if (!duart.rx_enabled)
         {
             uint8_t ch;
-            while (pty_console.is_data_ready() && pty_console.receive(&ch))
+            int rc;
+            while ((rc = stdin_console.poll(&ch)) == 1)
             {
                 debug_in_tx.enqueue(ch);
+            }
+            if (rc == -1)
+            {
+                fprintf(stderr, "\n");
+                exit_requested = true;
             }
         }
 
@@ -1513,6 +1620,8 @@ int main(int argc, const char** argv)
         exit(EXIT_FAILURE);
     }
 
+    emulator.init_stdin();
+
     SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
 
     emulator.setDasmSyntax(moira::Syntax::GNU_MIT);
@@ -1577,6 +1686,10 @@ int main(int argc, const char** argv)
         if (clock_now - previous_io_poll >= IO_POLL_INTERVAL)
         {
             emulator.poll_io();
+            if (emulator.exit_requested)
+            {
+                running = false;
+            }
             previous_io_poll = clock_now;
 
             SDL_Event event;
