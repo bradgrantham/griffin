@@ -61,6 +61,7 @@ static volatile uint8_t &duart_imr     = *reinterpret_cast<volatile uint8_t *>(G
 static volatile uint8_t &duart_ctur    = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CTUR);
 static volatile uint8_t &duart_ctlr    = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CTLR);
 static volatile uint8_t &duart_startcc = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_STARTCC);
+static volatile uint8_t &duart_ivr     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_IVR);
 
 // Wait for BSY to clear.  Returns CF_TIMEOUT if limit exceeded.
 static cf_error cf_wait_ready()
@@ -377,7 +378,7 @@ void timer_tick()
 }; // extern "C"
 
 // ---------------------------------------------------------------------------
-// 68681 DUART — Channel A console (115200 8N1 via internal timer)
+// 68681 DUART — Channel A console (38400 8N1)
 // ---------------------------------------------------------------------------
 
 // CRA/CRB command encodings
@@ -420,6 +421,8 @@ static void duart_init()
     uart_rx_tail = 0;
     uart_rx_overflow = 0;
 
+    // ---- MC68681 Init: Channel A, 38400 8N1, RxRDY interrupt ----
+
     // Reset Channel A
     duart_cra = DUART_CMD_RESET_RX;
     duart_cra = DUART_CMD_RESET_TX;
@@ -430,25 +433,18 @@ static void duart_init()
     // MR2A: 1 stop bit, normal mode (MR pointer auto-advanced)
     duart_mra = 0x07;
 
-    // Timer mode, X1/CLK undivided, BRG set 2
-    duart_acr = 0xE0;
+    // ACR: BRG set 0, timer mode irrelevant (bits 6:4 = 000), no IP change int
+    duart_acr = 0x00;
 
-    // Preload = 1 → timer output = 3.6864 MHz / 2 = 1.8432 MHz
-    duart_ctur = 0x00;
-    duart_ctlr = 0x01;
-
-    // Start the timer (side-effect read)
-    [[maybe_unused]] volatile uint8_t dummy = duart_startcc;
-
-    // Select timer as TX and RX clock source
-    duart_csra = 0xDD;
-
-    // Enable TX and RX
-    duart_cra = DUART_CMD_ENABLE_TXRX;
+    // CSRA: Tx and Rx both = BRG 38400 (code 1100 = 0xC)
+    duart_csra = 0xcc;
 
     // Enable RXRDYA interrupt — ISR drains bytes into uart_rx_queue.
     // TX stays polled; no TXRDYA interrupt needed.
     duart_imr = Griffin::DUART_ISR_RXRDYA_MASK;
+
+    // Enable TX and RX
+    duart_cra = DUART_CMD_ENABLE_TXRX;
 
     // Report status via bit-bang debug path
     uint8_t sra = duart_sra;
@@ -681,20 +677,189 @@ extern "C" {
 extern long read(int file, void *__buf, size_t len);
 };
 
+// ---------------------------------------------------------------------------
+// Debug monitor — interactive memory read/write via bitbang serial.
+// Runs before DUART init so the DUART can be poked from here.
+// ---------------------------------------------------------------------------
+
+static uint32_t parse_hex(const char *s, const char **end)
+{
+    uint32_t val = 0;
+    while (*s)
+    {
+        char c = *s;
+        if (c >= '0' && c <= '9')
+        {
+            val = (val << 4) | (c - '0');
+        }
+        else if (c >= 'a' && c <= 'f')
+        {
+            val = (val << 4) | (c - 'a' + 10);
+        }
+        else if (c >= 'A' && c <= 'F')
+        {
+            val = (val << 4) | (c - 'A' + 10);
+        }
+        else
+        {
+            break;
+        }
+        s++;
+    }
+    if (end)
+    {
+        *end = s;
+    }
+    return val;
+}
+
+static const char *skip_spaces(const char *s)
+{
+    while (*s == ' ')
+    {
+        s++;
+    }
+    return s;
+}
+
+static int debug_getline(char *buf, int maxlen)
+{
+    int pos = 0;
+    for (;;)
+    {
+        int ch = debug_getchar();
+        if (ch < 0)
+        {
+            continue;
+        }
+        if (ch == '\r' || ch == '\n')
+        {
+            debug_serial_putchar('\r');
+            debug_serial_putchar('\n');
+            buf[pos] = '\0';
+            return pos;
+        }
+        if (ch == 0x7F || ch == 0x08)
+        {
+            if (pos > 0)
+            {
+                pos--;
+                debug_serial_putchar('\b');
+                debug_serial_putchar(' ');
+                debug_serial_putchar('\b');
+            }
+        }
+        else if (pos < maxlen - 1)
+        {
+            buf[pos++] = ch;
+            debug_serial_putchar(ch);
+        }
+    }
+}
+
+static void debug_monitor()
+{
+    debug_printf("Monitor: r ADDR [LEN] | w ADDR VAL | q\n");
+
+    char line[80];
+
+    for (;;)
+    {
+        debug_printf("> ");
+        debug_getline(line, sizeof(line));
+
+        const char *p = skip_spaces(line);
+        char cmd = *p;
+
+        if (cmd == '\0')
+        {
+            continue;
+        }
+
+        if (cmd == 'q' || cmd == 'Q')
+        {
+            debug_printf("Continuing boot...\n");
+            return;
+        }
+
+        if (cmd == 'r' || cmd == 'R')
+        {
+            p = skip_spaces(p + 1);
+            const char *end;
+            uint32_t addr = parse_hex(p, &end);
+            p = skip_spaces(end);
+            uint32_t len = 1;
+            if (*p)
+            {
+                len = parse_hex(p, &end);
+            }
+            if (len == 0)
+            {
+                len = 1;
+            }
+            if (len > 256)
+            {
+                len = 256;
+            }
+
+            for (uint32_t off = 0; off < len; off += 16)
+            {
+                uint32_t row = (len - off < 16) ? (len - off) : 16;
+                debug_printf("%06lX:", (unsigned long)(addr + off));
+                for (uint32_t i = 0; i < row; i++)
+                {
+                    uint8_t val = *reinterpret_cast<volatile uint8_t *>(addr + off + i);
+                    debug_printf(" %02X", val);
+                }
+                debug_printf("\n");
+            }
+        }
+        else if (cmd == 'w' || cmd == 'W')
+        {
+            p = skip_spaces(p + 1);
+            const char *end;
+            uint32_t addr = parse_hex(p, &end);
+            p = skip_spaces(end);
+            if (*p)
+            {
+                uint32_t val = parse_hex(p, &end);
+                *reinterpret_cast<volatile uint8_t *>(addr) = static_cast<uint8_t>(val);
+                debug_printf("%06lX <- %02X\n", (unsigned long)addr, val & 0xFF);
+            }
+            else
+            {
+                debug_printf("usage: w ADDR VAL\n");
+            }
+        }
+        else if (cmd == 'h' || cmd == 'H' || cmd == '?')
+        {
+            debug_printf("r ADDR [LEN] - read bytes (LEN default 1, max 256)\n");
+            debug_printf("w ADDR VAL   - write byte\n");
+            debug_printf("q            - quit monitor, continue boot\n");
+        }
+        else
+        {
+            debug_printf("?\n");
+        }
+    }
+}
+
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
 
+    // debug_monitor();
+
     // Initialize 68681 DUART and switch console output from bit-bang to DUART.
     // Everything before this point prints via debug_printf (GLUE bit-bang).
-    // Everything after prints via printf (DUART Channel A, 115200 8N1).
+    // Everything after prints via printf (DUART Channel A, 38400 8N1).
     duart_init();
     for(auto c: "DUART TX\n")
     {
         if(c) duart_putchar(c);
     }
     duart_console_enable();
-    printf("Console on DUART Channel A, 115200 8N1\n");
+    printf("Console on DUART Channel A, 38400 8N1\n");
 
     volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
 
@@ -704,6 +869,7 @@ int main()
 
     cf_mount_and_list();
 
+    printf("Input check loop...\n");
     for (;;)
     {
         unsigned char ch;
@@ -713,6 +879,5 @@ int main()
             printf("received: 0x%02X '%c'\n", ch,
                          (ch >= 0x20 && ch < 0x7F) ? ch : '.');
         }
-        // Event loop
     }
 }
