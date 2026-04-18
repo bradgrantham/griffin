@@ -1,7 +1,8 @@
 M68K_GCC = ./m68k-gcc
 M68K_OBJCOPY = ./m68k-objcopy
 
-REAL_SOURCES = crt0.s rom.cpp splash.cpp syscalls.c ff.c diskio.c
+REAL_SOURCES = crt0.s rom.cpp syscalls.c ff.c diskio.c
+# splash.cpp
 SOURCES = $(REAL_SOURCES) build_info.c
 OBJECTS = # startup_audio.o
 LDSCRIPT = linker.ld
