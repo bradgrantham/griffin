@@ -7,33 +7,57 @@ vector_table:
     .long   _exc_bus_error      | 2: Bus error
     .long   _exc_address_error  | 3: Address error
     .long   _exc_illegal_insn   | 4: Illegal instruction
-    .long   _default_handler    | 5: Zero divide
-    .long   _default_handler    | 6: CHK instruction
-    .long   _default_handler    | 7: TRAPV instruction
-    .long   _default_handler    | 8: Privilege violation
-    .long   _default_handler    | 9: Trace
-    .long   _default_handler    | 10: Line 1010 emulator
-    .long   _default_handler    | 11: Line 1111 emulator
-    .rept 3
-    .long   _default_handler    | 12-14: Reserved
-    .endr
-    .long   _default_handler    | 15: Uninitialized interrupt
-    .rept 8
-    .long   _default_handler    | 16-23: Reserved
-    .endr
-    .long   _default_handler    | 24: Spurious interrupt
-    .long   _default_handler    | 25: Level 1 autovector
-    .long   _default_handler    | 26: Level 2 autovector
-    .long   _default_handler    | 27: Level 3 autovector
-    .long   _default_handler    | 28: Level 4 autovector
+    .long   _default_handler_5    | 5: Zero divide
+    .long   _default_handler_6    | 6: CHK instruction
+    .long   _default_handler_7    | 7: TRAPV instruction
+    .long   _default_handler_8    | 8: Privilege violation
+    .long   _default_handler_9    | 9: Trace
+    .long   _default_handler_10    | 10: Line 1010 emulator
+    .long   _default_handler_11    | 11: Line 1111 emulator
+
+    .long   _default_handler_12    | 12: Reserved
+    .long   _default_handler_13    | 13: Reserved
+    .long   _default_handler_14    | 14: Reserved
+
+    .long   _default_handler_15    | 15: Uninitialized interrupt
+
+    .long   _default_handler_16    | 16-23: Reserved
+    .long   _default_handler_17    | 16-23: Reserved
+    .long   _default_handler_18    | 16-23: Reserved
+    .long   _default_handler_19    | 16-23: Reserved
+    .long   _default_handler_19    | 16-23: Reserved
+    .long   _default_handler_21 | 16-23: Reserved
+    .long   _default_handler_22 | 16-23: Reserved
+    .long   _default_handler_23 | 16-23: Reserved
+
+    .long   _default_handler_24 | 24: Spurious interrupt
+    .long   _default_handler_25 | 25: Level 1 autovector
+    .long   _default_handler_26 | 26: Level 2 autovector
+    .long   _default_handler_27 | 27: Level 3 autovector
+    .long   _default_handler_28 | 28: Level 4 autovector
     .long   _duart_isr          | 29: Level 5 autovector (DUART)
-    .long   _default_handler    | 30: Level 6 autovector (GLUE, later)
-    .long   _default_handler    | 31: Level 7 autovector
+    .long   _video_isr          | 30: Level 6 autovector (VIDEO)
+    .long   _default_handler_31 | 31: Level 7 autovector
+
+    .long   _default_handler_32 | 32-47: TRAP #0-15
+    .long   _default_handler_33 | 32-47: TRAP #0-15
+    .long   _default_handler_34 | 32-47: TRAP #0-15
+    .long   _default_handler_35 | 32-47: TRAP #0-15
+    .long   _default_handler_36 | 32-47: TRAP #0-15
+    .long   _default_handler_37 | 32-47: TRAP #0-15
+    .long   _default_handler_38 | 32-47: TRAP #0-15
+    .long   _default_handler_39 | 32-47: TRAP #0-15
+    .long   _default_handler_40 | 32-47: TRAP #0-15
+    .long   _default_handler_41 | 32-47: TRAP #0-15
+    .long   _default_handler_42 | 32-47: TRAP #0-15
+    .long   _default_handler_43 | 32-47: TRAP #0-15
+    .long   _default_handler_44 | 32-47: TRAP #0-15
+    .long   _default_handler_45 | 32-47: TRAP #0-15
+    .long   _default_handler_46 | 32-47: TRAP #0-15
+    .long   _default_handler_47 | 32-47: TRAP #0-15
+
     .rept 16
-    .long   _default_handler    | 32-47: TRAP #0-15
-    .endr
-    .rept 16
-    .long   _default_handler    | 48-63: Reserved
+    .long   _default_handler | 48-63: Reserved
     .endr
 
     .section .text
@@ -241,6 +265,10 @@ data_copy:  cmp.l   %a2, %a1
     move.l  (%a0)+, (%a1)+
     bra     data_copy
 data_done:
+
+    /* initialize video counter */
+    lea     video_counter, %a0
+    move.l  #0, (%a0)
 
     /* Call global constructors */
     jsr     __libc_init_array
@@ -544,46 +572,340 @@ _exc_illegal_insn:
 | ====================================================================
     .global _duart_isr
 _duart_isr:
-    movem.l %d0-%d1/%a0, -(%sp)
 
+    /* three debug pulses == "DUARTISR" */
+    move.b #0x00, GLUE_DEBUG_OUT
+    move.b #0x01, GLUE_DEBUG_OUT
+    move.b #0x00, GLUE_DEBUG_OUT
+    move.b #0x01, GLUE_DEBUG_OUT
+    move.b #0x00, GLUE_DEBUG_OUT
+    move.b #0x01, GLUE_DEBUG_OUT
+
+    movem.l %d0-%d6/%a0/%a5-%a6, -(%sp)
+
+    move.b  #'#', %d0
+    lea     .disr_start(%pc), %a5
+    jmp     timer_putchar
+.disr_start:
+
+    | Snapshot registers before any side-effect reads
+    move.b  DUART_SRA, %d2
+    move.b  DUART_ISR, %d3
+    move.b  DUART_RBA, %d4              | side effect: dequeues byte from FIFO
+
+    | Print "SRA ISR RBA\n" via bitbang debug
+    move.b  %d2, %d0
+    lea     .disr_sp1(%pc), %a6
+    jmp     timer_hex8
+.disr_sp1:
+    move.b  #' ', %d0
+    lea     .disr_p2(%pc), %a5
+    jmp     timer_putchar
+.disr_p2:
+    move.b  %d3, %d0
+    lea     .disr_sp2(%pc), %a6
+    jmp     timer_hex8
+.disr_sp2:
+    move.b  #' ', %d0
+    lea     .disr_p3(%pc), %a5
+    jmp     timer_putchar
+.disr_p3:
+    move.b  %d4, %d0
+    lea     .disr_nl(%pc), %a6
+    jmp     timer_hex8
+.disr_nl:
+    move.b  #0x0A, %d0
+    lea     .disr_drain(%pc), %a5
+    jmp     timer_putchar
+
+.disr_drain:
+    | Enqueue the byte we already read (in d4)
+    btst    #DUART_SRA_RXRDY_SHIFT, %d2
+    beq.s   .duart_isr_done
+
+    move.l  uart_rx_tail, %d1
+    lea     uart_rx_queue, %a0
+    adda.l  %d1, %a0
+    move.b  %d4, (%a0)
+
+    addq.l  #1, %d1
+    andi.l  #(UART_RX_QUEUE_SIZE - 1), %d1
+
+    cmp.l   uart_rx_head, %d1
+    beq.s   .duart_isr_overflow
+
+    move.l  %d1, uart_rx_tail
+
+    | Drain remaining FIFO entries (no debug print for these)
 .duart_rx_drain:
     move.b  DUART_SRA, %d0
     btst    #DUART_SRA_RXRDY_SHIFT, %d0
     beq.s   .duart_isr_done
 
-    move.b  DUART_RBA, %d0              | read byte (may clear RXRDY)
+    move.b  DUART_RBA, %d0
 
-    | Store byte at queue[tail] (harmless if queue is full —
-    | the slot at tail is the guard slot).
     move.l  uart_rx_tail, %d1
     lea     uart_rx_queue, %a0
     adda.l  %d1, %a0
     move.b  %d0, (%a0)
 
-    | next_tail = (tail + 1) & (SIZE - 1)
     addq.l  #1, %d1
     andi.l  #(UART_RX_QUEUE_SIZE - 1), %d1
 
-    | Full check: next_tail == head?
     cmp.l   uart_rx_head, %d1
     beq.s   .duart_isr_overflow
 
-    | Commit tail, try to drain more
     move.l  %d1, uart_rx_tail
     bra.s   .duart_rx_drain
 
 .duart_isr_overflow:
     move.b  #1, uart_rx_overflow
-    | fall through to done — don't drain further; consumer must catch up
 
 .duart_isr_done:
-    movem.l (%sp)+, %d0-%d1/%a0
+    movem.l (%sp)+, %d0-%d6/%a0/%a5-%a6
     rte
+
+_video_isr:
+    movem.l %d0-%d6/%a0/%a5-%a6, -(%sp)
+    lea     video_counter, %a0
+    move.l  (%a0), %d0
+    add.l   #1, %d0
+    move.l  %d0, (%a0)
+    movem.l (%sp)+, %d0-%d6/%a0/%a5-%a6
+    rte
+
 
 | _default_handler: catch-all for unexpected exceptions
     .global _default_handler
 _default_handler:
+    jmp panic_loop
     rte
+
+_default_handler_5:
+    lea     panic_loop(%pc), %a6
+    move.b  6, %d0
+    jmp     timer_hex8
+
+_default_handler_6:
+    lea     panic_loop(%pc), %a6
+    move.b  #6, %d0
+    jmp     timer_hex8
+
+_default_handler_7:
+    lea     panic_loop(%pc), %a6
+    move.b  #7, %d0
+    jmp     timer_hex8
+
+_default_handler_8:
+    lea     panic_loop(%pc), %a6
+    move.b  #8, %d0
+    jmp     timer_hex8
+
+_default_handler_9:
+    lea     panic_loop(%pc), %a6
+    move.b  #9, %d0
+    jmp     timer_hex8
+
+_default_handler_10:
+    lea     panic_loop(%pc), %a6
+    move.b  #10, %d0
+    jmp     timer_hex8
+
+_default_handler_11:
+    lea     panic_loop(%pc), %a6
+    move.b  #11, %d0
+    jmp     timer_hex8
+
+_default_handler_12:
+    lea     panic_loop(%pc), %a6
+    move.b  #12, %d0
+    jmp     timer_hex8
+
+_default_handler_13:
+    lea     panic_loop(%pc), %a6
+    move.b  #13, %d0
+    jmp     timer_hex8
+
+_default_handler_14:
+    lea     panic_loop(%pc), %a6
+    move.b  #14, %d0
+    jmp     timer_hex8
+
+_default_handler_15:
+    lea     panic_loop(%pc), %a6
+    move.b  #15, %d0
+    jmp     timer_hex8
+
+_default_handler_16:
+    lea     panic_loop(%pc), %a6
+    move.b  #16, %d0
+    jmp     timer_hex8
+
+_default_handler_17:
+    lea     panic_loop(%pc), %a6
+    move.b  #17, %d0
+    jmp     timer_hex8
+
+_default_handler_18:
+    lea     panic_loop(%pc), %a6
+    move.b  #18, %d0
+    jmp     timer_hex8
+
+_default_handler_19:
+    lea     panic_loop(%pc), %a6
+    move.b  #19, %d0
+    jmp     timer_hex8
+
+_default_handler_20:
+    lea     panic_loop(%pc), %a6
+    move.b  #20, %d0
+    jmp     timer_hex8
+
+_default_handler_21:
+    lea     panic_loop(%pc), %a6
+    move.b  #21, %d0
+    jmp     timer_hex8
+
+_default_handler_22:
+    lea     panic_loop(%pc), %a6
+    move.b  #22, %d0
+    jmp     timer_hex8
+
+_default_handler_23:
+    lea     panic_loop(%pc), %a6
+    move.b  #23, %d0
+    jmp     timer_hex8
+
+_default_handler_24:
+    lea     panic_loop(%pc), %a6
+    move.b  #24, %d0
+    jmp     timer_hex8
+
+_default_handler_25:
+    lea     panic_loop(%pc), %a6
+    move.b  #25, %d0
+    jmp     timer_hex8
+
+_default_handler_26:
+    lea     panic_loop(%pc), %a6
+    move.b  #26, %d0
+    jmp     timer_hex8
+
+_default_handler_27:
+    lea     panic_loop(%pc), %a6
+    move.b  #27, %d0
+    jmp     timer_hex8
+
+_default_handler_28:
+    lea     panic_loop(%pc), %a6
+    move.b  #28, %d0
+    jmp     timer_hex8
+
+_default_handler_29:
+    lea     panic_loop(%pc), %a6
+    move.b  #29, %d0
+    jmp     timer_hex8
+
+_default_handler_30:
+    lea     panic_loop(%pc), %a6
+    move.b  #30, %d0
+    jmp     timer_hex8
+
+_default_handler_31:
+    lea     panic_loop(%pc), %a6
+    move.b  #31, %d0
+    jmp     timer_hex8
+
+_default_handler_32:
+    lea     panic_loop(%pc), %a6
+    move.b  #32, %d0
+    jmp     timer_hex8
+
+_default_handler_33:
+    lea     panic_loop(%pc), %a6
+    move.b  #33, %d0
+    jmp     timer_hex8
+
+_default_handler_34:
+    lea     panic_loop(%pc), %a6
+    move.b  #34, %d0
+    jmp     timer_hex8
+
+_default_handler_35:
+    lea     panic_loop(%pc), %a6
+    move.b  #35, %d0
+    jmp     timer_hex8
+
+_default_handler_36:
+    lea     panic_loop(%pc), %a6
+    move.b  #36, %d0
+    jmp     timer_hex8
+
+_default_handler_37:
+    lea     panic_loop(%pc), %a6
+    move.b  #37, %d0
+    jmp     timer_hex8
+
+_default_handler_38:
+    lea     panic_loop(%pc), %a6
+    move.b  #38, %d0
+    jmp     timer_hex8
+
+_default_handler_39:
+    lea     panic_loop(%pc), %a6
+    move.b  #39, %d0
+    jmp     timer_hex8
+
+_default_handler_40:
+    lea     panic_loop(%pc), %a6
+    move.b  #40, %d0
+    jmp     timer_hex8
+
+_default_handler_41:
+    lea     panic_loop(%pc), %a6
+    move.b  #41, %d0
+    jmp     timer_hex8
+
+_default_handler_42:
+    lea     panic_loop(%pc), %a6
+    move.b  #42, %d0
+    jmp     timer_hex8
+
+_default_handler_43:
+    lea     panic_loop(%pc), %a6
+    move.b  #43, %d0
+    jmp     timer_hex8
+
+_default_handler_44:
+    lea     panic_loop(%pc), %a6
+    move.b  #44, %d0
+    jmp     timer_hex8
+
+_default_handler_45:
+    lea     panic_loop(%pc), %a6
+    move.b  #45, %d0
+    jmp     timer_hex8
+
+_default_handler_46:
+    lea     panic_loop(%pc), %a6
+    move.b  #46, %d0
+    jmp     timer_hex8
+
+_default_handler_47:
+    lea     panic_loop(%pc), %a6
+    move.b  #47, %d0
+    jmp     timer_hex8
+
+_default_handler_48:
+    lea     panic_loop(%pc), %a6
+    move.b  #48, %d0
+    jmp     timer_hex8
+
+_default_handler_49:
+    lea     panic_loop(%pc), %a6
+    move.b  #49, %d0
+    jmp     timer_hex8
+
 
 | ====================================================================
 | RAM test failure handlers — stack-free, print via UART then blink
@@ -815,3 +1137,6 @@ uart_rx_tail:
     .skip 4
 uart_rx_overflow:
     .skip 1
+    .global video_counter
+video_counter:
+    .skip 4
