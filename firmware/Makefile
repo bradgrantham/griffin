@@ -27,7 +27,7 @@ startup_audio.o: startup.raw
 	    --rename-section .data=.rodata,alloc,load,readonly,data,contents $< $@
 
 rom.elf: $(SOURCES) $(OBJECTS) $(LDSCRIPT)
-	$(M68K_GCC) -g -T $(LDSCRIPT) $(SOURCES) $(OBJECTS) -o $@
+	$(M68K_GCC) -Wall -g -T $(LDSCRIPT) $(SOURCES) $(OBJECTS) -o $@
 
 rom.s: rom.cpp $(LDSCRIPT)
 	$(M68K_GCC) -S -g rom.cpp
