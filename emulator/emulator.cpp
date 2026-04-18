@@ -9,7 +9,6 @@
 // pty.h / util.h pull in termios.h which #defines EXTB, colliding with
 // a Moira enum member.  Include Moira first, then the PTY header.
 #include "Moira.h"
-#include <SDL3/SDL.h>
 
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -970,6 +969,37 @@ struct DUARTState
     }
 };
 
+struct VideoState
+{
+    static constexpr uint64_t video_rate_centihertz = 5994;
+    static constexpr uint64_t sysclk_per_vblank = SYSCLK_HZ * 100 / video_rate_centihertz;
+    uint64_t clock_next_event {sysclk_per_vblank};
+    uint64_t previous_video_interrupt {0};
+    bool interrupt_pending = true;
+
+    VideoState() : previous_video_interrupt(0)
+    {
+    }
+
+    // Advance timer state — call periodically from poll_io
+    void check_timer(uint64_t clock_now)
+    {
+        while (clock_now >= clock_next_event)
+        {
+            clock_next_event += sysclk_per_vblank;
+            interrupt_pending = true;
+        }
+    }
+
+    bool irq_pending()
+    {
+        bool p = interrupt_pending;
+        interrupt_pending = false;
+        return p;
+    }
+    
+};
+
 // ---------------------------------------------------------------------------
 // Real-time clock governor
 //
@@ -1017,6 +1047,7 @@ class GriffinEmulator : public moira::Moira
     PTYConsole pty_console;
     mutable CFState cf;
     mutable DUARTState duart;
+    mutable VideoState video;
     mutable TimerState timer;
     mutable SoftUARTTX debug_in_tx;
     StdinConsole stdin_console;
@@ -1408,18 +1439,20 @@ public:
         }
 
         duart.check_timer(getClock());
+        video.check_timer(getClock());
         update_ipl();
     }
 
     // Unified IPL management — picks highest active interrupt source
     void update_ipl()
     {
-        if (duart.irq_pending(pty_console))
-        {
+        if (video.irq_pending()) {
+            setIPL(VIDEO_IRQ_LEVEL);
+            printf("set video IPL %lu\n", getClock());
+        }  else if (duart.irq_pending(pty_console)) {
             setIPL(DUART_IRQ_LEVEL);
-        }
-        else
-        {
+        } else {
+            printf("set 0 IPL %lu\n", getClock());
             setIPL(0);
         }
     }
@@ -1691,15 +1724,6 @@ int main(int argc, const char** argv)
                 running = false;
             }
             previous_io_poll = clock_now;
-
-            SDL_Event event;
-            while (SDL_PollEvent(&event))
-            {
-                if (event.type == SDL_EVENT_QUIT)
-                {
-                    running = false;
-                }
-            }
         }
 
         if(now != then)
@@ -1713,9 +1737,5 @@ int main(int argc, const char** argv)
         }
     }
 
-    if (audio)
-    {
-        fclose(audio);
-    }
     return 0;
 }
