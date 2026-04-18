@@ -974,30 +974,19 @@ struct VideoState
     static constexpr uint64_t video_rate_centihertz = 5994;
     static constexpr uint64_t sysclk_per_vblank = SYSCLK_HZ * 100 / video_rate_centihertz;
     uint64_t clock_next_event {sysclk_per_vblank};
-    uint64_t previous_video_interrupt {0};
-    bool interrupt_pending = true;
+    bool irq_latched = false;
 
-    VideoState() : previous_video_interrupt(0)
-    {
-    }
-
-    // Advance timer state — call periodically from poll_io
     void check_timer(uint64_t clock_now)
     {
         while (clock_now >= clock_next_event)
         {
             clock_next_event += sysclk_per_vblank;
-            interrupt_pending = true;
+            irq_latched = true;
         }
     }
 
-    bool irq_pending()
-    {
-        bool p = interrupt_pending;
-        interrupt_pending = false;
-        return p;
-    }
-    
+    bool irq_pending() const { return irq_latched; }
+    void clear_irq() { irq_latched = false; }
 };
 
 // ---------------------------------------------------------------------------
@@ -1353,6 +1342,13 @@ public:
             return;
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write8(addr - IO_BASE, val);
+        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
+            if(addr == VIDEO_CLRINT) {
+                video.clear_irq();
+                const_cast<GriffinEmulator*>(this)->update_ipl();
+            } else {
+                printf("write of uint8_t %02X to unhandled VIDEO address%06X\n", val, addr);
+            }
         } else {
             printf("write of uint8_t %02X to unhandled %06X\n", val, addr);
             abort();
@@ -1448,11 +1444,9 @@ public:
     {
         if (video.irq_pending()) {
             setIPL(VIDEO_IRQ_LEVEL);
-            printf("set video IPL %lu\n", getClock());
-        }  else if (duart.irq_pending(pty_console)) {
+        } else if (duart.irq_pending(pty_console)) {
             setIPL(DUART_IRQ_LEVEL);
         } else {
-            printf("set 0 IPL %lu\n", getClock());
             setIPL(0);
         }
     }

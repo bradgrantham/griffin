@@ -869,12 +869,14 @@ int main()
 
     cf_mount_and_list();
 
-    extern uint32_t video_counter;
+    volatile extern uint32_t video_counter;
 
     printf("Input check loop...\n");
+    printf("%lu\n", video_counter);
     uint32_t last_video_print = video_counter;
     for (;;)
     {
+#if 0
         unsigned char ch;
         long result = read(0, &ch, 1);
         if(result == 1)
@@ -882,13 +884,14 @@ int main()
             printf("received: 0x%02X '%c'\n", ch,
                          (ch >= 0x20 && ch < 0x7F) ? ch : '.');
         }
+#endif
         if(video_counter >= last_video_print + 60)
         {
             uint32_t seconds = video_counter * 100 / 5994;
             uint32_t ss = seconds % 60;
             uint32_t mm = (seconds / 60) % 60;
             uint32_t hh = seconds / 3600;
-            printf("%02d:%02d:%02d\n");
+            printf("%02ld:%02ld:%02ld\n", hh, mm, ss);
             last_video_print = video_counter;
         }
     }

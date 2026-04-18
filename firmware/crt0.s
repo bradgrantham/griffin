@@ -667,6 +667,7 @@ _duart_isr:
 
 _video_isr:
     movem.l %d0-%d6/%a0/%a5-%a6, -(%sp)
+    move.b  #0, VIDEO_CLRINT            | ack VIDEO IRQ
     lea     video_counter, %a0
     move.l  (%a0), %d0
     add.l   #1, %d0
