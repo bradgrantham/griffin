@@ -156,6 +156,15 @@ peripherals:
     interrupt:
       level: 6
       signal: ~VIDEO_IRQ
+    registers:
+      - offset: 0x03
+        name: CLRINT
+        access: write
+        width: 8
+        description: |
+          Write any value to clear the latched VIDEO vsync IRQ.  IRQ is
+          set on the rising edge of vsync and held until CLRINT is
+          written, so firmware must acknowledge in the ISR before RTE.
 
   CF:
     part: "Compact Flash (True IDE)"
