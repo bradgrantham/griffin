@@ -159,28 +159,59 @@ module Video
     assign VGA_VSYNC = ~in_vsync;
 
     // ----------------------------------------------------------------
-    // VSYNC interrupt — latched on rising edge of vsync (SYSCLK domain),
-    // cleared by CPU write to VIDEO_CLRINT (offset 0x03 → A[5:1] = 5'h01).
-    // Held asserted until the ISR acknowledges, so brief SR masking in
+    // VSYNC interrupt — latched on rising edge of vsync, cleared by CPU
+    // write to VIDEO_CLRINT (offset 0x03 → A[5:1] = 5'h01).  Held
+    // asserted until the ISR acknowledges, so brief SR masking in
     // firmware cannot drop the interrupt.
+    //
+    // The event is generated as a single-cycle pulse in the PIXEL_CLK
+    // domain at the exact v_cnt transition into V_SYNC_START, then
+    // crossed to SYSCLK via a toggle flip-flop + 2-FF synchronizer.
+    // The toggle scheme is robust regardless of clock ratio: each
+    // vsync event flips the toggle, and the SYSCLK side detects any
+    // change (XOR of two synchronized samples).  This avoids sampling
+    // the wide combinational `v_cnt >= 490 & v_cnt < 492` comparator
+    // across clock domains, which could glitch on unrelated v_cnt
+    // increments and produce spurious IRQs.
     // ----------------------------------------------------------------
-    // Sample in_vsync directly in SYSCLK to detect its rising edge.
-    // Metastability risk is negligible: in_vsync transitions only ~120 Hz,
-    // and a rare 1-SYSCLK-late capture just delays the IRQ by ~71 ns.
-    reg vsync_prev;
-    reg video_irq_latched;
-    wire clrint_write = cpu_writing & (A == 5'h01) & ~nLDS;
+
+    // PIXEL_CLK domain: fire a one-cycle pulse at the rising edge of
+    // vsync (the cycle v_cnt advances to V_SYNC_START), and flip the
+    // toggle so the SYSCLK side can observe the event as a level change.
+    wire vsync_event = (v_cnt == V_SYNC_START) & h_last;
+    reg  vsync_tog;
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            vsync_tog <= 1'b0;
+        end
+        else if (vsync_event)
+        begin
+            vsync_tog <= ~vsync_tog;
+        end
+    end
+
+    // SYSCLK domain: 2-FF synchronizer on the toggle, plus one extra
+    // stage so we can XOR two stable samples to detect the toggle
+    // flipping.  vsync_sync[0] is the metastability-prone stage and
+    // must not feed combinational logic other than the next flop.
+    reg [2:0] vsync_sync;
+    reg       video_irq_latched;
+    wire      clrint_write = cpu_writing & (A == 5'h01) & ~nLDS;
+    wire      vsync_edge   = vsync_sync[2] ^ vsync_sync[1];
+
     always @(posedge SYSCLK or posedge RESET)
     begin
         if (RESET)
         begin
-            vsync_prev        <= 1'b0;
+            vsync_sync        <= 3'b000;
             video_irq_latched <= 1'b0;
         end
         else
         begin
-            vsync_prev <= in_vsync;
-            if (in_vsync & ~vsync_prev)
+            vsync_sync <= {vsync_sync[1:0], vsync_tog};
+            if (vsync_edge)
             begin
                 video_irq_latched <= 1'b1;
             end
