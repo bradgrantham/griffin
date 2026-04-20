@@ -9,8 +9,8 @@ module glue (
     input  wire        DEBUG_IN,    // pin 83: UART RX input (GCLK1)
     input  wire        OE2_pin,
     input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
-    input  wire        nDUART_DTACK,     // pin 16: IO MCU asserts when ready
-    input  wire        nDUART_IRQ,       // pin 18: IO MCU interrupt request (active low)
+    input  wire        nDUART_DTACK,     // pin 16: DUART asserts when ready
+    input  wire        nDUART_IRQ,       // pin 18: DUART interrupt request (active low)
     input  wire        nAS,
     input  wire        [23:18] A_hi,
     input  wire        [5:1]   A_lo,
@@ -119,13 +119,13 @@ module glue (
     //
     // Priority levels (from griffin.yml / griffin.md):
     //   6: VIDEO    (~VIDEO_IRQ,  pin 1)   — nIPL = 001
-    //   5: IO       (~DUART_IRQ,     pin 18)  — nIPL = 010
+    //   5: DUART    (~DUART_IRQ,     pin 18)  — nIPL = 010
     //   none:                              — nIPL = 111
     // ----------------------------------------------------------------
 
     wire duart_irq_active     = ~nDUART_IRQ;
 
-    assign nIPL = ~nVIDEO_IRQ       ? 3'b001 :  // level 6
+    assign nIPL = ~nVIDEO_IRQ        ? 3'b001 :  // level 6
                   duart_irq_active   ? 3'b010 :  // level 5
                                        3'b111;   // no interrupt
 
@@ -288,15 +288,16 @@ module glue (
     end
 
     wire dtack_comb =
-        ((~nRAM_1_SEL)          & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // RAM bank 1
-        ((~nRAM_2_SEL)   & (ws_cnt >= `RAM_BANK_2_DTACK_THRESHOLD))  |  // RAM bank 2
-        ((~nRAM_3_SEL)   & (ws_cnt >= `RAM_BANK_3_DTACK_THRESHOLD))  |  // RAM bank 3
-        ((~nRAM_4_SEL)   & (ws_cnt >= `RAM_BANK_4_DTACK_THRESHOLD))  |  // RAM bank 4
+        ((~nRAM_1_SEL)      & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // RAM bank 1
+        ((~nRAM_2_SEL)      & (ws_cnt >= `RAM_BANK_2_DTACK_THRESHOLD))  |  // RAM bank 2
+        ((~nRAM_3_SEL)      & (ws_cnt >= `RAM_BANK_3_DTACK_THRESHOLD))  |  // RAM bank 3
+        ((~nRAM_4_SEL)      & (ws_cnt >= `RAM_BANK_4_DTACK_THRESHOLD))  |  // RAM bank 4
         ((~nROM_SELECT)     & (ws_cnt >= `ROM_DTACK_THRESHOLD))  |  // ROM
         (glue_select        & (ws_cnt >= `GLUE_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
+        (~nVIDEO_SELECT     & (ws_cnt >= `VIDEO_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
         (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
-        ((~nDUART_SELECT)   & ~nDUART_DTACK) |  // IO MCU: handshake
-        (AUDIO_LE          & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO
+        ((~nDUART_SELECT)   & ~nDUART_DTACK) |  // DUART
+        (AUDIO_LE           & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO
 
     // Timer armed gate: when armed and timer is not at zero, block
     // ALL DTACK to freeze the CPU until the next zero-crossing.
