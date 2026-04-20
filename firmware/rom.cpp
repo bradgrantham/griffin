@@ -408,6 +408,11 @@ extern "C" uint8_t duart_getchar()
     return ch;
 }
 
+bool duart_received_ready()
+{
+    return uart_rx_head != uart_rx_tail;
+}
+
 // Defined in syscalls.c — switches write()/read() to DUART backend
 extern "C" void duart_console_enable();
 
@@ -442,6 +447,9 @@ static void duart_init()
     // Enable RXRDYA interrupt — ISR drains bytes into uart_rx_queue.
     // TX stays polled; no TXRDYA interrupt needed.
     duart_imr = Griffin::DUART_ISR_RXRDYA_MASK;
+
+    // Clear DUART IVR - chasing a bug
+    duart_ivr = 0x0;
 
     // Enable TX and RX
     duart_cra = DUART_CMD_ENABLE_TXRX;
@@ -872,19 +880,21 @@ int main()
     volatile extern uint32_t video_counter;
 
     printf("Input check loop...\n");
-    printf("%lu\n", video_counter);
     uint32_t last_video_print = video_counter;
+
     for (;;)
     {
-#if 0
-        unsigned char ch;
-        long result = read(0, &ch, 1);
-        if(result == 1)
+        if(duart_received_ready())
         {
-            printf("received: 0x%02X '%c'\n", ch,
-                         (ch >= 0x20 && ch < 0x7F) ? ch : '.');
+            unsigned char ch;
+            long result = read(0, &ch, 1);
+            if(result == 1)
+            {
+                printf("received: 0x%02X '%c'\n", ch,
+                             (ch >= 0x20 && ch < 0x7F) ? ch : '.');
+            }
         }
-#endif
+
         if(video_counter >= last_video_print + 60)
         {
             uint32_t seconds = video_counter * 100 / 5994;
