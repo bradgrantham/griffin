@@ -266,6 +266,13 @@ data_copy:  cmp.l   %a2, %a1
     bra     data_copy
 data_done:
 
+    /* mark stack */
+    lea     0xFFE00, %a0
+    move.l  #128, %d0
+mark_stack:
+    move.l  #0x55555555, (%a0)+
+    dbra    %d0, mark_stack
+
     /* initialize video counter */
     lea     video_counter, %a0
     move.l  #0, (%a0)
@@ -501,10 +508,147 @@ debug_getchar_asm:
 
 | Bus Error — ~20 Hz toggle (~25ms half-period)
 _exc_bus_error:
-    move.l  _stack_top, %sp
     lea     msg_bus_error, %a1
-    lea     .exc_bus_blink(%pc), %a6
+    lea     .bussp(%pc), %a6
     jmp     timer_puts
+
+.bussp:
+| print sp first
+    move.l  %sp, %d0
+    lsr.l     #8, %d0
+    lsr.l     #8, %d0
+    lsr.l     #8, %d0
+    lea     .bussp3(%pc), %a6
+    jmp     timer_hex8
+.bussp3:
+    move.l %sp, %d0
+    lsr.l    #8, %d0
+    lsr.l    #8, %d0
+    lea     .bussp2(%pc), %a6
+    jmp     timer_hex8
+.bussp2:
+    move.l %sp, %d0
+    lsr.l    #8, %d0
+    lea     .bussp1(%pc), %a6
+    jmp     timer_hex8
+.bussp1:
+    move.l %sp, %d0
+    lea     .bussp0(%pc), %a6
+    jmp     timer_hex8
+.bussp0:
+    move.b  #':', %d0
+    lea     .busspcolon(%pc), %a5
+    jmp     timer_putchar
+.busspcolon:
+    move.b  #' ', %d0
+    lea     .busspspace(%pc), %a5
+    jmp     timer_putchar
+.busspspace:
+
+.exc_bus_dump:
+    | Stack frame layout (14 bytes):
+    |   0(sp): status word
+    |   2(sp): access address (long)
+    |   6(sp): instruction register
+    |   8(sp): SR
+    |  10(sp): PC (long)
+
+    | Word 0 — status word
+    move.b  0(%sp), %d0
+    lea     .busw0lo(%pc), %a6
+    jmp     timer_hex8
+.busw0lo:
+    move.b  1(%sp), %d0
+    lea     .busw0sp(%pc), %a6
+    jmp     timer_hex8
+.busw0sp:
+    move.b  #' ', %d0
+    lea     .busw1hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 1 — access address high
+.busw1hi:
+    move.b  2(%sp), %d0
+    lea     .busw1lo(%pc), %a6
+    jmp     timer_hex8
+.busw1lo:
+    move.b  3(%sp), %d0
+    lea     .busw1sp(%pc), %a6
+    jmp     timer_hex8
+.busw1sp:
+    move.b  #' ', %d0
+    lea     .busw2hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 2 — access address low
+.busw2hi:
+    move.b  4(%sp), %d0
+    lea     .busw2lo(%pc), %a6
+    jmp     timer_hex8
+.busw2lo:
+    move.b  5(%sp), %d0
+    lea     .busw2sp(%pc), %a6
+    jmp     timer_hex8
+.busw2sp:
+    move.b  #' ', %d0
+    lea     .busw3hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 3 — instruction register
+.busw3hi:
+    move.b  6(%sp), %d0
+    lea     .busw3lo(%pc), %a6
+    jmp     timer_hex8
+.busw3lo:
+    move.b  7(%sp), %d0
+    lea     .busw3sp(%pc), %a6
+    jmp     timer_hex8
+.busw3sp:
+    move.b  #' ', %d0
+    lea     .busw4hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 4 — SR
+.busw4hi:
+    move.b  8(%sp), %d0
+    lea     .busw4lo(%pc), %a6
+    jmp     timer_hex8
+.busw4lo:
+    move.b  9(%sp), %d0
+    lea     .busw4sp(%pc), %a6
+    jmp     timer_hex8
+.busw4sp:
+    move.b  #' ', %d0
+    lea     .busw5hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 5 — PC high
+.busw5hi:
+    move.b  10(%sp), %d0
+    lea     .busw5lo(%pc), %a6
+    jmp     timer_hex8
+.busw5lo:
+    move.b  11(%sp), %d0
+    lea     .busw5sp(%pc), %a6
+    jmp     timer_hex8
+.busw5sp:
+    move.b  #' ', %d0
+    lea     .busw6hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 6 — PC low
+.busw6hi:
+    move.b  12(%sp), %d0
+    lea     .busw6lo(%pc), %a6
+    jmp     timer_hex8
+.busw6lo:
+    move.b  13(%sp), %d0
+    lea     .busw6nl(%pc), %a6
+    jmp     timer_hex8
+.busw6nl:
+    move.b  #'\n', %d0
+    lea     .exc_bus_blink(%pc), %a5
+    jmp     timer_putchar
 .exc_bus_blink:
     moveq   #0, %d7
 .bus_err_loop:
@@ -518,11 +662,149 @@ _exc_bus_error:
     bra     .bus_err_loop
 
 | Address Error — ~5 Hz toggle (~100ms half-period)
+| Address Error — dump frame, then ~5 Hz toggle (~100ms half-period)
 _exc_address_error:
-    move.l  _stack_top, %sp
     lea     msg_addr_error, %a1
-    lea     .exc_addr_blink(%pc), %a6
+    lea     .exc_addr_dump(%pc), %a6
     jmp     timer_puts
+
+.exc_addr_dump:
+    | Stack frame layout (14 bytes):
+    |   0(sp): status word
+    |   2(sp): access address (long)
+    |   6(sp): instruction register
+    |   8(sp): SR
+    |  10(sp): PC (long)
+
+| print sp first
+    move.l %sp, %d0
+    lsr.l    #8, %d0
+    lsr.l    #8, %d0
+    lsr.l    #8, %d0
+    lea     .addrsp3(%pc), %a6
+    jmp     timer_hex8
+.addrsp3:
+    move.l %sp, %d0
+    lsr.l    #8, %d0
+    lsr.l    #8, %d0
+    lea     .addrsp2(%pc), %a6
+    jmp     timer_hex8
+.addrsp2:
+    move.l %sp, %d0
+    lsr.l    #8, %d0
+    lea     .addrsp1(%pc), %a6
+    jmp     timer_hex8
+.addrsp1:
+    move.l %sp, %d0
+    lea     .addrsp0(%pc), %a6
+    jmp     timer_hex8
+.addrsp0:
+    move.b  #':', %d0
+    lea     .addrspcolon(%pc), %a5
+    jmp     timer_putchar
+.addrspcolon:
+    move.b  #' ', %d0
+    lea     .addrspspace(%pc), %a5
+    jmp     timer_putchar
+.addrspspace:
+
+    | Word 0 — status word
+    move.b  0(%sp), %d0
+    lea     .w0lo(%pc), %a6
+    jmp     timer_hex8
+.w0lo:
+    move.b  1(%sp), %d0
+    lea     .w0sp(%pc), %a6
+    jmp     timer_hex8
+.w0sp:
+    move.b  #' ', %d0
+    lea     .w1hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 1 — access address high
+.w1hi:
+    move.b  2(%sp), %d0
+    lea     .w1lo(%pc), %a6
+    jmp     timer_hex8
+.w1lo:
+    move.b  3(%sp), %d0
+    lea     .w1sp(%pc), %a6
+    jmp     timer_hex8
+.w1sp:
+    move.b  #' ', %d0
+    lea     .w2hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 2 — access address low
+.w2hi:
+    move.b  4(%sp), %d0
+    lea     .w2lo(%pc), %a6
+    jmp     timer_hex8
+.w2lo:
+    move.b  5(%sp), %d0
+    lea     .w2sp(%pc), %a6
+    jmp     timer_hex8
+.w2sp:
+    move.b  #' ', %d0
+    lea     .w3hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 3 — instruction register
+.w3hi:
+    move.b  6(%sp), %d0
+    lea     .w3lo(%pc), %a6
+    jmp     timer_hex8
+.w3lo:
+    move.b  7(%sp), %d0
+    lea     .w3sp(%pc), %a6
+    jmp     timer_hex8
+.w3sp:
+    move.b  #' ', %d0
+    lea     .w4hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 4 — SR
+.w4hi:
+    move.b  8(%sp), %d0
+    lea     .w4lo(%pc), %a6
+    jmp     timer_hex8
+.w4lo:
+    move.b  9(%sp), %d0
+    lea     .w4sp(%pc), %a6
+    jmp     timer_hex8
+.w4sp:
+    move.b  #' ', %d0
+    lea     .w5hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 5 — PC high
+.w5hi:
+    move.b  10(%sp), %d0
+    lea     .w5lo(%pc), %a6
+    jmp     timer_hex8
+.w5lo:
+    move.b  11(%sp), %d0
+    lea     .w5sp(%pc), %a6
+    jmp     timer_hex8
+.w5sp:
+    move.b  #' ', %d0
+    lea     .w6hi(%pc), %a5
+    jmp     timer_putchar
+
+    | Word 6 — PC low
+.w6hi:
+    move.b  12(%sp), %d0
+    lea     .w6lo(%pc), %a6
+    jmp     timer_hex8
+.w6lo:
+    move.b  13(%sp), %d0
+    lea     .w6nl(%pc), %a6
+    jmp     timer_hex8
+.w6nl:
+    move.b  #'\n', %d0
+    lea     .exc_addr_blink(%pc), %a5
+    jmp     timer_putchar
+
 .exc_addr_blink:
     moveq   #0, %d7
 .addr_err_loop:
@@ -573,50 +855,12 @@ _exc_illegal_insn:
     .global _duart_isr
 _duart_isr:
 
-    /* three debug pulses == "DUARTISR" */
-    move.b #0x00, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x00, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-    move.b #0x00, GLUE_DEBUG_OUT
-    move.b #0x01, GLUE_DEBUG_OUT
-
     movem.l %d0-%d6/%a0/%a5-%a6, -(%sp)
-
-    move.b  #'#', %d0
-    lea     .disr_start(%pc), %a5
-    jmp     timer_putchar
-.disr_start:
 
     | Snapshot registers before any side-effect reads
     move.b  DUART_SRA, %d2
     move.b  DUART_ISR, %d3
     move.b  DUART_RBA, %d4              | side effect: dequeues byte from FIFO
-
-    | Print "SRA ISR RBA\n" via bitbang debug
-    move.b  %d2, %d0
-    lea     .disr_sp1(%pc), %a6
-    jmp     timer_hex8
-.disr_sp1:
-    move.b  #' ', %d0
-    lea     .disr_p2(%pc), %a5
-    jmp     timer_putchar
-.disr_p2:
-    move.b  %d3, %d0
-    lea     .disr_sp2(%pc), %a6
-    jmp     timer_hex8
-.disr_sp2:
-    move.b  #' ', %d0
-    lea     .disr_p3(%pc), %a5
-    jmp     timer_putchar
-.disr_p3:
-    move.b  %d4, %d0
-    lea     .disr_nl(%pc), %a6
-    jmp     timer_hex8
-.disr_nl:
-    move.b  #0x0A, %d0
-    lea     .disr_drain(%pc), %a5
-    jmp     timer_putchar
 
 .disr_drain:
     | Enqueue the byte we already read (in d4)
@@ -1138,6 +1382,7 @@ uart_rx_tail:
     .skip 4
 uart_rx_overflow:
     .skip 1
+    .align 2
     .global video_counter
 video_counter:
     .skip 4
