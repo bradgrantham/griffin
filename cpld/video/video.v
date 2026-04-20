@@ -3,22 +3,8 @@
 // VIDEO — VGA 640x480 progressive 1bpp video generator
 //
 // VESA 640x480@60: 25.175 MHz pixel clock, 800x525 raster, negative
-// HSync/VSync.  Pixel data arrives via DMA from ENGINE; VIDEO controls
-// timing and tells ENGINE when it needs the next 16-pixel word.  Each
-// pixel bit selects between two CPU-writable R3G3B2 palette registers
-// (VIDEO_PALETTE, offset 0x0E: ENTRY_0=pixel0 bg, ENTRY_1=pixel1 fg),
-// unpacked onto VGA_R[2:0], VGA_G[2:0], VGA_B[1:0].  A read-only
-// STATUS register (offset 0x07) exposes v_cnt[0] as LINE_TOGGLE so the
-// CPU can busywait-pace audio writes or load a new palette per line.
-// Reset defaults: ENTRY_0=0x00 (black), ENTRY_1=0xFF (white).
+// HSync/VSync.  
 //
-// Bodge wires (Rev 1):
-//   VIDEO pin 9  --> ENGINE pin 2:  NEED_WORD (request next word)
-//   VIDEO pin 28 --> ENGINE pin 8:  SOF       (start of frame)
-//   VIDEO pin 30 --> ENGINE pin 10: EOL       (end of line)
-//   VIDEO pin 31 <-- ENGINE pin 40: LATCH     (D[15:0] stable)
-//   VIDEO pin 36 --> U23 pin 11:    AUDIO_LE  (latch audio DAC, stub)
-
 module Video
 (
     // ----------------------------------------------------------------
