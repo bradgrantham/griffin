@@ -20,7 +20,12 @@ address error:
 Ref: MC68000UM, Section 5.5 "Bus Error" / "Address Error".
 """
 
+import argparse
+import bisect
+import os
 import re
+import shutil
+import subprocess
 import sys
 
 
@@ -68,6 +73,85 @@ def decode_sr(sr):
     return lines
 
 
+DEFAULT_NM_CANDIDATES = [
+    "m68k-unknown-elf-nm",
+    "nm",
+    "llvm-nm",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 "m68k-unknown-elf", "bin", "m68k-unknown-elf-nm"),
+]
+
+
+def _runs(path):
+    """Return True if the binary at `path` can actually exec on this host."""
+    try:
+        r = subprocess.run([path, "--version"],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+        return r.returncode == 0
+    except OSError:
+        return False
+
+
+def find_nm(explicit):
+    if explicit:
+        return explicit
+    for cand in DEFAULT_NM_CANDIDATES:
+        path = cand if os.path.isabs(cand) else shutil.which(cand)
+        if not path:
+            continue
+        if os.path.isabs(cand) and not (os.path.isfile(path) and os.access(path, os.X_OK)):
+            continue
+        if _runs(path):
+            return path
+    return None
+
+
+def load_symbols(elf_path, nm_path):
+    """Return a sorted list of (addr, name) tuples from the ELF."""
+    cmd = [nm_path, "-n", "--defined-only", elf_path]
+    try:
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"{nm_path} failed: {e.stderr.strip()}")
+    syms = []
+    for ln in out.splitlines():
+        parts = ln.split(None, 2)
+        if len(parts) < 3:
+            continue
+        addr_s, type_, name = parts
+        if type_ in ("a", "A", "U", "w", "W"):
+            continue
+        try:
+            addr = int(addr_s, 16)
+        except ValueError:
+            continue
+        syms.append((addr, name))
+    syms.sort(key=lambda p: p[0])
+    return syms
+
+
+def nearest_symbol(syms, addr):
+    if not syms:
+        return None
+    keys = [a for a, _ in syms]
+    i = bisect.bisect_right(keys, addr) - 1
+    if i < 0:
+        return None
+    sym_addr, name = syms[i]
+    return (name, addr - sym_addr, sym_addr)
+
+
+def fmt_sym(syms, addr):
+    if syms is None:
+        return ""
+    hit = nearest_symbol(syms, addr)
+    if hit is None:
+        return "  [no symbol <= addr]"
+    name, off, sym_addr = hit
+    return f"  [{name}+0x{off:X} @ 0x{sym_addr:08X}]"
+
+
 LINE_RE = re.compile(
     r"""
     ^\s*
@@ -85,7 +169,7 @@ LINE_RE = re.compile(
 )
 
 
-def decode_frame(line):
+def decode_frame(line, syms=None):
     m = LINE_RE.match(line)
     if not m:
         raise ValueError(f"Could not parse stack frame line: {line!r}")
@@ -104,18 +188,34 @@ def decode_frame(line):
         out.append("Stack frame:")
     out.append(f"  +0  SSW = 0x{ssw:04X}")
     out.extend(decode_ssw(ssw))
-    out.append(f"  +2  Access address = 0x{access_addr:08X}")
+    out.append(f"  +2  Access address = 0x{access_addr:08X}{fmt_sym(syms, access_addr)}")
     out.append(f"  +6  Instruction reg (IR) = 0x{ir:04X}")
     out.append(f"  +8  SR = 0x{sr:04X}")
     out.extend(decode_sr(sr))
-    out.append(f"  +10 PC  = 0x{pc:08X}  (approximate; may be a few words past the faulting instruction)")
+    out.append(f"  +10 PC  = 0x{pc:08X}{fmt_sym(syms, pc)}")
+    out.append(f"          (approximate; may be a few words past the faulting instruction)")
     return "\n".join(out)
 
 
 def main(argv):
-    if len(argv) > 1:
-        src = " ".join(argv[1:])
-        lines = [src]
+    ap = argparse.ArgumentParser(description="Decode 68000 bus/address error stack frames.")
+    ap.add_argument("--elf", help="ELF file; nearest symbol will be printed for access addr and PC.")
+    ap.add_argument("--nm", help="Path to nm binary (default: auto-detect m68k-unknown-elf-nm).")
+    ap.add_argument("frame", nargs="*",
+                    help='Stack frame text, e.g. "000FFFAA: 1D75 318A EAA1 1D71 2010 00C0 13B6". '
+                         "If omitted, frames are read from stdin, one per line.")
+    args = ap.parse_args(argv[1:])
+
+    syms = None
+    if args.elf:
+        nm = find_nm(args.nm)
+        if nm is None:
+            print("error: could not find nm; pass --nm PATH", file=sys.stderr)
+            return 2
+        syms = load_symbols(args.elf, nm)
+
+    if args.frame:
+        lines = [" ".join(args.frame)]
     else:
         lines = [ln for ln in sys.stdin if ln.strip() and not ln.lstrip().startswith("#")]
 
@@ -125,10 +225,11 @@ def main(argv):
             print()
         first = False
         try:
-            print(decode_frame(ln))
+            print(decode_frame(ln, syms))
         except ValueError as e:
             print(f"error: {e}", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":
-    main(sys.argv)
+    sys.exit(main(sys.argv) or 0)
