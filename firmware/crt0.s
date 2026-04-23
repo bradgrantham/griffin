@@ -34,7 +34,7 @@ vector_table:
     .long   _default_handler_25 | 25: Level 1 autovector
     .long   _default_handler_26 | 26: Level 2 autovector
     .long   _default_handler_27 | 27: Level 3 autovector
-    .long   _default_handler_28 | 28: Level 4 autovector
+    .long   _ps2_isr            | 28: Level 4 autovector (PS/2 bit IRQ in GLUE)
     .long   _duart_isr          | 29: Level 5 autovector (DUART)
     .long   _video_isr          | 30: Level 6 autovector (VIDEO)
     .long   _default_handler_31 | 31: Level 7 autovector
@@ -276,6 +276,18 @@ mark_stack:
     /* initialize video counter */
     lea     video_counter, %a0
     move.l  #0, (%a0)
+
+    move.l  #0, ps2_rx_head
+    move.l  #0, ps2_rx_tail
+    move.b  #0, ps2_err_flags
+    move.b  #0, ps2_rx_state
+    move.w  #0, ps2_rx_accum
+    move.b  #0, kbd_sending
+    move.b  #0, kbd_next_clk_is_ack
+    move.b  #0, kbd_tx_bits
+    move.w  #0, kbd_tx_data
+    move.b  #0, GLUE_PS2_CTRL
+    move.b  #GLUE_PS2_CLEAR_BIT_READY_MASK, GLUE_PS2_CLEAR
 
     /* Call global constructors */
     jsr     __libc_init_array
@@ -919,6 +931,234 @@ _video_isr:
     movem.l (%sp)+, %d0-%d6/%a0/%a5-%a6
     rte
 
+| ====================================================================
+| _ps2_isr — PS/2 bit-level IRQ (GLUE level 4)
+|
+| Fires once per falling edge of PS2_CLK (one bit per IRQ).  The
+| CPLD latches DATA_IN into PS2_STATUS bit 1 and sets BIT_READY (bit
+| 0).  This handler accumulates 11-bit frames (start, 8 data LSB
+| first, odd parity, stop), validates them, and enqueues the data
+| byte into ps2_rx_queue.  Errors are ORed into ps2_err_flags:
+|   bit 0 = framing error (start != 0 or stop != 1)
+|   bit 1 = parity error
+|   bit 2 = overrun (queue full)
+|
+| TX (host-to-device) shares this ISR.  When kbd_sending is set, each
+| falling edge shifts the next bit of kbd_tx_data onto PS2_DATA via
+| DATA_DRIVE_LOW (open-drain: drive=1 pulls low, drive=0 releases).
+| When kbd_tx_bits reaches 0, DATA is released and kbd_next_clk_is_ack
+| is set so the following edge (the device's line-ACK clock) is
+| swallowed without disturbing ps2_rx_accum.
+| ====================================================================
+    .global _ps2_isr
+_ps2_isr:
+    movem.l %d0-%d5/%a0, -(%sp)
+
+    | Read status (captures the bit that was on DATA at the falling
+    | edge) then ack BIT_READY so the next edge can latch cleanly.
+    move.b  GLUE_PS2_STATUS, %d0
+    move.b  #(GLUE_PS2_CLEAR_BIT_READY_MASK), GLUE_PS2_CLEAR
+
+    | TX branch: if we're clocking a host->device frame out, shift the
+    | next bit onto DATA.  Does not touch ps2_rx_accum.
+    tst.b   kbd_sending
+    bne     .ps2_tx_path
+
+    | ACK-swallow: the edge following the last TX bit is the device's
+    | line-ACK.  Consume it without shifting into the RX accumulator.
+    tst.b   kbd_next_clk_is_ack
+    beq.s   .ps2_rx_path
+    clr.b   kbd_next_clk_is_ack
+    bra     .ps2_isr_done
+
+.ps2_rx_path:
+    | Isolate the new data bit into d1 (0 or 1).
+    btst    #GLUE_PS2_STATUS_DATA_IN_SHIFT, %d0
+    sne     %d1
+    and.w   #1, %d1
+
+    | Shift the running 11-bit accumulator right by 1, insert the
+    | new bit at position 10.  Result, once 11 bits have arrived:
+    |   bit 0  = start
+    |   bits 1..8  = data LSB first
+    |   bit 9  = parity
+    |   bit 10 = stop
+    move.w  ps2_rx_accum, %d2
+    lsr.w   #1, %d2
+    moveq   #10, %d3
+    lsl.w   %d3, %d1
+    or.w    %d1, %d2
+    move.w  %d2, ps2_rx_accum
+
+    addq.b  #1, ps2_rx_state
+    cmp.b   #11, ps2_rx_state
+    bne     .ps2_isr_done
+
+    | ---- Frame complete: validate and extract -------------------
+    clr.b   ps2_rx_state
+    clr.w   ps2_rx_accum                  | reset for next frame
+
+    | Start bit must be 0.
+    btst    #0, %d2
+    bne.s   .ps2_framing
+
+    | Stop bit must be 1.
+    btst    #10, %d2
+    beq.s   .ps2_framing
+
+    | Odd parity: XOR of bits 1..9 must be 1.
+    move.w  %d2, %d3
+    lsr.w   #1, %d3                        | drop start bit
+    moveq   #9, %d4
+    moveq   #0, %d5
+.ps2_par_loop:
+    move.w  %d3, %d1
+    and.w   #1, %d1
+    eor.w   %d1, %d5
+    lsr.w   #1, %d3
+    subq.w  #1, %d4
+    bne.s   .ps2_par_loop
+    cmp.w   #1, %d5
+    bne.s   .ps2_parity
+
+    | Extract data byte: bits 1..8.
+    move.w  %d2, %d0
+    lsr.w   #1, %d0
+
+    | Enqueue into ps2_rx_queue.
+    move.l  ps2_rx_tail, %d1
+    lea     ps2_rx_queue, %a0
+    adda.l  %d1, %a0
+    move.b  %d0, (%a0)
+    addq.l  #1, %d1
+    andi.l  #(PS2_RX_QUEUE_SIZE - 1), %d1
+    cmp.l   ps2_rx_head, %d1
+    beq.s   .ps2_overflow
+    move.l  %d1, ps2_rx_tail
+    bra.s   .ps2_isr_done
+
+.ps2_framing:
+    or.b    #0x01, ps2_err_flags
+    bra.s   .ps2_isr_done
+
+.ps2_parity:
+    or.b    #0x02, ps2_err_flags
+    bra.s   .ps2_isr_done
+
+.ps2_overflow:
+    or.b    #0x04, ps2_err_flags
+    bra.s   .ps2_isr_done
+
+.ps2_tx_path:
+    | Decrement remaining-bit counter; when it hits 0, we're done
+    | clocking the frame out — release DATA, arm the ACK swallow.
+    subq.b  #1, kbd_tx_bits
+    beq.s   .ps2_tx_done
+
+    | Place bit 0 of kbd_tx_data onto DATA via DATA_DRIVE_LOW.
+    | Open-drain: bit=0 -> DATA_DRIVE_LOW=1 (pull low),
+    |             bit=1 -> DATA_DRIVE_LOW=0 (release, pull-up -> high).
+    move.w  kbd_tx_data, %d1
+    btst    #0, %d1
+    seq     %d2                            | 0xFF if bit was 0, 0x00 if 1
+    and.b   #(GLUE_PS2_CTRL_DATA_DRIVE_LOW_MASK), %d2
+    move.b  %d2, GLUE_PS2_CTRL
+    lsr.w   #1, %d1
+    move.w  %d1, kbd_tx_data
+    bra.s   .ps2_isr_done
+
+.ps2_tx_done:
+    | All 11 bits have been placed on DATA.  Release DATA so the
+    | device can pull it low on the next clock to line-ACK.
+    clr.b   GLUE_PS2_CTRL
+    move.b  #1, kbd_next_clk_is_ack
+    clr.b   kbd_sending
+
+.ps2_isr_done:
+    movem.l (%sp)+, %d0-%d5/%a0
+    rte
+
+
+| ====================================================================
+| ps2_send_byte(uint8_t b): transmit one byte host->keyboard.
+|
+| GCC m68k ABI: byte arg promoted to int, passed on stack at 4(%sp);
+| value byte is at 7(%sp) (big-endian LSB of the promoted int).
+|
+| Procedure (per PS/2 host->device spec):
+|   1. Pull CLK low (inhibit) for >=100 us.
+|   2. Pull DATA low (start bit = 0), release CLK.
+|   3. Let the device clock 10 more bits (data LSB first, parity, stop)
+|      out of kbd_tx_data — handled by the TX branch of _ps2_isr.
+|   4. Release DATA; device acks by pulling DATA low for one clock.
+|
+| Odd parity is computed so that (8 data bits XOR parity) == 1.
+|
+| Clobbers: d0, d1, d2, d3, d4, d5
+| ====================================================================
+    .global ps2_send_byte
+ps2_send_byte:
+    | --- Read argument byte ------------------------------------------
+    move.b  7(%sp), %d0                    | d0.b = byte to send
+
+    | --- Compute odd parity in d1 bit 0 ------------------------------
+    | d1 = 1 ^ XOR(bit0..bit7 of d0)
+    moveq   #0, %d1
+    move.b  %d0, %d2
+    moveq   #7, %d3
+.Lps2_par:
+    move.b  %d2, %d4
+    and.b   #1, %d4
+    eor.b   %d4, %d1
+    lsr.b   #1, %d2
+    dbra    %d3, .Lps2_par
+    eori.b  #1, %d1                        | flip to odd parity
+
+    | --- Build 11-bit frame in d2 ------------------------------------
+    | bit 0 = start (0), bits 1..8 = data, bit 9 = parity, bit 10 = stop
+    moveq   #0, %d2
+    move.b  %d0, %d2
+    and.w   #0xFF, %d2
+    lsl.w   #1, %d2                        | data into bits 1..8
+    moveq   #9, %d3
+    and.w   #1, %d1
+    lsl.w   %d3, %d1                       | parity into bit 9
+    or.w    %d1, %d2
+    or.w    #0x0400, %d2                   | stop bit = bit 10
+
+    | --- Mask IRQs (level <=6) before touching CPLD + state ----------
+    move.w  %sr, %d5
+    ori.w   #0x0700, %sr
+
+    | --- Pull CLK low (request-to-send / inhibit) --------------------
+    move.b  #(GLUE_PS2_CTRL_CLK_DRIVE_LOW_MASK), GLUE_PS2_CTRL
+
+    | --- Hold >=100 us.  At SYSCLK=14 MHz with ROM wait states,
+    | --- dbra is ~16 clocks/iter; 250 iters ≈ 285 us -----------------
+    move.w  #250, %d3
+.Lps2_hold:
+    dbra    %d3, .Lps2_hold
+
+    | --- Place start bit (= 0) on DATA and release CLK ---------------
+    | Setting CTRL = DATA_DRIVE_LOW only: CLK released, DATA pulled low.
+    move.b  #(GLUE_PS2_CTRL_DATA_DRIVE_LOW_MASK), GLUE_PS2_CTRL
+
+    | --- Install TX state --------------------------------------------
+    | Pre-shift the frame so bit 0 of kbd_tx_data is the first post-
+    | start bit (data0).  The ISR will place that on the first falling
+    | edge and shift until kbd_tx_bits reaches 0 (11 more edges).
+    lsr.w   #1, %d2
+    move.w  %d2, kbd_tx_data
+    move.b  #11, kbd_tx_bits
+    move.b  #0, kbd_next_clk_is_ack
+    move.b  #1, kbd_sending
+
+    | --- Clear any BIT_READY latched by our own CLK-falling edge -----
+    move.b  #(GLUE_PS2_CLEAR_BIT_READY_MASK), GLUE_PS2_CLEAR
+
+    | --- Restore IRQs ------------------------------------------------
+    move.w  %d5, %sr
+    rts
 
 | _default_handler: catch-all for unexpected exceptions
     .global _default_handler
@@ -1386,3 +1626,36 @@ uart_rx_overflow:
     .global video_counter
 video_counter:
     .skip 4
+
+    .equ PS2_RX_QUEUE_SIZE, 256 | must be power of 2
+
+    .align 2
+    .global ps2_rx_queue
+    .global ps2_rx_head
+    .global ps2_rx_tail
+    .global ps2_err_flags
+ps2_rx_queue:
+    .skip PS2_RX_QUEUE_SIZE
+ps2_rx_head:
+    .skip 4
+ps2_rx_tail:
+    .skip 4
+ps2_err_flags:
+    .skip 1
+ps2_rx_state:
+    .skip 1
+    .global kbd_sending
+kbd_sending:
+    .skip 1
+    .global kbd_next_clk_is_ack
+kbd_next_clk_is_ack:
+    .skip 1
+    .global kbd_tx_bits
+kbd_tx_bits:
+    .skip 1
+    .align 2
+ps2_rx_accum:
+    .skip 2
+    .global kbd_tx_data
+kbd_tx_data:
+    .skip 2

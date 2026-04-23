@@ -7,7 +7,7 @@ project:
 peripherals:
   GLUE:
     part: ATF1508AS
-    description: "System glue logic"
+    description: "System glue logic (also hosts PS/2 keyboard input)"
     address_range:
       base: 0xF00000
       size: 0x040000
@@ -18,6 +18,9 @@ peripherals:
       - 14318181: 0
       - 16000000: 0
       - 20000000: 0
+    interrupt:
+      level: 4
+      signal: ~PS2_IRQ
     registers:
       - offset: 0x01
         name: DEBUG_OUT
@@ -69,6 +72,54 @@ peripherals:
           Typical use: arm, then issue the periodic I/O write — the
           stall absorbs variable instruction timing so the period
           between successive I/O operations is exactly TIMER clocks.
+      - offset: 0x11
+        name: PS2_STATUS
+        access: read
+        width: 8
+        description: |
+          PS/2 bit-level RX status.  The CPLD synchronizes PS2_CLK,
+          detects falling edges, latches PS2_DATA into DATA_IN, and
+          sets BIT_READY (which asserts the GLUE level-4 IRQ).  All
+          frame-level protocol (start/parity/stop, 11-bit counting,
+          overrun, TX bit shifting) is handled in firmware — this
+          register exposes only the single latched bit per IRQ.
+        bits:
+          - { bit: "0", name: BIT_READY,
+              description: "1 = a falling edge has been detected and DATA_IN is valid; W1C via PS2_CLEAR" }
+          - { bit: "1", name: DATA_IN,
+              description: "PS2_DATA sample latched on the falling edge that set BIT_READY" }
+          - { bit: "2", name: DATA_LIVE,
+              description: "Unlatched synchronized PS2_DATA pin state (use for TX ACK sampling outside the IRQ handshake)" }
+          - { bit: "3", name: CLK_LIVE,
+              description: "Unlatched synchronized PS2_CLK pin state (debug)" }
+      - offset: 0x11
+        name: PS2_CLEAR
+        access: write
+        width: 8
+        description: |
+          Write-1-to-clear for PS2_STATUS latched flags.  Write
+          BIT_READY=1 to acknowledge the current bit IRQ and arm
+          the next falling-edge capture; the GLUE IRQ de-asserts
+          on the same cycle.
+        bits:
+          - { bit: "0", name: BIT_READY,
+              description: "Write 1 to clear BIT_READY (ISR ack)" }
+      - offset: 0x13
+        name: PS2_CTRL
+        access: write
+        width: 8
+        description: |
+          Open-drain drive control for PS2_CLK and PS2_DATA.  Each
+          *_DRIVE_LOW bit acts as the pin's output enable and
+          always drives 0 when asserted; the pin tri-states to the
+          external pull-up otherwise.  Firmware handles TX-of-1 by
+          leaving DATA_DRIVE_LOW=0 and relying on the pull-up, so
+          no DATA_OUT_VALUE bit is needed.
+        bits:
+          - { bit: "0", name: CLK_DRIVE_LOW,
+              description: "1 = drive PS2_CLK low (inhibit device / request-to-send); 0 = tri-state" }
+          - { bit: "1", name: DATA_DRIVE_LOW,
+              description: "1 = drive PS2_DATA low (TX 0-bit or request-to-send data line); 0 = tri-state (TX 1-bit)" }
 
   ROM:
     part: "2x 64K byte-wide EPROM/Flash"

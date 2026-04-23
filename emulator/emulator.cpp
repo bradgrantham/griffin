@@ -2,7 +2,10 @@
 #include <chrono>
 #include <cstdint>
 #include <cinttypes>
+#include <deque>
 #include <thread>
+
+#include <SDL3/SDL.h>
 
 #include "../griffin.generated.h"
 
@@ -990,6 +993,174 @@ struct VideoState
 };
 
 // ---------------------------------------------------------------------------
+// PS/2 keyboard emulation — mirrors the minimal CPLD primitive.
+//
+// The CPLD latches one PS/2 DATA bit on each synchronized PS2_CLK falling
+// edge and raises IRQ4.  Firmware does all framing/parity in software.
+// Here we model the device side: translate SDL key events into PS/2 Set 2
+// byte streams, then into individual bit events timed at ~80 µs each, and
+// feed them into the latched-bit + BIT_READY register as emulated time
+// advances.
+// ---------------------------------------------------------------------------
+
+static uint8_t sdl_to_ps2_set2(SDL_Scancode sc)
+{
+    switch (sc)
+    {
+        case SDL_SCANCODE_A: return 0x1C;
+        case SDL_SCANCODE_B: return 0x32;
+        case SDL_SCANCODE_C: return 0x21;
+        case SDL_SCANCODE_D: return 0x23;
+        case SDL_SCANCODE_E: return 0x24;
+        case SDL_SCANCODE_F: return 0x2B;
+        case SDL_SCANCODE_G: return 0x34;
+        case SDL_SCANCODE_H: return 0x33;
+        case SDL_SCANCODE_I: return 0x43;
+        case SDL_SCANCODE_J: return 0x3B;
+        case SDL_SCANCODE_K: return 0x42;
+        case SDL_SCANCODE_L: return 0x4B;
+        case SDL_SCANCODE_M: return 0x3A;
+        case SDL_SCANCODE_N: return 0x31;
+        case SDL_SCANCODE_O: return 0x44;
+        case SDL_SCANCODE_P: return 0x4D;
+        case SDL_SCANCODE_Q: return 0x15;
+        case SDL_SCANCODE_R: return 0x2D;
+        case SDL_SCANCODE_S: return 0x1B;
+        case SDL_SCANCODE_T: return 0x2C;
+        case SDL_SCANCODE_U: return 0x3C;
+        case SDL_SCANCODE_V: return 0x2A;
+        case SDL_SCANCODE_W: return 0x1D;
+        case SDL_SCANCODE_X: return 0x22;
+        case SDL_SCANCODE_Y: return 0x35;
+        case SDL_SCANCODE_Z: return 0x1A;
+        case SDL_SCANCODE_1: return 0x16;
+        case SDL_SCANCODE_2: return 0x1E;
+        case SDL_SCANCODE_3: return 0x26;
+        case SDL_SCANCODE_4: return 0x25;
+        case SDL_SCANCODE_5: return 0x2E;
+        case SDL_SCANCODE_6: return 0x36;
+        case SDL_SCANCODE_7: return 0x3D;
+        case SDL_SCANCODE_8: return 0x3E;
+        case SDL_SCANCODE_9: return 0x46;
+        case SDL_SCANCODE_0: return 0x45;
+        case SDL_SCANCODE_RETURN:    return 0x5A;
+        case SDL_SCANCODE_SPACE:     return 0x29;
+        case SDL_SCANCODE_BACKSPACE: return 0x66;
+        case SDL_SCANCODE_ESCAPE:    return 0x76;
+        case SDL_SCANCODE_TAB:       return 0x0D;
+        default: return 0;
+    }
+}
+
+struct PS2BitEvent
+{
+    uint64_t fire_clock;
+    uint8_t bit;
+};
+
+struct PS2State
+{
+    static constexpr uint64_t bit_period_sysclk = SYSCLK_HZ / 12500; // ~80 µs
+
+    std::deque<PS2BitEvent> bit_queue;
+    uint8_t data_in_latched = 1;       // idle-high
+    bool bit_ready = false;
+    uint8_t ctrl = 0;
+    SDL_Window *window = nullptr;
+    bool sdl_ok = false;
+
+    bool init()
+    {
+        if (!SDL_Init(SDL_INIT_VIDEO))
+        {
+            fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+            return false;
+        }
+        window = SDL_CreateWindow("Griffin PS/2 input", 320, 100, 0);
+        if (!window)
+        {
+            fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+            SDL_Quit();
+            return false;
+        }
+        sdl_ok = true;
+        return true;
+    }
+
+    ~PS2State()
+    {
+        if (window) { SDL_DestroyWindow(window); }
+        if (sdl_ok) { SDL_Quit(); }
+    }
+
+    // Append an 11-bit PS/2 frame to the pending bit event queue.
+    void enqueue_byte(uint64_t clock_now, uint8_t byte)
+    {
+        uint64_t t = bit_queue.empty()
+            ? clock_now + bit_period_sysclk
+            : bit_queue.back().fire_clock + bit_period_sysclk;
+
+        bit_queue.push_back({t, 0});                          // start
+        t += bit_period_sysclk;
+
+        uint8_t parity = 1;                                   // odd parity
+        for (int i = 0; i < 8; i++)
+        {
+            uint8_t b = (byte >> i) & 1;
+            bit_queue.push_back({t, b});
+            parity ^= b;
+            t += bit_period_sysclk;
+        }
+
+        bit_queue.push_back({t, parity});                     // parity
+        t += bit_period_sysclk;
+        bit_queue.push_back({t, 1});                          // stop
+    }
+
+    void check_timer(uint64_t clock_now)
+    {
+        while (!bit_ready && !bit_queue.empty()
+               && clock_now >= bit_queue.front().fire_clock)
+        {
+            data_in_latched = bit_queue.front().bit;
+            bit_ready = true;
+            bit_queue.pop_front();
+        }
+    }
+
+    uint8_t read_reg(uint32_t abs_addr) const
+    {
+        if (abs_addr == GLUE_PS2_STATUS)
+        {
+            uint8_t v = 0;
+            if (bit_ready)       { v |= GLUE_PS2_STATUS_BIT_READY_MASK; }
+            if (data_in_latched) { v |= GLUE_PS2_STATUS_DATA_IN_MASK; }
+            v |= GLUE_PS2_STATUS_DATA_LIVE_MASK;
+            v |= GLUE_PS2_STATUS_CLK_LIVE_MASK;
+            return v;
+        }
+        return 0;
+    }
+
+    void write_reg(uint32_t abs_addr, uint8_t val)
+    {
+        if (abs_addr == GLUE_PS2_CLEAR)
+        {
+            if (val & GLUE_PS2_CLEAR_BIT_READY_MASK)
+            {
+                bit_ready = false;
+            }
+        }
+        else if (abs_addr == GLUE_PS2_CTRL)
+        {
+            ctrl = val;
+        }
+    }
+
+    bool irq_pending() const { return bit_ready; }
+};
+
+// ---------------------------------------------------------------------------
 // Real-time clock governor
 //
 // Paces emulation to wall-clock speed.  Called every THROTTLE_INTERVAL
@@ -1037,6 +1208,7 @@ class GriffinEmulator : public moira::Moira
     mutable CFState cf;
     mutable DUARTState duart;
     mutable VideoState video;
+    mutable PS2State ps2;
     mutable TimerState timer;
     mutable SoftUARTTX debug_in_tx;
     StdinConsole stdin_console;
@@ -1078,6 +1250,10 @@ class GriffinEmulator : public moira::Moira
         {
             debug_in_tx.advance(getClock());
             return debug_in_tx.current_bit;
+        }
+        if (addr + IO_BASE == GLUE_PS2_STATUS)
+        {
+            return ps2.read_reg(GLUE_PS2_STATUS);
         }
         if(debug & DEBUG_IO)
         {
@@ -1151,6 +1327,9 @@ class GriffinEmulator : public moira::Moira
             {
                 printf("[TIMER ARM: stall=%u clks]\n", stall);
             }
+        } else if(addr + IO_BASE == GLUE_PS2_CLEAR || addr + IO_BASE == GLUE_PS2_CTRL) {
+            ps2.write_reg(addr + IO_BASE, val);
+            const_cast<GriffinEmulator*>(this)->update_ipl();
         } else if(addr + IO_BASE >= AUDIO_BASE && addr + IO_BASE < AUDIO_BASE + AUDIO_SIZE) {
             dac_value = val;
         } else {
@@ -1410,6 +1589,11 @@ public:
         return stdin_console.open();
     }
 
+    bool init_ps2()
+    {
+        return ps2.init();
+    }
+
     bool open_cf(const char *path, bool read_only)
     {
         return cf.open(path, read_only);
@@ -1434,8 +1618,34 @@ public:
             }
         }
 
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev))
+        {
+            if (ev.type == SDL_EVENT_QUIT)
+            {
+                exit_requested = true;
+            }
+            else if (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP)
+            {
+                if (ev.key.repeat)
+                {
+                    continue;
+                }
+                uint8_t code = sdl_to_ps2_set2(ev.key.scancode);
+                if (code != 0)
+                {
+                    if (ev.type == SDL_EVENT_KEY_UP)
+                    {
+                        ps2.enqueue_byte(getClock(), 0xF0);
+                    }
+                    ps2.enqueue_byte(getClock(), code);
+                }
+            }
+        }
+
         duart.check_timer(getClock());
         video.check_timer(getClock());
+        ps2.check_timer(getClock());
         update_ipl();
     }
 
@@ -1446,6 +1656,8 @@ public:
             setIPL(VIDEO_IRQ_LEVEL);
         } else if (duart.irq_pending(pty_console)) {
             setIPL(DUART_IRQ_LEVEL);
+        } else if (ps2.irq_pending()) {
+            setIPL(GLUE_IRQ_LEVEL);
         } else {
             setIPL(0);
         }
@@ -1648,6 +1860,11 @@ int main(int argc, const char** argv)
     }
 
     emulator.init_stdin();
+
+    if (!emulator.init_ps2())
+    {
+        fprintf(stderr, "Warning: SDL/PS2 init failed, PS/2 input disabled\n");
+    }
 
     SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
 

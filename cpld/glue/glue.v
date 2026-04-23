@@ -41,7 +41,12 @@ module glue (
 
     output wire        nR_W,
     output wire        nDUART_SELECT,
-    output wire        nDUART_RESET  // Active low reset to 68681
+    output wire        nDUART_RESET,  // Active low reset to 68681
+
+    // PS/2 keyboard (pins 39/40, open-drain with external pull-ups).
+    // CPLD drives 0 when *_DRIVE_LOW is asserted; tri-states otherwise.
+    inout  wire        PS2_CLK,
+    inout  wire        PS2_DATA
 );
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
@@ -118,15 +123,18 @@ module glue (
     // Interrupt priority encoder (active-low nIPL to 68000)
     //
     // Priority levels (from griffin.yml / griffin.md):
-    //   6: VIDEO    (~VIDEO_IRQ,  pin 1)   — nIPL = 001
-    //   5: DUART    (~DUART_IRQ,     pin 18)  — nIPL = 010
-    //   none:                              — nIPL = 111
+    //   6: VIDEO    (~VIDEO_IRQ,  pin 1)    — nIPL = 001
+    //   5: DUART    (~DUART_IRQ,  pin 18)   — nIPL = 010
+    //   4: PS/2     (~PS2_IRQ,    internal) — nIPL = 011
+    //   none:                               — nIPL = 111
     // ----------------------------------------------------------------
 
     wire duart_irq_active     = ~nDUART_IRQ;
+    wire ps2_irq_active;  // driven by PS/2 bit_ready below
 
     assign nIPL = ~nVIDEO_IRQ        ? 3'b001 :  // level 6
                   duart_irq_active   ? 3'b010 :  // level 5
+                  ps2_irq_active     ? 3'b011 :  // level 4
                                        3'b111;   // no interrupt
 
     wire glue_select = glue_segment & bus_cycle;
@@ -166,6 +174,9 @@ module glue (
     localparam [23:0] GLUE_DEBUG_ADDR        = `GLUE_DEBUG_OUT;
     localparam [23:0] GLUE_TIMER_ADDR        = `GLUE_TIMER;
     localparam [23:0] GLUE_TIMER_ARM_ADDR    = `GLUE_TIMER_ARM;
+    // PS2_STATUS and PS2_CLEAR share 0xF00011 (R/W sides of the same slot).
+    localparam [23:0] GLUE_PS2_STATUS_ADDR   = `GLUE_PS2_STATUS;
+    localparam [23:0] GLUE_PS2_CTRL_ADDR     = `GLUE_PS2_CTRL;
 
     wire debug_out_select      = glue_select & lo_byte_selected & write
                                  & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
@@ -175,6 +186,12 @@ module glue (
                               & (A_lo[5:1] == GLUE_TIMER_ADDR[5:1]);
     wire timer_arm_select   = glue_select & lo_byte_selected & write
                               & (A_lo[5:1] == GLUE_TIMER_ARM_ADDR[5:1]);
+    wire ps2_status_read_select  = glue_select & lo_byte_selected & read
+                                   & (A_lo[5:1] == GLUE_PS2_STATUS_ADDR[5:1]);
+    wire ps2_clear_write_select  = glue_select & lo_byte_selected & write
+                                   & (A_lo[5:1] == GLUE_PS2_STATUS_ADDR[5:1]);
+    wire ps2_ctrl_write_select   = glue_select & lo_byte_selected & write
+                                   & (A_lo[5:1] == GLUE_PS2_CTRL_ADDR[5:1]);
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -182,14 +199,19 @@ module glue (
     // All other times the pins are tristated so the CPU, ROM, RAM,
     // etc. can drive the bus.
     // ----------------------------------------------------------------
-    wire glue_read_active = debug_in_select;
+    wire glue_read_active = debug_in_select | ps2_status_read_select;
 
     reg [7:0] glue_read_data;
     always @(*) begin
         glue_read_data = 8'h00;
         if (debug_in_select)
             glue_read_data = {7'd0, DEBUG_IN};
-
+        else if (ps2_status_read_select)
+            glue_read_data = {4'd0,
+                              ps2_clk_sync[1],       // bit 3: CLK_LIVE
+                              ps2_data_sync[1],      // bit 2: DATA_LIVE
+                              ps2_data_in_latched,   // bit 1: DATA_IN
+                              ps2_bit_ready};        // bit 0: BIT_READY
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;
@@ -265,6 +287,69 @@ module glue (
                 timer_armed <= 1'b1;
         end
     end
+
+    // ----------------------------------------------------------------
+    // PS/2 bit-level IRQ source (GLUE_PS2_STATUS / _CLEAR / _CTRL)
+    //
+    // The CPU does all PS/2 protocol work (frame counting, parity,
+    // start/stop, TX shifting).  This block is the minimal
+    // deterministic primitive it needs: on each synchronized falling
+    // edge of PS2_CLK, latch PS2_DATA into ps2_data_in_latched, set
+    // ps2_bit_ready, and assert the GLUE level-4 IRQ.  The ISR reads
+    // STATUS, then writes CLEAR.BIT_READY=1 to acknowledge.
+    //
+    // PS2_CLK uses a 3-FF shift register so the oldest two registered
+    // samples give a glitch-free edge detect without a separate
+    // "previous" flop.  PS2_DATA uses 2 FFs — the stage-1 value is
+    // sampled at the same moment bit_ready is set so ISR sees the
+    // bit that was on the line at the clock edge.
+    // ----------------------------------------------------------------
+    reg [2:0] ps2_clk_sync;
+    reg [1:0] ps2_data_sync;
+    reg       ps2_data_in_latched;
+    reg       ps2_bit_ready;
+    reg       ps2_ctrl_clk_drive_low;
+    reg       ps2_ctrl_data_drive_low;
+
+    // Falling edge on the two oldest synchronized CLK samples.
+    wire ps2_clk_falling = ps2_clk_sync[2] & ~ps2_clk_sync[1];
+
+    always @(posedge SYSCLK) begin
+        if (RESET) begin
+            ps2_clk_sync            <= 3'b111;  // idle high
+            ps2_data_sync           <= 2'b11;
+            ps2_data_in_latched     <= 1'b0;
+            ps2_bit_ready           <= 1'b0;
+            ps2_ctrl_clk_drive_low  <= 1'b0;
+            ps2_ctrl_data_drive_low <= 1'b0;
+        end else begin
+            ps2_clk_sync  <= {ps2_clk_sync[1:0],  PS2_CLK};
+            ps2_data_sync <= {ps2_data_sync[0],   PS2_DATA};
+
+            // Falling edge captures a new bit and asserts IRQ.
+            // A write-1-to-clear via PS2_CLEAR ack takes precedence —
+            // if the ISR acks the same cycle a new edge arrives, the
+            // new edge still sets the flag so nothing is lost.
+            if (ps2_clk_falling) begin
+                ps2_data_in_latched <= ps2_data_sync[1];
+                ps2_bit_ready       <= 1'b1;
+            end else if (ps2_clear_write_select & D[0]) begin
+                ps2_bit_ready       <= 1'b0;
+            end
+
+            if (ps2_ctrl_write_select) begin
+                ps2_ctrl_clk_drive_low  <= D[0];
+                ps2_ctrl_data_drive_low <= D[1];
+            end
+        end
+    end
+
+    assign ps2_irq_active = ps2_bit_ready;
+
+    // Open-drain: drive 0 only when CPU asserts *_DRIVE_LOW; otherwise
+    // tri-state so the external pull-up takes the line high.
+    assign PS2_CLK  = ps2_ctrl_clk_drive_low  ? 1'b0 : 1'bz;
+    assign PS2_DATA = ps2_ctrl_data_drive_low ? 1'b0 : 1'bz;
 
     // ----------------------------------------------------------------
     // DTACK generation
@@ -377,3 +462,5 @@ endmodule
 //PIN: nDUART_DTACK  : 16
 //PIN: nDUART_IRQ    : 18
 //PIN: nDUART_RESET   : 69
+//PIN: PS2_CLK       : 39
+//PIN: PS2_DATA      : 40

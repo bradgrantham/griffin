@@ -369,6 +369,15 @@ extern volatile uint32_t uart_rx_head;
 extern volatile uint32_t uart_rx_tail;
 extern volatile uint8_t uart_rx_overflow;
 
+// PS/2 RX ring buffer (written by _ps2_isr in crt0.s, read by ps2_getchar)
+constexpr size_t PS2_RX_QUEUE_SIZE = 256;  // must match crt0.s
+extern volatile uint8_t ps2_rx_queue[PS2_RX_QUEUE_SIZE];
+extern volatile uint32_t ps2_rx_head;
+extern volatile uint32_t ps2_rx_tail;
+extern volatile uint8_t ps2_err_flags;  // bit 0 framing, bit 1 parity, bit 2 overrun
+
+extern "C" void ps2_send_byte(uint8_t b);
+
 // Timer tick handler — called from ISR context at IPL 5
 void timer_tick()
 {
@@ -411,6 +420,18 @@ extern "C" uint8_t duart_getchar()
 bool duart_received_ready()
 {
     return uart_rx_head != uart_rx_tail;
+}
+
+static bool ps2_received_ready()
+{
+    return ps2_rx_head != ps2_rx_tail;
+}
+
+static uint8_t ps2_getchar()
+{
+    uint8_t ch = ps2_rx_queue[ps2_rx_head];
+    ps2_rx_head = (ps2_rx_head + 1) & (PS2_RX_QUEUE_SIZE - 1);
+    return ch;
 }
 
 // Defined in syscalls.c — switches write()/read() to DUART backend
@@ -893,6 +914,24 @@ int main()
                 printf("received: 0x%02X '%c'\n", ch,
                              (ch >= 0x20 && ch < 0x7F) ? ch : '.');
             }
+        }
+
+        if(ps2_received_ready())
+        {
+            uint8_t byte = ps2_getchar();
+            printf("ps2: 0x%02X\n", byte);
+            if(byte == 0xAA)
+            {
+                printf("ps2: BAT OK, sending 0xFA\n");
+                ps2_send_byte(0xFA);
+            }
+        }
+
+        if(ps2_err_flags)
+        {
+            uint8_t flags = ps2_err_flags;
+            ps2_err_flags = 0;
+            printf("ps2 err: 0x%02X\n", flags);
         }
 
         if(video_counter >= last_video_print + 60)
