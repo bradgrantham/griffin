@@ -948,7 +948,7 @@ _video_isr:
 | DATA_DRIVE_LOW (open-drain: drive=1 pulls low, drive=0 releases).
 | When kbd_tx_bits reaches 0, DATA is released and kbd_next_clk_is_ack
 | is set so the following edge (the device's line-ACK clock) is
-| swallowed without disturbing ps2_rx_accum.
+| discarded without disturbing ps2_rx_accum.
 | ====================================================================
     .global _ps2_isr
 _ps2_isr:
@@ -964,7 +964,7 @@ _ps2_isr:
     tst.b   kbd_sending
     bne     .ps2_tx_path
 
-    | ACK-swallow: the edge following the last TX bit is the device's
+    | ACK-discard: the edge following the last TX bit is the device's
     | line-ACK.  Consume it without shifting into the RX accumulator.
     tst.b   kbd_next_clk_is_ack
     beq.s   .ps2_rx_path
@@ -1038,10 +1038,12 @@ _ps2_isr:
     bra.s   .ps2_isr_done
 
 .ps2_framing:
+    move.w  %d2, ps2_err_accum
     or.b    #0x01, ps2_err_flags
     bra.s   .ps2_isr_done
 
 .ps2_parity:
+    move.w  %d2, ps2_err_accum
     or.b    #0x02, ps2_err_flags
     bra.s   .ps2_isr_done
 
@@ -1051,7 +1053,7 @@ _ps2_isr:
 
 .ps2_tx_path:
     | Decrement remaining-bit counter; when it hits 0, we're done
-    | clocking the frame out — release DATA, arm the ACK swallow.
+    | clocking the frame out — release DATA, arm the ACK discard.
     subq.b  #1, kbd_tx_bits
     beq.s   .ps2_tx_done
 
@@ -1658,4 +1660,7 @@ ps2_rx_accum:
     .skip 2
     .global kbd_tx_data
 kbd_tx_data:
+    .skip 2
+    .global ps2_err_accum
+ps2_err_accum:
     .skip 2

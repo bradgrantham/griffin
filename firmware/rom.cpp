@@ -375,6 +375,7 @@ extern volatile uint8_t ps2_rx_queue[PS2_RX_QUEUE_SIZE];
 extern volatile uint32_t ps2_rx_head;
 extern volatile uint32_t ps2_rx_tail;
 extern volatile uint8_t ps2_err_flags;  // bit 0 framing, bit 1 parity, bit 2 overrun
+extern volatile uint16_t ps2_err_accum; // accumulator snapshot at the failing frame
 
 extern "C" void ps2_send_byte(uint8_t b);
 
@@ -930,8 +931,9 @@ int main()
         if(ps2_err_flags)
         {
             uint8_t flags = ps2_err_flags;
+            uint16_t accum = ps2_err_accum;
             ps2_err_flags = 0;
-            printf("ps2 err: 0x%02X\n", flags);
+            printf("ps2 err: 0x%02X accum=0x%04X\n", flags, accum);
         }
 
         if(video_counter >= last_video_print + 60)
