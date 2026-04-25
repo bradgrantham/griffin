@@ -7,7 +7,7 @@ Start with baremetal fun, then progress towards full SpareMiNT or fuzix until bo
 
 MVP:
 
-* Fuzix or CP/M-68K with an image viewer: NTSC 704\*480i BW, NTSC 176\*480i color (704 sample artifact color) , VGA 640\*480p 2 colors per row from palette of 256, VGA 320\*480p 4 colors per row from palette of 256
+* Fuzix or CP/M-68K or NOMMU Linux 68k with an image viewer: around 640x480x1 (bonus could be NTSC 176\*480i color (704 sample artifact color) , VGA 640\*480p 2 colors per row from palette of 256, VGA 320\*480p 4 colors per row from palette of 256, 640x480x8 if that can be made to work)
 
 
 Put this on a screen somehow, from Macbeth:
@@ -336,6 +336,7 @@ Video using snoop.  Or don't bother?
   * register bits = HSYNC, VSYNC (so D0, D1, D2, D3)
   * For starters just disable interrupts and jump to unrolled framebuffer code, last words are jump to start
   * expand 0 to 0x00, 1 to 0xFF, no palette
+  * Maybe just do R1, G2, B1 resistors
 
 # Rev 2
 
@@ -346,7 +347,7 @@ Clean everything up for Rev 2, get as much tested as possible
 * PS/2 - GLUE or 68681
 * 68681 to 115200 baud
 * 68681 interrupt for SYSTICK, turn off the video interrupt
-* Don't bother with hacky video from main memory.  It's a lot of work but you'll want the dedicated VRAM support from Rev 2 which you can't prototype in rev 1.  (Could GLUE have a 24A/16D write serialized to SPI over to a blank PCB with GLUE as a receiver and drive memory and VIDEO board?  Lot of work for a design to throw away.)
+* Don't bother with hacky video from main memory.  It's a lot of work but you'll want the dedicated VRAM support from Rev 2 which you can't prototype in rev 1.  (Could ENGINE have a 24A/16D write serialized to SPI over to a blank PCB with GLUE as a receiver and drive memory and VIDEO board?  Lot of work for a design to throw away.).
 * Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card
 
 ## Summary
@@ -431,7 +432,7 @@ Either drop back to CUPL or get tristating figured out through Verilog
     - [ ] use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
     - [ ] Make the pin header be 2xN, down each side silk screen the signal at the pin
     - [ ] Put in lots of holes for ground test points around the board
-  - [ ] Pullups on PS/2 clock lines
+  - [ ] Pullups on PS/2 clock and data lines
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
     - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
@@ -458,11 +459,10 @@ Either drop back to CUPL or get tristating figured out through Verilog
     - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
     - [ ] CF card to 16 bits
 - [ ] PCB only
+  - [ ] SMT parts and footprints - CF, RAM, 68681?
   - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
-  - [ ] CF card SMT footprint
-  - [ ] RAM SMT footprint, just go to like 8MB RAM
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
-  - [ ] PS2 stabs - move footprint  
+  - [ ] PS2 footprint and pin mapping was all wrong
   - [ ] Headphone jack pads - drill partial holes?  
   - [ ] RCA jack retainer feet - drill partial holes?
   - [x] Swap MOUSE\_CLK and KBD\_DATA  
