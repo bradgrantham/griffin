@@ -945,7 +945,7 @@ _video_isr:
 |
 | TX (host-to-device) shares this ISR.  When kbd_sending is set, each
 | falling edge shifts the next bit of kbd_tx_data onto PS2_DATA via
-| DATA_DRIVE_LOW (open-drain: drive=1 pulls low, drive=0 releases).
+| DATA (open-drain: drive=1 pulls low, drive=0 releases).
 | When kbd_tx_bits reaches 0, DATA is released and kbd_next_clk_is_ack
 | is set so the following edge (the device's line-ACK clock) is
 | discarded without disturbing ps2_rx_accum.
@@ -1057,13 +1057,13 @@ _ps2_isr:
     subq.b  #1, kbd_tx_bits
     beq.s   .ps2_tx_done
 
-    | Place bit 0 of kbd_tx_data onto DATA via DATA_DRIVE_LOW.
-    | Open-drain: bit=0 -> DATA_DRIVE_LOW=1 (pull low),
-    |             bit=1 -> DATA_DRIVE_LOW=0 (release, pull-up -> high).
+    | Place bit 0 of kbd_tx_data onto DATA.
+    | Open-drain: bit=0 -> DATA=1 (pull low),
+    |             bit=1 -> DATA=0 (release, pull-up -> high).
     move.w  kbd_tx_data, %d1
     btst    #0, %d1
     seq     %d2                            | 0xFF if bit was 0, 0x00 if 1
-    and.b   #(GLUE_PS2_CTRL_DATA_DRIVE_LOW_MASK), %d2
+    and.b   #(GLUE_PS2_CTRL_DATA_MASK), %d2
     move.b  %d2, GLUE_PS2_CTRL
     lsr.w   #1, %d1
     move.w  %d1, kbd_tx_data
@@ -1133,7 +1133,7 @@ ps2_send_byte:
     ori.w   #0x0700, %sr
 
     | --- Pull CLK low (request-to-send / inhibit) --------------------
-    move.b  #(GLUE_PS2_CTRL_CLK_DRIVE_LOW_MASK), GLUE_PS2_CTRL
+    move.b  #(GLUE_PS2_CTRL_CLK_MASK), GLUE_PS2_CTRL
 
     | --- Hold >=100 us.  At SYSCLK=14 MHz with ROM wait states,
     | --- dbra is ~16 clocks/iter; 250 iters ≈ 285 us -----------------
@@ -1142,8 +1142,8 @@ ps2_send_byte:
     dbra    %d3, .Lps2_hold
 
     | --- Place start bit (= 0) on DATA and release CLK ---------------
-    | Setting CTRL = DATA_DRIVE_LOW only: CLK released, DATA pulled low.
-    move.b  #(GLUE_PS2_CTRL_DATA_DRIVE_LOW_MASK), GLUE_PS2_CTRL
+    | Setting CTRL = DATA only: CLK released, DATA pulled low.
+    move.b  #(GLUE_PS2_CTRL_DATA_MASK), GLUE_PS2_CTRL
 
     | --- Install TX state --------------------------------------------
     | Pre-shift the frame so bit 0 of kbd_tx_data is the first post-

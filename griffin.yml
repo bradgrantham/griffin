@@ -110,15 +110,15 @@ peripherals:
         width: 8
         description: |
           Open-drain drive control for PS2_CLK and PS2_DATA.  Each
-          *_DRIVE_LOW bit acts as the pin's output enable and
-          always drives 0 when asserted; the pin tri-states to the
-          external pull-up otherwise.  Firmware handles TX-of-1 by
-          leaving DATA_DRIVE_LOW=0 and relying on the pull-up, so
-          no DATA_OUT_VALUE bit is needed.
+          bit acts as the pin's output enable and always drives 0
+          when asserted; the pin tri-states to the external pull-up
+          otherwise.  Firmware handles TX-of-1 by leaving
+          DATA_DRIVE_LOW=0 and relying on the pull-up, so no
+          DATA_OUT_VALUE bit is needed.
         bits:
-          - { bit: "0", name: CLK_DRIVE_LOW,
+          - { bit: "0", name: CLK,
               description: "1 = drive PS2_CLK low (inhibit device / request-to-send); 0 = tri-state" }
-          - { bit: "1", name: DATA_DRIVE_LOW,
+          - { bit: "1", name: DATA,
               description: "1 = drive PS2_DATA low (TX 0-bit or request-to-send data line); 0 = tri-state (TX 1-bit)" }
 
   ROM:

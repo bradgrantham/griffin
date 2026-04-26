@@ -44,7 +44,7 @@ module glue (
     output wire        nDUART_RESET,  // Active low reset to 68681
 
     // PS/2 keyboard (pins 39/40, open-drain with external pull-ups).
-    // CPLD drives 0 when *_DRIVE_LOW is asserted; tri-states otherwise.
+    // CPLD drives 0 when pin is asserted; tri-states otherwise.
     inout  wire        PS2_CLK,
     inout  wire        PS2_DATA
 );
