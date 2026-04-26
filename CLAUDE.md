@@ -40,7 +40,7 @@
 ## Building components
 
 * Generate C++, Verilog, and assembly includes for components with `make` at project root.
-* Build glue in cpld/ with `make glue` 
+* Build glue and other CPLD Verilog in cpld/ with `make {thing}`; {edif,fit,io,jed,pin,svf,tt3} files are outputs.  When planning, ignore the outputs (especially .fit)
 * Configure emulator CMake in emulator/ with `cmake -Bbuild .` and build with `cmake --build build`
 * Build the ROM in firmware/ with `make`.  The toolchain is made from a Docker image of an Ubuntu 24 build of crosstool-ng for m68k-unknown-elf for 68000 and not for 68832; see firmware/m68k-crosstool-ng.config, firmware/m68k-{g++,gcc,objcopy,objdump}, BUILD_TOOLCHAIN_CONTAINER, Dockerfile.  The toolchain .tar.gz might not be in git.
 * Build the sanity test ROM image in firmware/ with `make`.  Same toolchain as firmware/.  (Probably should unify the toolchains between firmware and rom at some point...)
