@@ -6,7 +6,9 @@
 #include <cstdlib>
 
 #include "../griffin.generated.h"
-#include "splash.h"
+// #include "splash.h"
+
+#include "ps2.h"
 
 extern "C" {
 #include "ff.h"
@@ -369,16 +371,6 @@ extern volatile uint32_t uart_rx_head;
 extern volatile uint32_t uart_rx_tail;
 extern volatile uint8_t uart_rx_overflow;
 
-// PS/2 RX ring buffer (written by _ps2_isr in crt0.s, read by ps2_getchar)
-constexpr size_t PS2_RX_QUEUE_SIZE = 256;  // must match crt0.s
-extern volatile uint8_t ps2_rx_queue[PS2_RX_QUEUE_SIZE];
-extern volatile uint32_t ps2_rx_head;
-extern volatile uint32_t ps2_rx_tail;
-extern volatile uint8_t ps2_err_flags;  // bit 0 framing, bit 1 parity, bit 2 overrun
-extern volatile uint16_t ps2_err_accum; // accumulator snapshot at the failing frame
-
-extern "C" void ps2_send_byte(uint8_t b);
-
 // Timer tick handler — called from ISR context at IPL 5
 void timer_tick()
 {
@@ -421,18 +413,6 @@ extern "C" uint8_t duart_getchar()
 bool duart_received_ready()
 {
     return uart_rx_head != uart_rx_tail;
-}
-
-static bool ps2_received_ready()
-{
-    return ps2_rx_head != ps2_rx_tail;
-}
-
-static uint8_t ps2_getchar()
-{
-    uint8_t ch = ps2_rx_queue[ps2_rx_head];
-    ps2_rx_head = (ps2_rx_head + 1) & (PS2_RX_QUEUE_SIZE - 1);
-    return ch;
 }
 
 // Defined in syscalls.c — switches write()/read() to DUART backend
@@ -495,7 +475,7 @@ static void duart_init()
     }
 }
 
-static void dump_hex(uint32_t base_addr, const uint8_t *data, int size)
+[[maybe_unused]] static void dump_hex(uint32_t base_addr, const uint8_t *data, int size)
 {
     int offset = 0;
     while (size > 0)
@@ -623,7 +603,7 @@ extern "C" const int8_t _binary_startup_raw_end[];
 // Uses the GLUE auto-reload timer to get deterministic sample timing:
 // each sample period is broken into 'arms' timer stalls of (period+1)*8
 // SYSCLK clocks each.  The stall absorbs instruction overhead.
-static void play_audio(const int8_t *buf, uint32_t len, uint32_t sample_rate)
+[[maybe_unused]] static void play_audio(const int8_t *buf, uint32_t len, uint32_t sample_rate)
 {
     // Find best timer period (1-31) and arm count to match sample_rate.
     uint32_t target = Griffin::SYSCLK_HZ / sample_rate;
@@ -691,7 +671,7 @@ static void play_audio(const int8_t *buf, uint32_t len, uint32_t sample_rate)
 
 // Pop one byte from the event ring buffer.  Returns false if empty.
 // No interrupt masking needed — head is only modified here (single consumer).
-static bool evt_pop(uint8_t *out)
+[[maybe_unused]] static bool evt_pop(uint8_t *out)
 {
     uint32_t h = evt_head;
     if(h == evt_tail)
@@ -787,7 +767,7 @@ static int debug_getline(char *buf, int maxlen)
     }
 }
 
-static void debug_monitor()
+[[maybe_unused]] static void debug_monitor()
 {
     debug_printf("Monitor: r ADDR [LEN] | w ADDR VAL | q\n");
 
@@ -891,8 +871,6 @@ int main()
     duart_console_enable();
     printf("Console on DUART Channel A, 38400 8N1\n");
 
-    volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
-
     // Play startup sound
     // uint32_t audio_len = _binary_startup_raw_end - _binary_startup_raw_start;
     // play_audio(_binary_startup_raw_start, audio_len, 11025);
@@ -917,23 +895,30 @@ int main()
             }
         }
 
+        uint16_t err_data = ps2_get_err_data();
+        auto err_flags = ps2_get_err_flags();
+        if(err_flags)
+        {
+            printf("ps2 err: 0x%02X (%s%s%s) data=0x%04X\n",
+                err_flags,
+                (err_flags & PS2_ERROR_FRAMING) ? "framing " : "",
+                (err_flags & PS2_ERROR_PARITY) ? "parity " : "",
+                (err_flags & PS2_ERROR_OVERRUN) ? "overrun " : "",
+                err_data);
+        }
+
         if(ps2_received_ready())
         {
             uint8_t byte = ps2_getchar();
             printf("ps2: 0x%02X\n", byte);
             if(byte == 0xAA)
             {
-                printf("ps2: BAT OK, sending 0xFA\n");
-                ps2_send_byte(0xFA);
+                printf("ps2: BAT OK, sending 0xED\n");
+                ps2_send_byte(0xED);
+                printf("ps2: BAT OK, sending 0x00\n");
+                ps2_send_byte(0x00);
+                printf("ps2: BAT OK, sent 0xED, enqueued 0x00\n");
             }
-        }
-
-        if(ps2_err_flags)
-        {
-            uint8_t flags = ps2_err_flags;
-            uint16_t accum = ps2_err_accum;
-            ps2_err_flags = 0;
-            printf("ps2 err: 0x%02X accum=0x%04X\n", flags, accum);
         }
 
         if(video_counter >= last_video_print + 60)

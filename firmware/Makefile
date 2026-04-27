@@ -1,7 +1,7 @@
 M68K_GCC = ./m68k-gcc
 M68K_OBJCOPY = ./m68k-objcopy
 
-REAL_SOURCES = crt0.s rom.cpp syscalls.c ff.c diskio.c
+REAL_SOURCES = crt0.s rom.cpp syscalls.c ff.c diskio.c ps2.cpp
 # splash.cpp
 SOURCES = $(REAL_SOURCES) build_info.c
 OBJECTS = # startup_audio.o
@@ -27,7 +27,7 @@ startup_audio.o: startup.raw
 	    --rename-section .data=.rodata,alloc,load,readonly,data,contents $< $@
 
 rom.elf: $(SOURCES) $(OBJECTS) $(LDSCRIPT)
-	$(M68K_GCC) --std=c++23 -Wall -g -T $(LDSCRIPT) $(SOURCES) $(OBJECTS) -o $@
+	$(M68K_GCC) --std=c++23 -O -Wall -g -T $(LDSCRIPT) $(SOURCES) $(OBJECTS) -o $@
 
 rom.s: rom.cpp $(LDSCRIPT)
 	$(M68K_GCC) -S -g rom.cpp
