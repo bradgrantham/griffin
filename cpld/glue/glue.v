@@ -11,6 +11,7 @@ module glue (
     input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
     input  wire        nDUART_DTACK,     // pin 16: DUART asserts when ready
     input  wire        nDUART_IRQ,       // pin 18: DUART interrupt request (active low)
+    input  wire        nENGINE_IRQ,      // pin 20: ENGINE CPLD interrupt request (active low)
     input  wire        nAS,
     input  wire        [23:18] A_hi,
     input  wire        [5:1]   A_lo,
@@ -26,6 +27,7 @@ module glue (
     output wire        nRAM_3_SEL,
     output wire        nRAM_4_SEL,
     output wire        nVIDEO_SELECT,
+    output wire        nENGINE_SELECT,
     output wire        nWRITE_LO,
     output wire        nWRITE_HI,
     output wire        DEBUG_OUT,
@@ -112,6 +114,7 @@ module glue (
     assign nROM_SELECT = ~((rom_region | ram_1_region_but_rom_overlaid) & bus_cycle);
 
     assign nVIDEO_SELECT = ~(video_region & bus_cycle);
+    assign nENGINE_SELECT = ~(engine_region & bus_cycle);
 
     // Bus error: assert after 15 wait-state clocks (~1.05 µs at 14.318 MHz)
     // if no peripheral has responded with DTACK.  Causes the 68000 to take
@@ -126,15 +129,18 @@ module glue (
     //   6: VIDEO    (~VIDEO_IRQ,  pin 1)    — nIPL = 001
     //   5: DUART    (~DUART_IRQ,  pin 18)   — nIPL = 010
     //   4: PS/2     (~PS2_IRQ,    internal) — nIPL = 011
+    //   3: ENGINE   (~ENGINE_IRQ, pin 20)   — nIPL = 100
     //   none:                               — nIPL = 111
     // ----------------------------------------------------------------
 
     wire duart_irq_active     = ~nDUART_IRQ;
+    wire engine_irq_active    = ~nENGINE_IRQ;
     wire ps2_irq_active;  // driven by PS/2 bit_ready below
 
     assign nIPL = ~nVIDEO_IRQ        ? 3'b001 :  // level 6
                   duart_irq_active   ? 3'b010 :  // level 5
                   ps2_irq_active     ? 3'b011 :  // level 4
+                  engine_irq_active  ? 3'b100 :  // level 3
                                        3'b111;   // no interrupt
 
     wire glue_select = glue_segment & bus_cycle;
@@ -380,6 +386,7 @@ module glue (
         ((~nROM_SELECT)     & (ws_cnt >= `ROM_DTACK_THRESHOLD))  |  // ROM
         (glue_select        & (ws_cnt >= `GLUE_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
         (~nVIDEO_SELECT     & (ws_cnt >= `VIDEO_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
+        (~nENGINE_SELECT    & (ws_cnt >= `ENGINE_DTACK_THRESHOLD)) |  // ENGINE (0 WS)
         (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
         ((~nDUART_SELECT)   & ~nDUART_DTACK) |  // DUART
         (AUDIO_LE           & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO
@@ -461,6 +468,8 @@ endmodule
 //PIN: FC_2       : 50
 //PIN: nDUART_DTACK  : 16
 //PIN: nDUART_IRQ    : 18
+//PIN: nENGINE_IRQ   : 20
+//PIN: nENGINE_SELECT : 15
 //PIN: nDUART_RESET   : 69
 //PIN: PS2_CLK       : 39
 //PIN: PS2_DATA      : 40

@@ -43,7 +43,7 @@ all: glue video engine
 
 glue: glue/glue.svf
 
-glue/glue.edif: glue/glue.v glue/build_id.vh ../griffin.generated.vh
+glue/glue.edif: glue/glue.v  ../griffin.generated.vh
 	cd glue && $(YOSYS) glue
 
 glue/glue.jed: glue/glue.edif

@@ -191,6 +191,84 @@ peripherals:
       - 16000000: 0
       - 20000000: 1
 
+  ENGINE:
+    part: ATF1508AS
+    description: "Audio DMA engine.  Bus-masters via BR/BG/BGACK to copy 16-bit words from a 4 KB-aligned source buffer in RAM to AUDIO at a programmable SYSCLK-paced rate; loops 2 KW buffer while DMA_EN set; IRQ (level 3) on each half-buffer rollover (1024 and 2048 words)."
+    address_range:
+      base: 0xD00000
+      size: 0x100000
+      width: [8, 16]
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 0
+    interrupt:
+      level: 3
+      signal: ~ENGINE_IRQ
+    registers:
+      - offset: 0x01
+        name: CTRL
+        access: write
+        width: 8
+        description: |
+          DMA control.  Writing DMA_EN=0 stops DMA and resets the
+          word counter to 0.  Writing DMA_EN=1 starts DMA from
+          word 0 of the current BASE buffer.
+        bits:
+          - { bit: "0", name: DMA_EN,
+              description: "1 = DMA active and looping; 0 = stopped, counter reset" }
+          - { bit: "1", name: IRQ_EN,
+              description: "1 = assert ~ENGINE_IRQ when IRQ_PEND latches" }
+      - offset: 0x03
+        name: STATUS
+        access: read
+        width: 8
+        description: |
+          DMA status.  HALF reflects the current high bit of the
+          word counter.  When IRQ_PEND latches at the half-buffer
+          rollover, the ISR reads STATUS, refills the OPPOSITE
+          half (because HALF tells which half is now being
+          consumed), then writes IRQ_CLR.  OVERRUN sticks if the
+          period counter rolls over while a previously-latched
+          sample_due was still pending (i.e. bus_overhead exceeded
+          PERIOD); cleared by IRQ_CLR.
+        bits:
+          - { bit: "0", name: HALF,
+              description: "Live word_counter[10]; 0 = lower half being consumed, 1 = upper half" }
+          - { bit: "1", name: IRQ_PEND,
+              description: "1 = a half-buffer boundary has been crossed since last clear" }
+          - { bit: "2", name: OVERRUN,
+              description: "1 = a sample tick arrived before the prior cycle finished; cleared by IRQ_CLR" }
+      - offset: 0x05
+        name: IRQ_CLR
+        access: write
+        width: 8
+        description: "Any write clears IRQ_PEND and OVERRUN."
+      - offset: 0x06
+        name: SOURCE
+        access: write
+        width: 16
+        description: |
+          Source-buffer base address.  Bits [9:0] of the written
+          word are stored as base[21:12] of the byte address;
+          bits [15:10] are ignored.  In other words, write
+          (buffer_byte_address >> 12).  The buffer must be
+          aligned to 4 KB (2 KW).  RAM is at most 4 MB so the
+          high two address bits are always zero.
+      - offset: 0x0A
+        name: PERIOD
+        access: write
+        width: 16
+        description: |
+          SYSCLK cycles between successive DMA word copies.
+          Bits [9:0] are stored; bits [15:10] are ignored.
+          For 22.05 kS/s: 544 at 12 MHz, 635 at 14 MHz, 907 at
+          20 MHz.  Counter is reloaded at the end of each copy,
+          so total period is approximately PERIOD + a handful of
+          arbitration/bus cycles.
+
   VIDEO:
     part: ATF1508AS
     description: "Just a pass-through for composite SYNC and PIXEL at the moment and fires a 59.95Hz interrupt"
