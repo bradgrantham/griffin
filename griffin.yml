@@ -462,6 +462,7 @@ constants:
   CF_CMD_SET_FEATURES:  0xEF
   CF_CMD_SET_8BIT:      0x01
   CF_DH_LBA:            0xE0
+  PS2_RX_QUEUE_SIZE:    64
 
 bodges:
   - "Reroute A6 pad on U12 to A18"
