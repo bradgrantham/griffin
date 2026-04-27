@@ -36,6 +36,7 @@
 * Therefore carefully split responsibility between the CPLDs and CPU. Examples:
   * A complete UART RX and TX doesn't fit in GLUE, but GLUE implements a free-running reloaded "TIMER" so that CPU code can have more deterministic hard timing and perform UART RX and TX in a loop.
   * Rather than encoding progressive versus interlaced DMA, just have a "row stride" that the CPU can set and also add once in the video blank ISR to set up field 1. (for future video)
+* Prefer C++23 with correct idioms when possible, C when it makes more sense than C++, use assembly when the code must be in assembly.
 
 ## Building components
 
