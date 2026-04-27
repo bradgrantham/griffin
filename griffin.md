@@ -63,18 +63,7 @@ How much design file can be in YAML or in Python?  Generate from YAML:
 
 **Use USB\_C and print a case.**
 
-# How To Get To Reliable / Ready for Rev 2
-
-At reliable 14MHz UART TX and CF and RAM and somewhat-working RX in `04092026-14mhz-works-no-engine`
-
-Start tagging source when something works and check it and tag it often
-
-
-# Need to buy
-
-* crystal for 68681
-
-# Bodges for rev 1 Board
+# Bodges on rev 1 Board
 
 DEBUG\_OUT LED:
 
@@ -310,66 +299,63 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 * 8-bit R2R  
 * [LM358](https://www.digikey.com/en/products/detail/texas-instruments/LM358P/277042) op-amp  
 
-# Rev 0.Dumb
-
-## Push Back
-
-The idea was to use what I had: 12MHz 68000, 64K ROMs, 128K SRAMs.  That's gotten out of control.  It always turns into a workstation with graphics.  Could I still breadboard something?  USB-C power breakout, 68000P12, 64K 8-bit ROMs, 128K 8-bit SRAMs, bitbang SD card, bitbang UART...  Initial address decoding could be really  simple: 5'bxxxx0 is ROM, 5'b00011 is RAM, 5'b00101 is 68681 with SD card off it.  nDTACK is (nROM AND nRAM AND 68681 nDTACK).  IPL0 is 68681, IPL1 and IPL2 are pulled high. Very few parts and hey presto it's a CP/M-68K board.  Do you count what you have *now* as parts bin?  Or only what you had January 1, 2026?  32 wires to 2 ROMS and 2 RAMs, 24 wires to 68681, two NANDs to get WRITE_LO and WRITE_HI, 12MHZ osc, 3MHz crystal, bypass caps, decoupling caps, pullups on HALT etc.
-
-**That's a LOT of wires, *and is a distraction from pixels***.  If you thought you could do NTSC in software with it, that would be a thing to do.  Could do the bonkers idea with framebuffer packed into MOVEQ instructions in the region A17==1 with 8x1bit pixels in low byte and sync bit in D9 (clobbers D0 or D1) ; need a shift register, some dtack logic, and a divider.  **Even more wires and tricky hacking**.
-
-Why not just put everything into a 1508, no logic?  You already have a CUPL workflow.  Let it manage DTACK, all peripheral SELECT lines, repeat RAM and pick a region which is interpreted as framebuffer, either catch and output sync and pixel or enable a latch and shift...  You have a working 68K, 1MB RAM, ROM, GLUE, CF Card...  Could you prototype this in Griffin Mark I?  Get 68681 working, then get SYSTICK out of GLUE for more macrocells, then manage shift and sync to two lines to...  VIDEO?  Special VIDEO bitfile that passes through VIDEO_STALL and VIDEO_IRQ lines backwards to CPST_PIXEL and CPST_SYNC?
-
-## Actual board
-
-Could design the boards, send them off, and get them back mostly populated with SMT...  Use SMT for 1508 discretes, maybe RAM.  Only items I need to populate are: CPU socket, RAM sockets, ROM ZIF, 68681 socket, composite jack.  Still a lot of soldering.  I get 720x480 monochrome, 180x480 ~16 artifact colors.
-
-# Rev 1.5
-
-Video using snoop.  Or don't bother?
-
-* VGA 640x480x1
-* 8-bit shift, 8 bit holding register
-* 8 pixels at 25.175MHz = 317.7ns = 4.44 cycles @ 14MHz
-* Unrolled 800\*525 "MOVEQ #byte, D{0,1,2}" (100\*525 = 52500 words)
-  * VIDEO blocks until 8-bit holding register is empty (every 8 pixel cycles) then loads holding register from LSByte
-  * register bits = HSYNC, VSYNC (so D0, D1, D2, D3)
-  * For starters just disable interrupts and jump to unrolled framebuffer code, last words are jump to start
-  * expand 0 to 0x00, 1 to 0xFF, no palette
-  * Maybe just do R1, G2, B1 resistors
-
 # Rev 2
 
 ## Investigation Plan
 
 Clean everything up for Rev 2, get as much tested as possible
 
-* PS/2 - GLUE or 68681
-* 68681 to 115200 baud
-* 68681 interrupt for SYSTICK, turn off the video interrupt
-* Don't bother with hacky video from main memory.  It's a lot of work but you'll want the dedicated VRAM support from Rev 2 which you can't prototype in rev 1.  (Could ENGINE have a 24A/16D write serialized to SPI over to a blank PCB with GLUE as a receiver and drive memory and VIDEO board?  Lot of work for a design to throw away.).
+* 68681 to 115200 baud - if we can't, then need other solution?
+* Get as much out of asm into C/C++ as possible so you are in a comfortable place where you can read the code68681 interrupt for SYSTICK, turn off the video interrupt
+* Prototype audio DMA
 * Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card
+
+## Fiddly bits for later
+
+framing error on first codes from keyboard
+
+## Strategy
+
+How to reduce chance of spin and reduce likelihood of bodge?  Use golden references, everything else flows from them
+
+Griffin.yml interfaces between chips
+
+* Check netlist against that
+* Generate emulator from that
+
+Verilog - uses constants from YAML
+
+* Require fit
+* Dictates pin layout of CPLDs
+
+Verify netlist and fit against each other
+
+Maybe an unstructured English definition managed by AI that states machine capabilities and components?  Verify YAML and definition and netlist and fit all against each other?
+
+Verify electrical behavior of all analog components from netlist
+
+Need a rev1 branch for continuing experiments and main branch under development is rev2
+
+* Any revelations from rev1 feed into rev2
 
 ## Summary
 
 Either drop back to CUPL or get tristating figured out through Verilog
 
 * BQ3285 and a coin cell to be somewhat period-appropriate RTC
-* 16MHz CPU clock, 16-bit RAM, 16-bit ROM, 16-bit True IDE CF
+* 16MHz CPU clock, 16-bit RAM, 16-bit ROM
+* 16-bit True IDE CF
 * 16MB 16-bit SRAM part
-
-* Really should put an RTC on it.
-
 * GLUE ATF1508 has same functionality as Rev 1 minus SYSTICK
 
-  * separate DEBUG LED pin
+  * separate DEBUG LED pin; use it more liberally from CPU for boot codes or steady-state (video ISR) or double fault (GLUE)
 
   * boot serial TX, TIMER gives 8-bit counter on CPU clock with stall for determinism
 
   * PS/2 input through an IRQ from CLK pin (then read DATA pin), PS/2 output through pulling CLK low for 100uS and then let peripheral drive CLK and update data with IRQ
 
 
-* serial I/O
+* Serial I/O
 
   - boot diagnostic serial output through bitbang like now
 
@@ -380,6 +366,10 @@ Either drop back to CUPL or get tristating figured out through Verilog
   - pair of pins for 2nd UART for e.g. ESP32 communication, PPP, ... - as high baud rate as system can drive
 
   - 68681 UART console output routed through the CPLD so boot serial can be switched out and 68681 in and have one output
+  
+  - configurable timer ISR
+  
+  - Also bring out I/O pins
 
 
 * 640x480x60p VESA through separate SRAM that is on the bus but isolated and clocked out if not being accessed
@@ -402,17 +392,20 @@ Either drop back to CUPL or get tristating figured out through Verilog
   * VBLANK IRQ
 
 
-- *maybe* Audio with configurable or maybe just 22S/s rate stereo through another CPLD - smaller? 1504?
-
-  * Want double-buffering, so timer is clocking out one while the other is on the bus - don't need bus arbitration for that, just have two SRAMs and switch them
-
+- Audio with configurable or maybe just 22S/s rate stereo through another CPLD - smaller? 1504?
+  * Do DMA for audio, much more tractable than video DMA
+  
   * Configure as much as the CPLD can do
-
+  
   * Get a decent audio DAC, 2x 8 bit - stereo
-
+  
   * Could I also ADC?  Like flip a high-order bit on writes so low page is out and high page is in?
-
+  
   * Let memory be 8-bit and in rapid succession latch left, right outputs and then read left, right inputs and write to memory
+  
+  * 22KB * stereo = 44KB / sec; 10Hz ISR can memcpy, need 4.4KB buffer so dedicate 8KB to output and 8KB to input, 16KB from end of memory
+    * 4MB - 16KB = 0x3FC000, 8KB counter = 13 bits
+  
 
 ## Board changes
 
@@ -429,9 +422,10 @@ Either drop back to CUPL or get tristating figured out through Verilog
   - [ ] More signals between CPLDs??
   - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
   - [ ] GND, +5V, D, A, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points, basically bring out every inter-IC signal
-    - [ ] use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
+    - [ ] Use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
     - [ ] Make the pin header be 2xN, down each side silk screen the signal at the pin
     - [ ] Put in lots of holes for ground test points around the board
+    - [ ] Bring out pins from GLUE, if there any left, for the purpose of debugging
   - [ ] Pullups on PS/2 clock and data lines
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
@@ -454,25 +448,25 @@ Either drop back to CUPL or get tristating figured out through Verilog
   - [ ] FT4232H on the board with USB-C: debug console & UART, second UART for whatever, JTAG to CPLDs
   - [ ] CF card
     - [ ] symbol is junk - redo it.
-  - [ ] CF card IOWR should be gated by AS.
-    - [ ] CF card latches on rise of IOWR
-    - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
+    - [ ] CF card IOWR should be gated by AS.
+      - [ ] CF card latches on rise of IOWR
+      - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
     - [ ] CF card to 16 bits
+    - [ ] CF card schematic has weird pin numbers
 - [ ] PCB only
-  - [ ] SMT parts and footprints - CF, RAM, 68681?
+  - [ ] SMT parts and footprints? - CF, RAM, 68681?
   - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
   - [ ] PS2 footprint and pin mapping was all wrong
   - [ ] Headphone jack pads - drill partial holes?  
   - [ ] RCA jack retainer feet - drill partial holes?
-  - [x] Swap MOUSE\_CLK and KBD\_DATA  
   - [x] Route A18 to GLUE instead of A6  
   - [x] Wire GLUE VPA back to the CPU in place of ENGINE\_IACK
   - [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
   - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF -  need ZIF footprint
   - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
   - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
-    - [ ] Is there a castellenated version I could solder on?
+    - [ ] Is there a castellated version I could solder on?
     - [ ] Is there a better version, something smaller with fewer pins?
   - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
 
