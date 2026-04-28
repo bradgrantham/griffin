@@ -371,12 +371,6 @@ extern volatile uint32_t uart_rx_head;
 extern volatile uint32_t uart_rx_tail;
 extern volatile uint8_t uart_rx_overflow;
 
-// Timer tick handler — called from ISR context at IPL 5
-void timer_tick()
-{
-    // TODO: increment tick counter, feed watchdog, etc.
-}
-
 }; // extern "C"
 
 // ---------------------------------------------------------------------------
@@ -418,7 +412,7 @@ bool duart_received_ready()
 // Defined in syscalls.c — switches write()/read() to DUART backend
 extern "C" void duart_console_enable();
 
-static void duart_init()
+static void duart_38400_init()
 {
     debug_printf("DUART: init\n");
 
@@ -440,15 +434,28 @@ static void duart_init()
     // MR2A: 1 stop bit, normal mode (MR pointer auto-advanced)
     duart_mra = 0x07;
 
-    // ACR: BRG set 0, timer mode irrelevant (bits 6:4 = 000), no IP change int
-    duart_acr = 0x00;
+    // ACR: BRG set 0, C/T = Timer mode on X1/CLK direct (bits 6:4 = 110)
+    duart_acr = (0x6U << Griffin::DUART_ACR_CT_MODE_SHIFT);
 
     // CSRA: Tx and Rx both = BRG 38400 (code 1100 = 0xC)
     duart_csra = 0xcc;
 
-    // Enable RXRDYA interrupt — ISR drains bytes into uart_rx_queue.
-    // TX stays polled; no TXRDYA interrupt needed.
-    duart_imr = Griffin::DUART_ISR_RXRDYA_MASK;
+    // C/T preload: F_irq = DUART_CLOCK / preload (Timer mode fires every
+    // square-wave half-period = preload input cycles).  TICK_HZ chosen
+    // here as a firmware convention.
+    static constexpr uint32_t TICK_HZ = 100;
+    static constexpr uint32_t TICK_PRELOAD = Griffin::DUART_CLOCK / TICK_HZ / 2;
+    static_assert(TICK_PRELOAD > 0 && TICK_PRELOAD < 0x10000,
+                  "DUART tick preload must fit in 16 bits");
+    duart_ctur = (TICK_PRELOAD >> 8) & 0xFF;
+    duart_ctlr =  TICK_PRELOAD       & 0xFF;
+
+    // Enable RXRDYA + CTR_READY interrupts.  Both share the level-5
+    // autovector; _duart_isr distinguishes them via the ISR snapshot.
+    duart_imr = Griffin::DUART_ISR_RXRDYA_MASK | Griffin::DUART_ISR_CTR_READY_MASK;
+
+    // Read STARTCC to kick off the C/T (the read itself is the side effect).
+    [[maybe_unused]] uint8_t startcc_discard = duart_startcc;
 
     // Clear DUART IVR - chasing a bug
     duart_ivr = 0x0;
@@ -467,6 +474,65 @@ static void duart_init()
     {
         debug_printf(" TXEMT");
     }
+    debug_printf("\n");
+
+    if (!(sra & Griffin::DUART_SRA_TXRDY_MASK))
+    {
+        debug_printf("DUART: WARNING — TXRDY not set after init\n");
+    }
+}
+
+// Dummy-read BRG test register (offset 0x2) to toggle extended-rate mode.
+// MUST be volatile so the compiler doesn't drop it — the read itself is
+// the side effect. - only works on SCC68681/XR68C681
+static inline void duart_enter_brg_test()
+{
+    volatile uint8_t discard = *reinterpret_cast<volatile uint8_t*>(
+        Griffin::DUART_BASE + 0x2);
+    (void)discard;
+}
+
+// only works on SCC68681/XR68C681
+static void duart_115200_init()
+{
+    debug_printf("DUART: init\n");
+
+    // Initialize RX queue state before enabling any DUART interrupts.
+    // .monitor_data is NOLOAD and not cleared by the BSS init loop.
+    uart_rx_head = 0;
+    uart_rx_tail = 0;
+    uart_rx_overflow = 0;
+
+    // ---- MC68681 Init: Channel A, 115200 8N1, RxRDY interrupt ----
+    // Reset Channel A
+    duart_cra = DUART_CMD_RESET_RX;
+    duart_cra = DUART_CMD_RESET_TX;
+    duart_cra = DUART_CMD_RESET_MR_PTR;
+
+    // Enter BRG test mode BEFORE programming CSR — the CSR code meanings
+    // change with the test flip-flop, so order matters if we want to be
+    // sure we never transiently select an unintended rate.
+    // (Assumes hardware reset has cleared the flop-flop; see note above.)
+    duart_enter_brg_test();
+
+    // MR1A: 8 data bits, no parity
+    duart_mra = 0x13;
+    // MR2A: 1 stop bit, normal mode
+    duart_mra = 0x07;
+    // ACR: BRG set 0 (bit 7 = 0), no IP change int
+    duart_acr = 0x00;
+    // CSRA: Tx and Rx both = code 0110 → 115200 in BRG test mode
+    duart_csra = 0x66;
+
+    duart_imr = Griffin::DUART_ISR_RXRDYA_MASK;
+    duart_ivr = 0x0;
+    duart_cra = DUART_CMD_ENABLE_TXRX;
+
+    // Report status via bit-bang debug path
+    uint8_t sra = duart_sra;
+    debug_printf("DUART: SRA=0x%02X", sra);
+    if (sra & Griffin::DUART_SRA_TXRDY_MASK) { debug_printf(" TXRDY"); }
+    if (sra & Griffin::DUART_SRA_TXEMT_MASK) { debug_printf(" TXEMT"); }
     debug_printf("\n");
 
     if (!(sra & Griffin::DUART_SRA_TXRDY_MASK))
@@ -863,7 +929,7 @@ int main()
     // Initialize 68681 DUART and switch console output from bit-bang to DUART.
     // Everything before this point prints via debug_printf (GLUE bit-bang).
     // Everything after prints via printf (DUART Channel A, 38400 8N1).
-    duart_init();
+    duart_38400_init();
     for(auto c: "DUART TX\n")
     {
         if(c) duart_putchar(c);
@@ -877,10 +943,10 @@ int main()
 
     cf_mount_and_list();
 
-    volatile extern uint32_t video_counter;
+    extern volatile uint32_t tick_counter;
 
     printf("Input check loop...\n");
-    uint32_t last_video_print = video_counter;
+    uint32_t last_tick_print = tick_counter;
 
     for (;;)
     {
@@ -921,14 +987,14 @@ int main()
             }
         }
 
-        if(video_counter >= last_video_print + 60)
+        if(tick_counter >= last_tick_print + 100)
         {
-            uint32_t seconds = video_counter * 100 / 5994;
+            uint32_t seconds = tick_counter / 100;
             uint32_t ss = seconds % 60;
             uint32_t mm = (seconds / 60) % 60;
             uint32_t hh = seconds / 3600;
             printf("%02ld:%02ld:%02ld\n", hh, mm, ss);
-            last_video_print = video_counter;
+            last_tick_print = tick_counter;
         }
     }
 }

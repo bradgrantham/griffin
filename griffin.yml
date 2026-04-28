@@ -379,8 +379,18 @@ peripherals:
           description: "Channel A transmitter buffer (write to enqueue)" }
       - { offset: 0x09, name: IPCR,   access: read,  width: 8,
           description: "Input port change register (read clears interrupt)" }
-      - { offset: 0x09, name: ACR,    access: write, width: 8,
-          description: "Auxiliary control register (timer/counter mode, BRG set select)" }
+      - offset: 0x09
+        name: ACR
+        access: write
+        width: 8
+        description: "Auxiliary control register (timer/counter mode, BRG set select)"
+        bits:
+          - { bit: "7",   name: BRG_SET,     description: "0 = BRG set 0; 1 = BRG set 1 (selects CSRA/CSRB rate table)" }
+          - { bit: "6:4", name: CT_MODE,     description: "C/T mode + clock: 6=Timer X1/CLK, 7=Timer X1/CLK÷16, 3=Counter X1/CLK÷16" }
+          - { bit: "3",   name: IP3_INT_EN,  description: "IP3 change-of-state IRQ enable" }
+          - { bit: "2",   name: IP2_INT_EN,  description: "IP2 change-of-state IRQ enable" }
+          - { bit: "1",   name: IP1_INT_EN,  description: "IP1 change-of-state IRQ enable" }
+          - { bit: "0",   name: IP0_INT_EN,  description: "IP0 change-of-state IRQ enable" }
       - offset: 0x0B
         name: ISR
         access: read

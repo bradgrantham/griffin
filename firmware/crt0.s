@@ -273,8 +273,8 @@ mark_stack:
     move.l  #0x55555555, (%a0)+
     dbra    %d0, mark_stack
 
-    /* initialize video counter */
-    lea     video_counter, %a0
+    /* initialize tick counter */
+    lea     tick_counter, %a0
     move.l  #0, (%a0)
 
     /* initialize PS/2 */
@@ -852,8 +852,10 @@ _exc_illegal_insn:
 | (at tail) but tail is not advanced, so the byte is discarded
 | on the next enqueue.  uart_rx_overflow is set.
 |
-| Future: systick (if moved to DUART counter) would share this
-| vector and be distinguished by reading DUART_ISR.
+| The C/T runs in Timer mode at 100 Hz; CTR_READY is acked by reading
+| STOPCC (in Timer mode that clears the IRQ status without stopping the
+| counter).  RXRDYA and CTR_READY share this vector and are distinguished
+| by the ISR snapshot in %d3.
 | ====================================================================
     .global _duart_isr
 _duart_isr:
@@ -909,17 +911,17 @@ _duart_isr:
     move.b  #1, uart_rx_overflow
 
 .duart_isr_done:
+    btst    #DUART_ISR_CTR_READY_SHIFT, %d3
+    beq.s   .duart_isr_exit
+    tst.b   DUART_STOPCC                | ack C/T IRQ (Timer mode: counter keeps running)
+    addq.l  #1, tick_counter
+
+.duart_isr_exit:
     movem.l (%sp)+, %d0-%d6/%a0/%a5-%a6
     rte
 
 _video_isr:
-    movem.l %d0-%d6/%a0/%a5-%a6, -(%sp)
     move.b  #0, VIDEO_CLRINT            | ack VIDEO IRQ
-    lea     video_counter, %a0
-    move.l  (%a0), %d0
-    add.l   #1, %d0
-    move.l  %d0, (%a0)
-    movem.l (%sp)+, %d0-%d6/%a0/%a5-%a6
     rte
 
 | _default_handler: catch-all for unexpected exceptions
@@ -1386,6 +1388,6 @@ uart_rx_overflow:
     .skip 1
     .align 2
 
-    .global video_counter
-video_counter:
+    .global tick_counter
+tick_counter:
     .skip 4

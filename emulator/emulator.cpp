@@ -775,9 +775,10 @@ struct DUARTState
         return (static_cast<uint16_t>(ctur) << 8) | ctlr;
     }
 
-    // Counter/timer period in SYSCLK cycles.
-    // Real 68681 counts down from preload to 1 at DUART_CLOCK rate.
-    // Convert to SYSCLK: preload * SYSCLK_HZ / DUART_CLOCK.
+    // Counter/timer period between IRQs in SYSCLK cycles.
+    // Counter mode: one IRQ per preload countdown.
+    // Timer mode: one IRQ per full square-wave period = 2*preload input cycles
+    // (matches MC68681 hardware — preload alone gives only the half-period).
     uint64_t ctr_period_sysclk() const
     {
         uint32_t p = preload();
@@ -785,7 +786,12 @@ struct DUARTState
         {
             p = 0x10000;  // 68681 treats 0 as 65536
         }
-        return static_cast<uint64_t>(p) * SYSCLK_HZ / DUART_CLOCK;
+        uint64_t cycles = p;
+        if ((acr & 0x40) != 0)
+        {
+            cycles *= 2;
+        }
+        return cycles * SYSCLK_HZ / DUART_CLOCK;
     }
 
     // Advance timer state — call periodically from poll_io
@@ -907,9 +913,15 @@ struct DUARTState
                 // sets it using getClock() after this returns.
                 return 0;
             case DUART_STOPCC:
-                ctr_running = false;
+                // In Timer mode (ACR[6]=1), STOPCC only clears the IRQ
+                // status; the counter keeps free-running.  In Counter
+                // mode it fully halts the counter.
                 ctr_ready = false;
-                ctr_next_fire = 0;
+                if ((acr & 0x40) == 0)
+                {
+                    ctr_running = false;
+                    ctr_next_fire = 0;
+                }
                 return 0;
             default:
                 return 0;
