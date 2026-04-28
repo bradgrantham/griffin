@@ -305,10 +305,11 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 
 Clean everything up for Rev 2, get as much tested as possible
 
-* 68681 to 115200 baud - if we can't, then need other solution?
-* Get as much out of asm into C/C++ as possible so you are in a comfortable place where you can read the code68681 interrupt for SYSTICK, turn off the video interrupt
 * Prototype audio DMA
+* Prototype 640x240 composite so you have a standalone machine?
 * Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card
+* 68681 to 115200 baud - if we can't, then need other solution?
+  * I only have MC68681!  :expressionless:  So I'll need to order SCC68681 or the XC variant.  38400 until then.
 
 ## Fiddly bits for later
 
