@@ -1,8 +1,3 @@
-/* Support files for GNU libc.  Files in the system namespace go here.
-   Files in the C namespace (ie those that do not start with an
-   underscore) go in .c.  */
-
-#include <_ansi.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/fcntl.h>
@@ -12,9 +7,10 @@
 #include <sys/time.h>
 #include <sys/times.h>
 #include <errno.h>
-#include <reent.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <stdint.h>
+#include <stddef.h>
 
 #define USE_FATFS
 
@@ -33,7 +29,7 @@ void* sbrk(ptrdiff_t incr)
     extern char heap_top;
     char *prev_heap_end;
 
-    if (heap_end == 0)
+    if (heap_end == nullptr)
     {
         heap_end = &heap_low;
     }
@@ -44,12 +40,12 @@ void* sbrk(ptrdiff_t incr)
     {
         write(1, "Heap and stack collision\n", 25);
         errno = ENOMEM;
-        return (caddr_t) -1;
+        return (void*)-1;
     }
 
     heap_end += incr;
 
-    return (caddr_t) prev_heap_end;
+    return prev_heap_end;
 }
 
 int getpid(void)
@@ -63,11 +59,14 @@ int kill([[maybe_unused]] int pid, [[maybe_unused]] int sig)
     return -1;
 }
 
-void exit (int status)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-infinite-loop"
+[[noreturn]] void exit (int status)
 {
     kill(status, -1);
     while (1) {}
 }
+#pragma GCC diagnostic pop
 
 void _exit (int status)
 {
@@ -97,7 +96,7 @@ void duart_console_enable(void)
     console_is_duart = 1;
 }
 
-_ssize_t write (int file,  const void *ptr, size_t len)
+ssize_t write (int file,  const void *ptr, size_t len)
 {
     if(file < 0) { errno =  EINVAL; return -1; }
 
@@ -108,7 +107,7 @@ _ssize_t write (int file,  const void *ptr, size_t len)
         {
             putchar_fn(*chars++);
         }
-        return (_ssize_t) len;
+        return (ssize_t) len;
     } else {
         int myFile = file - FD_OFFSET;
         if(!filesOpened[myFile])
@@ -126,7 +125,7 @@ _ssize_t write (int file,  const void *ptr, size_t len)
             errno = EIO;
             return -1;
         }
-        return (_ssize_t)wrote;
+        return (ssize_t)wrote;
 #else /* not USE_FATFS */
         errno = EIO;
         return -1;
@@ -200,15 +199,13 @@ off_t lseek (int file, off_t ptr, int dir)
     }
 }
 
-long read(int file, void *__buf, size_t len)
+ssize_t read(int file, void *buf, size_t len)
 {
-    char *ptr = (char *)__buf;
+    char *ptr = (char *)buf;
     if(file < 0) { errno =  EINVAL; return -1; }
 
     if((file == 0) || (file == 1) || (file == 2)) {
-        size_t i;
-
-        for (i = 0; i < len; i++)
+        for (size_t i = 0; i < len; i++)
         {
             if (console_is_duart)
             {
@@ -219,7 +216,7 @@ long read(int file, void *__buf, size_t len)
                 *ptr++ = 0;
             }
         }
-        return (_ssize_t)len;
+        return (ssize_t)len;
     } else {
         int myFile = file - FD_OFFSET;
         if(!filesOpened[myFile]) {
@@ -235,7 +232,7 @@ long read(int file, void *__buf, size_t len)
             errno = EIO;
             return -1;
         }
-        return (_ssize_t)wasRead;
+        return (ssize_t)wasRead;
 #else /* not USE_FATFS */
         errno = EIO;
         return -1;
@@ -245,7 +242,7 @@ long read(int file, void *__buf, size_t len)
 
 int open(const char *path, int flags, ...)
 {
-    if(path == NULL) {
+    if(path == nullptr) {
         errno = EFAULT;
         return -1;
     }
@@ -295,37 +292,31 @@ int open(const char *path, int flags, ...)
 #endif /* USE_FATFS */
 }
 
-int wait(int *status)
+int wait([[maybe_unused]] int *status)
 {
-    (void)status;
     errno = ECHILD;
     return -1;
 }
 
-int unlink(const char *name)
+int unlink([[maybe_unused]] const char *name)
 {
-    (void)name;
     errno = ENOENT;
     return -1;
 }
 
-clock_t times(struct tms *buf)
+clock_t times([[maybe_unused]] struct tms *buf)
 {
-    (void)buf;
     return (clock_t)-1;
 }
 
-int stat(const char *__restrict file, struct stat *__restrict st)
+int stat([[maybe_unused]] const char *restrict file, struct stat *restrict st)
 {
-    (void)file;
     st->st_mode = S_IFCHR;
     return 0;
 }
 
-int link(const char *old, const char *_new)
+int link([[maybe_unused]] const char *old, [[maybe_unused]] const char *new_path)
 {
-    (void)old;
-    (void)_new;
     errno = EMLINK;
     return -1;
 }
@@ -336,11 +327,8 @@ int fork(void)
     return -1;
 }
 
-int execve(const char *name, char *const argv[], char *const env[])
+int execve([[maybe_unused]] const char *name, [[maybe_unused]] char *const argv[], [[maybe_unused]] char *const env[])
 {
-    (void)name;
-    (void)argv;
-    (void)env;
     errno = ENOMEM;
     return -1;
 }
