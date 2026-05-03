@@ -6,9 +6,12 @@
 #include <cstdlib>
 
 #include "../griffin.generated.h"
+#include "../griffin.generated.refs.h"
 // #include "splash.h"
 
 #include "ps2.h"
+
+using namespace Griffin::reg;
 
 extern "C" {
 #include "ff.h"
@@ -37,40 +40,12 @@ static constexpr uint32_t CF_POLL_LIMIT = 500000;
 // wall-clock duration stays constant if the system clock changes.
 static constexpr uint32_t CF_INIT_POLL_LIMIT = (Griffin::SYSCLK_HZ / 50) * 2;
 
-static volatile uint8_t &cf_data       = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_DATA);
-static volatile uint8_t &cf_error_reg  = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_ERROR);
-static volatile uint8_t &cf_features   = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_FEATURES);
-static volatile uint8_t &cf_sec_count  = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_SECTOR_COUNT);
-static volatile uint8_t &cf_sec_num    = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_SECTOR_NUM);
-static volatile uint8_t &cf_cyl_lo     = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_CYL_LO);
-static volatile uint8_t &cf_cyl_hi     = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_CYL_HI);
-static volatile uint8_t &cf_drive_head = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_DRIVE_HEAD);
-static volatile uint8_t &cf_status     = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_STATUS);
-static volatile uint8_t &cf_command    = *reinterpret_cast<volatile uint8_t *>(Griffin::CF_COMMAND);
-
-// ---------------------------------------------------------------------------
-// 68681 DUART — register access
-// ---------------------------------------------------------------------------
-
-static volatile uint8_t &duart_mra     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_MR1A);
-static volatile uint8_t &duart_sra     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_SRA);
-static volatile uint8_t &duart_csra    = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CSRA);
-static volatile uint8_t &duart_cra     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CRA);
-static volatile uint8_t &duart_rba     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_RBA);
-static volatile uint8_t &duart_tba     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_TBA);
-static volatile uint8_t &duart_acr     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_ACR);
-static volatile uint8_t &duart_imr     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_IMR);
-static volatile uint8_t &duart_ctur    = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CTUR);
-static volatile uint8_t &duart_ctlr    = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_CTLR);
-static volatile uint8_t &duart_startcc = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_STARTCC);
-static volatile uint8_t &duart_ivr     = *reinterpret_cast<volatile uint8_t *>(Griffin::DUART_IVR);
-
 // Wait for BSY to clear.  Returns CF_TIMEOUT if limit exceeded.
 static cf_error cf_wait_ready()
 {
     for (uint32_t i = 0; i < CF_POLL_LIMIT; i++)
     {
-        if (!(cf_status & Griffin::CF_STATUS_BSY))
+        if (!(CF_STATUS & Griffin::CF_STATUS_BSY))
         {
             return CF_OK;
         }
@@ -83,7 +58,7 @@ static cf_error cf_wait_drq()
 {
     for (uint32_t i = 0; i < CF_POLL_LIMIT; i++)
     {
-        uint8_t s = cf_status;
+        uint8_t s = CF_STATUS;
         if (s & Griffin::CF_STATUS_ERR)
         {
             return CF_ERR;
@@ -99,11 +74,11 @@ static cf_error cf_wait_drq()
 // Set LBA address and sector count into CF registers.
 static void cf_set_lba(uint32_t lba, uint8_t count)
 {
-    cf_sec_count  = count;
-    cf_sec_num    = lba & 0xFF;
-    cf_cyl_lo     = (lba >> 8) & 0xFF;
-    cf_cyl_hi     = (lba >> 16) & 0xFF;
-    cf_drive_head = Griffin::CF_DH_LBA | ((lba >> 24) & 0x0F);
+    CF_SECTOR_COUNT  = count;
+    CF_SECTOR_NUM    = lba & 0xFF;
+    CF_CYL_LO     = (lba >> 8) & 0xFF;
+    CF_CYL_HI     = (lba >> 16) & 0xFF;
+    CF_DRIVE_HEAD = Griffin::CF_DH_LBA | ((lba >> 24) & 0x0F);
 }
 
 // Initialize CF card: wait for ready, set 8-bit PIO mode.
@@ -112,7 +87,7 @@ extern "C" cf_error cf_init()
     // Wait for BSY clear with extended power-on timeout.
     for (uint32_t i = 0; i < CF_INIT_POLL_LIMIT; i++)
     {
-        if (!(cf_status & Griffin::CF_STATUS_BSY))
+        if (!(CF_STATUS & Griffin::CF_STATUS_BSY))
         {
             goto bsy_clear;
         }
@@ -123,7 +98,7 @@ bsy_clear:
     // Wait for DRDY
     for (uint32_t i = 0; i < CF_INIT_POLL_LIMIT; i++)
     {
-        if (cf_status & Griffin::CF_STATUS_DRDY)
+        if (CF_STATUS & Griffin::CF_STATUS_DRDY)
         {
             goto drdy_ok;
         }
@@ -132,12 +107,12 @@ bsy_clear:
 
 drdy_ok:
     // Set 8-bit transfer mode
-    cf_features = Griffin::CF_CMD_SET_8BIT;
-    cf_command  = Griffin::CF_CMD_SET_FEATURES;
+    CF_FEATURES = Griffin::CF_CMD_SET_8BIT;
+    CF_COMMAND  = Griffin::CF_CMD_SET_FEATURES;
 
     for (uint32_t i = 0; i < CF_INIT_POLL_LIMIT; i++)
     {
-        uint8_t s = cf_status;
+        uint8_t s = CF_STATUS;
         if (s & Griffin::CF_STATUS_ERR)
         {
             return CF_ERR;
@@ -159,8 +134,8 @@ extern "C" cf_error cf_identify(uint8_t buf[512])
         return err;
     }
 
-    cf_drive_head = Griffin::CF_DH_LBA;
-    cf_command    = Griffin::CF_CMD_IDENTIFY;
+    CF_DRIVE_HEAD = Griffin::CF_DH_LBA;
+    CF_COMMAND    = Griffin::CF_CMD_IDENTIFY;
 
     err = cf_wait_drq();
     if (err != CF_OK)
@@ -170,7 +145,7 @@ extern "C" cf_error cf_identify(uint8_t buf[512])
 
     for (int i = 0; i < 512; i++)
     {
-        buf[i] = cf_data;
+        buf[i] = CF_DATA;
     }
     return CF_OK;
 }
@@ -221,7 +196,7 @@ extern "C" cf_error cf_read_sectors(uint32_t lba, uint8_t count, uint8_t *buf)
     }
 
     cf_set_lba(lba, count);
-    cf_command = Griffin::CF_CMD_READ_SECTORS;
+    CF_COMMAND = Griffin::CF_CMD_READ_SECTORS;
 
     for (int sec = 0; sec < count; sec++)
     {
@@ -232,7 +207,7 @@ extern "C" cf_error cf_read_sectors(uint32_t lba, uint8_t count, uint8_t *buf)
         }
         for (int i = 0; i < 512; i++)
         {
-            *buf++ = cf_data;
+            *buf++ = CF_DATA;
         }
     }
     return CF_OK;
@@ -249,7 +224,7 @@ extern "C" cf_error cf_write_sectors(uint32_t lba, uint8_t count, const uint8_t 
     }
 
     cf_set_lba(lba, count);
-    cf_command = Griffin::CF_CMD_WRITE_SECTORS;
+    CF_COMMAND = Griffin::CF_CMD_WRITE_SECTORS;
 
     for (int sec = 0; sec < count; sec++)
     {
@@ -260,7 +235,7 @@ extern "C" cf_error cf_write_sectors(uint32_t lba, uint8_t count, const uint8_t 
         }
         for (int i = 0; i < 512; i++)
         {
-            cf_data = *buf++;
+            CF_DATA = *buf++;
         }
     }
 
@@ -386,9 +361,9 @@ static constexpr uint8_t DUART_CMD_ENABLE_TXRX  = 0x05;  // EC=1, TC=1
 
 extern "C" void duart_putchar(uint8_t ch)
 {
-    while (!(duart_sra & Griffin::DUART_SRA_TXRDY_MASK))
+    while (!(DUART_SRA & Griffin::DUART_SRA_TXRDY_MASK))
         ;
-    duart_tba = ch;
+    DUART_TBA = ch;
 }
 
 extern "C" uint8_t duart_getchar()
@@ -425,20 +400,20 @@ static void duart_38400_init()
     // ---- MC68681 Init: Channel A, 38400 8N1, RxRDY interrupt ----
 
     // Reset Channel A
-    duart_cra = DUART_CMD_RESET_RX;
-    duart_cra = DUART_CMD_RESET_TX;
-    duart_cra = DUART_CMD_RESET_MR_PTR;
+    DUART_CRA = DUART_CMD_RESET_RX;
+    DUART_CRA = DUART_CMD_RESET_TX;
+    DUART_CRA = DUART_CMD_RESET_MR_PTR;
 
     // MR1A: 8 data bits, no parity
-    duart_mra = 0x13;
+    DUART_MR1A = 0x13;
     // MR2A: 1 stop bit, normal mode (MR pointer auto-advanced)
-    duart_mra = 0x07;
+    DUART_MR1A = 0x07;
 
     // ACR: BRG set 0, C/T = Timer mode on X1/CLK direct (bits 6:4 = 110)
-    duart_acr = (0x6U << Griffin::DUART_ACR_CT_MODE_SHIFT);
+    DUART_ACR = (0x6U << Griffin::DUART_ACR_CT_MODE_SHIFT);
 
     // CSRA: Tx and Rx both = BRG 38400 (code 1100 = 0xC)
-    duart_csra = 0xcc;
+    DUART_CSRA = 0xcc;
 
     // C/T preload: F_irq = DUART_CLOCK / preload (Timer mode fires every
     // square-wave half-period = preload input cycles).  TICK_HZ chosen
@@ -447,24 +422,24 @@ static void duart_38400_init()
     static constexpr uint32_t TICK_PRELOAD = Griffin::DUART_CLOCK / TICK_HZ / 2;
     static_assert(TICK_PRELOAD > 0 && TICK_PRELOAD < 0x10000,
                   "DUART tick preload must fit in 16 bits");
-    duart_ctur = (TICK_PRELOAD >> 8) & 0xFF;
-    duart_ctlr =  TICK_PRELOAD       & 0xFF;
+    DUART_CTUR = (TICK_PRELOAD >> 8) & 0xFF;
+    DUART_CTLR =  TICK_PRELOAD       & 0xFF;
 
     // Enable RXRDYA + CTR_READY interrupts.  Both share the level-5
     // autovector; _duart_isr distinguishes them via the ISR snapshot.
-    duart_imr = Griffin::DUART_ISR_RXRDYA_MASK | Griffin::DUART_ISR_CTR_READY_MASK;
+    DUART_IMR = Griffin::DUART_ISR_RXRDYA_MASK | Griffin::DUART_ISR_CTR_READY_MASK;
 
     // Read STARTCC to kick off the C/T (the read itself is the side effect).
-    [[maybe_unused]] uint8_t startcc_discard = duart_startcc;
+    [[maybe_unused]] uint8_t startcc_discard = DUART_STARTCC;
 
     // Clear DUART IVR - chasing a bug
-    duart_ivr = 0x0;
+    DUART_IVR = 0x0;
 
     // Enable TX and RX
-    duart_cra = DUART_CMD_ENABLE_TXRX;
+    DUART_CRA = DUART_CMD_ENABLE_TXRX;
 
     // Report status via bit-bang debug path
-    uint8_t sra = duart_sra;
+    uint8_t sra = DUART_SRA;
     debug_printf("DUART: SRA=0x%02X", sra);
     if (sra & Griffin::DUART_SRA_TXRDY_MASK)
     {
@@ -505,9 +480,9 @@ static inline void duart_enter_brg_test()
 
     // ---- MC68681 Init: Channel A, 115200 8N1, RxRDY interrupt ----
     // Reset Channel A
-    duart_cra = DUART_CMD_RESET_RX;
-    duart_cra = DUART_CMD_RESET_TX;
-    duart_cra = DUART_CMD_RESET_MR_PTR;
+    DUART_CRA = DUART_CMD_RESET_RX;
+    DUART_CRA = DUART_CMD_RESET_TX;
+    DUART_CRA = DUART_CMD_RESET_MR_PTR;
 
     // Enter BRG test mode BEFORE programming CSR — the CSR code meanings
     // change with the test flip-flop, so order matters if we want to be
@@ -516,20 +491,20 @@ static inline void duart_enter_brg_test()
     duart_enter_brg_test();
 
     // MR1A: 8 data bits, no parity
-    duart_mra = 0x13;
+    DUART_MR1A = 0x13;
     // MR2A: 1 stop bit, normal mode
-    duart_mra = 0x07;
+    DUART_MR1A = 0x07;
     // ACR: BRG set 0 (bit 7 = 0), no IP change int
-    duart_acr = 0x00;
+    DUART_ACR = 0x00;
     // CSRA: Tx and Rx both = code 0110 → 115200 in BRG test mode
-    duart_csra = 0x66;
+    DUART_CSRA = 0x66;
 
-    duart_imr = Griffin::DUART_ISR_RXRDYA_MASK;
-    duart_ivr = 0x0;
-    duart_cra = DUART_CMD_ENABLE_TXRX;
+    DUART_IMR = Griffin::DUART_ISR_RXRDYA_MASK;
+    DUART_IVR = 0x0;
+    DUART_CRA = DUART_CMD_ENABLE_TXRX;
 
     // Report status via bit-bang debug path
-    uint8_t sra = duart_sra;
+    uint8_t sra = DUART_SRA;
     debug_printf("DUART: SRA=0x%02X", sra);
     if (sra & Griffin::DUART_SRA_TXRDY_MASK) { debug_printf(" TXRDY"); }
     if (sra & Griffin::DUART_SRA_TXEMT_MASK) { debug_printf(" TXEMT"); }
@@ -577,7 +552,7 @@ static void cf_mount_and_list()
     if (err != CF_OK)
     {
         printf("CF: init failed (err=%d) status=0x%02X error=0x%02X\n",
-               err, cf_status, cf_error_reg);
+               err, CF_STATUS, CF_ERROR);
         return;
     }
     printf("CF: init OK\n");
@@ -587,7 +562,7 @@ static void cf_mount_and_list()
     if (err != CF_OK)
     {
         printf("CF: identify failed (err=%d) status=0x%02X error=0x%02X\n",
-               err, cf_status, cf_error_reg);
+               err, CF_STATUS, CF_ERROR);
         return;
     }
 
@@ -695,11 +670,7 @@ extern "C" const int8_t _binary_startup_raw_end[];
         }
     }
 
-    volatile uint8_t &timer_reg = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_TIMER);
-    volatile uint8_t &timer_arm = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_TIMER_ARM);
-    volatile uint8_t &dac       = *reinterpret_cast<volatile uint8_t *>(Griffin::AUDIO_DAC);
-
-    timer_reg = best_period;
+    GLUE_TIMER = best_period;
 
     // Inner loop in inline asm for tightness.
     // Per sample: write (sample + 128) to DAC, then arm the timer best_arms times.
@@ -725,14 +696,14 @@ extern "C" const int8_t _binary_startup_raw_end[];
         "2:                               \n"  // .test
         "    dbra    %%d3, 1b             \n"
         : "+a" (buf_ptr), "+d" (count)
-        : [dac] "a" (&dac),
-          [arm] "a" (&timer_arm),
+        : [dac] "a" (&AUDIO_DAC),
+          [arm] "a" (&GLUE_TIMER_ARM),
           "d" (arms_m1)
         : "d0", "d1", "memory"
     );
 
-    timer_reg = 0;
-    dac = 0x80;  // silence (center)
+    GLUE_TIMER = 0;
+    AUDIO_DAC = 0x80;  // silence (center)
 }
 
 // Pop one byte from the event ring buffer.  Returns false if empty.

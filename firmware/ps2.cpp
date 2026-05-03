@@ -1,9 +1,7 @@
 #include "ps2.h"
+#include "../griffin.generated.refs.h"
 
-static volatile uint8_t &glue_ps2_clear = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_PS2_CLEAR);
-static volatile uint8_t &glue_ps2_ctrl = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_PS2_CTRL);
-static volatile uint8_t &glue_ps2_status = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_PS2_STATUS);
-static volatile uint8_t &glue_debug_out = *reinterpret_cast<volatile uint8_t *>(Griffin::GLUE_DEBUG_OUT);
+using namespace Griffin::reg;
 
 struct ps2_state_t
 {
@@ -52,8 +50,8 @@ void ps2_init()
     ps2.kbd_next_clk_is_ack = 0;
     ps2.kbd_tx_bits = 0;
     ps2.kbd_tx_data = 0;
-    glue_ps2_ctrl = 0;
-    glue_ps2_clear = Griffin::GLUE_PS2_CLEAR_BIT_READY_MASK;
+    GLUE_PS2_CTRL = 0;
+    GLUE_PS2_CLEAR = Griffin::GLUE_PS2_CLEAR_BIT_READY_MASK;
 }
 
 /* ---- IRQ mask helpers ---------------------------------------------- */
@@ -98,8 +96,8 @@ void ps2_isr(void)
 {
     /* Read status (captures the bit that was on DATA at the falling
      * edge) then ack BIT_READY so the next edge can latch cleanly. */
-    uint8_t status = glue_ps2_status;
-    glue_ps2_clear = Griffin::GLUE_PS2_CLEAR_BIT_READY_MASK;
+    uint8_t status = GLUE_PS2_STATUS;
+    GLUE_PS2_CLEAR = Griffin::GLUE_PS2_CLEAR_BIT_READY_MASK;
 
     /* TX branch */
     if (ps2.kbd_sending)
@@ -110,7 +108,7 @@ void ps2_isr(void)
         {
             /* All 11 bits placed.  Release DATA so the device can pull
              * it low on the next clock to line-ACK. */
-            glue_ps2_ctrl = 0;
+            GLUE_PS2_CTRL = 0;
             ps2.kbd_next_clk_is_ack = 1;
             ps2.kbd_sending = 0;
             return;
@@ -120,7 +118,7 @@ void ps2_isr(void)
          * Open-drain: bit=0 -> drive=1 (pull low),
          *             bit=1 -> drive=0 (release, pull-up -> high). */
         uint16_t txd = ps2.kbd_tx_data;
-        glue_ps2_ctrl = (txd & 1u) ? 0u : Griffin::GLUE_PS2_CTRL_DATA_MASK;
+        GLUE_PS2_CTRL = (txd & 1u) ? 0u : Griffin::GLUE_PS2_CTRL_DATA_MASK;
         ps2.kbd_tx_data = txd >> 1;
         return;
     }
@@ -212,7 +210,7 @@ void ps2_send_byte(uint8_t b)
     uint16_t saved_sr = irq_save();
 
     /* Pull CLK low (request-to-send / inhibit). */
-    glue_ps2_ctrl = Griffin::GLUE_PS2_CTRL_CLK_MASK;
+    GLUE_PS2_CTRL = Griffin::GLUE_PS2_CTRL_CLK_MASK;
 
     /* Hold >=100 us.  At SYSCLK=14 MHz with ROM wait states this loop
      * runs ~16 cycles/iter; 250 iters ≈ 285 us.
@@ -228,7 +226,7 @@ void ps2_send_byte(uint8_t b)
 
     /* Place start bit (= 0) on DATA and release CLK.
      * Setting CTRL = DATA only: CLK released, DATA pulled low. */
-    glue_ps2_ctrl = Griffin::GLUE_PS2_CTRL_DATA_MASK;
+    GLUE_PS2_CTRL = Griffin::GLUE_PS2_CTRL_DATA_MASK;
 
     /* Pre-shift the frame so bit 0 of kbd_tx_data is the first
      * post-start bit (data0).  The ISR will place that on the first
@@ -239,7 +237,7 @@ void ps2_send_byte(uint8_t b)
     ps2.kbd_sending         = 1;
 
     /* Clear any BIT_READY latched by our own CLK-falling edge. */
-    glue_ps2_clear = Griffin::GLUE_PS2_CLEAR_BIT_READY_MASK;
+    GLUE_PS2_CLEAR = Griffin::GLUE_PS2_CLEAR_BIT_READY_MASK;
 
     irq_restore(saved_sr);
 }

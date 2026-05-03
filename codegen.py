@@ -476,6 +476,76 @@ def write_verilog_include(hw: dict, path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# C++ register-reference header — inline volatile references at MMIO addresses
+# ---------------------------------------------------------------------------
+
+def write_cpp_refs_header(hw: dict, path: Path) -> None:
+    """Emit C++23 inline references for memory-mapped registers.
+
+    Each register declared in griffin.yml gets a `volatile uintN_t &` (where N
+    matches the register width) bound to the register's physical address,
+    inside namespace ``Griffin::reg``.  Firmware adds
+    ``using namespace Griffin::reg;`` and writes ``CF_DATA = byte;`` instead
+    of hand-rolling reinterpret_casts."""
+    perifs = hw.get('peripherals', {})
+
+    lines = []
+    w = lines.append
+
+    w(f"// {BANNER}")
+    w("//")
+    w("// Inline references for memory-mapped registers.  Include this header")
+    w("// from firmware translation units that read/write peripheral registers")
+    w("// and add `using namespace Griffin::reg;` to bring the names into scope.")
+    w("//")
+    w("// Each reference is a `volatile uintN_t &` bound to the register's")
+    w("// physical address, where N is the register's declared width.")
+    w("")
+    w("#pragma once")
+    w("")
+    w("#include <cstdint>")
+    w("")
+    w("namespace Griffin::reg {")
+    w("")
+
+    for pname, periph in perifs.items():
+        ar = periph.get('address_range')
+        if not ar:
+            continue
+        regs = periph.get('registers', [])
+        if not regs:
+            continue
+
+        base = parse_int(ar['base'])
+        desc = periph.get('description') or periph.get('part') or ''
+
+        w(f"// {pname}" + (f": {desc}" if desc else ""))
+        for reg in regs:
+            offset = parse_int(reg['offset'])
+            rname  = reg['name']
+            access = reg.get('access', 'rw')
+            width  = parse_int(reg.get('width', 8))
+            if width not in (8, 16, 32):
+                continue
+            ctype = f"uint{width}_t"
+            addr  = base + offset
+            rdesc = reg.get('description', '')
+            short = rdesc.split('.')[0].strip() if rdesc else ''
+            comment = f"  // {access.upper()}"
+            if short:
+                comment += f": {short}"
+            w(f"inline volatile {ctype} &{pname}_{rname} = "
+              f"*reinterpret_cast<volatile {ctype} *>({fmt_hex(addr, 6)}UL);"
+              f"{comment}")
+        w("")
+
+    w("} // namespace Griffin::reg")
+
+    path.write_text('\n'.join(lines) + '\n')
+    print(f"  wrote {path}")
+
+
+# ---------------------------------------------------------------------------
 # MCS-51 (SDCC) C header — register offsets and constants for IO MCU firmware
 # ---------------------------------------------------------------------------
 
@@ -581,6 +651,7 @@ def main():
     write_asm_include(    hw, outdir / f"{stem}.generated.inc")
     write_ld_include(     hw, outdir / f"{stem}.generated.ld")
     write_verilog_include(hw, outdir / f"{stem}.generated.vh")
+    write_cpp_refs_header(hw, outdir / f"{stem}.generated.refs.h")
     write_mcs51_header(   hw, outdir / f"{stem}.generated.mcs51.h")
 
 

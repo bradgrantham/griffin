@@ -1,4 +1,4 @@
-GENERATED := griffin.generated.h griffin.generated.inc griffin.generated.ld griffin.generated.vh
+GENERATED := griffin.generated.h griffin.generated.inc griffin.generated.ld griffin.generated.vh griffin.generated.refs.h
 
 codegen: $(GENERATED)
 
