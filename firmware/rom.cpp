@@ -493,7 +493,7 @@ static inline void duart_enter_brg_test()
 }
 
 // only works on SCC68681/XR68C681
-static void duart_115200_init()
+[[maybe_unused]] static void duart_115200_init()
 {
     debug_printf("DUART: init\n");
 
@@ -548,7 +548,7 @@ static void duart_115200_init()
     {
         int howmany = (size < 16) ? size : 16;
 
-        printf("  0x%06lX: ", (unsigned long)(base_addr + offset));
+        printf("  0x%06lX: ", static_cast<unsigned long>(base_addr + offset));
         for (int i = 0; i < howmany; i++)
         {
             printf("%02X ", data[i]);
@@ -595,7 +595,7 @@ static void cf_mount_and_list()
     cf_parse_identify(id_buf, &info);
     printf("CF: %s, firmware %s, serial %s\n", info.model, info.firmware_rev, info.serial);
     printf("CF: sectors:  %lu, capacity: %lu KB\n",
-           (unsigned long)info.lba_sectors, (unsigned long)(info.lba_sectors / 2));
+           static_cast<unsigned long>(info.lba_sectors), static_cast<unsigned long>(info.lba_sectors / 2));
 
     // Mount filesystem
     FRESULT res = f_mount(&fatfs, "", 1);
@@ -615,12 +615,12 @@ static void cf_mount_and_list()
         if (label[0])
         {
             printf("Volume: %s (S/N %04X-%04X)\n",
-                   label, (unsigned)(vsn >> 16), (unsigned)(vsn & 0xFFFF));
+                   label, static_cast<unsigned>(vsn >> 16), static_cast<unsigned>(vsn & 0xFFFF));
         }
         else
         {
             printf("Volume: (no label) (S/N %04X-%04X)\n",
-                   (unsigned)(vsn >> 16), (unsigned)(vsn & 0xFFFF));
+                   static_cast<unsigned>(vsn >> 16), static_cast<unsigned>(vsn & 0xFFFF));
         }
     }
 
@@ -630,8 +630,8 @@ static void cf_mount_and_list()
     res = f_getfree("", &free_clust, &fs_ptr);
     if (res == FR_OK)
     {
-        unsigned long free_kb = (unsigned long)(free_clust * fs_ptr->csize) / 2;
-        unsigned long total_kb = (unsigned long)((fs_ptr->n_fatent - 2) * fs_ptr->csize) / 2;
+        unsigned long free_kb = static_cast<unsigned long>(free_clust * fs_ptr->csize) / 2;
+        unsigned long total_kb = static_cast<unsigned long>((fs_ptr->n_fatent - 2) * fs_ptr->csize) / 2;
         printf("  %lu KB free / %lu KB total\n", free_kb, total_kb);
     }
 
@@ -651,7 +651,7 @@ static void cf_mount_and_list()
             }
             printf("  %c %7lu  %s\n",
                    (fno.fattrib & AM_DIR) ? 'd' : '-',
-                   (unsigned long)fno.fsize, fno.fname);
+                   static_cast<unsigned long>(fno.fsize), fno.fname);
         }
         f_closedir(&dir);
     }
@@ -680,7 +680,7 @@ extern "C" const int8_t _binary_startup_raw_end[];
     for (uint8_t n = 1; n <= 31; n++)
     {
         uint32_t tick = (static_cast<uint32_t>(n) + 1) * 8;
-        uint16_t arms = (target + tick / 2) / tick;
+        uint16_t arms = static_cast<uint16_t>((target + tick / 2) / tick);
         if (arms < 1)
         {
             arms = 1;
@@ -827,8 +827,8 @@ static int debug_getline(char *buf, int maxlen)
         }
         else if (pos < maxlen - 1)
         {
-            buf[pos++] = ch;
-            debug_serial_putchar(ch);
+            buf[pos++] = static_cast<char>(ch);
+            debug_serial_putchar(static_cast<char>(ch));
         }
     }
 }
@@ -881,7 +881,7 @@ static int debug_getline(char *buf, int maxlen)
             for (uint32_t off = 0; off < len; off += 16)
             {
                 uint32_t row = (len - off < 16) ? (len - off) : 16;
-                debug_printf("%06lX:", (unsigned long)(addr + off));
+                debug_printf("%06lX:", static_cast<unsigned long>(addr + off));
                 for (uint32_t i = 0; i < row; i++)
                 {
                     uint8_t val = *reinterpret_cast<volatile uint8_t *>(addr + off + i);
@@ -900,7 +900,7 @@ static int debug_getline(char *buf, int maxlen)
             {
                 uint32_t val = parse_hex(p, &end);
                 *reinterpret_cast<volatile uint8_t *>(addr) = static_cast<uint8_t>(val);
-                debug_printf("%06lX <- %02X\n", (unsigned long)addr, val & 0xFF);
+                debug_printf("%06lX <- %02X\n", static_cast<unsigned long>(addr), val & 0xFF);
             }
             else
             {

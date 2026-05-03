@@ -206,7 +206,7 @@ void ps2_send_byte(uint8_t b)
     uint16_t parity = odd_parity_bit(b);
     uint16_t frame  = ((uint16_t)b << 1)
                     | (parity << 9)
-                    | 0x0400u;          /* stop bit */
+                    | (uint16_t)0x0400u;          /* stop bit */
 
     /* Mask IRQs while we touch the CPLD and TX state. */
     uint16_t saved_sr = irq_save();
