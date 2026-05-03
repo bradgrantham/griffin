@@ -57,7 +57,7 @@ int getpid(void)
     return 1;
 }
 
-int kill(int pid, int sig)
+int kill([[maybe_unused]] int pid, [[maybe_unused]] int sig)
 {
     errno = EINVAL;
     return -1;
@@ -103,13 +103,12 @@ _ssize_t write (int file,  const void *ptr, size_t len)
 
     if((file == 0) || (file == 1) || (file == 2))
     {
-        int DataIdx;
-
-        for (DataIdx = 0; DataIdx < len; DataIdx++)
+        const uint8_t* chars = (const uint8_t*)ptr;
+        for (size_t i = 0; i < len; i++)
         {
-            putchar_fn(*(const uint8_t *)ptr++);
+            putchar_fn(*chars++);
         }
-        return len;
+        return (_ssize_t) len;
     } else {
         int myFile = file - FD_OFFSET;
         if(!filesOpened[myFile])
@@ -127,7 +126,7 @@ _ssize_t write (int file,  const void *ptr, size_t len)
             errno = EIO;
             return -1;
         }
-        return wrote;
+        return (_ssize_t)wrote;
 #else /* not USE_FATFS */
         errno = EIO;
         return -1;
@@ -150,13 +149,13 @@ int close(int file)
     return 0;
 }
 
-int fstat(int file, struct stat *st)
+int fstat([[maybe_unused]] int file, [[maybe_unused]] struct stat *st)
 {
     st->st_mode = S_IFCHR;
     return 0;
 }
 
-int isatty(int file)
+int isatty([[maybe_unused]] int file)
 {
     return 1;
 }
@@ -181,18 +180,18 @@ off_t lseek (int file, off_t ptr, int dir)
 
         FRESULT result;
         if(dir == SEEK_SET) {
-            result = f_lseek(&files[myFile], ptr);
+            result = f_lseek(&files[myFile], (FSIZE_t)ptr);
         } else if(dir == SEEK_CUR) {
-            result = f_lseek(&files[myFile], ptr + f_tell(&files[myFile]));
+            result = f_lseek(&files[myFile], (FSIZE_t)ptr + f_tell(&files[myFile]));
         } else /* SEEK_END */ {
-            result = f_lseek(&files[myFile], f_size(&files[myFile]) - 1 - ptr);
+            result = f_lseek(&files[myFile], f_size(&files[myFile]) - 1 - (FSIZE_t)ptr);
         }
         if(result != FR_OK) {
             printf("XXX lseek: result not OK %d\n", result);
             errno = EIO;
             return -1;
         }
-        return f_tell(&files[myFile]);
+        return (off_t)f_tell(&files[myFile]);
 
 #else /* not USE_FATFS */
         errno = EIO;
@@ -207,20 +206,20 @@ long read(int file, void *__buf, size_t len)
     if(file < 0) { errno =  EINVAL; return -1; }
 
     if((file == 0) || (file == 1) || (file == 2)) {
-        int DataIdx;
+        size_t i;
 
-        for (DataIdx = 0; DataIdx < len; DataIdx++)
+        for (i = 0; i < len; i++)
         {
             if (console_is_duart)
             {
-                *ptr++ = duart_getchar();
+                *ptr++ = (char)duart_getchar();
             }
             else
             {
                 *ptr++ = 0;
             }
         }
-        return len;
+        return (_ssize_t)len;
     } else {
         int myFile = file - FD_OFFSET;
         if(!filesOpened[myFile]) {
@@ -236,7 +235,7 @@ long read(int file, void *__buf, size_t len)
             errno = EIO;
             return -1;
         }
-        return wasRead;
+        return (_ssize_t)wasRead;
 #else /* not USE_FATFS */
         errno = EIO;
         return -1;
@@ -281,7 +280,7 @@ int open(const char *path, int flags, ...)
         FatFSFlags |= FA_CREATE_ALWAYS;
     }
     errno = 0;
-    FRESULT result = f_open (&files[which], path, FatFSFlags);
+    FRESULT result = f_open (&files[which], path, (BYTE)FatFSFlags);
     if(result) {
         printf("XXX open couldn't open \"%s\" for reading, FatFS result %d\n", path, result);
         errno = EIO;
@@ -298,29 +297,35 @@ int open(const char *path, int flags, ...)
 
 int wait(int *status)
 {
+    (void)status;
     errno = ECHILD;
     return -1;
 }
 
 int unlink(const char *name)
 {
+    (void)name;
     errno = ENOENT;
     return -1;
 }
 
 clock_t times(struct tms *buf)
 {
-    return -1;
+    (void)buf;
+    return (clock_t)-1;
 }
 
 int stat(const char *__restrict file, struct stat *__restrict st)
 {
+    (void)file;
     st->st_mode = S_IFCHR;
     return 0;
 }
 
 int link(const char *old, const char *_new)
 {
+    (void)old;
+    (void)_new;
     errno = EMLINK;
     return -1;
 }
@@ -333,6 +338,9 @@ int fork(void)
 
 int execve(const char *name, char *const argv[], char *const env[])
 {
+    (void)name;
+    (void)argv;
+    (void)env;
     errno = ENOMEM;
     return -1;
 }
