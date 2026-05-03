@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Griffin</title>
+<style>
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    max-width: 720px;
+    margin: 2em auto;
+    padding: 0 1em;
+    line-height: 1.5;
+    color: #222;
+  }
+  h1, h2 { font-family: Helvetica, Arial, sans-serif; }
+  h1 { margin-bottom: 0.2em; }
+  h2 { margin-top: 1.6em; }
+  img.photo { max-width: 100%; }
+  img.crest { float: right; width: 100px; margin: 0 0 0.5em 1em; }
+  code { font-family: Menlo, Consolas, monospace; font-size: 0.95em; }
+  a { color: #0645ad; }
+  .caption { font-size: 0.9em; color: #666; }
+</style>
+</head>
+<body>
+
+<img src="https://plunk.org/griffin/Crest.svg" alt="Grantham crest, with a griffin" class="crest">
+
+<h1>Griffin</h1>
+
+<p>
+Griffin is a homebrew 68000 computer I started building to use up some old chips. The Grantham family
+crest features a griffin, which I had forgotten, so the name turned out to be very appropriate. The
+<a href="https://github.com/bradgrantham/griffin">source and design files are on GitHub</a>.
+</p>
+
+<p>
+<img src="https://plunk.org/griffin/griffin_050126.jpg" alt="The Griffin board" class="photo">
+<br>
+<span class="caption">The board on the bench, May 2026.</span>
+</p>
+
+<p>
+The starting point was the parts drawer. I had a 12 MHz 68000, a couple of 128K AS6C4008-55 SRAMs,
+some 64K EPROMs that need to be erased with 20 minutes under an ultraviolet lamp,
+and the usual assortment of LEDs, transistors, capacitors, and resistors that
+accumulates over forty years. I bought a few new parts to fill in the gaps: an MC68681 DUART, three
+ATF1508AS programmable logic devices, and EPROMs that could be erased directly in a USB programmer.
+A 68010 is on the way in case I want to try Linux NOMMU later.
+</p>
+
+<p>
+The goal was modest. Boot the CPU, talk to a serial console, read a CF card, take input from a PS/2
+keyboard, and eventually display a bitmap on a screen. Audio would be a bonus. None of this is
+groundbreaking — people have built dozens of 68k boards — but I wanted one made out of parts I already
+had.
+</p>
+
+<h2>The design lives in YAML</h2>
+
+<p>
+Early on I decided that the machine definition would live in a single file, <code>griffin.yml</code>.
+It contains the register addresses, bitfield definitions, queue sizes, clock constants, and the
+protocols between peripherals. A top-level <code>make</code> generates C++, Verilog, and assembly
+headers from it, so the firmware, the CPLD logic, and the emulator all agree on what bit means what.
+</p>
+
+<p>
+There's also <code>griffin.md</code>, which is more of a running design journal. Looking back through
+the git history of those two files, the project changed its mind a lot. Composite video got added,
+deleted, and partly added back. The serial part went from an 8051-style UART to the MC68681.
+An MMU appeared and then went away. A "rev 2" rethink started before rev 1 was even fully working.
+Most of the meandering happened because something didn't fit in the CPLD, or because I changed my
+mind about what I cared about.
+</p>
+
+<h2>Where it is now</h2>
+
+<p>
+The rev 1 board boots at an overclocked 14 MHz. It has:
+</p>
+
+<ul>
+  <li>A 68000 CPU (probably a 68010 later).</li>
+  <li>1 MB of SRAM, two AS6C4008-55s in a 16-bit pair.</li>
+  <li>Two 27C512 EPROMs for ROM, even and odd.</li>
+  <li>An MC68681 DUART for the serial console and the system tick.</li>
+  <li>A CF card interface with FAT support, via ElmChan's FatFs.</li>
+  <li>PS/2 keyboard input, mostly working.</li>
+  <li>A CPU-writable audio DAC with no hardware assistance.</li>
+</ul>
+
+<p>
+The console comes up, the ROM monitor talks, the CF card enumerates and FAT reads work, and PS/2 is
+good enough that I can print keycodes. There is no video yet.
+</p>
+
+<p>
+The rev 1 design files are in the repo:
+the <a href="https://github.com/bradgrantham/griffin/blob/main/board_rev_1_schematic.pdf">schematic</a>,
+the <a href="https://github.com/bradgrantham/griffin/blob/main/board_rev_1_pcb.pdf">PCB</a>,
+and a <a href="https://github.com/bradgrantham/griffin/blob/main/board/board-pcb-rev-1.distilled.txt">distilled netlist</a>
+summarized from KiCad.
+</p>
+
+<h2>CPLDs and the CPU</h2>
+
+<p>
+The most interesting decisions on this project have been about where to draw the line between the CPU
+and the three ATF1508 CPLDs, which I named <code>GLUE</code>, <code>VIDEO</code>, and
+<code>ENGINE</code>. The CPLDs are good at deterministic, parallel, fast signaling, but their real
+estate is tiny — on the order of 128 macrocells each. The CPU is flexible but it stalls on DTACK,
+takes interrupts, and waits on slow ROM, so it's not great for hard real-time work.
+</p>
+
+<p>
+A full UART would not fit in <code>GLUE</code>, so instead <code>GLUE</code> just provides a free-running
+reloadable timer. The CPU does the actual UART RX and TX in a tight polled loop with deterministic
+ticks. That worked well enough for bringup, and it has since been replaced by the MC68681's hardware
+UART. The trick still earned its keep.
+</p>
+
+<p>
+PS/2 input is split the same way. <code>GLUE</code> synchronizes the <code>PS2_CLK</code> and
+<code>PS2_DATA</code> lines, detects each falling edge of the clock, latches the data bit, and
+raises an IRQ — the bit-level work that the CPU has no business trying to do at that timing. The
+CPU then handles the framing on top of that: start/stop/parity bits, packing into bytes, and
+scancode decoding. Bit-level timing in the CPLD, byte-level protocol in firmware.
+</p>
+
+<h2>The CPLD toolchain</h2>
+
+<p>
+The ATF1508 toolchain is its own small adventure. I am driving Verilog through synthesis into EDIF,
+and then through Atmel's old <code>fit1508</code> binary. A Python helper summarizes the fit report
+and checks that the pin assignments have not drifted. The pins on the rev 1 board are already routed,
+so the fitter has to be told to keep the pinout exactly.
+The Makefile in <code>cpld/</code> wraps all of that, and the resulting
+<code>.svf</code> files get programmed in over JTAG.
+</p>
+
+<h2>The emulator</h2>
+
+<p>
+There's a small 68000 emulator in <code>emulator/</code> that models the CPU and the MMIO peripherals
+well enough to run the ROM. It has turned out to be very useful: I can iterate on firmware without
+pulling the EPROMs, which early on meant erasing them under UV, and
+reflashing, which is still a real time sink. It also serves
+as a sanity check — if a change behaves the same on the emulator and the real board, I have more
+confidence the bug is somewhere I understand, and if they disagree, that disagreement is itself a
+useful clue.
+</p>
+
+<h2>What's next</h2>
+
+<p>
+The next thing I want to see is video. The rev 1 board has both a monochrome composite output and a
+VGA output for 640&times;480, and I would be happy to get either one of them displaying a stable
+raster of a pattern out of memory.
+</p>
+
+<p>
+After that, a proper keyboard-and-screen monitor, and then probably a try at FUZIX, once
+there's something to look at.
+</p>
+
+<h2>A note on Claude Code</h2>
+
+<p>
+I have leaned heavily on
+<a href="https://claude.com/claude-code">Claude Code</a> throughout the project, both for typing
+boilerplate and as a design consultant I can argue with at midnight. It has helped me untangle CPLD
+fitter errors, draft emulator code, write firmware in C++23, and generally keep momentum on a project
+I would otherwise have shelved several times. A lot of the cleaner code on this project would not
+exist without it, and probably some of the bugs would not either.
+</p>
+
+<p>
+Thanks for reading. The
+<a href="https://github.com/bradgrantham/griffin">repository</a> is the most up-to-date thing; this
+page will go stale faster than the code does.
+</p>
+
+<p style="margin-top: 2em; font-size: 0.9em; color: #666;">
+— Brad Grantham, May 2026
+</p>
+
+</body>
+</html>
