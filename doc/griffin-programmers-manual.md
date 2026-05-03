@@ -5,7 +5,7 @@
 
 ## What Griffin Is
 
-Griffin is a homebrew 68000 computer built around a Motorola MC68000P12 at 12 MHz and a set of ATF1508 CPLDs.  It boots from 128K of ROM into up to 4MB of SRAM and talks to the outside world through a PS/2 keyboard and mouse, a 115200 baud serial port, a CompactFlash card slot, and either NTSC composite or VGA video output.  An 8-bit R2R DAC provides audio.  A third CPLD socket ("ENGINE") is reserved for application-specific accelerators.
+Griffin is a homebrew 68000 computer built around a Motorola MC68000P12 at 12 MHz and a set of ATF1508 CPLDs.  It boots from 128K of ROM into up to 4MB of SRAM and talks to the outside world through a PS/2 keyboard and mouse, a 115200 baud serial port, a CompactFlash card slot, and either NTSC composite or VGA video output.  An 8-bit R2R DAC provides audio.  A third CPLD socket ("ENGINE") is TBD.
 
 This manual describes what the hardware looks like from the 68000 side: the address map, the peripheral registers, the interrupt scheme, and the ROM routines that are available to code running from RAM.
 
@@ -74,9 +74,7 @@ GLUE generates DTACK on behalf of most peripherals by counting SYSCLK cycles aft
 | VIDEO registers | 0 | 83 ns |
 | CompactFlash | 7 | 667 ns |
 
-The IO MCU and ENGINE provide their own DTACK via handshake signals and may take variable time to respond.  GLUE asserts BERR after 256 SYSCLK cycles (about 21 us at 12 MHz) if IO MCU DTACK has not arrived; the standard BERR timeout is shorter for other devices.
-
-VIDEO_STALL is a separate mechanism: when armed, *all* bus DTACK is held off until the VIDEO shift register is ready for the next word of pixel data.  This gives the CPU a flow-controlled interface for streaming pixels without timing loops.
+The 68681 provides its own DTACK via handshake signals and may take variable time to respond.  GLUE asserts BERR after 256 SYSCLK cycles (about 21 us at 12 MHz) if 68681 DTACK has not arrived; the standard BERR timeout is shorter for other devices.
 
 
 ## Interrupts
@@ -86,7 +84,7 @@ Griffin uses autovectored interrupts exclusively.  GLUE asserts `~VPA` during an
 | IPL Level | Vector | Source | Description |
 |---|---|---|---|
 | 7 (NMI) | 31 | VIDEO | Frame (vblank) or line interrupt |
-| 6 | 30 | ENGINE | Application-specific accelerator |
+| 6 | 30 | ENGINE |  |
 | 5 | 29 | IO MCU | Event queue has data |
 | 4 | 28 | GLUE UART | Byte received on DEBUG_IN (if enabled) |
 
@@ -139,8 +137,6 @@ The baud rate is hard-coded in the GLUE Verilog; there is no software-configurab
 | Bit | Name | Description |
 |---|---|---|
 | 0 | `ROM_OVERLAY_DISABLE` | Write 1 to unmap ROM from Bank 1 address space |
-| 1 | `IO_RESET_RELEASE` | Write 1 to release IO MCU from reset (drives IO_RESET low) |
-| 2 | `VIDEO_STALL_ENABLE` | Write 1 to allow VIDEO_STALL to block DTACK (default 0 so the system boots without a VIDEO CPLD installed) |
 
 The ROM startup code writes `0x03` (overlay off + IO MCU released) after copying the vector table to RAM.
 
@@ -171,99 +167,6 @@ The intended use is bit-banged protocols or audio sample output where you need p
 ```
 
 
-## VIDEO Registers (base `0xE00000`)
-
-VIDEO is a second ATF1508 that generates pixel output.  It contains a 16-bit shift register, a 2-entry R3G3B2 palette, and H/V timing counters.  The CPU feeds it pixel data through a flow-controlled "snoop" mechanism.
-
-All registers are 8-bit at odd addresses unless noted as 16-bit.
-
-### MODE (`0xE00001`, r/w)
-
-| Bit | Name | Description |
-|---|---|---|
-| 2:0 | `CLOCK` | Clock source: `0b000`=disabled, `0b100`=14.318 MHz (NTSC), `0b101`=25.175 MHz (VGA) |
-| 3 | `PALETTE` | 0=slow palette (one palette per line), 1=fast palette (palette update every 16 pixels) |
-| 4 | `FORMAT` | 0=progressive, 1=interlaced |
-| 5 | `ENBVINT` | 0=disable vblank interrupt, 1=enable (IPL 7!) |
-| 6 | `ENBSNP` | 0=disable VIDEO_STALL snoop, 1=enable |
-| 7 | `CBURST` | 0=no colorburst, 1=enable colorburst (NTSC artifact color) |
-
-**Mode change procedure:** disable ENBVINT, wait at least 50 ms, configure WORDS_START / LINES_START / LINES_COUNT and other registers, then write MODE with the desired settings.
-
-### MODE2 (`0xE00003`, r/w)
-
-| Bit | Name | Description |
-|---|---|---|
-| 0 | `PPC` | 0=one pixel per clock, 1=one pixel per two clocks (pixel doubling for 320-wide modes) |
-| 1 | `ENBLINT` | 0=disable line interrupt, 1=enable line interrupt during blanking |
-
-Can be changed at any time.
-
-### WORDS_START (`0xE00005`, write only, 8-bit)
-
-Number of 16-pixel "words" from the end of hblank to the first visible output.  This positions the active display horizontally.  Change during hblank only.
-
-### BORDER_PIXEL (`0xE00009`, r/w, 8-bit)
-
-Bit 0 selects the pixel value used outside the visible word range (fed through the palette like any other pixel).  Change at any time.
-
-### LINES_START (`0xE0000B`, write only, 8-bit)
-
-Number of lines after vblank end before visible output begins.  Also unblocks snoop reads after vsync.
-
-### LINES_COUNT (`0xE0000C`, write only, 16-bit)
-
-Number of visible scan lines.  Written as a 16-bit word.
-
-### PALETTE (`0xE0000E`, write only, 16-bit)
-
-Loads the palette register immediately.  Two R3G3B2 entries packed into one word: entry 0 in the low byte (selects the color for pixel value 0), entry 1 in the high byte (pixel value 1).
-
-R3G3B2 encoding: bits 7:5 = red (3 bits), bits 4:2 = green (3 bits), bits 1:0 = blue (2 bits).
-
-### NEXT_PALETTE (`0xE00010`, write only, 16-bit)
-
-Same format as PALETTE, but buffered.  Gets promoted to the active palette on the next shift register reload (every 16 pixel clocks).  In "fast palette" mode, the CPU writes a palette word and a pixel word alternately, giving 2 colors per 16-pixel group — up to 80 distinct colors across a 640-pixel line.
-
-### ARM_SNOOP (`0xE00012`, write only, 16-bit)
-
-Write any value to arm the VIDEO_STALL blocking snoop.  Must be written once per visible scan line, before beginning the pixel data writes for that line.  While ENBSNP is set in MODE and the snoop is armed, GLUE holds off DTACK on the *next* bus access until the VIDEO shift register is empty and ready.
-
-### DISARM_SNOOP (`0xE00014`, write only, 16-bit)
-
-Write any value to disarm the snoop.  Do this at the end of each visible line so that hblank processing isn't stalled.
-
-### PIXEL_DATA (`0xE00016`, write only, 16-bit)
-
-16 bits of pixel data.  Bit 0 (LSB) is shifted out first and selects between palette entries 0 and 1.  When the snoop is armed and VIDEO_STALL is enabled in GLUE, writing this register stalls until the shift register is empty.
-
-### Driving Video: The Scanline Loop
-
-The basic pattern for a visible frame:
-
-1. VIDEO raises IPL 7 at the start of vblank.
-2. Your ISR sets up per-frame state and waits for vblank to end (via LINES_START timing).
-3. For each visible line:
-   a. Optionally write PALETTE or NEXT_PALETTE.
-   b. Write ARM_SNOOP.
-   c. Write N words to PIXEL_DATA (or perform `move.w (An)+, Dn` reads that VIDEO snoops).  Each write auto-stalls until the shift register is ready.
-   d. Write DISARM_SNOOP.
-   e. Optionally do hblank housekeeping (poll IO, update palette for next line, etc.)
-4. After the last visible line, return from the ISR.
-
-In "slow palette" mode each line is: arm, N pixel words, disarm.
-In "fast palette" mode each line is: arm, then N repetitions of (palette word, pixel word), disarm — conveniently done with `move.l (An)+, Dn` which performs two word reads.
-
-### Practical Video Modes
-
-| Mode | Resolution | Clock | PPC | Pixel Words/Line |
-|---|---|---|---|---|
-| NTSC mono | 704x480i | 14.318 MHz | 0 | 44 |
-| NTSC color | 176x480i | 14.318 MHz | 1 | 11 (artifact color) |
-| VGA 2-color | 640x480p | 25.175 MHz | 0 | 40 |
-| VGA 2-color wide pixel | 320x480p | 25.175 MHz | 1 | 20 |
-
-At 12 MHz the CPU can realistically sustain about 40 pixel words per line in VGA progressive mode.  640x480 at one pixel per clock needs a 68EC000 at 20 MHz to keep up.
 
 
 ## CompactFlash Registers (base `0xF40000`)
@@ -314,62 +217,9 @@ Always OR the Drive/Head register with `0xE0` (`CF_DH_LBA`) to select LBA addres
 
 In 8-bit PIO mode the CF card returns each 16-bit ATA word low-byte-first.  ATA strings pack the first character of each pair in the *high* byte, so adjacent characters come out swapped.  The ROM's `cf_extract_string` handles this.
 
+## 68681
 
-## IO MCU Registers (base `0xF80000`)
-
-The IO MCU is an AT89S52 running at 11.0592 MHz.  It manages PS/2 keyboard and mouse receive, a 115200 baud UART for serial console, and a programmable systick timer.  It communicates with the 68000 through a simple handshake bus protocol: GLUE selects the MCU, the MCU reads or writes the data bus and asserts DTACK, then both sides release.
-
-The 68000 side sees a FIFO of tagged events.
-
-### RX_DATA / TX_DATA (`0xF80001`)
-
-| Direction | Description |
-|---|---|
-| Read | Dequeue one byte from the MCU's event queue.  Returns `0x00` (`EVT_EMPTY`) if the queue is empty. |
-| Write | Send a byte out the MCU's UART TX. |
-
-### STATUS / CONFIG (`0xF80003`)
-
-| Direction | Bits | Description |
-|---|---|---|
-| Read | 0 | `QUEUE_NOTEMPTY` — event queue contains data |
-| Read | 1 | `TX_READY` — UART TX buffer is empty |
-| Read | 2 | `KBD_PRESENT` — PS/2 keyboard detected |
-| Read | 3 | `MOUSE_PRESENT` — PS/2 mouse detected |
-| Read | 4 | `OVERFLOW` — queue overflow occurred (sticky until MCU reset) |
-| Write | 2:0 | `TIMER_RATE` — systick rate selection (see below) |
-
-### Systick Timer Rates
-
-| Value | Rate |
-|---|---|
-| 0 | Disabled |
-| 1 | 50 Hz |
-| 2 | 60 Hz |
-| 3 | 100 Hz |
-| 4 | 200 Hz |
-
-When enabled, the MCU enqueues an `EVT_TIMER` byte at the selected rate and asserts `~IO_IRQ`.
-
-### Event Protocol
-
-The event queue is a stream of tagged bytes.  Each event is either a single type byte (for timer ticks) or a type byte followed by a payload byte.  Dequeue by reading RX_DATA until you get `EVT_EMPTY` (0x00).
-
-| Type Byte | Name | Payload | Description |
-|---|---|---|---|
-| `0x00` | `EVT_EMPTY` | — | Queue is empty (sentinel, not a real event) |
-| `0x01` | `EVT_UART_RX` | 1 byte: received char | UART byte received |
-| `0x02` | `EVT_KBD` | 1 byte: PS/2 scancode | Keyboard scancode (make/break) |
-| `0x03` | `EVT_MOUSE` | 1 byte: mouse data | Raw PS/2 mouse byte |
-| `0x04` | `EVT_TIMER` | — | Systick timer tick (no payload) |
-
-The ROM's level-5 ISR drains this queue into a 256-byte ring buffer in RAM (`io_evt_queue` at a fixed address in `.monitor_data`), so application code can process events without directly accessing IO MCU hardware in time-critical paths.
-
-### PS/2 Scancode Notes
-
-Keyboard events are raw PS/2 Set 2 scancodes.  A key press is a single byte (e.g. `0x1C` for 'A').  A key release is `0xF0` followed by the scancode.  Extended keys are prefixed with `0xE0`.  The ROM does not currently decode these into ASCII — that's up to your application.
-
-Mouse events are raw PS/2 mouse protocol bytes.  A standard PS/2 mouse sends 3-byte packets: status (buttons + sign bits), X delta, Y delta.  Your application must reassemble packets from the individual bytes.
+TBD
 
 
 ## AUDIO DAC (`0xFC0001`)
@@ -435,18 +285,9 @@ Read `count` sectors (512 bytes each) starting at `lba` into `buf`.
 
 Write `count` sectors from `buf` to disk starting at `lba`.
 
-### IO MCU Event Ring Buffer
+### UART and PS/2 ring buffers
 
-The ROM's ISR maintains a 256-byte ring buffer of IO MCU events in RAM.  The relevant symbols (in `.monitor_data`):
-
-| Symbol | Type | Description |
-|---|---|---|
-| `io_evt_queue` | `uint8_t[256]` | Ring buffer storage |
-| `io_evt_head` | `uint32_t` | Read index (consumer advances this) |
-| `io_evt_tail` | `uint32_t` | Write index (ISR advances this) |
-| `io_evt_overflow` | `uint8_t` | Sticky overflow flag |
-
-The `evt_pop` helper in `rom.cpp` demonstrates the consumer side: read `io_evt_queue[head]`, advance head with `& 0xFF`.  No interrupt masking is needed because only the consumer modifies `head` and only the ISR modifies `tail`.
+TBD
 
 ### Memory Size
 
@@ -482,15 +323,6 @@ make
 
 Produces `rom.bin` (flat binary for EPROM) and split `rom_even.bin` / `rom_odd.bin` for the two byte-wide ROM chips.  The toolchain is a crosstool-ng `m68k-unknown-elf` cross-compiler targeting the plain 68000 (not 68020 or ColdFire).
 
-### IO MCU Firmware
-
-```bash
-cd io-mcu
-make
-```
-
-Requires `sdcc`.  Produces `io-mcu.ihx` (Intel HEX) for flashing the AT89S52.
-
 ### CPLD Bitfiles
 
 ```bash
@@ -505,8 +337,4 @@ Runs the Verilog through the Microchip fitter to produce `.jed` files for the AT
 
 **Instruction timing and ROM wait states.**  The ROM has 1 wait state at 12 MHz.  If you're writing cycle-counted loops that fetch from ROM (which includes all instruction fetches when running from ROM), each instruction takes about 2 extra SYSCLK cycles beyond the 68000's nominal cycle count.  If timing matters, copy your loop to RAM and run it from there.
 
-**The IO MCU bus protocol is slow.**  Each IO MCU access involves a software handshake on the AT89S52 side.  The MCU disables interrupts during the bus cycle, so if you're hammering the IO MCU with reads, you may cause PS/2 clock edges to be missed.  Drain events in batches during vblank rather than polling continuously.
-
-**VIDEO_STALL freezes the whole CPU.**  When the snoop is armed and VIDEO_STALL_ENABLE is set in GLUE_CONFIG, *any* bus access — not just VIDEO register writes — is held off until the shift register is ready.  This is by design: it's how the CPU and VIDEO stay synchronized without a frame buffer.  But it means you can't service interrupts or do anything else during visible scan lines.  Do your housekeeping in hblank and vblank.
-
-**Use `griffin.yml` as the source of truth.**  Don't hard-code register addresses in your application.  Include the appropriate generated header and use the symbolic names.  If you need to add a register or constant, add it to the YAML and regenerate.
+Use `griffin.yml` as the source of truth.**  Don't hard-code register addresses in your application.  Include the appropriate generated header and use the symbolic names.  If you need to add a register or constant, add it to the YAML and regenerate.
