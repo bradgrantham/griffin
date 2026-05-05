@@ -55,3 +55,10 @@ griffin.generated.mcs51.h
 griffin.generated.vh
 griffin.generated.yml
 griffin.generated.refs.h
+audio.raw
+cf.bin
+duart-setup-115200.mon
+duart-setup-38400.mon
+duart-setup-9600.mon
+rom_even-read.bin
+rom_odd-read.bin
