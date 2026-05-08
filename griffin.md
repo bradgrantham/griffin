@@ -114,7 +114,7 @@ USB-C power with switch inline between supply and USB-C port
 
 ## Power-on reset and user reset button
 
-Supervisor IC
+DS1233 reset supervisor
 
 ## System clock
 
@@ -303,17 +303,45 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 
 ## Investigation Plan
 
+Why is serial transmit and interrupt not working?
+
+* was doubling up input characters for a little while
+* IRQ line loose?
+* Get this under control
+
 Clean everything up for Rev 2, get as much tested as possible
 
-* Prototype audio DMA
-* Prototype 640x240 composite so you have a standalone machine?
-* Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card
-* 68681 to 115200 baud - if we can't, then need other solution?
-  * I only have MC68681!  :expressionless:  So I'll need to order SCC68681 or the XC variant.  38400 until then.
+* Prototype 640x240 mono composite so you have a standalone machine.
+  * interlace and colorburst and audio are bonus - add them after if there is room
+  * Bus mastering requests for first load and releases after last load
+  * Work to do:
+    * Finish populating VGA resistors according to Claude's guidance
+    * Attempt video.v; no bodging needs to be finished for that
+    * Assign wires that need to be ENGINE-to-7200-to-VIDEO - bodge them out to the breadboard
+    * Attempt engine.v, maybe with two FIFO in engine.v but 7200s should arrive tomorrow.
+* Booter & apps
+  * Need trap interface to ROM calls
+    * get_time, open/close/read/write/etc, sbrk?, read(0), write(0) for console
+
+  * "App" linker.ld, load at 0x1000, crt0.s that just sets up program and rts when done?, syscalls.c that pulls trap
+  * Load file into memory, jump to 0x1000
+  * What to do about PS/2?  Want some kind of raw SDL/GLFW-like keycode operation for graphical apps.
+    * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader
+
+* 68681 to 115200 baud - I only have MC68681!  :expressionless:  I have ordered 2 XR68C681, which has a 16-byte buffer and can do 115200.
+* Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 12MB on Rev 2
+  * buildroot
+    * Need kernel config for: serial, PPP, block devices, CF card, ext4?
+      * bonus: fbdev
+
+    * need serial driver for 68681
+    * need later a console driver hooking together PS/2 and framebuffer
+    * need 68010 config, seems like Claude can get on top of that
+
 
 ## Fiddly bits for later
 
-framing error on first codes from keyboard
+framing error on first codes from keyboard...?
 
 ## Strategy
 
@@ -341,19 +369,16 @@ Need a rev1 branch for continuing experiments and main branch under development 
 
 ## Summary
 
-Either drop back to CUPL or get tristating figured out through Verilog
-
 * BQ3285 and a coin cell to be somewhat period-appropriate RTC
-* 16MHz CPU clock, 16-bit RAM, 16-bit ROM
+* 16MHz CPU clock, 16-bit 16MB SDRAM, 16-bit ROM?
 * 16-bit True IDE CF
-* 16MB 16-bit SRAM part
 * GLUE ATF1508 has same functionality as Rev 1 minus SYSTICK
 
-  * separate DEBUG LED pin; use it more liberally from CPU for boot codes or steady-state (video ISR) or double fault (GLUE)
+  * separate DEBUG LED pin bit; use it more liberally from CPU for boot codes or steady-state (video ISR) or double fault (GLUE)
 
-  * boot serial TX, TIMER gives 8-bit counter on CPU clock with stall for determinism
+  * boot serial TX - TIMER gives 8-bit counter on CPU clock with stall for determinism
 
-  * PS/2 input through an IRQ from CLK pin (then read DATA pin), PS/2 output through pulling CLK low for 100uS and then let peripheral drive CLK and update data with IRQ
+  * PS/2 input
 
 
 * Serial I/O
@@ -373,24 +398,30 @@ Either drop back to CUPL or get tristating figured out through Verilog
   - Also bring out I/O pins
 
 
-* 640x480x60p VESA through separate SRAM that is on the bus but isolated and clocked out if not being accessed
+* 640x480 VGA through shared SRAM
 
-  - 25.175MHz pixel clock, 640x480@60, 16-bit wide 512KB RAM, R5G6B5
-
-  * 8bpp from the RAM goes into a LUT RAM with 8, 4, 2, or 1 shifts per pixel, if it will fit.  May not fit, in which case just do 16 straight or a 1-bit-shifter-to-monochrome 565
-
-  * LUT RAM also needs to be on the bus, need to be able to switch data into RAM
-
-  * first ATF1508 - manage timing, drive RAM with counter, arbitrate access to VRAM
-    * HSYNC/VSYNC back through a read
-
-  * second ATF1508 - manage 16 bits to shifts through LUT, arbitrate access to LUT RAM
-
-  * Possibly have an external pair of counters that can be reset independently by CPLD if the counter doesn't fit in the 1508
-
-  * *maybe* could have a 2x mode where I get 320*240 so CPU is better matched to the output.
-
-  * VBLANK IRQ
+  - 25.175MHz pixel clock, 640x480@60
+  - Pair of 7200 shift registers on the bus (may need transceivers because of capacitance?)
+  
+  * VIDEO CPLD drives timing and sync; pulls bytes from 7200 shift registers
+    * Probably pull even then odd bytes to limit macrocells but maybe 16 bits at a time if simplicity requires it)
+    * ENABLE bit in register, enable *after* ENGINE
+    * VBLANK IRQ
+    * If next 9th bit from 7200s register isn't the reverse of the saved one, set a FIFO_ERROR bit in a register
+      * Saved one needs to be 1 on reset
+    * Can test this without the 7200s; just do junk for what's read
+    * Bonus - if fits, PALETTE register for two 8-bit palette values
+    * Bonus - if fits, BACKGROUND register for an 8-bit palette value
+    * Bonus - 2bpp mode at 320x240 - is there room for 4 palette entries?  Need to move to external circuitry for this?
+  * ENGINE CPLD drives 16-bit DMA, latches pair of 7200 shift registers
+    * base 64K-aligned FB_BASE register for pixel DMA data
+    * When one of the 7200 is half-full (/HF signal), DMA burst 32 and latch words from framebuffer RAM
+    * ENABLE bit in register - enable *before* VIDEO
+    * toggles 9th bit in 7200 per byte; should be 0 on reset so that video sees toggle as first thing
+    * Is there a sane test without the 7200 in place?
+    * Bonus - if it fits, actually stream lines instead of 32 bytes, line up with VIDEO scanout so CPU can change DMA between frames for e.g. double buffering
+    * Bonus - every 80 words (every two lines) stream a word and either write to AUDIO or trigger AUDIO_LE; 13KHz streaming
+  * 7200 is in the mail.  Could ENGINE itself have a byte FIFO big enough to work?
 
 
 - Audio with configurable or maybe just 22S/s rate stereo through another CPLD - smaller? 1504?
@@ -427,6 +458,7 @@ Either drop back to CUPL or get tristating figured out through Verilog
     - [ ] Make the pin header be 2xN, down each side silk screen the signal at the pin
     - [ ] Put in lots of holes for ground test points around the board
     - [ ] Bring out pins from GLUE, if there any left, for the purpose of debugging
+    - [ ] Put all the test points in female header suitable for plugging Dr. Guzman's analyzer into directly - test how it works to have two ganged together and make the headers that shape
   - [ ] Pullups on PS/2 clock and data lines
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
   - [ ] Make audio stereo - one 16-bit write
