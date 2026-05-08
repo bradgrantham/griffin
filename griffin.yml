@@ -33,9 +33,19 @@ peripherals:
         name: DEBUG_IN
         access: read
         width: 8
-        description: "Read DEBUG_IN signal state"
+        description: |
+          Read DEBUG_IN pin state and platform ID.  PLATFORM_ID is
+          piggy-backed on this read because a standalone register
+          does not fit in the Rev 1 GLUE pinout — it can promote to
+          its own register on Rev 2.  Firmware reads once at boot
+          and uses PLATFORM_ID to gate Rev 1 bringup hacks (bitbang
+          DEBUG_OUT for serial, VIDEO IRQ as systick) on real
+          hardware while letting the emulator exercise the normal
+          DUART path.
         bits:
           - { bit: "0", name: IN, description: "DEBUG_IN pin state" }
+          - { bit: "1", name: PLATFORM_ID,
+              description: "0 = emulator, 1 = Rev 1 hardware" }
       - offset: 0x07
         name: CONFIG
         access: write

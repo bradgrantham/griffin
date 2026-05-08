@@ -29,6 +29,15 @@
 
 * I don't have "timeout", use a perl one-liner instead.
 
+### Rev 1 bringup hacks (temporary; remove on Rev 2)
+
+The 68681 DUART is unreliable on Rev 1.  Until Rev 2, firmware detects the platform at boot and skips the DUART on real hardware.
+
+* **Platform detection.**  `GLUE_DEBUG_IN` (0xF00001) bit 1 = `PLATFORM_ID`: `0` = emulator, `1` = Rev 1 hardware.  
+* **Firmware gate.**  `static bool platform_is_hardware` in `rom.cpp` is set once at top of `main()`.  (1) `duart_38400_init()` and `duart_console_enable()` are skipped on hardware, (2) `get_milliseconds()` picks the timebase.
+* **Two timebases, one API.**  `tick_counter` (4-byte BSS in `crt0.s`) is incremented by `_duart_isr` at 100 Hz when CTR_READY fires.  `video_frame_counter` is incremented by `_video_isr` at ~60 Hz on every VBLANK.  Both run unconditionally; on hardware only the video one advances.  `get_milliseconds()` uses video_frame_counter on hardware and `tick_counter` on emulator.  
+* **Rev 2.**  Once XR68C681 is validated, delete `platform_is_hardware`, both gates in `main()`, and collapse `get_milliseconds()` back to tick counter.  `video_frame_counter` is worth keeping for video timing
+
 ### Hardware and Software balance
 
 * ATF1508 CPLD's are best at deterministic behavior, parallel processing, and high-speed response/signaling, but have limited real-estate so functionality must be kept as minimal as possible

@@ -211,7 +211,8 @@ module glue (
     always @(*) begin
         glue_read_data = 8'h00;
         if (debug_in_select)
-            glue_read_data = {7'd0, DEBUG_IN};
+            // bit 1 hardwired = PLATFORM_ID (1 on real Rev 1 HW; emulator returns 0)
+            glue_read_data = {6'd0, 1'b1, DEBUG_IN};
         else if (ps2_status_read_select)
             glue_read_data = {4'd0,
                               ps2_clk_sync[1],       // bit 3: CLK_LIVE

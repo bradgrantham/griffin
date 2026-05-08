@@ -922,6 +922,7 @@ _duart_isr:
 
 _video_isr:
     move.b  #0, VIDEO_CLRINT            | ack VIDEO IRQ
+    addq.l  #1, video_frame_counter
     rte
 
 | _default_handler: catch-all for unexpected exceptions
@@ -1390,4 +1391,8 @@ uart_rx_overflow:
 
     .global tick_counter
 tick_counter:
+    .skip 4
+
+    .global video_frame_counter
+video_frame_counter:
     .skip 4

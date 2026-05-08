@@ -1261,7 +1261,9 @@ class GriffinEmulator : public moira::Moira
         if (addr == GLUE_DEBUG_IN - IO_BASE)
         {
             debug_in_tx.advance(getClock());
-            return debug_in_tx.current_bit;
+            // PLATFORM_ID (bit 1) reads 0 in the emulator; firmware uses it
+            // to skip Rev 1 bringup hacks (bitbang serial, VIDEO-IRQ systick).
+            return (debug_in_tx.current_bit & GLUE_DEBUG_IN_MASK);
         }
         if (addr + IO_BASE == GLUE_PS2_STATUS)
         {

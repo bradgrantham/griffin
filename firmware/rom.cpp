@@ -346,7 +346,34 @@ extern volatile uint32_t uart_rx_head;
 extern volatile uint32_t uart_rx_tail;
 extern volatile uint8_t uart_rx_overflow;
 
+// DUART CTR_READY ISR increments this at 100 Hz (emulator path).
+extern volatile uint32_t tick_counter;
+
+// VIDEO ISR increments this on every VBLANK (~60 Hz at VGA 640x480@60).
+extern volatile uint32_t video_frame_counter;
+
 }; // extern "C"
+
+// Platform detection — set in main() from GLUE_DEBUG_IN PLATFORM_ID bit.
+// On Rev 1 hardware the 68681 adapter is unreliable, so firmware uses VIDEO
+// IRQ as the timebase and bitbang DEBUG_OUT as the console; the emulator
+// runs the normal DUART path.
+static bool platform_is_hardware = false;
+
+// Milliseconds since boot.  Picks the right counter and rate based on
+// platform: VIDEO frame counter at ~60 Hz on hardware, DUART tick counter
+// at 100 Hz in the emulator.
+extern "C" uint32_t get_milliseconds()
+{
+    if (platform_is_hardware)
+    {
+        return (video_frame_counter * 1000U) / 60U;
+    }
+    else
+    {
+        return tick_counter * 10U;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 68681 DUART — Channel A console (38400 8N1)
@@ -909,62 +936,35 @@ static void video_init()
 
 int main()
 {
-    extern volatile uint32_t tick_counter;
-    uint32_t last_tick_print = tick_counter;
+    platform_is_hardware =
+        (GLUE_DEBUG_IN & Griffin::GLUE_DEBUG_IN_PLATFORM_ID_MASK) != 0;
 
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
+    debug_printf("Platform: %s\n",
+                 platform_is_hardware ? "Rev 1 hardware (bringup hacks)"
+                                      : "emulator");
 
     video_init();
 
     // debug_monitor();
 
-    // Initialize 68681 DUART and switch console output from bit-bang to DUART.
-    // Everything before this point prints via debug_printf (GLUE bit-bang).
-    // Everything after prints via printf (DUART Channel A, 38400 8N1).
-    duart_38400_init();
-    for (;;)
+    if (!platform_is_hardware)
     {
-        if(tick_counter >= last_tick_print + 100)
+        // Initialize 68681 DUART and switch console output from bit-bang
+        // to DUART.  Everything before this point prints via debug_printf
+        // (GLUE bit-bang); everything after prints via printf (DUART
+        // Channel A, 38400 8N1).
+        duart_38400_init();
+    }
+
+    if (!platform_is_hardware)
+    {
+        for(auto c: "DUART TX\n")
         {
-            debug_printf("boop\n");
-            tick_counter = tick_counter + 1;
-            uint32_t seconds = tick_counter / 100;
-            last_tick_print = tick_counter;
-            uint8_t color;
-            switch(seconds % 8) {
-                case 0:
-                    color = 0xFF;
-                    break;
-                case 1:
-                    color = 0xFC;
-                    break;
-                case 2:
-                    color = 0xE3;
-                    break;
-                case 3:
-                    color = 0xE0;
-                    break;
-                case 4:
-                    color = 0x1F;
-                    break;
-                case 5:
-                    color = 0x1C;
-                    break;
-                case 6:
-                    color = 0x13;
-                    break;
-                default: case 7:
-                    color = 0x0;
-                    break;
-            }
-            VIDEO_PALETTE = (color << 8) | (0xFF ^ color);
+            if(c) duart_putchar(c);
         }
+        duart_console_enable();
     }
-    for(auto c: "DUART TX\n")
-    {
-        if(c) duart_putchar(c);
-    }
-    duart_console_enable();
     printf("Console on DUART Channel A, 38400 8N1\n");
 
     // Play startup sound
@@ -975,7 +975,7 @@ int main()
 
     printf("Input check loop...\n");
 
-    last_tick_print = tick_counter;
+    uint32_t last_clock_print_ms = get_milliseconds();
     for (;;)
     {
         if(duart_received_ready())
@@ -1015,14 +1015,44 @@ int main()
             }
         }
 
-        if(tick_counter >= last_tick_print + 100)
+        uint32_t now_ms = get_milliseconds();
+        if(now_ms >= last_clock_print_ms + 1000)
         {
-            uint32_t seconds = tick_counter / 100;
+            uint32_t seconds = now_ms / 1000;
             uint32_t ss = seconds % 60;
             uint32_t mm = (seconds / 60) % 60;
             uint32_t hh = seconds / 3600;
             printf("%02ld:%02ld:%02ld\n", hh, mm, ss);
-            last_tick_print = tick_counter;
+            last_clock_print_ms = now_ms;
+
+            uint8_t color;
+            switch(seconds % 8) {
+                case 0:
+                    color = 0xFF;
+                    break;
+                case 1:
+                    color = 0xFC;
+                    break;
+                case 2:
+                    color = 0xE3;
+                    break;
+                case 3:
+                    color = 0xE0;
+                    break;
+                case 4:
+                    color = 0x1F;
+                    break;
+                case 5:
+                    color = 0x1C;
+                    break;
+                case 6:
+                    color = 0x13;
+                    break;
+                default: case 7:
+                    color = 0x0;
+                    break;
+            }
+            VIDEO_PALETTE = (color << 8) | (0xFF ^ color);
         }
     }
 
