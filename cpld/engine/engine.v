@@ -50,6 +50,14 @@ module Engine
     assign nBR = 1;
     assign nBGACK = 1;
 
+    // assign A = 23'bz;
+    // assign D = 16'bz;
+    // assign R_nW = 1'bz;
+    // assign nAS = 1'bz;
+    // assign nUDS = 1'bz;
+    // assign nLDS = 1'bz;
+    // assign FC = 3'bz;
+
 endmodule
 
 // ENGINE ATF1508 — Griffin board Rev 1

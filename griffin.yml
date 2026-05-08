@@ -193,7 +193,7 @@ peripherals:
 
   ENGINE:
     part: ATF1508AS
-    description: "Audio DMA engine.  Bus-masters via BR/BG/BGACK to copy 16-bit words from a 4 KB-aligned source buffer in RAM to AUDIO at a programmable SYSCLK-paced rate; loops 2 KW buffer while DMA_EN set; IRQ (level 3) on each half-buffer rollover (1024 and 2048 words)."
+    description: "DMA engine"
     address_range:
       base: 0xD00000
       size: 0x100000
@@ -207,71 +207,10 @@ peripherals:
     interrupt:
       level: 3
       signal: ~ENGINE_IRQ
-    registers:
-      - offset: 0x01
-        name: CTRL
-        access: write
-        width: 8
-        description: |
-          DMA control.  Writing DMA_EN=0 stops DMA and resets the
-          word counter to 0.  Writing DMA_EN=1 starts DMA from
-          word 0 of the current BASE buffer.
-        bits:
-          - { bit: "0", name: DMA_EN,
-              description: "1 = DMA active and looping; 0 = stopped, counter reset" }
-          - { bit: "1", name: IRQ_EN,
-              description: "1 = assert ~ENGINE_IRQ when IRQ_PEND latches" }
-      - offset: 0x03
-        name: STATUS
-        access: read
-        width: 8
-        description: |
-          DMA status.  HALF reflects the current high bit of the
-          word counter.  When IRQ_PEND latches at the half-buffer
-          rollover, the ISR reads STATUS, refills the OPPOSITE
-          half (because HALF tells which half is now being
-          consumed), then writes IRQ_CLR.  OVERRUN sticks if the
-          period counter rolls over while a previously-latched
-          sample_due was still pending (i.e. bus_overhead exceeded
-          PERIOD); cleared by IRQ_CLR.
-        bits:
-          - { bit: "0", name: HALF,
-              description: "Live word_counter[10]; 0 = lower half being consumed, 1 = upper half" }
-          - { bit: "1", name: IRQ_PEND,
-              description: "1 = a half-buffer boundary has been crossed since last clear" }
-          - { bit: "2", name: OVERRUN,
-              description: "1 = a sample tick arrived before the prior cycle finished; cleared by IRQ_CLR" }
-      - offset: 0x05
-        name: IRQ_CLR
-        access: write
-        width: 8
-        description: "Any write clears IRQ_PEND and OVERRUN."
-      - offset: 0x06
-        name: SOURCE
-        access: write
-        width: 16
-        description: |
-          Source-buffer base address.  Bits [9:0] of the written
-          word are stored as base[21:12] of the byte address;
-          bits [15:10] are ignored.  In other words, write
-          (buffer_byte_address >> 12).  The buffer must be
-          aligned to 4 KB (2 KW).  RAM is at most 4 MB so the
-          high two address bits are always zero.
-      - offset: 0x0A
-        name: PERIOD
-        access: write
-        width: 16
-        description: |
-          SYSCLK cycles between successive DMA word copies.
-          Bits [9:0] are stored; bits [15:10] are ignored.
-          For 22.05 kS/s: 544 at 12 MHz, 635 at 14 MHz, 907 at
-          20 MHz.  Counter is reloaded at the end of each copy,
-          so total period is approximately PERIOD + a handful of
-          arbitration/bus cycles.
 
   VIDEO:
     part: ATF1508AS
-    description: "Just a pass-through for composite SYNC and PIXEL at the moment and fires a 59.95Hz interrupt"
+    description: "VGA 640x480@60 1bpp video generator with 7200 FIFO read interface"
     dtack:
       - 12000000: 0
       - 14000000: 0
@@ -294,6 +233,52 @@ peripherals:
           Write any value to clear the latched VIDEO vsync IRQ.  IRQ is
           set on the rising edge of vsync and held until CLRINT is
           written, so firmware must acknowledge in the ISR before RTE.
+      - offset: 0x05
+        name: CTRL
+        access: write
+        width: 8
+        description: "Video control register."
+        bits:
+          - { bit: "0", name: ENABLE,
+              description: "1 = pixel output and FIFO reads active; 0 = black screen, no reads. Enable after ENGINE." }
+      - offset: 0x05
+        name: CTRL_RB
+        access: read
+        width: 8
+        description: "Video control readback."
+        bits:
+          - { bit: "0", name: ENABLE,
+              description: "Current ENABLE state" }
+          - { bit: "1", name: FIFO_ERROR,
+              description: "Sticky: 9th-bit toggle mismatch detected (FIFO sync lost). Clear with CLRERR." }
+      - offset: 0x07
+        name: STATUS
+        access: read
+        width: 8
+        description: "Video status."
+        bits:
+          - { bit: "0", name: LINE_TOGGLE,
+              description: "v_cnt[0] — toggles each scanline (31.469 kHz)" }
+      - offset: 0x09
+        name: CLRERR
+        access: write
+        width: 8
+        description: "Write any value to clear FIFO_ERROR sticky bit."
+      - offset: 0x0E
+        name: PALETTE
+        access: write
+        width: 16
+        description: |
+          Two-entry 1bpp palette.  D[15:8] = foreground (pixel=1),
+          D[7:0] = background (pixel=0).  Each byte is R3G3B2.
+          Reset default: fg=0xFF (white), bg=0x00 (black).
+      - offset: 0x11
+        name: BACKGROUND
+        access: write
+        width: 8
+        description: |
+          Border/blanking color (R3G3B2).  Displayed outside the
+          640x480 active region.  Reset default: 0x00 (black).
 
   CF:
     part: "Compact Flash (True IDE)"

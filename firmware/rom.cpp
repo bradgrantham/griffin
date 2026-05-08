@@ -430,7 +430,8 @@ static void duart_38400_init()
     DUART_IMR = Griffin::DUART_ISR_RXRDYA_MASK | Griffin::DUART_ISR_CTR_READY_MASK;
 
     // Read STARTCC to kick off the C/T (the read itself is the side effect).
-    [[maybe_unused]] uint8_t startcc_discard = DUART_STARTCC;
+    uint8_t startcc_discard = DUART_STARTCC;
+    (void)startcc_discard;
 
     // Clear DUART IVR - chasing a bug
     DUART_IVR = 0x0;
@@ -891,9 +892,29 @@ static int debug_getline(char *buf, int maxlen)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Video init — set palette and enable scanout
+// ---------------------------------------------------------------------------
+
+static void video_init()
+{
+    VIDEO_PALETTE = 0xFF00;     // fg=white, bg=black
+    VIDEO_BACKGROUND = 0x00;    // black border
+    VIDEO_CLRERR = 0;           // clear any stale FIFO_ERROR
+    VIDEO_CTRL = Griffin::VIDEO_CTRL_ENABLE_MASK;
+
+    debug_printf("VIDEO: enabled (CTRL_RB=0x%02X)\n",
+                 static_cast<unsigned>(VIDEO_CTRL_RB));
+}
+
 int main()
 {
+    extern volatile uint32_t tick_counter;
+    uint32_t last_tick_print = tick_counter;
+
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
+
+    video_init();
 
     // debug_monitor();
 
@@ -901,6 +922,44 @@ int main()
     // Everything before this point prints via debug_printf (GLUE bit-bang).
     // Everything after prints via printf (DUART Channel A, 38400 8N1).
     duart_38400_init();
+    for (;;)
+    {
+        if(tick_counter >= last_tick_print + 100)
+        {
+            debug_printf("boop\n");
+            tick_counter = tick_counter + 1;
+            uint32_t seconds = tick_counter / 100;
+            last_tick_print = tick_counter;
+            uint8_t color;
+            switch(seconds % 8) {
+                case 0:
+                    color = 0xFF;
+                    break;
+                case 1:
+                    color = 0xFC;
+                    break;
+                case 2:
+                    color = 0xE3;
+                    break;
+                case 3:
+                    color = 0xE0;
+                    break;
+                case 4:
+                    color = 0x1F;
+                    break;
+                case 5:
+                    color = 0x1C;
+                    break;
+                case 6:
+                    color = 0x13;
+                    break;
+                default: case 7:
+                    color = 0x0;
+                    break;
+            }
+            VIDEO_PALETTE = (color << 8) | (0xFF ^ color);
+        }
+    }
     for(auto c: "DUART TX\n")
     {
         if(c) duart_putchar(c);
@@ -914,11 +973,9 @@ int main()
 
     cf_mount_and_list();
 
-    extern volatile uint32_t tick_counter;
-
     printf("Input check loop...\n");
-    uint32_t last_tick_print = tick_counter;
 
+    last_tick_print = tick_counter;
     for (;;)
     {
         if(duart_received_ready())
@@ -968,4 +1025,5 @@ int main()
             last_tick_print = tick_counter;
         }
     }
+
 }

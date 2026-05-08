@@ -3,7 +3,10 @@
 // VIDEO — VGA 640x480 progressive 1bpp video generator
 //
 // VESA 640x480@60: 25.175 MHz pixel clock, 800x525 raster, negative
-// HSync/VSync.  
+// HSync/VSync.  Pixel data is read byte-at-a-time from an IDT7200L15
+// 256x9-bit FIFO (filled by ENGINE).  Each byte is 8 pixels, MSB
+// first.  The current pixel bit selects between two CPU-writable
+// R3G3B2 palette entries (fg/bg).
 //
 module Video
 (
@@ -19,61 +22,48 @@ module Video
     input  wire        nRESET,          // pin 1  (GCLR)
 
     // ----------------------------------------------------------------
-    // Bus interface — directly from CPU / GLUE
-    //   Most bus pins are declared input-only so the fitter configures
-    //   them that way (VIDEO never drives the address bus, control bus,
-    //   or FC).  D[15:0] is inout: VIDEO snoops D for pixel words via
-    //   LATCH from ENGINE, captures D[15:8]/[7:0] on CPU writes to
-    //   VIDEO_PALETTE, and drives D with STATUS on CPU reads of
-    //   VIDEO_STATUS.  Tristate at all other times.
+    // Bus interface
     // ----------------------------------------------------------------
     input  wire        nVIDEO_SELECT,   // pin 84 (OE1)
     input  wire        nAS,             // pin 21
-    // input  wire        nUDS,            // pin 22
+    input  wire        nUDS,            // pin 22
     input  wire        nLDS,            // pin 64
     input  wire        R_nW,            // pin 25
     input  wire [5:1]  A,               // pins 48,49,51,54,55
     inout  wire [15:0] D,               // pins (see pin list)
-    // input  wire [2:0]  FC,              // pins 33,34,35
 
     // ----------------------------------------------------------------
     // Pixel oscillator enables
-    //   The board has two pixel oscillators (Y1 14.318 MHz NTSC, Y3
-    //   25.175 MHz VGA) tri-stated onto pin 2 PIXEL_CLK.  In VGA mode
-    //   we hold Y1 disabled and Y3 enabled.
     // ----------------------------------------------------------------
     output wire        CPST_CLK_ENB,    // pin 40 — Y1 14.318 MHz enable (held off)
     output wire        VGA_CLK_ENB,     // pin 41 — Y3 25.175 MHz enable (held on)
 
     // ----------------------------------------------------------------
-    // VGA outputs (directly to PCB, directly to DAC resistor ladders)
-    //   1bpp white-on-black: when current_pixel=1 all eight color bits
-    //   are driven high; when 0, all low.
+    // VGA outputs
     // ----------------------------------------------------------------
-    // output wire        VGA_HSYNC,       // pin 46
-    // output wire        VGA_VSYNC,       // pin 29
-    // output reg         VGA_R0,          // pin 4
-    // output reg         VGA_R1,          // pin 8
-    // output reg         VGA_R2,          // pin 6
-    // output reg         VGA_G0,          // pin 76
-    // output reg         VGA_G1,          // pin 77
-    // output reg         VGA_G2,          // pin 81 (GCLK3)
-    // output reg         VGA_B0,          // pin 74
-    // output reg         VGA_B1,          // pin 75
+    output wire        VGA_HSYNC,       // pin 46
+    output wire        VGA_VSYNC,       // pin 29
+    output reg         VGA_R0,          // pin 4
+    output reg         VGA_R1,          // pin 8
+    output reg         VGA_R2,          // pin 6
+    output reg         VGA_G0,          // pin 76
+    output reg         VGA_G1,          // pin 77
+    output reg         VGA_G2,          // pin 81 (GCLK3)
+    output reg         VGA_B0,          // pin 74
+    output reg         VGA_B1,          // pin 75
 
     // ----------------------------------------------------------------
-    // Control outputs to GLUE
-    //
-    //   VIDEO_STALL is held to constant 0 — the GLUE-side input was
-    //   removed when freeing GLUE macrocells, but pin 79 is left
-    //   declared on the VIDEO side as a const-0 output to anchor the
-    //   ATF1508AS fitter floorplan (without the pre-assigned pin
-    //   anchor, the fitter rebalances LAB A above its 40-signal
-    //   fan-in limit and the design no longer fits).
+    // Control outputs
     // ----------------------------------------------------------------
-    // output wire        VIDEO_STALL,     // pin 79 — held low, not used by GLUE
+    output wire        VIDEO_STALL,     // pin 79 — held low, fitter anchor
     output wire        nVIDEO_IRQ,      // pin 5
 
+    // ----------------------------------------------------------------
+    // 7200 FIFO read interface (bodge wires to breadboard)
+    // ----------------------------------------------------------------
+    input  wire [7:0]  FIFO_Q,          // pins 36,31,30,28,37,39,44,9
+    input  wire        FIFO_Q8,         // pin 45 — 9th bit toggle
+    output reg         nFIFO_RE         // pin 50 — read enable (active low)
 );
 
     wire RESET = ~nRESET;
@@ -81,15 +71,14 @@ module Video
     // ----------------------------------------------------------------
     // Static assignments
     // ----------------------------------------------------------------
-    assign CPST_CLK_ENB = 1'b0;         // disable 14.318 MHz NTSC oscillator
-    assign VGA_CLK_ENB  = 1'b1;         // enable 25.175 MHz VGA oscillator
+    assign CPST_CLK_ENB = 1'b0;
+    assign VGA_CLK_ENB  = 1'b1;
+    assign VIDEO_STALL  = 1'b0;
 
     // ----------------------------------------------------------------
-    // VGA 640x480@60 timing parameters (VESA, 25.175 MHz pixel clock,
-    // 800 x 525, negative HSync/VSync)
+    // VGA 640x480@60 timing parameters
     // ----------------------------------------------------------------
 
-    // Horizontal: 640 active, 16 front porch, 96 sync, 48 back porch
     localparam H_ACTIVE      = 10'd640;
     localparam H_FRONT_PORCH = 10'd16;
     localparam H_SYNC        = 10'd96;
@@ -99,7 +88,6 @@ module Video
     localparam H_SYNC_START  = H_ACTIVE + H_FRONT_PORCH;        // 656
     localparam H_SYNC_END    = H_SYNC_START + H_SYNC;            // 752
 
-    // Vertical: 480 active, 10 front porch, 2 vsync, 33 back porch
     localparam V_ACTIVE      = 10'd480;
     localparam V_FRONT_PORCH = 10'd10;
     localparam V_SYNC        = 10'd2;
@@ -109,8 +97,7 @@ module Video
     localparam V_SYNC_START  = V_ACTIVE + V_FRONT_PORCH;        // 490
     localparam V_SYNC_END    = V_SYNC_START + V_SYNC;            // 492
 
-    // Active words per line: 640 pixels / 16 bits = 40 words
-    localparam WORDS_PER_LINE = 6'd40;
+    localparam BYTES_PER_LINE = 7'd80;
 
     // ----------------------------------------------------------------
     // Horizontal and vertical counters (PIXEL_CLK domain)
@@ -124,27 +111,38 @@ module Video
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
         if (RESET)
+        begin
             h_cnt <= 10'd0;
+        end
         else if (h_last)
+        begin
             h_cnt <= 10'd0;
+        end
         else
+        begin
             h_cnt <= h_cnt + 10'd1;
+        end
     end
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
         if (RESET)
+        begin
             v_cnt <= 10'd0;
+        end
         else if (h_last)
         begin
             if (v_cnt == V_TOTAL - 10'd1)
+            begin
                 v_cnt <= 10'd0;
+            end
             else
+            begin
                 v_cnt <= v_cnt + 10'd1;
+            end
         end
     end
 
-    // Timing signals
     wire h_active = (h_cnt < H_ACTIVE);
     wire v_active = (v_cnt < V_ACTIVE);
     wire active_video = h_active & v_active;
@@ -153,31 +151,15 @@ module Video
     wire in_vsync = (v_cnt >= V_SYNC_START) & (v_cnt < V_SYNC_END);
 
     // ----------------------------------------------------------------
-    // VGA sync (negative polarity for VGA 640x480@60)
+    // VGA sync (negative polarity)
     // ----------------------------------------------------------------
     assign VGA_HSYNC = ~in_hsync;
     assign VGA_VSYNC = ~in_vsync;
 
     // ----------------------------------------------------------------
-    // VSYNC interrupt — latched on rising edge of vsync, cleared by CPU
-    // write to VIDEO_CLRINT (offset 0x03 → A[5:1] = 5'h01).  Held
-    // asserted until the ISR acknowledges, so brief SR masking in
-    // firmware cannot drop the interrupt.
-    //
-    // The event is generated as a single-cycle pulse in the PIXEL_CLK
-    // domain at the exact v_cnt transition into V_SYNC_START, then
-    // crossed to SYSCLK via a toggle flip-flop + 2-FF synchronizer.
-    // The toggle scheme is robust regardless of clock ratio: each
-    // vsync event flips the toggle, and the SYSCLK side detects any
-    // change (XOR of two synchronized samples).  This avoids sampling
-    // the wide combinational `v_cnt >= 490 & v_cnt < 492` comparator
-    // across clock domains, which could glitch on unrelated v_cnt
-    // increments and produce spurious IRQs.
+    // VSYNC interrupt — toggle + 2FF synchronizer across clock domains
     // ----------------------------------------------------------------
 
-    // PIXEL_CLK domain: fire a one-cycle pulse at the rising edge of
-    // vsync (the cycle v_cnt advances to V_SYNC_START), and flip the
-    // toggle so the SYSCLK side can observe the event as a level change.
     wire vsync_event = (v_cnt == V_SYNC_START) & h_last;
     reg  vsync_tog;
     always @(posedge PIXEL_CLK or posedge RESET)
@@ -192,10 +174,6 @@ module Video
         end
     end
 
-    // SYSCLK domain: 2-FF synchronizer on the toggle, plus one extra
-    // stage so we can XOR two stable samples to detect the toggle
-    // flipping.  vsync_sync[0] is the metastability-prone stage and
-    // must not feed combinational logic other than the next flop.
     reg [2:0] vsync_sync;
     reg       video_irq_latched;
     wire      clrint_write = cpu_writing & (A == 5'h01) & ~nLDS;
@@ -226,35 +204,264 @@ module Video
 
     // ----------------------------------------------------------------
     // CPU register interface (SYSCLK domain)
-    //
-    //   Writes:
-    //     0x0E VIDEO_PALETTE  [W16]  — {ENTRY_1, ENTRY_0}, each R3G3B2
-    //                                  ENTRY_0 (D[7:0])  = pixel=0 color (bg)
-    //                                  ENTRY_1 (D[15:8]) = pixel=1 color (fg)
-    //   Reads:
-    //     0x07 VIDEO_STATUS   [R8]   — bit 0 = LINE_TOGGLE (v_cnt[0])
-    //
-    //   Address decode uses A[5:1]:
-    //     0x0E >> 1 = 5'h07  (PALETTE write)
-    //     0x07 >> 1 = 5'h03  (STATUS  read)
-    //
-    //   palette_fg / palette_bg are read asynchronously from the
-    //   PIXEL_CLK color output block.  A CPU write that straddles a
-    //   pixel boundary can produce a single-pixel color glitch (~40 ns
-    //   at 25.175 MHz), invisible in practice.
     // ----------------------------------------------------------------
     wire cpu_selected = ~nVIDEO_SELECT & ~nAS;
     wire cpu_reading  = cpu_selected & R_nW;
     wire cpu_writing  = cpu_selected & ~R_nW;
 
-    // STATUS read: drive D with {15'd0, v_cnt[0]} when selected;
-    // tristate otherwise.  v_cnt[0] is read directly from PIXEL_CLK
-    // without a synchronizer — metastability on a polled status bit
-    // just makes the CPU see the flip one cycle late at worst, and
-    // the flip only happens at 31.469 kHz so almost every read lands
-    // on a stable value anyway.
+    // CTRL register (offset 0x05, A[5:1] = 5'h02)
+    reg video_enable;
+
+    wire ctrl_write = cpu_writing & (A == 5'h02) & ~nLDS;
+
+    always @(posedge SYSCLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            video_enable <= 1'b0;
+        end
+        else if (ctrl_write)
+        begin
+            video_enable <= D[0];
+        end
+    end
+
+    // Palette register (offset 0x0E, A[5:1] = 5'h07)
+    reg [7:0] palette_bg;
+    reg [7:0] palette_fg;
+
+    always @(posedge SYSCLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            palette_bg <= 8'h00;
+            palette_fg <= 8'hFF;
+        end
+        else if (cpu_writing & (A == 5'h07))
+        begin
+            if (~nLDS)
+            begin
+                palette_bg <= D[7:0];
+            end
+            if (~nUDS)
+            begin
+                palette_fg <= D[15:8];
+            end
+        end
+    end
+
+    // Background register (offset 0x11, A[5:1] = 5'h08)
+    reg [7:0] background_color;
+
+    always @(posedge SYSCLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            background_color <= 8'h00;
+        end
+        else if (cpu_writing & (A == 5'h08) & ~nLDS)
+        begin
+            background_color <= D[7:0];
+        end
+    end
+
+    // STATUS read (offset 0x07, A[5:1] = 5'h03)
     wire status_read = cpu_reading & (A == 5'h03) & ~nLDS;
-    assign D = status_read ? {15'd0, v_cnt[0]} : 16'bz;
+
+    // CTRL read (offset 0x05, A[5:1] = 5'h02)
+    wire ctrl_read = cpu_reading & (A == 5'h02) & ~nLDS;
+
+    wire any_read = status_read | ctrl_read;
+    wire [15:0] read_data = status_read ? {15'd0, v_cnt[0]}
+                                        : {14'd0, fifo_error, video_enable};
+
+    assign D = any_read ? read_data : 16'bz;
+
+    // CLRERR (offset 0x09, A[5:1] = 5'h04)
+    wire clrerr_write = cpu_writing & (A == 5'h04) & ~nLDS;
+
+    // ----------------------------------------------------------------
+    // 9th bit error detection
+    //
+    // ENGINE toggles bit 8 on each byte written to the FIFO.  VIDEO
+    // checks that each successive read has the opposite Q8 from the
+    // previous.  Mismatch sets a sticky flag.  saved_9th_bit is 1 on
+    // reset so the first ENGINE byte (9th bit = 0) is valid.
+    //
+    // PIXEL_CLK domain: toggle on error, sync to SYSCLK via 3FF.
+    // ----------------------------------------------------------------
+
+    reg saved_9th_bit;
+    reg fifo_err_tog;
+
+    reg [2:0] err_sync;
+    reg       fifo_error;
+    wire      err_edge = err_sync[2] ^ err_sync[1];
+
+    always @(posedge SYSCLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            err_sync   <= 3'b000;
+            fifo_error <= 1'b0;
+        end
+        else
+        begin
+            err_sync <= {err_sync[1:0], fifo_err_tog};
+            if (err_edge)
+            begin
+                fifo_error <= 1'b1;
+            end
+            else if (clrerr_write)
+            begin
+                fifo_error <= 1'b0;
+            end
+        end
+    end
+
+    // ----------------------------------------------------------------
+    // FIFO read logic and pixel shift register (PIXEL_CLK domain)
+    //
+    // Read 80 bytes per active line.  Each byte is 8 pixels (MSB
+    // first).  nRE is asserted for one PIXEL_CLK cycle; on the next
+    // posedge the FIFO data is captured into shift_reg.
+    //
+    // Preload: assert nRE at h_cnt == 798 when the next line is
+    // active, so shift_reg is loaded at h_cnt == 799 and the first
+    // pixel is ready at h_cnt == 0.
+    //
+    // Mid-line: nRE is asserted at bit_cnt == 6 (overlapping the
+    // second-to-last pixel of the current byte); data is captured
+    // at bit_cnt == 7, and the new byte's MSB drives the pixel
+    // output starting the next cycle (via current_pixel_reg pipeline).
+    // ----------------------------------------------------------------
+
+    reg [7:0] shift_reg;
+    reg [2:0] bit_cnt;
+    reg [6:0] byte_cnt;
+    reg       fifo_loading;
+
+    // Next line will be active: v_cnt 0..478 -> lines 1..479; v_cnt 524 -> line 0
+    wire next_line_active = (v_cnt < V_ACTIVE - 10'd1) | (v_cnt == V_TOTAL - 10'd1);
+
+    wire preload = (h_cnt == H_TOTAL - 10'd2) & next_line_active & video_enable;
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            shift_reg    <= 8'd0;
+            bit_cnt      <= 3'd0;
+            byte_cnt     <= 7'd0;
+            nFIFO_RE     <= 1'b1;
+            fifo_loading <= 1'b0;
+            saved_9th_bit <= 1'b1;
+            fifo_err_tog <= 1'b0;
+        end
+        else if (preload)
+        begin
+            nFIFO_RE     <= 1'b0;
+            fifo_loading <= 1'b1;
+            byte_cnt     <= 7'd0;
+            bit_cnt      <= 3'd0;
+        end
+        else if (fifo_loading)
+        begin
+            shift_reg    <= FIFO_Q;
+            nFIFO_RE     <= 1'b1;
+            fifo_loading <= 1'b0;
+            byte_cnt     <= byte_cnt + 7'd1;
+            bit_cnt      <= 3'd0;
+            if (FIFO_Q8 == saved_9th_bit)
+            begin
+                fifo_err_tog <= ~fifo_err_tog;
+            end
+            saved_9th_bit <= FIFO_Q8;
+        end
+        else if (byte_cnt > 7'd0 & byte_cnt <= BYTES_PER_LINE)
+        begin
+            shift_reg <= {shift_reg[6:0], 1'b0};
+            if (bit_cnt == 3'd6 & byte_cnt < BYTES_PER_LINE)
+            begin
+                nFIFO_RE     <= 1'b0;
+                fifo_loading <= 1'b1;
+            end
+            bit_cnt <= bit_cnt + 3'd1;
+        end
+        else
+        begin
+            nFIFO_RE  <= 1'b1;
+            shift_reg <= 8'd0;
+        end
+    end
+
+    // ----------------------------------------------------------------
+    // VGA color output (PIXEL_CLK domain)
+    //
+    // Pipeline current_pixel and active_video through one FF stage
+    // before the color output FFs.  This limits each color FF's
+    // fan-in to 4 signals (current_pixel_reg, active_video_reg,
+    // palette_fg[bit], palette_bg[bit]) — well under the ATF1508's
+    // 40-signal per-LAB limit.
+    // ----------------------------------------------------------------
+
+    wire current_pixel = shift_reg[7];
+
+    reg current_pixel_reg;
+    reg active_video_reg;
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            current_pixel_reg <= 1'b0;
+            active_video_reg  <= 1'b0;
+        end
+        else
+        begin
+            current_pixel_reg <= current_pixel;
+            active_video_reg  <= active_video & video_enable;
+        end
+    end
+
+    wire [7:0] pixel_color = current_pixel_reg ? palette_fg : palette_bg;
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            VGA_R0 <= 1'b0;
+            VGA_R1 <= 1'b0;
+            VGA_R2 <= 1'b0;
+            VGA_G0 <= 1'b0;
+            VGA_G1 <= 1'b0;
+            VGA_G2 <= 1'b0;
+            VGA_B0 <= 1'b0;
+            VGA_B1 <= 1'b0;
+        end
+        else if (active_video_reg)
+        begin
+            VGA_R2 <= pixel_color[7];
+            VGA_R1 <= pixel_color[6];
+            VGA_R0 <= pixel_color[5];
+            VGA_G2 <= pixel_color[4];
+            VGA_G1 <= pixel_color[3];
+            VGA_G0 <= pixel_color[2];
+            VGA_B1 <= pixel_color[1];
+            VGA_B0 <= pixel_color[0];
+        end
+        else
+        begin
+            VGA_R2 <= background_color[7];
+            VGA_R1 <= background_color[6];
+            VGA_R0 <= background_color[5];
+            VGA_G2 <= background_color[4];
+            VGA_G1 <= background_color[3];
+            VGA_G0 <= background_color[2];
+            VGA_B1 <= background_color[1];
+            VGA_B0 <= background_color[0];
+        end
+    end
 
 endmodule
 
@@ -323,11 +530,14 @@ endmodule
 //PIN: VIDEO_STALL    : 79
 //PIN: nVIDEO_IRQ     : 5
 //
-// Bodge: VIDEO <-> ENGINE
-//PIN: NEED_WORD      : 9
-//PIN: SOF            : 28
-//PIN: EOL            : 30
-//PIN: LATCH          : 31
-//
-// Bodge: VIDEO -> Audio DAC
-//PIN: AUDIO_LE       : 36
+// 7200 FIFO read interface (bodge wires to breadboard)
+//PIN: FIFO_Q_0       : 36
+//PIN: FIFO_Q_1       : 31
+//PIN: FIFO_Q_2       : 30
+//PIN: FIFO_Q_3       : 28
+//PIN: FIFO_Q_4       : 37
+//PIN: FIFO_Q_5       : 39
+//PIN: FIFO_Q_6       : 44
+//PIN: FIFO_Q_7       : 9
+//PIN: FIFO_Q8        : 45
+//PIN: nFIFO_RE       : 50

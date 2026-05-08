@@ -14,7 +14,8 @@ EXTRA_OBJECTS = # startup_audio.o
 LDSCRIPT = linker.ld
 
 WARNFLAGS = -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror
-COMMONFLAGS = -O -g -fno-omit-frame-pointer -fanalyzer
+COMMONFLAGS = -g -fno-omit-frame-pointer -fanalyzer -Os
+
 CXXFLAGS = --std=c++23 $(COMMONFLAGS) $(WARNFLAGS) -Wold-style-cast
 CFLAGS = --std=c23 $(COMMONFLAGS) $(WARNFLAGS)
 ASFLAGS = -g
