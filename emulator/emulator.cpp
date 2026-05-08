@@ -984,24 +984,222 @@ struct DUARTState
     }
 };
 
+static uint32_t r3g3b2_to_argb(uint8_t c)
+{
+    uint8_t r3 = (c >> 5) & 0x7;
+    uint8_t g3 = (c >> 2) & 0x7;
+    uint8_t b2 = c & 0x3;
+    uint8_t r8 = (r3 << 5) | (r3 << 2) | (r3 >> 1);
+    uint8_t g8 = (g3 << 5) | (g3 << 2) | (g3 >> 1);
+    uint8_t b8 = (b2 << 6) | (b2 << 4) | (b2 << 2) | b2;
+    return 0xFF000000u | (r8 << 16) | (g8 << 8) | b8;
+}
+
 struct VideoState
 {
-    static constexpr uint64_t video_rate_centihertz = 5994;
-    static constexpr uint64_t sysclk_per_vblank = SYSCLK_HZ * 100 / video_rate_centihertz;
-    uint64_t clock_next_event {sysclk_per_vblank};
+    // 800 pixel clocks per line at 25.175 MHz, converted to SYSCLK (14 MHz)
+    // via Bresenham: GCD(14000000,25175000)=25000 → 560/1007
+    static constexpr uint64_t LINE_NUM = 800ULL * 560;  // 448000
+    static constexpr uint64_t LINE_DEN = 1007;
+    static constexpr int V_TOTAL = 525;
+    static constexpr int V_ACTIVE = 480;
+    static constexpr int V_SYNC_START = 490;
+    static constexpr int H_ACTIVE = 640;
+    static constexpr int BYTES_PER_LINE = 80;
+
+    uint64_t clock_next_line = 0;
+    uint64_t frac_accum = 0;
+    int v_cnt = 0;
+
     bool irq_latched = false;
+
+    bool video_enable = false;
+    uint8_t palette_fg = 0xFF;
+    uint8_t palette_bg = 0x00;
+    uint8_t background_color = 0x00;
+    bool fifo_error = false;
+
+    SDL_Window *window = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    SDL_Texture *texture = nullptr;
+    bool sdl_ok = false;
+    std::vector<uint32_t> framebuffer;
+
+    uint32_t rng_state = 0x12345678;
+
+    uint8_t next_random_byte()
+    {
+        static int count = 0;
+        if(count++ < 5) {
+            rng_state ^= rng_state << 13;
+            rng_state ^= rng_state >> 17;
+            rng_state ^= rng_state << 5;
+        }
+        return static_cast<uint8_t>(rng_state);
+    }
+
+    bool init()
+    {
+        if (!SDL_Init(SDL_INIT_VIDEO))
+        {
+            fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+            return false;
+        }
+        window = SDL_CreateWindow("Griffin Video", H_ACTIVE, V_ACTIVE, 0);
+        if (!window)
+        {
+            fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+            SDL_Quit();
+            return false;
+        }
+        renderer = SDL_CreateRenderer(window, nullptr);
+        if (!renderer)
+        {
+            fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            return false;
+        }
+        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                    SDL_TEXTUREACCESS_STREAMING,
+                                    H_ACTIVE, V_ACTIVE);
+        if (!texture)
+        {
+            fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
+            SDL_DestroyRenderer(renderer);
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            return false;
+        }
+        framebuffer.resize(H_ACTIVE * V_ACTIVE, 0xFF000000u);
+        sdl_ok = true;
+
+        // Seed the timing accumulator
+        frac_accum = LINE_NUM;
+        clock_next_line = frac_accum / LINE_DEN;
+        frac_accum %= LINE_DEN;
+
+        return true;
+    }
+
+    ~VideoState()
+    {
+        if (texture)  { SDL_DestroyTexture(texture); }
+        if (renderer) { SDL_DestroyRenderer(renderer); }
+        if (window)   { SDL_DestroyWindow(window); }
+        if (sdl_ok)   { SDL_Quit(); }
+    }
+
+    void render_scanline(int line)
+    {
+        uint32_t *row = &framebuffer[line * H_ACTIVE];
+        if (!video_enable)
+        {
+            uint32_t bg = r3g3b2_to_argb(background_color);
+            for (int i = 0; i < H_ACTIVE; i++)
+            {
+                row[i] = bg;
+            }
+            return;
+        }
+        uint32_t fg_argb = r3g3b2_to_argb(palette_fg);
+        uint32_t bg_argb = r3g3b2_to_argb(palette_bg);
+        for (int b = 0; b < BYTES_PER_LINE; b++)
+        {
+            uint8_t shift = next_random_byte();
+            for (int bit = 7; bit >= 0; bit--)
+            {
+                row[b * 8 + (7 - bit)] = (shift & (1 << bit)) ? fg_argb : bg_argb;
+            }
+        }
+    }
+
+    void present_frame()
+    {
+        if (!sdl_ok)
+        {
+            return;
+        }
+        SDL_UpdateTexture(texture, nullptr, framebuffer.data(),
+                          H_ACTIVE * sizeof(uint32_t));
+        SDL_RenderTexture(renderer, texture, nullptr, nullptr);
+        SDL_RenderPresent(renderer);
+    }
 
     void check_timer(uint64_t clock_now)
     {
-        while (clock_now >= clock_next_event)
+        while (clock_now >= clock_next_line)
         {
-            clock_next_event += sysclk_per_vblank;
-            irq_latched = true;
+            if (v_cnt < V_ACTIVE)
+            {
+                render_scanline(v_cnt);
+            }
+
+            v_cnt++;
+
+            if (v_cnt == V_SYNC_START)
+            {
+                irq_latched = true;
+                present_frame();
+            }
+
+            if (v_cnt >= V_TOTAL)
+            {
+                v_cnt = 0;
+            }
+
+            frac_accum += LINE_NUM;
+            uint64_t advance = frac_accum / LINE_DEN;
+            frac_accum %= LINE_DEN;
+            clock_next_line += advance;
         }
     }
 
     bool irq_pending() const { return irq_latched; }
     void clear_irq() { irq_latched = false; }
+
+    uint8_t read_reg(uint32_t addr) const
+    {
+        if (addr == VIDEO_CTRL_RB)
+        {
+            return (fifo_error ? VIDEO_CTRL_RB_FIFO_ERROR_MASK : 0)
+                 | (video_enable ? VIDEO_CTRL_RB_ENABLE_MASK : 0);
+        }
+        if (addr == VIDEO_STATUS)
+        {
+            return v_cnt & 1;
+        }
+        return 0;
+    }
+
+    void write_reg8(uint32_t addr, uint8_t val)
+    {
+        if (addr == VIDEO_CLRINT)
+        {
+            irq_latched = false;
+        }
+        else if (addr == VIDEO_CTRL)
+        {
+            video_enable = (val & VIDEO_CTRL_ENABLE_MASK) != 0;
+        }
+        else if (addr == VIDEO_CLRERR)
+        {
+            fifo_error = false;
+        }
+        else if (addr == VIDEO_BACKGROUND)
+        {
+            background_color = val;
+        }
+    }
+
+    void write_reg16(uint32_t addr, uint16_t val)
+    {
+        if (addr == VIDEO_PALETTE)
+        {
+            palette_fg = (val >> 8) & 0xFF;
+            palette_bg = val & 0xFF;
+        }
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -1078,32 +1276,7 @@ struct PS2State
     uint8_t data_in_latched = 1;       // idle-high
     bool bit_ready = false;
     uint8_t ctrl = 0;
-    SDL_Window *window = nullptr;
-    bool sdl_ok = false;
-
-    bool init()
-    {
-        if (!SDL_Init(SDL_INIT_VIDEO))
-        {
-            fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-            return false;
-        }
-        window = SDL_CreateWindow("Griffin PS/2 input", 320, 100, 0);
-        if (!window)
-        {
-            fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
-            SDL_Quit();
-            return false;
-        }
-        sdl_ok = true;
-        return true;
-    }
-
-    ~PS2State()
-    {
-        if (window) { SDL_DestroyWindow(window); }
-        if (sdl_ok) { SDL_Quit(); }
-    }
+    bool init() { return true; }
 
     // Append an 11-bit PS/2 frame to the pending bit event queue.
     void enqueue_byte(uint64_t clock_now, uint8_t byte)
@@ -1479,6 +1652,8 @@ public:
             }
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return ROM[(addr - ROM_BASE) % ROM_SIZE];
+        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
+            return video.read_reg(addr);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read8(addr - IO_BASE);
         } else {
@@ -1503,6 +1678,8 @@ public:
             return (read8(addr) << 8) | read8(addr + 1);
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return (ROM[(addr - ROM_BASE) % ROM_SIZE] << 8) | ROM[(addr - ROM_BASE + 1) % ROM_SIZE];
+        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
+            return (video.read_reg(addr) << 8) | video.read_reg(addr + 1);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read16(addr - IO_BASE);
         } else {
@@ -1536,12 +1713,8 @@ public:
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write8(addr - IO_BASE, val);
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            if(addr == VIDEO_CLRINT) {
-                video.clear_irq();
-                const_cast<GriffinEmulator*>(this)->update_ipl();
-            } else {
-                printf("write of uint8_t %02X to unhandled VIDEO address%06X\n", val, addr);
-            }
+            video.write_reg8(addr, val);
+            const_cast<GriffinEmulator*>(this)->update_ipl();
         } else {
             printf("write of uint8_t %02X to unhandled %06X\n", val, addr);
             abort();
@@ -1577,6 +1750,8 @@ public:
             }
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
+        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
+            video.write_reg16(addr, val);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write16(addr - IO_BASE, val);
         } else {
@@ -1606,6 +1781,11 @@ public:
     bool init_ps2()
     {
         return ps2.init();
+    }
+
+    bool init_video()
+    {
+        return video.init();
     }
 
     bool open_cf(const char *path, bool read_only)
@@ -1875,9 +2055,9 @@ int main(int argc, const char** argv)
 
     emulator.init_stdin();
 
-    if (!emulator.init_ps2())
+    if (!emulator.init_video())
     {
-        fprintf(stderr, "Warning: SDL/PS2 init failed, PS/2 input disabled\n");
+        fprintf(stderr, "Warning: SDL/Video init failed, display disabled\n");
     }
 
     SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
