@@ -3,8 +3,12 @@
 // VIDEO — VGA 640x480 progressive 1bpp video generator
 //
 // VESA 640x480@60: 25.175 MHz pixel clock, 800x525 raster, negative
-// HSync/VSync.  Pixel data is read byte-at-a-time from an IDT7200L15
-// 256x9-bit FIFO (filled by ENGINE).  Each byte is 8 pixels, MSB
+// HSync/VSync.  Pixel data is read byte-at-a-time from two IDT7200L15
+// 256x9-bit FIFOs (filled simultaneously by ENGINE with 16-bit words).
+// FIFO_EVEN holds MSB (D[15:8]), FIFO_ODD holds LSB (D[7:0]).  VIDEO
+// reads alternately: EVEN first, then ODD, yielding big-endian byte
+// order.  Q[8:0] outputs are shared (active one at a time); separate
+// nRE pins select which FIFO to read.  Each byte is 8 pixels, MSB
 // first.  The current pixel bit selects between two CPU-writable
 // R3G3B2 palette entries (fg/bg).
 //
@@ -60,10 +64,13 @@ module Video
 
     // ----------------------------------------------------------------
     // 7200 FIFO read interface (bodge wires to breadboard)
+    //   Q[8:0] shared between EVEN and ODD FIFOs; only one nRE
+    //   is asserted at a time so only one FIFO drives.
     // ----------------------------------------------------------------
     input  wire [7:0]  FIFO_Q,          // pins 36,31,30,28,37,39,44,9
     input  wire        FIFO_Q8,         // pin 45 — 9th bit toggle
-    output reg         nFIFO_RE         // pin 50 — read enable (active low)
+    output reg         nFIFO_RE_EVEN,   // pin 50 — EVEN FIFO read enable
+    output reg         nFIFO_RE_ODD     // pin 52 — ODD FIFO read enable
 );
 
     wire RESET = ~nRESET;
@@ -283,10 +290,11 @@ module Video
     // ----------------------------------------------------------------
     // 9th bit error detection
     //
-    // ENGINE toggles bit 8 on each byte written to the FIFO.  VIDEO
-    // checks that each successive read has the opposite Q8 from the
-    // previous.  Mismatch sets a sticky flag.  saved_9th_bit is 1 on
-    // reset so the first ENGINE byte (9th bit = 0) is valid.
+    // ENGINE toggles bit 8 on each word written (both FIFOs get the
+    // same Q8 per write).  VIDEO checks Q8 only on EVEN FIFO reads
+    // (one check per word pair) — successive EVEN reads must toggle.
+    // saved_9th_bit is 1 on reset so the first ENGINE byte (Q8=0)
+    // is valid.
     //
     // PIXEL_CLK domain: toggle on error, sync to SYSCLK via 3FF.
     // ----------------------------------------------------------------
@@ -322,13 +330,15 @@ module Video
     // ----------------------------------------------------------------
     // FIFO read logic and pixel shift register (PIXEL_CLK domain)
     //
-    // Read 80 bytes per active line.  Each byte is 8 pixels (MSB
-    // first).  nRE is asserted for one PIXEL_CLK cycle; on the next
-    // posedge the FIFO data is captured into shift_reg.
+    // Read 80 bytes per active line from two FIFOs alternately (EVEN
+    // first, then ODD, then EVEN, ...).  Each byte is 8 pixels (MSB
+    // first).  Only the selected FIFO's nRE is asserted; the other
+    // stays high.  fifo_select toggles after each byte load.
     //
     // Preload: assert nRE at h_cnt == 798 when the next line is
     // active, so shift_reg is loaded at h_cnt == 799 and the first
-    // pixel is ready at h_cnt == 0.
+    // pixel is ready at h_cnt == 0.  fifo_select resets to 0 (EVEN)
+    // at the start of each line.
     //
     // Mid-line: nRE is asserted at bit_cnt == 6 (overlapping the
     // second-to-last pixel of the current byte); data is captured
@@ -340,6 +350,7 @@ module Video
     reg [2:0] bit_cnt;
     reg [6:0] byte_cnt;
     reg       fifo_loading;
+    reg       fifo_select;    // 0 = EVEN (MSB), 1 = ODD (LSB)
 
     // Next line will be active: v_cnt 0..478 -> lines 1..479; v_cnt 524 -> line 0
     wire next_line_active = (v_cnt < V_ACTIVE - 10'd1) | (v_cnt == V_TOTAL - 10'd1);
@@ -350,48 +361,59 @@ module Video
     begin
         if (RESET)
         begin
-            shift_reg    <= 8'd0;
-            bit_cnt      <= 3'd0;
-            byte_cnt     <= 7'd0;
-            nFIFO_RE     <= 1'b1;
-            fifo_loading <= 1'b0;
-            saved_9th_bit <= 1'b1;
-            fifo_err_tog <= 1'b0;
+            shift_reg      <= 8'd0;
+            bit_cnt        <= 3'd0;
+            byte_cnt       <= 7'd0;
+            nFIFO_RE_EVEN  <= 1'b1;
+            nFIFO_RE_ODD   <= 1'b1;
+            fifo_loading   <= 1'b0;
+            fifo_select    <= 1'b0;
+            saved_9th_bit  <= 1'b1;
+            fifo_err_tog   <= 1'b0;
         end
         else if (preload)
         begin
-            nFIFO_RE     <= 1'b0;
-            fifo_loading <= 1'b1;
-            byte_cnt     <= 7'd0;
-            bit_cnt      <= 3'd0;
+            nFIFO_RE_EVEN  <= 1'b0;
+            nFIFO_RE_ODD   <= 1'b1;
+            fifo_loading   <= 1'b1;
+            fifo_select    <= 1'b0;
+            byte_cnt       <= 7'd0;
+            bit_cnt        <= 3'd0;
         end
         else if (fifo_loading)
         begin
-            shift_reg    <= FIFO_Q;
-            nFIFO_RE     <= 1'b1;
-            fifo_loading <= 1'b0;
-            byte_cnt     <= byte_cnt + 7'd1;
-            bit_cnt      <= 3'd0;
-            if (FIFO_Q8 == saved_9th_bit)
+            shift_reg      <= FIFO_Q;
+            nFIFO_RE_EVEN  <= 1'b1;
+            nFIFO_RE_ODD   <= 1'b1;
+            fifo_loading   <= 1'b0;
+            byte_cnt       <= byte_cnt + 7'd1;
+            bit_cnt        <= 3'd0;
+            fifo_select    <= ~fifo_select;
+            if (~fifo_select & (FIFO_Q8 == saved_9th_bit))
             begin
                 fifo_err_tog <= ~fifo_err_tog;
             end
-            saved_9th_bit <= FIFO_Q8;
+            if (~fifo_select)
+            begin
+                saved_9th_bit <= FIFO_Q8;
+            end
         end
         else if (byte_cnt > 7'd0 & byte_cnt <= BYTES_PER_LINE)
         begin
             shift_reg <= {shift_reg[6:0], 1'b0};
             if (bit_cnt == 3'd6 & byte_cnt < BYTES_PER_LINE)
             begin
-                nFIFO_RE     <= 1'b0;
-                fifo_loading <= 1'b1;
+                nFIFO_RE_EVEN <= fifo_select;
+                nFIFO_RE_ODD  <= ~fifo_select;
+                fifo_loading  <= 1'b1;
             end
             bit_cnt <= bit_cnt + 3'd1;
         end
         else
         begin
-            nFIFO_RE  <= 1'b1;
-            shift_reg <= 8'd0;
+            nFIFO_RE_EVEN <= 1'b1;
+            nFIFO_RE_ODD  <= 1'b1;
+            shift_reg      <= 8'd0;
         end
     end
 
@@ -531,6 +553,7 @@ endmodule
 //PIN: nVIDEO_IRQ     : 5
 //
 // 7200 FIFO read interface (bodge wires to breadboard)
+//   Q[8:0] shared between EVEN and ODD FIFOs
 //PIN: FIFO_Q_0       : 36
 //PIN: FIFO_Q_1       : 31
 //PIN: FIFO_Q_2       : 30
@@ -540,4 +563,5 @@ endmodule
 //PIN: FIFO_Q_6       : 44
 //PIN: FIFO_Q_7       : 9
 //PIN: FIFO_Q8        : 45
-//PIN: nFIFO_RE       : 50
+//PIN: nFIFO_RE_EVEN  : 50
+//PIN: nFIFO_RE_ODD   : 52
