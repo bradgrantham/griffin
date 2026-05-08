@@ -134,7 +134,7 @@ module glue (
     // ----------------------------------------------------------------
 
     wire duart_irq_active     = ~nDUART_IRQ;
-    wire engine_irq_active    = ~nENGINE_IRQ;
+    wire engine_irq_active    = 0; // ~nENGINE_IRQ;
     wire ps2_irq_active;  // driven by PS/2 bit_ready below
 
     assign nIPL = ~nVIDEO_IRQ        ? 3'b001 :  // level 6
