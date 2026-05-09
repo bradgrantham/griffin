@@ -27,6 +27,8 @@ Put this on a screen somehow, from Macbeth:
 
 68000 cycle counts - [https://gist.github.com/cbmeeks/e759c7061d61ec4ac354a7df44a4a8f1](https://gist.github.com/cbmeeks/e759c7061d61ec4ac354a7df44a4a8f1)	
 
+https://www.shopmemory.com/product-category/sram/
+
 Use PLD or CPLD devices - **settled on ATF1508 PLCC-84**
 
   * [ATF1508AS | Microchip Technology](https://www.microchip.com/en-us/product/ATF1508AS) - PLCC-84  
@@ -303,41 +305,35 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 
 ## Investigation Plan
 
-Why is serial transmit and interrupt not working?
-
-* was doubling up input characters for a little while
-* IRQ line loose?
-* Get this under control
-
 Clean everything up for Rev 2, get as much tested as possible
 
+* Test XR68C681 and older ROM - does it fire up the crystal?
+* Wire ENGINE into JTAG chain
+  * cut VIDEO 71/TDO, wire over to ENGINE 14/TDI
+  * wire ENGINE 71/TDI into cut trace at VIDEO
+  * Wire ENGINE 62/TCK and ENGINE 23/TMS to VIDEO 62 and 23
+* Wire in 7200s to bus - 16 Q lines and R_nW to bus, 2 Q lines to ENGINE, 8 lines & 2 read & reset to VIDEO
 * Prototype 640x240 mono composite so you have a standalone machine.
   * interlace and colorburst and audio are bonus - add them after if there is room
   * Bus mastering requests for first load and releases after last load
   * Work to do:
-    * Finish populating VGA resistors according to Claude's guidance
-    * Attempt video.v; no bodging needs to be finished for that
     * Assign wires that need to be ENGINE-to-7200-to-VIDEO - bodge them out to the breadboard
     * Attempt engine.v, maybe with two FIFO in engine.v but 7200s should arrive tomorrow.
+  * Don't bother with a palette RAM - you can probably get to 2bpp with 4 R3G3B2 colors through VIDEO CPLD if you drop background and maybe simplify some other bits
 * Booter & apps
   * Need trap interface to ROM calls
     * get_time, open/close/read/write/etc, sbrk?, read(0), write(0) for console
-
   * "App" linker.ld, load at 0x1000, crt0.s that just sets up program and rts when done?, syscalls.c that pulls trap
   * Load file into memory, jump to 0x1000
   * What to do about PS/2?  Want some kind of raw SDL/GLFW-like keycode operation for graphical apps.
     * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader
-
-* 68681 to 115200 baud - I only have MC68681!  :expressionless:  I have ordered 2 XR68C681, which has a 16-byte buffer and can do 115200.
 * Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 12MB on Rev 2
   * buildroot
-    * Need kernel config for: serial, PPP, block devices, CF card, ext4?
+    * Need kernel config for: serial, PPP, block devices, CF card, ext4, console with PS/2 and bitmap display
       * bonus: fbdev
-
-    * need serial driver for 68681
+    * need serial driver for xr68C681 - no way to test it at the moment
     * need later a console driver hooking together PS/2 and framebuffer
     * need 68010 config, seems like Claude can get on top of that
-
 
 ## Fiddly bits for later
 
