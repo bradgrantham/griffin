@@ -2,7 +2,7 @@
 
 ## Intent
 
-* This is a homebrew 68000 computer intended to let me use some parts I've had for decades in my bin, including 68000P12, AS6C4008-55PCN, a bunch of 70ns 27C512, and a handful of discrete parts.  The IC parts bin inventory is at chip-inventory.csv but I also have assorted LEDs, transistors, diodes, and a large selection of capacitors and resistors.  I've added to my collection for this project: MC68681, ATF1508CPLD, W27C512-45Z.  68010P12 on order for possible Linux 68K NOMMU
+* This is a homebrew 68000 computer intended to let me use some parts I've had for decades in my bin, including 68000P12, AS6C4008-55PCN, a bunch of 70ns 27C512, and a handful of discrete parts.  The IC parts bin inventory is at chip-inventory.csv but I also have assorted LEDs, transistors, diodes, and a large selection of capacitors and resistors.  I've added to my collection for this project: MC68681, XR68C681, ATF1508CPLD, W27C512-45Z, 68010P12
 
 * Goals include display of bitmaps starting with 640*480*1bpp, audio, and CF reading.  Possibly FUZIX, MiNT, EmuTOS, CP/M-68K, Linux
 
@@ -15,7 +15,7 @@
     * netlist is in board/board-pcb-rev-1.distilled.txt except with bodges applied as noted in griffin.yml, produced with kicad_netlist_summary_2.py
     * Rev 1 gerbers are in board/board-gerb
   * GLUE Verilog for ATF1508AS in cpld/glue
-  * MC68681 DUART (SCC68681 or XR68C681 for later revision if sourceable)
+  * XR68C681 DUART
   * Makefile for GLUE, VIDEO, ENGINE in cpld
   * ROM in firmware/{crt0.s,linker.ld,rom.cpp,Makefile} and associated other files in firmware
   * bringup ROM in sanity/{sanity.s,linker.ld,Makefile} (not keeping up to date)
@@ -28,15 +28,6 @@
 * The pins have been hand-assigned to ATF1508 pins, and those must remain where assigned because a PCB has already been manufactured.
 
 * I don't have "timeout", use a perl one-liner instead.
-
-### Rev 1 bringup hacks (temporary; remove on Rev 2)
-
-The 68681 DUART is unreliable on Rev 1.  Until Rev 2, firmware detects the platform at boot and skips the DUART on real hardware.
-
-* **Platform detection.**  `GLUE_DEBUG_IN` (0xF00001) bit 1 = `PLATFORM_ID`: `0` = emulator, `1` = Rev 1 hardware.  
-* **Firmware gate.**  `static bool platform_is_hardware` in `rom.cpp` is set once at top of `main()`.  (1) `duart_38400_init()` and `duart_console_enable()` are skipped on hardware, (2) `get_milliseconds()` picks the timebase.
-* **Two timebases, one API.**  `tick_counter` (4-byte BSS in `crt0.s`) is incremented by `_duart_isr` at 100 Hz when CTR_READY fires.  `video_frame_counter` is incremented by `_video_isr` at ~60 Hz on every VBLANK.  Both run unconditionally; on hardware only the video one advances.  `get_milliseconds()` uses video_frame_counter on hardware and `tick_counter` on emulator.  
-* **Rev 2.**  Once XR68C681 is validated, delete `platform_is_hardware`, both gates in `main()`, and collapse `get_milliseconds()` back to tick counter.  `video_frame_counter` is worth keeping for video timing
 
 ### Hardware and Software balance
 

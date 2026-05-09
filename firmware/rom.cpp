@@ -354,25 +354,11 @@ extern volatile uint32_t video_frame_counter;
 
 }; // extern "C"
 
-// Platform detection — set in main() from GLUE_DEBUG_IN PLATFORM_ID bit.
-// On Rev 1 hardware the 68681 adapter is unreliable, so firmware uses VIDEO
-// IRQ as the timebase and bitbang DEBUG_OUT as the console; the emulator
-// runs the normal DUART path.
-static bool platform_is_hardware = false;
-
-// Milliseconds since boot.  Picks the right counter and rate based on
-// platform: VIDEO frame counter at ~60 Hz on hardware, DUART tick counter
-// at 100 Hz in the emulator.
+// Milliseconds since boot.
 extern "C" uint32_t get_milliseconds()
 {
-    if (platform_is_hardware)
-    {
-        return (video_frame_counter * 1000U) / 60U;
-    }
-    else
-    {
-        return tick_counter * 10U;
-    }
+//     return (video_frame_counter * 1000U) / 60U; // Possible alternate timebase
+   return tick_counter * 10U;
 }
 
 // ---------------------------------------------------------------------------
@@ -936,35 +922,25 @@ static void video_init()
 
 int main()
 {
-    platform_is_hardware =
-        (GLUE_DEBUG_IN & Griffin::GLUE_DEBUG_IN_PLATFORM_ID_MASK) != 0;
-
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
-    debug_printf("Platform: %s\n",
-                 platform_is_hardware ? "Rev 1 hardware (bringup hacks)"
-                                      : "emulator");
 
     video_init();
 
     // debug_monitor();
 
-    if (!platform_is_hardware)
-    {
-        // Initialize 68681 DUART and switch console output from bit-bang
-        // to DUART.  Everything before this point prints via debug_printf
-        // (GLUE bit-bang); everything after prints via printf (DUART
-        // Channel A, 38400 8N1).
-        duart_38400_init();
-    }
 
-    if (!platform_is_hardware)
+    // Initialize 68681 DUART and switch console output from bit-bang
+    // to DUART.  Everything before this point prints via debug_printf
+    // (GLUE bit-bang); everything after prints via printf (DUART
+    // Channel A, 38400 8N1).
+    duart_38400_init();
+
+
+    for(auto c: "DUART TX\n")
     {
-        for(auto c: "DUART TX\n")
-        {
-            if(c) duart_putchar(c);
-        }
-        duart_console_enable();
+        if(c) duart_putchar(c);
     }
+    duart_console_enable();
     printf("Console on DUART Channel A, 38400 8N1\n");
 
     // Play startup sound
