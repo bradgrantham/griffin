@@ -2,12 +2,12 @@
 
 Computer related to parts I already have in the bin
 
-Start with baremetal fun, then progress towards full SpareMiNT or fuzix until bored
+Start with baremetal fun, then progress towards full SpareMiNT/FUZIX/Linux-NOMMU/etc until bored
 *  [Atari ST Free Operating Systems - Vincent Rivière](https://youtu.be/28ieOWEQXhU?si=ekVV36ixjHvCfm06&t=1301)  
 
 MVP:
 
-* Fuzix or CP/M-68K or NOMMU Linux 68k with an image viewer: around 640x480x1 (bonus could be NTSC 176\*480i color (704 sample artifact color) , VGA 640\*480p 2 colors per row from palette of 256, VGA 320\*480p 4 colors per row from palette of 256, 640x480x8 if that can be made to work)
+* Fuzix or CP/M-68K or NOMMU Linux 68k with an image viewer: around 640x480x1 with 2 R3G3B2 colors, stretch goal change colors per row in a tight CPU loop  (bonus: 640*480p x 4 colors)
 
 
 Put this on a screen somehow, from Macbeth:
@@ -307,11 +307,6 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 
 Clean everything up for Rev 2, get as much tested as possible
 
-* Test XR68C681 and older ROM - does it fire up the crystal?
-* Wire ENGINE into JTAG chain
-  * cut VIDEO 71/TDO, wire over to ENGINE 14/TDI
-  * wire ENGINE 71/TDI into cut trace at VIDEO
-  * Wire ENGINE 62/TCK and ENGINE 23/TMS to VIDEO 62 and 23
 * Wire in 7200s to bus - 16 Q lines and R_nW to bus, 2 Q lines to ENGINE, 8 lines & 2 read & reset to VIDEO
 * Prototype 640x240 mono composite so you have a standalone machine.
   * interlace and colorburst and audio are bonus - add them after if there is room
