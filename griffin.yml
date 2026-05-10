@@ -193,7 +193,7 @@ peripherals:
 
   ENGINE:
     part: ATF1508AS
-    description: "DMA engine"
+    description: "Video framebuffer DMA engine with 7200 FIFO write interface"
     address_range:
       base: 0xD00000
       size: 0x100000
@@ -207,6 +207,33 @@ peripherals:
     interrupt:
       level: 3
       signal: ~ENGINE_IRQ
+    registers:
+      - offset: 0x03
+        name: SOURCE_PAGE
+        access: write
+        width: 8
+        description: |
+          Framebuffer page: A[23:16] of source base address.
+          Combined with 15-bit word counter for A[15:1].
+          Framebuffer must be 64KB-aligned.
+      - offset: 0x05
+        name: CTRL
+        access: write
+        width: 8
+        description: "DMA control register."
+        bits:
+          - { bit: "0", name: DMA_EN,
+              description: "1 = enable DMA, resets word counter. 0 = stop DMA, release bus." }
+      - offset: 0x05
+        name: STATUS
+        access: read
+        width: 8
+        description: "DMA status readback."
+        bits:
+          - { bit: "0", name: DMA_EN,
+              description: "Current DMA_EN state" }
+          - { bit: "1", name: FIFO_HF,
+              description: "1 = FIFO half-full (HF asserted, DMA paused)" }
 
   VIDEO:
     part: ATF1508AS

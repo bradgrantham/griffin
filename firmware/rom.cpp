@@ -906,11 +906,38 @@ static int debug_getline(char *buf, int maxlen)
 }
 
 // ---------------------------------------------------------------------------
-// Video init — set palette and enable scanout
+// Video init — generate checkerboard, start ENGINE DMA, enable scanout
 // ---------------------------------------------------------------------------
 
-static void video_init()
+static constexpr uint32_t FB_ADDR = 0x0F0000;
+static constexpr uint8_t  FB_PAGE = 0x0F;
+
+static void generate_checkerboard()
 {
+    volatile uint8_t *fb = reinterpret_cast<volatile uint8_t *>(FB_ADDR);
+    constexpr uint32_t BYTES_PER_ROW = 80;
+    constexpr uint32_t ROWS = 480;
+
+    for (uint32_t y = 0; y < ROWS; y++)
+    {
+        uint8_t pattern = ((y / 4) & 1) ? 0x0F : 0xF0;
+        for (uint32_t x = 0; x < BYTES_PER_ROW; x++)
+        {
+            fb[y * BYTES_PER_ROW + x] = pattern;
+        }
+    }
+}
+
+static void video_test_init()
+{
+    debug_printf("VIDEO: generating 4x4 checkerboard at 0x%06lX\n",
+                 static_cast<unsigned long>(FB_ADDR));
+    generate_checkerboard();
+
+    ENGINE_SOURCE_PAGE = FB_PAGE;
+    ENGINE_CTRL = Griffin::ENGINE_CTRL_DMA_EN_MASK;
+    debug_printf("ENGINE: DMA enabled, page=0x%02X\n", FB_PAGE);
+
     VIDEO_PALETTE = 0xFF00;     // fg=white, bg=black
     VIDEO_BACKGROUND = 0x00;    // black border
     VIDEO_CLRERR = 0;           // clear any stale FIFO_ERROR
@@ -924,7 +951,7 @@ int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
 
-    video_init();
+    video_test_init();
 
     // debug_monitor();
 

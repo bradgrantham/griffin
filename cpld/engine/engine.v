@@ -1,34 +1,32 @@
-// engine.v — Griffin audio DMA engine (ATF1508AS CPLD)
+// engine.v — Griffin video framebuffer DMA engine (ATF1508AS CPLD)
 //
 // Bus-masters via BR/BG/BGACK and copies 16-bit words from a
-// 4 KB-aligned source buffer in RAM to AUDIO at a programmable
-// SYSCLK-paced rate.  Buffer is fixed-length 2 KW (4 KB), looped
-// while DMA_EN is set.  Word counter is 11 bits; bit[10] flips
-// every 1024 words and that flip latches IRQ_PEND so firmware can
-// double-buffer fills.
+// framebuffer in RAM to a pair of IDT7200 FIFOs.  The FIFOs feed
+// the VIDEO CPLD for scanout.
 //
-// Address layout (no overlap, so the master-cycle address is just
-// a wired concat — no adder):
-//   A[23:22] = 2'b00          (RAM is at most 4 MB)
-//   A[21:12] = SOURCE[9:0]    (10-bit base register)
-//   A[11:1]  = word_counter   (11-bit DMA counter)
-//   A[0]     = 0              (always word-aligned; not a pin)
+// Address: {source_page[7:0], word_counter[14:0]} = A[23:1].
+// Framebuffer is 64KB-aligned.  Counter resets at 19200 words
+// (640x480 pixels / 16 pixels per word = one frame).
+//
+// Flow control: when FIFO half-full deasserts (room available),
+// ENGINE requests bus and transfers exactly 40 words (one scanline).
+// Then releases bus and waits for next HF deassert.
 
 `include "../../griffin.generated.vh"
 
 module Engine
 (
-    input  wire        CPUCLK,          // pin 83 (GCLK1)  — 12 MHz system clock
+    input  wire        CPUCLK,          // pin 83 (GCLK1)  — system clock
     input  wire        nRESET,          // pin 1  (GCLR)   — active-low async reset
 
     // Shared 68000 bus
-    // inout  wire [23:1] A,
-    // inout  wire [15:0] D,
-    // inout  wire        R_nW,
-    // inout  wire        nAS,
-    // inout  wire        nUDS,
-    // inout  wire        nLDS,
-    // inout  wire [2:0]  FC,
+    inout  wire [23:1] A,
+    input  wire [15:0] D,
+    inout  wire        R_nW,
+    inout  wire        nAS,
+    inout  wire        nUDS,
+    inout  wire        nLDS,
+    inout  wire [2:0]  FC,
 
     // Bus observation
     input  wire        nDTACK_BUS,      // pin 81 (GCLK3)
@@ -38,8 +36,13 @@ module Engine
 
     // Bus arbitration
     input  wire        nBG,             // pin 76
-    output wire        nBR,             // pin 79
-    output wire        nBGACK,          // pin 77
+    output reg         nBR,             // pin 79
+    output reg         nBGACK,          // pin 77
+
+    // FIFO interface (bodge wires to breadboard)
+    input  wire        nFIFO_HF,        // pin 6  — either 7200 half-full (active low)
+    output reg         nFIFO_W,         // pin 10 — both 7200 /W (active low)
+    output reg         q8_toggle_out,   // pin 8  — both 7200 D8 (toggle per word)
 
     // IRQ to GLUE
     output wire        nENGINE_IRQ      // pin 5
@@ -47,16 +50,203 @@ module Engine
 
     wire RESET = ~nRESET;
     assign nENGINE_IRQ = 1;
-    assign nBR = 1;
-    assign nBGACK = 1;
 
-    // assign A = 23'bz;
-    // assign D = 16'bz;
-    // assign R_nW = 1'bz;
-    // assign nAS = 1'bz;
-    // assign nUDS = 1'bz;
-    // assign nLDS = 1'bz;
-    // assign FC = 3'bz;
+    // ----------------------------------------------------------------
+    // Bus tri-state — drive only when BGACK is asserted (mastering)
+    // ----------------------------------------------------------------
+
+    wire mastering = ~nBGACK;
+
+    reg [7:0]  source_page;
+    reg [14:0] word_counter;
+
+    wire [23:1] dma_addr = {source_page, word_counter};
+
+    assign A    = mastering ? dma_addr : 23'bz;
+    assign R_nW = mastering ? 1'b1     : 1'bz;
+    assign FC   = mastering ? 3'b101   : 3'bz;
+
+    reg as_out, uds_out, lds_out;
+    assign nAS  = mastering ? as_out  : 1'bz;
+    assign nUDS = mastering ? uds_out : 1'bz;
+    assign nLDS = mastering ? lds_out : 1'bz;
+
+    // ----------------------------------------------------------------
+    // CPU register interface
+    // ----------------------------------------------------------------
+
+    wire cpu_write = ~nENGINE_SELECT & ~R_nW & ~nLDS;
+
+    // SOURCE_PAGE at offset 0x03: A[2:1] = 01, 8-bit via nLDS (D[7:0])
+    wire source_write = cpu_write & (A[2:1] == 2'b01);
+
+    // CTRL at offset 0x05: A[2:1] = 10, 8-bit via nLDS
+    wire ctrl_write = cpu_write & (A[2:1] == 2'b10);
+
+    reg dma_en;
+
+    // ----------------------------------------------------------------
+    // Row burst counter — counts 0 to 39 within each row transfer
+    // ----------------------------------------------------------------
+
+    localparam [5:0] WORDS_PER_ROW = 6'd40;
+    reg [5:0] burst_cnt;
+    wire end_of_row = (burst_cnt == WORDS_PER_ROW - 6'd1);
+
+    // Frame boundary — reset word counter after 19200 words
+    localparam [14:0] WORDS_PER_FRAME = 15'd19200;
+    wire end_of_frame = (word_counter == WORDS_PER_FRAME - 15'd1);
+
+    // ----------------------------------------------------------------
+    // DMA state machine
+    // ----------------------------------------------------------------
+
+    localparam STATE_IDLE       = 3'd0;
+    localparam STATE_REQUEST    = 3'd1;
+    localparam STATE_WAIT_FREE  = 3'd2;
+    localparam STATE_ADDR       = 3'd3;
+    localparam STATE_WAIT_DTACK = 3'd4;
+    localparam STATE_LATCH      = 3'd5;
+    localparam STATE_RELEASE    = 3'd6;
+
+    reg [2:0] state;
+
+    wire fifo_has_room = nFIFO_HF;
+    wire want_dma = dma_en & fifo_has_room;
+
+    always @(posedge CPUCLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            state         <= STATE_IDLE;
+            nBR           <= 1'b1;
+            nBGACK        <= 1'b1;
+            nFIFO_W       <= 1'b1;
+            as_out        <= 1'b1;
+            uds_out       <= 1'b1;
+            lds_out       <= 1'b1;
+            dma_en        <= 1'b0;
+            source_page   <= 8'd0;
+            word_counter  <= 15'd0;
+            burst_cnt     <= 6'd0;
+            q8_toggle_out <= 1'b0;
+        end
+        else
+        begin
+            // CPU register writes (only possible when not mastering)
+            if (source_write)
+            begin
+                source_page <= D[7:0];
+            end
+            if (ctrl_write)
+            begin
+                dma_en <= D[0];
+                if (D[0])
+                begin
+                    word_counter  <= 15'd0;
+                    q8_toggle_out <= 1'b0;
+                end
+            end
+
+            case (state)
+                STATE_IDLE:
+                begin
+                    if (want_dma)
+                    begin
+                        nBR       <= 1'b0;
+                        burst_cnt <= 6'd0;
+                        state     <= STATE_REQUEST;
+                    end
+                end
+
+                STATE_REQUEST:
+                begin
+                    if (~dma_en)
+                    begin
+                        nBR   <= 1'b1;
+                        state <= STATE_IDLE;
+                    end
+                    else if (~nBG)
+                    begin
+                        state <= STATE_WAIT_FREE;
+                    end
+                end
+
+                STATE_WAIT_FREE:
+                begin
+                    if (~dma_en)
+                    begin
+                        nBR   <= 1'b1;
+                        state <= STATE_IDLE;
+                    end
+                    else if (nAS)
+                    begin
+                        nBGACK <= 1'b0;
+                        nBR    <= 1'b1;
+                        state  <= STATE_ADDR;
+                    end
+                end
+
+                STATE_ADDR:
+                begin
+                    as_out  <= 1'b0;
+                    uds_out <= 1'b0;
+                    lds_out <= 1'b0;
+                    state   <= STATE_WAIT_DTACK;
+                end
+
+                STATE_WAIT_DTACK:
+                begin
+                    if (~nDTACK_BUS)
+                    begin
+                        nFIFO_W <= 1'b0;
+                        state   <= STATE_LATCH;
+                    end
+                end
+
+                STATE_LATCH:
+                begin
+                    nFIFO_W       <= 1'b1;
+                    as_out        <= 1'b1;
+                    uds_out       <= 1'b1;
+                    lds_out       <= 1'b1;
+                    q8_toggle_out <= ~q8_toggle_out;
+                    burst_cnt     <= burst_cnt + 6'd1;
+
+                    if (end_of_frame)
+                    begin
+                        word_counter <= 15'd0;
+                    end
+                    else
+                    begin
+                        word_counter <= word_counter + 15'd1;
+                    end
+
+                    if (end_of_row)
+                    begin
+                        state <= STATE_RELEASE;
+                    end
+                    else
+                    begin
+                        state <= STATE_ADDR;
+                    end
+                end
+
+                STATE_RELEASE:
+                begin
+                    nBGACK <= 1'b1;
+                    state  <= STATE_IDLE;
+                end
+
+                default:
+                begin
+                    state  <= STATE_IDLE;
+                    nBGACK <= 1'b1;
+                    nBR    <= 1'b1;
+                end
+            endcase
+        end
+    end
 
 endmodule
 
@@ -113,7 +303,7 @@ endmodule
 //PIN: A_1            : 49
 //PIN: A_0            : 48
 //
-// Data bus
+// Data bus (input only for video DMA — FIFOs latch directly from bus)
 //PIN: D_15           : 27
 //PIN: D_14           : 63
 //PIN: D_13           : 24
@@ -130,3 +320,8 @@ endmodule
 //PIN: D_2            : 17
 //PIN: D_1            : 68
 //PIN: D_0            : 18
+//
+// FIFO interface (bodge wires to breadboard)
+//PIN: nFIFO_W        : 10
+//PIN: q8_toggle_out  : 8
+//PIN: nFIFO_HF       : 6

@@ -106,6 +106,11 @@ _start:
     move.b  #(GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK), GLUE_CONFIG
     move.b  #(GLUE_CONFIG_DEFAULT + GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK), glue_config_shadow
 
+    lea     rom_unshadowed, %a1
+    lea     .rom_un(%pc), %a6
+    jmp     timer_puts
+.rom_un:
+
     /* Copy ROM vector table to RAM */
     lea     vector_table, %a0
     move.l  #0, %a1
@@ -113,6 +118,11 @@ _start:
 vec_copy:
     move.l  (%a0)+, (%a1)+
     dbra    %d0, vec_copy
+
+    lea     vtab_copied, %a1
+    lea     .vtab_cop(%pc), %a6
+    jmp     timer_puts
+.vtab_cop:
 
     /* Probe RAM and print result */
     move.w  #0xAA55, 0x400000 - 2
@@ -1318,6 +1328,10 @@ _fini:
 .section .rodata
 hellostr:
     .string	"Griffin!\n"
+rom_unshadowed:
+    .string	"ROM shadow disabled.\n"
+vtab_copied:
+    .string	"Vector table copied.\n"
 msg_ram_ok:
     .string "RAM test OK\n"
 msg_ram_data_fail:
