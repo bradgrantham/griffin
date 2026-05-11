@@ -45,7 +45,7 @@ module Engine
     output reg         q8_toggle_out,   // pin 8  — both 7200 D8 (toggle per word)
 
     // IRQ to GLUE
-    output wire        nENGINE_IRQ      // pin 5
+    output wire        nENGINE_IRQ,      // pin 5
 );
 
     wire RESET = ~nRESET;
@@ -75,7 +75,7 @@ module Engine
     // CPU register interface
     // ----------------------------------------------------------------
 
-    wire cpu_write = ~nENGINE_SELECT & ~R_nW & ~nLDS;
+    wire cpu_write = ~nENGINE_SELECT & ~R_nW & ~nLDS & ~nAS;
 
     // SOURCE_PAGE at offset 0x03: A[2:1] = 01, 8-bit via nLDS (D[7:0])
     wire source_write = cpu_write & (A[2:1] == 2'b01);
