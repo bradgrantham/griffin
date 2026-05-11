@@ -1025,18 +1025,8 @@ struct VideoState
     bool sdl_ok = false;
     std::vector<uint32_t> framebuffer;
 
-    uint32_t rng_state = 0x12345678;
-
-    uint8_t next_random_byte()
-    {
-        static int count = 0;
-        if(count++ < 5) {
-            rng_state ^= rng_state << 13;
-            rng_state ^= rng_state >> 17;
-            rng_state ^= rng_state << 5;
-        }
-        return static_cast<uint8_t>(rng_state);
-    }
+    uint8_t scanline_bytes[BYTES_PER_LINE] = {};
+    bool scanline_valid = false;
 
     bool init()
     {
@@ -1093,7 +1083,7 @@ struct VideoState
     void render_scanline(int line)
     {
         uint32_t *row = &framebuffer[line * H_ACTIVE];
-        if (!video_enable)
+        if (!video_enable || !scanline_valid)
         {
             uint32_t bg = r3g3b2_to_argb(background_color);
             for (int i = 0; i < H_ACTIVE; i++)
@@ -1106,7 +1096,7 @@ struct VideoState
         uint32_t bg_argb = r3g3b2_to_argb(palette_bg);
         for (int b = 0; b < BYTES_PER_LINE; b++)
         {
-            uint8_t shift = next_random_byte();
+            uint8_t shift = scanline_bytes[b];
             for (int bit = 7; bit >= 0; bit--)
             {
                 row[b * 8 + (7 - bit)] = (shift & (1 << bit)) ? fg_argb : bg_argb;
@@ -1126,12 +1116,15 @@ struct VideoState
         SDL_RenderPresent(renderer);
     }
 
-    void check_timer(uint64_t clock_now)
+    template<typename FetchFn>
+    uint32_t check_timer(uint64_t clock_now, FetchFn&& fetch_active_line)
     {
+        uint32_t stall_cycles = 0;
         while (clock_now >= clock_next_line)
         {
             if (v_cnt < V_ACTIVE)
             {
+                scanline_valid = fetch_active_line(v_cnt, scanline_bytes, stall_cycles);
                 render_scanline(v_cnt);
             }
 
@@ -1153,6 +1146,7 @@ struct VideoState
             frac_accum %= LINE_DEN;
             clock_next_line += advance;
         }
+        return stall_cycles;
     }
 
     bool irq_pending() const { return irq_latched; }
@@ -1198,6 +1192,57 @@ struct VideoState
         {
             palette_fg = (val >> 8) & 0xFF;
             palette_bg = val & 0xFF;
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// ENGINE — framebuffer DMA engine (ATF1508AS CPLD).
+//
+// Real hardware bus-masters and bursts 40 16-bit words per scanline into
+// a pair of 7200 FIFOs.  The emulator skips the FIFO model: when a
+// scanline is rendered, VideoState's fetch callback pulls 80 bytes
+// directly from RAM at {SOURCE_PAGE, line*80} and we charge the CPU
+// the equivalent burst time so timing-sensitive code (bit-banged UART,
+// GLUE timer loops) sees the same stall as real hardware.
+// ---------------------------------------------------------------------------
+
+struct EngineState
+{
+    // engine.v STATE_ADDR + STATE_WAIT_DTACK + STATE_LATCH = 3 sysclks/word
+    // (RAM DTACK is 0 wait states), plus arbitration overhead per burst.
+    static constexpr uint32_t WORDS_PER_BURST = 40;
+    static constexpr uint32_t SYSCLKS_PER_WORD = 3;
+    static constexpr uint32_t ARBITRATION_SYSCLKS = 3;
+    static constexpr uint32_t SYSCLKS_PER_BURST =
+        WORDS_PER_BURST * SYSCLKS_PER_WORD + ARBITRATION_SYSCLKS;
+
+    uint8_t source_page = 0;
+    bool dma_en = false;
+
+    uint32_t fb_line_addr(int line) const
+    {
+        return (uint32_t(source_page) << 16) | (uint32_t(line) * 80);
+    }
+
+    uint8_t read_reg(uint32_t addr) const
+    {
+        if (addr == ENGINE_STATUS)
+        {
+            return dma_en ? ENGINE_STATUS_DMA_EN_MASK : 0;
+        }
+        return 0;
+    }
+
+    void write_reg8(uint32_t addr, uint8_t val)
+    {
+        if (addr == ENGINE_SOURCE_PAGE)
+        {
+            source_page = val;
+        }
+        else if (addr == ENGINE_CTRL)
+        {
+            dma_en = (val & ENGINE_CTRL_DMA_EN_MASK) != 0;
         }
     }
 };
@@ -1393,6 +1438,7 @@ class GriffinEmulator : public moira::Moira
     mutable CFState cf;
     mutable DUARTState duart;
     mutable VideoState video;
+    mutable EngineState engine;
     mutable PS2State ps2;
     mutable TimerState timer;
     mutable SoftUARTTX debug_in_tx;
@@ -1588,6 +1634,27 @@ class GriffinEmulator : public moira::Moira
         }
     }
 
+    uint8_t peek_ram8(uint32_t addr) const
+    {
+        if (RAM_BANK_1.contains(addr) && !RAM_bank1.empty())
+        {
+            return RAM_bank1[RAM_BANK_1.offset(addr) % RAM_bank1.size()];
+        }
+        if (RAM_BANK_2.contains(addr) && !RAM_bank2.empty())
+        {
+            return RAM_bank2[RAM_BANK_2.offset(addr) % RAM_bank2.size()];
+        }
+        if (RAM_BANK_3.contains(addr) && !RAM_bank3.empty())
+        {
+            return RAM_bank3[RAM_BANK_3.offset(addr) % RAM_bank3.size()];
+        }
+        if (RAM_BANK_4.contains(addr) && !RAM_bank4.empty())
+        {
+            return RAM_bank4[RAM_BANK_4.offset(addr) % RAM_bank4.size()];
+        }
+        return 0;
+    }
+
 public:
 
     uint32_t clock_hz = SYSCLK_HZ;
@@ -1654,6 +1721,8 @@ public:
             return ROM[(addr - ROM_BASE) % ROM_SIZE];
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
             return video.read_reg(addr);
+        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
+            return engine.read_reg(addr);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read8(addr - IO_BASE);
         } else {
@@ -1680,6 +1749,8 @@ public:
             return (ROM[(addr - ROM_BASE) % ROM_SIZE] << 8) | ROM[(addr - ROM_BASE + 1) % ROM_SIZE];
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
             return (video.read_reg(addr) << 8) | video.read_reg(addr + 1);
+        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
+            return (engine.read_reg(addr) << 8) | engine.read_reg(addr + 1);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read16(addr - IO_BASE);
         } else {
@@ -1715,6 +1786,8 @@ public:
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
             video.write_reg8(addr, val);
             const_cast<GriffinEmulator*>(this)->update_ipl();
+        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
+            engine.write_reg8(addr, val);
         } else {
             printf("write of uint8_t %02X to unhandled %06X\n", val, addr);
             abort();
@@ -1752,6 +1825,8 @@ public:
             return;
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
             video.write_reg16(addr, val);
+        } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
+            engine.write_reg8(addr + 1, low);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write16(addr - IO_BASE, val);
         } else {
@@ -1838,7 +1913,25 @@ public:
         }
 
         duart.check_timer(getClock());
-        video.check_timer(getClock());
+        uint32_t dma_stall = video.check_timer(getClock(),
+            [this](int line, uint8_t *dst, uint32_t &stall) -> bool
+            {
+                if (!engine.dma_en)
+                {
+                    return false;
+                }
+                uint32_t base = engine.fb_line_addr(line);
+                for (int i = 0; i < VideoState::BYTES_PER_LINE; i++)
+                {
+                    dst[i] = peek_ram8(base + i);
+                }
+                stall += EngineState::SYSCLKS_PER_BURST;
+                return true;
+            });
+        if (dma_stall > 0)
+        {
+            sync(static_cast<int>(dma_stall));
+        }
         ps2.check_timer(getClock());
         update_ipl();
     }
