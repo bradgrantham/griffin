@@ -21,6 +21,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <util.h>
+#include <sys/disk.h>
 #else
 #include <pty.h>
 #endif
@@ -245,6 +246,34 @@ struct CFState
             return false;
         }
         file_size = st.st_size;
+        if (S_ISBLK(st.st_mode) || S_ISCHR(st.st_mode))
+        {
+#ifdef __APPLE__
+            uint64_t block_count = 0;
+            uint32_t block_size = 0;
+            if (ioctl(fd, DKIOCGETBLOCKCOUNT, &block_count) < 0
+                || ioctl(fd, DKIOCGETBLOCKSIZE, &block_size) < 0)
+            {
+                perror("ioctl(DKIOCGETBLOCK*)");
+                ::close(fd);
+                fd = -1;
+                return false;
+            }
+            file_size = (off_t)block_count * (off_t)block_size;
+#else
+            // Fall back to seeking to end for other platforms.
+            off_t end = lseek(fd, 0, SEEK_END);
+            if (end < 0)
+            {
+                perror("lseek");
+                ::close(fd);
+                fd = -1;
+                return false;
+            }
+            file_size = end;
+            lseek(fd, 0, SEEK_SET);
+#endif
+        }
         if (file_size < 512)
         {
             fprintf(stderr, "CF image too small (%llu bytes, need at least 512)\n",
