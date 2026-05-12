@@ -35,7 +35,7 @@ crest features a griffin, which I had forgotten, so the name turned out to be ve
 </p>
 
 <p>
-<img src="https://plunk.org/griffin/griffin_050126.jpg" alt="The Griffin board" class="photo">
+<img src="https://plunk.org/griffin/griffin_051226.jpg" alt="The Griffin board" class="photo">
 <br>
 <span class="caption">The board on the bench, May 2026.</span>
 </p>
@@ -88,15 +88,26 @@ The rev 1 board boots at an overclocked 14 MHz. It has:
   <li>A CF card interface with FAT support, via ElmChan's FatFs.</li>
   <li>PS/2 keyboard input, mostly working.</li>
   <li>A CPU-writable audio DAC with no hardware assistance.</li>
+  <li>640&times;480 1bpp VGA out of main memory, with two R3G3B2 palette entries the CPU can rewrite every frame.</li>
 </ul>
 
 <p>
 The console comes up, the ROM monitor talks, the CF card enumerates and FAT reads work, and PS/2 is
-good enough that I can print keycodes. There is no video yet.
+good enough that I can print keycodes. Video is now up: <code>VIDEO</code> DMAs a 640&times;480 1bpp
+framebuffer and drives VGA, picking each pixel from one of two palette slots. The slots hold R3G3B2
+values and are CPU-writable, so even though there are only two colors on screen at once, the firmware
+can change which two between frames in the vertical-blank ISR &mdash; enough for a splash screen with
+a flash, or for crude palette-cycling effects.
 </p>
 
 <p>
-The rev 1 design files are in the repo:
+<img src="https://plunk.org/griffin/video_051226.jpg" alt="640x480 1bpp VGA output from the Griffin board" class="photo">
+<br>
+<span class="caption">640&times;480 1bpp VGA out of main memory, May 2026.</span>
+</p>
+
+<p>
+The rev 1 design files, which have yet to be updated with swapping out the AT89S52 for an XR68C681 with the video design, are in the repo:
 the <a href="https://github.com/bradgrantham/griffin/blob/main/board_rev_1_schematic.pdf">schematic</a>,
 the <a href="https://github.com/bradgrantham/griffin/blob/main/board_rev_1_pcb.pdf">PCB</a>,
 and a <a href="https://github.com/bradgrantham/griffin/blob/main/board/board-pcb-rev-1.distilled.txt">distilled netlist</a>
@@ -154,14 +165,9 @@ useful clue.
 <h2>What's next</h2>
 
 <p>
-The next thing I want to see is video. The rev 1 board has both a monochrome composite output and a
-VGA output for 640&times;480, and I would be happy to get either one of them displaying a stable
-raster of a pattern out of memory.
-</p>
-
-<p>
-After that, a proper keyboard-and-screen monitor, and then probably a try at FUZIX, once
-there's something to look at.
+With VGA working, the monochrome composite output on the rev 1 board is the next thing to bring up,
+and after that a proper keyboard-and-screen monitor, and then probably a try at FUZIX, once there's
+something to look at.
 </p>
 
 <h2>A note on Claude Code</h2>
