@@ -68,5 +68,11 @@ def main():
         f.write('};\n')
     print(f"Wrote {cpp_path} ({total_words} words, {total_words * 2} bytes)")
 
+    # Write raw blob: big-endian uint16_t words, suitable for fread into scanout buffer
+    bin_path = os.path.join(base, 'splash.bin')
+    with open(bin_path, 'wb') as f:
+        f.write(struct.pack(f'>{total_words}H', *words))
+    print(f"Wrote {bin_path} ({total_words * 2} bytes)")
+
 if __name__ == '__main__':
     main()
