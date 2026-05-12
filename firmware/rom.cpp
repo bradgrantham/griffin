@@ -928,6 +928,37 @@ static void generate_checkerboard()
     }
 }
 
+// Attempt to load splash.bin from the mounted filesystem into the framebuffer.
+// Returns true on success.  Framebuffer is 80 bytes/row * 480 rows = 38400 bytes
+// for 640x480 1bpp.  On any failure restores the checkerboard so a partial read
+// can't leave a corrupted image on screen.
+static constexpr size_t FB_BYTES = 80U * 480U;
+
+static bool load_splash()
+{
+    FILE *fp = fopen("splash.bin", "rb");
+    if (!fp)
+    {
+        printf("splash: fopen(\"splash.bin\") failed; falling back to checkerboard\n");
+        return false;
+    }
+
+    size_t got = fread(reinterpret_cast<void *>(FB_ADDR), 1, FB_BYTES, fp);
+    fclose(fp);
+
+    if (got != FB_BYTES)
+    {
+        printf("splash: short read (%lu of %lu bytes); falling back to checkerboard\n",
+               static_cast<unsigned long>(got), static_cast<unsigned long>(FB_BYTES));
+        generate_checkerboard();
+        return false;
+    }
+
+    printf("splash: loaded %lu bytes from splash.bin into framebuffer\n",
+           static_cast<unsigned long>(FB_BYTES));
+    return true;
+}
+
 static void video_test_init()
 {
     debug_printf("VIDEO: generating 4x4 checkerboard at 0x%06lX\n",
@@ -975,6 +1006,8 @@ int main()
     // play_audio(_binary_startup_raw_start, audio_len, 11025);
 
     cf_mount_and_list();
+
+    load_splash();
 
     printf("Input check loop...\n");
 
