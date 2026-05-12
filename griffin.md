@@ -216,19 +216,9 @@ Dedicated ATF1508 CPLD for:
 NTSC, VGA pixel and timing generation - second ATF1508
 
 * CPLD 16-bit shift register clocks out 1 bit, expands to R3G3B2 through internal pair of palette registers  
-
 * Count off hsync and vsync to provide HSYNC and VSYNC signals and exit-VBLANK interrupt (through GLUE)  
-
 * Registers: see [griffin.yml](griffin.yml). All config registers default to 0 (video disabled). Some can be changed at any time but in practice CPU is in a tight pixel loop during visible lines, so changes happen in hblank or vblank.
-
 * Snooped bus user data (FC2:FC0 == 101\) in “slow palette” mode expects 16bits of pixel data (16 pixels) repeated through visible pixels  
-
-* Snooped bus data in “fast palette” mode expects 16 bits of palette (2x R3G3B2) and then 16bits of pixel data (16 pixels) repeated through visible pixels and then one more 16-bits palette  (not implemented)
-  * For VGA only, "slow palette" is the palette is updated at most once per line, or perhaps as slow as set once and never set again.  "Fast palette" is the palette is updated every 16 pixels. For composite, the pixels are just 0 and 1 and I might add a colorburst mode so I can get artifact colors.  
-
-  * * 16-bit "pixel shift register", "palette register", "next 16 pixels" register, and "next palette" register. The LSBit of the pixel shift register is the current pixel, and selects from the two 8-bit values in the palette register for VGA.  Or it is black or white voltage for composite video.  Every pixel clock the pixel shift register shifts right.  On the starting pixel clock (multiple of 16\) and every 16 clocks through the end of visible pixels, the pixel shift register would be loaded from the "next 16 pixels" and the palette register would be loaded from "next palette".  After the visible pixels range, every 16 clocks until visible pixels starts again, the shift would be filled with border pixel (maybe set or cleared) and the palette register would be loaded from VIDEO\_BORDER\_PALETTE. The implication is that all lines will be multiples of 16 and I'm okay with that.  
-    * in "slow palette" mode, stall the next bus access (expecting a CPU read from framebuffer) until the pixel shift register is loaded from the previous "next 16 pixels", at which point the "next 16 pixels" are loaded from the snoop, the bus D lines are loaded into "next 16 pixels" and STALL is released.  Thus a line of "slow palette" can optionally set the "next" palette register to set border colors for the line.
-    * In "fast palette" the snoops also set the "next palette register" first, so a line of "fast palette" writes `VIDEO_ARM_SNOOP`, then reads N\*2 words made of a palette read and a pixel read, likely a move.l which will then perform two word reads. The first load will not stall but will be immediately loaded into "next palette". The second read will stall until the shift is loaded from the "next 16 pixels", the bus D lines are loaded into "next 16 pixels" and STALL is released.  
 
 ## Compact Flash interface
 
@@ -307,14 +297,9 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 
 Clean everything up for Rev 2, get as much tested as possible
 
-* Wire in 7200s to bus - 16 Q lines and R_nW to bus, 2 Q lines to ENGINE, 8 lines & 2 read & reset to VIDEO
-* Prototype 640x240 mono composite so you have a standalone machine.
-  * interlace and colorburst and audio are bonus - add them after if there is room
-  * Bus mastering requests for first load and releases after last load
-  * Work to do:
-    * Assign wires that need to be ENGINE-to-7200-to-VIDEO - bodge them out to the breadboard
-    * Attempt engine.v, maybe with two FIFO in engine.v but 7200s should arrive tomorrow.
-  * Don't bother with a palette RAM - you can probably get to 2bpp with 4 R3G3B2 colors through VIDEO CPLD if you drop background and maybe simplify some other bits
+* Prototype 640x240 mono composite - works
+  * slight instability on one FIFO - ODD? READ is sometimes lost, causing FIFO to lag scanout.
+
 * Booter & apps
   * Need trap interface to ROM calls
     * get_time, open/close/read/write/etc, sbrk?, read(0), write(0) for console
@@ -322,6 +307,7 @@ Clean everything up for Rev 2, get as much tested as possible
   * Load file into memory, jump to 0x1000
   * What to do about PS/2?  Want some kind of raw SDL/GLFW-like keycode operation for graphical apps.
     * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader
+  * Need a "text" mode versus 
 * Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 12MB on Rev 2
   * buildroot
     * Need kernel config for: serial, PPP, block devices, CF card, ext4, console with PS/2 and bitmap display
@@ -444,6 +430,7 @@ Need a rev1 branch for continuing experiments and main branch under development 
     - [ ] Any inter-IC signals that might cause stalls or floating behavior
   - [ ] More signals between CPLDs??
   - [ ] Decoupling caps for every +5V/GND pair especially CPLDs
+  - [ ] Source termination (33-100Ω series at CPLD output) on fast control signals to FIFOs — /RE_EVEN, /RE_ODD, /W, q8_toggle.  Rev 1 bringup: unterminated bodge wires caused /RE ringing to cross threshold at FIFO input, doubling reads and corrupting display (image creep up/left).  Workaround: 10pF caps from each /RE pin to GND at the 7200s — stable but not rock solid.
   - [ ] GND, +5V, D, A, WRITE_LO, WRITE_HI, IO/VIDEO/ENGINE/AUDIO select/latch, nVPA to test points, basically bring out every inter-IC signal
     - [ ] Use a pin header expecting Dupont jumpers to logic analyzer or use a jumper to a scope probe
     - [ ] Make the pin header be 2xN, down each side silk screen the signal at the pin
