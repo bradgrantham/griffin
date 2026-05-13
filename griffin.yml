@@ -299,13 +299,6 @@ peripherals:
           Two-entry 1bpp palette.  D[15:8] = foreground (pixel=1),
           D[7:0] = background (pixel=0).  Each byte is R3G3B2.
           Reset default: fg=0xFF (white), bg=0x00 (black).
-      - offset: 0x11
-        name: BACKGROUND
-        access: write
-        width: 8
-        description: |
-          Border/blanking color (R3G3B2).  Displayed outside the
-          640x480 active region.  Reset default: 0x00 (black).
 
   CF:
     part: "Compact Flash (True IDE)"
