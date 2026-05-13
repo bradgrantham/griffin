@@ -45,7 +45,7 @@ module Engine
     output reg         q8_toggle_out,   // pin 8  — both 7200 D8 (toggle per word)
 
     // IRQ to GLUE
-    output wire        nENGINE_IRQ,      // pin 5
+    output wire        nENGINE_IRQ      // pin 5
 );
 
     wire RESET = ~nRESET;
@@ -111,7 +111,40 @@ module Engine
 
     reg [2:0] state;
 
-    wire fifo_has_room = nFIFO_HF;
+    // 2-FF synchronizers for async inputs sampled by the SM on CPUCLK.
+    // Each signal needs its own pair; defends against metastability landing
+    // the state register in an unintended encoding.
+    reg nFIFO_HF_meta,   nFIFO_HF_sync;
+    reg nDTACK_BUS_meta, nDTACK_BUS_sync;
+    reg nBG_meta,        nBG_sync;
+    reg nAS_meta,        nAS_sync;
+    always @(posedge CPUCLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            nFIFO_HF_meta   <= 1'b0;
+            nFIFO_HF_sync   <= 1'b0;
+            nDTACK_BUS_meta <= 1'b1;
+            nDTACK_BUS_sync <= 1'b1;
+            nBG_meta        <= 1'b1;
+            nBG_sync        <= 1'b1;
+            nAS_meta        <= 1'b1;
+            nAS_sync        <= 1'b1;
+        end
+        else
+        begin
+            nFIFO_HF_meta   <= nFIFO_HF;
+            nFIFO_HF_sync   <= nFIFO_HF_meta;
+            nDTACK_BUS_meta <= nDTACK_BUS;
+            nDTACK_BUS_sync <= nDTACK_BUS_meta;
+            nBG_meta        <= nBG;
+            nBG_sync        <= nBG_meta;
+            nAS_meta        <= nAS;
+            nAS_sync        <= nAS_meta;
+        end
+    end
+
+    wire fifo_has_room = nFIFO_HF_sync;
     wire want_dma = dma_en & fifo_has_room;
 
     always @(posedge CPUCLK or posedge RESET)
@@ -166,7 +199,7 @@ module Engine
                         nBR   <= 1'b1;
                         state <= STATE_IDLE;
                     end
-                    else if (~nBG)
+                    else if (~nBG_sync)
                     begin
                         state <= STATE_WAIT_FREE;
                     end
@@ -179,7 +212,7 @@ module Engine
                         nBR   <= 1'b1;
                         state <= STATE_IDLE;
                     end
-                    else if (nAS)
+                    else if (nAS_sync)
                     begin
                         nBGACK <= 1'b0;
                         nBR    <= 1'b1;
@@ -197,7 +230,7 @@ module Engine
 
                 STATE_WAIT_DTACK:
                 begin
-                    if (~nDTACK_BUS)
+                    if (~nDTACK_BUS_sync)
                     begin
                         nFIFO_W <= 1'b0;
                         state   <= STATE_LATCH;
