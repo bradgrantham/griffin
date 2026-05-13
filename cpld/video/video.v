@@ -233,6 +233,33 @@ module Video
         end
     end
 
+    // ----------------------------------------------------------------
+    // Synchronize video_enable to PIXEL_CLK and latch frame_active at
+    // the start of each frame (vsync_event).  This ensures pixel
+    // shifting and FIFO draining always begin aligned to row 0 even
+    // if the CPU asserts ENABLE mid-frame.  Free-running h_cnt/v_cnt
+    // keep monitor sync locked the whole time.
+    // ----------------------------------------------------------------
+    reg [1:0] enable_sync;
+    reg       frame_active;
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            enable_sync  <= 2'b00;
+            frame_active <= 1'b0;
+        end
+        else
+        begin
+            enable_sync <= {enable_sync[0], video_enable};
+            if (vsync_event)
+            begin
+                frame_active <= enable_sync[1];
+            end
+        end
+    end
+
     // Palette register (offset 0x0E, A[5:1] = 5'h07)
     reg [7:0] palette_bg;
     reg [7:0] palette_fg;
@@ -254,21 +281,6 @@ module Video
             begin
                 palette_fg <= D[15:8];
             end
-        end
-    end
-
-    // Background register (offset 0x11, A[5:1] = 5'h08)
-    reg [7:0] background_color;
-
-    always @(posedge SYSCLK or posedge RESET)
-    begin
-        if (RESET)
-        begin
-            background_color <= 8'h00;
-        end
-        else if (cpu_writing & (A == 5'h08) & ~nLDS)
-        begin
-            background_color <= D[7:0];
         end
     end
 
@@ -355,7 +367,7 @@ module Video
     // Next line will be active: v_cnt 0..478 -> lines 1..479; v_cnt 524 -> line 0
     wire next_line_active = (v_cnt < V_ACTIVE - 10'd1) | (v_cnt == V_TOTAL - 10'd1);
 
-    wire preload = (h_cnt == H_TOTAL - 10'd2) & next_line_active & video_enable;
+    wire preload = (h_cnt == H_TOTAL - 10'd2) & next_line_active & frame_active;
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
@@ -442,7 +454,7 @@ module Video
         else
         begin
             current_pixel_reg <= current_pixel;
-            active_video_reg  <= active_video & video_enable;
+            active_video_reg  <= active_video & frame_active;
         end
     end
 
@@ -461,7 +473,7 @@ module Video
             VGA_B0 <= 1'b0;
             VGA_B1 <= 1'b0;
         end
-        else if (active_video_reg)
+        else
         begin
             VGA_R2 <= pixel_color[7];
             VGA_R1 <= pixel_color[6];
@@ -471,17 +483,6 @@ module Video
             VGA_G0 <= pixel_color[2];
             VGA_B1 <= pixel_color[1];
             VGA_B0 <= pixel_color[0];
-        end
-        else
-        begin
-            VGA_R2 <= background_color[7];
-            VGA_R1 <= background_color[6];
-            VGA_R0 <= background_color[5];
-            VGA_G2 <= background_color[4];
-            VGA_G1 <= background_color[3];
-            VGA_G0 <= background_color[2];
-            VGA_B1 <= background_color[1];
-            VGA_B0 <= background_color[0];
         end
     end
 
