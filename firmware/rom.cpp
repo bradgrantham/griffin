@@ -967,14 +967,14 @@ static void video_test_init()
 
     ENGINE_SOURCE_PAGE = FB_PAGE;
     ENGINE_CTRL = Griffin::ENGINE_CTRL_DMA_EN_MASK;
-    debug_printf("ENGINE: DMA enabled, page=0x%02X\n", FB_PAGE);
+    printf("ENGINE: DMA enabled, page=0x%02X\n", FB_PAGE);
 
     VIDEO_PALETTE = 0xFF00;     // fg=white, bg=black
     VIDEO_BACKGROUND = 0x00;    // black border
     VIDEO_CLRERR = 0;           // clear any stale FIFO_ERROR
     VIDEO_CTRL = Griffin::VIDEO_CTRL_ENABLE_MASK;
 
-    debug_printf("VIDEO: enabled (CTRL_RB=0x%02X)\n",
+    printf("VIDEO: enabled (CTRL_RB=0x%02X)\n",
                  static_cast<unsigned>(VIDEO_CTRL_RB));
 }
 
@@ -982,10 +982,7 @@ int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
 
-    video_test_init();
-
     // debug_monitor();
-
 
     // Initialize 68681 DUART and switch console output from bit-bang
     // to DUART.  Everything before this point prints via debug_printf
@@ -993,13 +990,14 @@ int main()
     // Channel A, 38400 8N1).
     duart_38400_init();
 
-
     for(auto c: "DUART TX\n")
     {
         if(c) duart_putchar(c);
     }
     duart_console_enable();
     printf("Console on DUART Channel A, 38400 8N1\n");
+
+    video_test_init();
 
     // Play startup sound
     // uint32_t audio_len = _binary_startup_raw_end - _binary_startup_raw_start;
@@ -1061,34 +1059,36 @@ int main()
             printf("%02ld:%02ld:%02ld\n", hh, mm, ss);
             last_clock_print_ms = now_ms;
 
-            uint8_t color;
-            switch(seconds % 8) {
-                case 0:
-                    color = 0xFF;
-                    break;
-                case 1:
-                    color = 0xFC;
-                    break;
-                case 2:
-                    color = 0xE3;
-                    break;
-                case 3:
-                    color = 0xE0;
-                    break;
-                case 4:
-                    color = 0x1F;
-                    break;
-                case 5:
-                    color = 0x1C;
-                    break;
-                case 6:
-                    color = 0x13;
-                    break;
-                default: case 7:
-                    color = 0x0;
-                    break;
+            if(seconds > 10) {
+                uint8_t color;
+                switch(seconds % 8) {
+                    case 0:
+                        color = 0xFF;
+                        break;
+                    case 1:
+                        color = 0xE3;
+                        break;
+                    case 2:
+                        color = 0xFC;
+                        break;
+                    case 3:
+                        color = 0xE0;
+                        break;
+                    case 4:
+                        color = 0x0;
+                        break;
+                    case 5:
+                        color = 0x1C;
+                        break;
+                    case 6:
+                        color = 0x13;
+                        break;
+                    default: case 7:
+                        color = 0x1F;
+                        break;
+                }
+                VIDEO_PALETTE = (color << 8) | (0xFF ^ color);
             }
-            VIDEO_PALETTE = (color << 8) | (0xFF ^ color);
         }
     }
 
