@@ -298,16 +298,20 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 Clean everything up for Rev 2, get as much tested as possible
 
 * Prototype 640x240 mono composite - works
-  * slight instability on one FIFO - ODD? READ is sometimes lost, causing FIFO to lag scanout.
+  * slight instability on one FIFO - ODD? READ is sometimes lost, causing FIFO to lag scanout. - try resistors at CPLD a la Claude
+* Console
+  * What to do about PS/2?  Want some kind of raw SDL/GLFW-like keycode operation for graphical apps.
+    * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader
+  
+  * Need a "text" mode versus graphics mode
+    * 80x24, 106x60
+  
 
 * Booter & apps
   * Need trap interface to ROM calls
     * get_time, open/close/read/write/etc, sbrk?, read(0), write(0) for console
   * "App" linker.ld, load at 0x1000, crt0.s that just sets up program and rts when done?, syscalls.c that pulls trap
   * Load file into memory, jump to 0x1000
-  * What to do about PS/2?  Want some kind of raw SDL/GLFW-like keycode operation for graphical apps.
-    * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader
-  * Need a "text" mode versus 
 * Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 12MB on Rev 2
   * buildroot
     * Need kernel config for: serial, PPP, block devices, CF card, ext4, console with PS/2 and bitmap display
@@ -356,6 +360,8 @@ Need a rev1 branch for continuing experiments and main branch under development 
   * boot serial TX - TIMER gives 8-bit counter on CPU clock with stall for determinism
 
   * PS/2 input
+  
+  * wire up some jumpers to do things like set clock speed
 
 
 * Serial I/O
