@@ -10,6 +10,8 @@
 // #include "splash.h"
 
 #include "ps2.h"
+#include "textport.h"
+#include "vt102.h"
 
 using namespace Griffin::reg;
 
@@ -959,6 +961,48 @@ static bool load_splash()
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Textport demo: drive an 80x30 VT102-compatible textport on the framebuffer
+// ---------------------------------------------------------------------------
+
+namespace gtxt = griffin::textport;
+namespace griffin::textport {
+    extern const FontRenderer font_8x16_renderer;
+    extern const FontRenderer font_8x8_renderer;
+    extern const FontRenderer font_6x10_renderer;
+}
+
+// Caller for the VT102 parser when it needs to send a reply (e.g. cursor
+// position report) — routes to the DUART so the host sees it.
+extern "C" void textport_uart_responder(const char* s, size_t n)
+{
+    for (size_t i = 0; i < n; ++i)
+    {
+        duart_putchar(static_cast<uint8_t>(s[i]));
+    }
+}
+
+static void textport_demo()
+{
+    gtxt::g_vt102.set_responder(&textport_uart_responder);
+    gtxt::g_textport.configure(
+        reinterpret_cast<uint8_t*>(FB_ADDR),
+        80U,                              // pitch in bytes (640 / 8)
+        &gtxt::font_8x16_renderer,
+        80U, 30U);
+
+    // Banner via the VT102 parser so we exercise the full stack.
+    const char* banner =
+        "\x1B[2J\x1B[H"
+        "Griffin textport — VT102, 80x30, 8x16 font\r\n"
+        "\x1B[7m inverse video \x1B[27m  normal\r\n"
+        "\r\n";
+    for (const char* p = banner; *p; ++p)
+    {
+        gtxt::g_vt102.put(static_cast<uint8_t>(*p));
+    }
+}
+
 static void video_test_init()
 {
     debug_printf("VIDEO: generating 4x4 checkerboard at 0x%06lX\n",
@@ -1007,11 +1051,16 @@ int main()
 
     load_splash();
 
+    // Bring up the bitmap textport overlay (replaces the splash on screen).
+    textport_demo();
+
     printf("Input check loop...\n");
 
     uint32_t last_clock_print_ms = get_milliseconds();
     for (;;)
     {
+        gtxt::g_textport.cursor_blink_tick();
+
         if(duart_received_ready())
         {
             unsigned char ch;
@@ -1091,5 +1140,4 @@ int main()
             }
         }
     }
-
 }

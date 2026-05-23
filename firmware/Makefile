@@ -2,7 +2,8 @@ M68K_GCC = ./m68k-gcc
 M68K_GXX = ./m68k-g++
 M68K_OBJCOPY = ./m68k-objcopy
 
-CPP_SOURCES = rom.cpp ps2.cpp
+CPP_SOURCES = rom.cpp ps2.cpp textport.cpp vt102.cpp \
+              font_8x16.cpp font_8x8.cpp font_6x10.cpp
 # splash.cpp
 C_SOURCES = syscalls.c ff.c diskio.c build_info.c
 ASM_SOURCES = crt0.s
