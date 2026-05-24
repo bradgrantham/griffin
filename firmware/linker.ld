@@ -59,17 +59,31 @@ SECTIONS
 
     _stack_top = ORIGIN(RAM) + LENGTH(RAM);
 
+    /* newlib's __libc_init_array iterates between __init_array_start and
+       __init_array_end (double underscore — weak refs).  Same for
+       preinit / fini.  Defining only the single-underscore names left the
+       weak refs at 0 and ctors never ran. */
+    .preinit_array : {
+        PROVIDE_HIDDEN(__preinit_array_start = .);
+        KEEP(*(.preinit_array))
+        PROVIDE_HIDDEN(__preinit_array_end = .);
+    } > ROM
+
     .init_array : {
+        PROVIDE_HIDDEN(__init_array_start = .);
         _init_array_start = .;
-        KEEP(*(.init_array*))
-        KEEP(*(SORT(.init_array.*)))
+        KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*)))
+        KEEP(*(.init_array EXCLUDE_FILE(*crtbegin.o *crtbegin?.o *crtend.o *crtend?.o) .ctors))
+        PROVIDE_HIDDEN(__init_array_end = .);
         _init_array_end = .;
     } > ROM
 
     .fini_array : {
+        PROVIDE_HIDDEN(__fini_array_start = .);
         _fini_array_start = .;
-        KEEP(*(.fini_array*))
-        KEEP(*(SORT(.fini_array.*)))
+        KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*)))
+        KEEP(*(.fini_array EXCLUDE_FILE(*crtbegin.o *crtbegin?.o *crtend.o *crtend?.o) .dtors))
+        PROVIDE_HIDDEN(__fini_array_end = .);
         _fini_array_end = .;
     } > ROM
 

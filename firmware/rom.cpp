@@ -970,6 +970,41 @@ namespace griffin::textport {
     extern const FontRenderer font_8x16_renderer;
     extern const FontRenderer font_8x8_renderer;
     extern const FontRenderer font_6x10_renderer;
+    extern const uint8_t font_8x16_bits[256 * 16];
+}
+
+// ---------------------------------------------------------------------------
+// Bitmap-text smoke test: route lorem-ipsum through Vt102Parser::put,
+// using only printable ASCII (no ESC, no control chars, no UTF-8).  This
+// exercises only the parser's S::Normal printable fast path, which is a
+// one-line delegation to Textport::put_glyph.
+// Cursor blink is intentionally NOT ticked.
+// ---------------------------------------------------------------------------
+[[maybe_unused]] static void bitmap_text_test()
+{
+    static const char lorem[] =
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do "
+        "eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut "
+        "enim ad minim veniam, quis nostrud exercitation ullamco laboris "
+        "nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor "
+        "in reprehenderit in voluptate velit esse cillum dolore eu fugiat "
+        "nulla pariatur. Excepteur sint occaecat cupidatat non proident, "
+        "sunt in culpa qui officia deserunt mollit anim id est laborum.";
+
+    gtxt::g_textport.configure(
+        reinterpret_cast<uint8_t*>(FB_ADDR),
+        80U,                              // pitch bytes (640 px / 8)
+        &gtxt::font_8x16_renderer,
+        80U, 24U);
+    gtxt::g_vt102.reset();
+
+    for (int rep = 0; rep < 10; ++rep)
+    {
+        for (const char* s = lorem; *s; ++s)
+        {
+            gtxt::g_vt102.put(static_cast<uint8_t>(*s));
+        }
+    }
 }
 
 // Caller for the VT102 parser when it needs to send a reply (e.g. cursor
@@ -1051,8 +1086,17 @@ int main()
 
     load_splash();
 
-    // Bring up the bitmap textport overlay (replaces the splash on screen).
-    textport_demo();
+    if(0) {
+        // Low-level bitmap-text smoke test.  Replaces splash on screen with
+        // lorem-ipsum rendered straight from font_8x16_bits into the FB —
+        // no Textport, no VT102, no cursor.  After this we just spin so
+        // nothing else can perturb the framebuffer.
+        bitmap_text_test();
+        printf("bitmap_text_test painted; entering spin loop\n");
+        for (;;) { }
+    } else {
+        textport_demo();
+    }
 
     printf("Input check loop...\n");
 
