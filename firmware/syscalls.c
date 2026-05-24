@@ -86,14 +86,61 @@ static FIL files[MAX_FILES];    /* starting with fd=3, so fd 3 through 3 + MAX_F
 void debug_serial_putchar(uint8_t ch);
 void duart_putchar(uint8_t ch);
 uint8_t duart_getchar(void);
+int  textport_vt102_putchar(int c);
+void early_log_push(uint8_t c);
 
-static void (*putchar_fn)(uint8_t) = debug_serial_putchar;
-static int console_is_duart = 0;
+// Sink enables; toggled by *_console_enable() and read only by
+// console_tee_putchar().  write() never inspects these directly.
+static int console_duart_enabled    = 0;
+static int console_textport_enabled = 0;
+static int console_is_duart         = 0;   // gates blocking read() below
+
+// Internal: emit one byte to every currently-enabled sink.  No newline
+// translation here — translation is the job of console_tee_putchar().
+static void console_tee_emit_byte(uint8_t c)
+{
+    if (!console_textport_enabled)
+    {
+        early_log_push(c);
+    }
+    if (console_duart_enabled)
+    {
+        duart_putchar(c);
+    }
+    else if (!console_textport_enabled)
+    {
+        debug_serial_putchar(c);
+    }
+    if (console_textport_enabled)
+    {
+        textport_vt102_putchar((int)c);
+    }
+}
+
+// All write() bytes flow through here.  Translates bare '\n' into "\r\n"
+// so both VT102 and serial terminals advance to column 0.
+static void console_tee_putchar(uint8_t c)
+{
+    if (c == '\n')
+    {
+        console_tee_emit_byte('\r');
+    }
+    console_tee_emit_byte(c);
+}
+
+static void (*putchar_fn)(uint8_t) = console_tee_putchar;
 
 void duart_console_enable(void)
 {
-    putchar_fn = duart_putchar;
-    console_is_duart = 1;
+    console_duart_enabled = 1;
+    console_is_duart      = 1;
+}
+
+// Called by textport_console_enable() (C++) after it has replayed and
+// frozen the ring.
+void textport_console_set_enabled(int on)
+{
+    console_textport_enabled = on ? 1 : 0;
 }
 
 ssize_t write (int file,  const void *ptr, size_t len)

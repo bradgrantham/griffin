@@ -298,18 +298,23 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 Clean everything up for Rev 2, get as much tested as possible
 
 * Prototype 640x240 mono composite - works
-  * slight instability on one FIFO - ODD? READ is sometimes lost, causing FIFO to lag scanout. - try resistors at CPLD a la Claude
+  * slight instability on one FIFO - ODD? READ is sometimes lost, causing FIFO to lag scanout. - try resistors inline 47Ω on FIFO_READ lines at CPLD a la Claude
 * Console
   * What to do about PS/2?  Want some kind of raw SDL/GLFW-like keycode operation for graphical apps.
     * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader
   
-  * Need a "text" mode versus graphics mode
-    * 80x24, 106x60
+* SW improvements
+  * graphics routines, take "blit" out of splash.cpp
+  * clean up syscalls
+  * better console factorization - ring buffer, DUART port 1, console
+  * factor out font - should be selectable by enum
   
 
 * Booter & apps
   * Need trap interface to ROM calls
-    * get_time, open/close/read/write/etc, sbrk?, read(0), write(0) for console
+    * get_time, open/close/read/write/etc, sbrk?
+    * read(0), write(0) for console
+    * open("/dev/ttyS0") for serial
   * "App" linker.ld, load at 0x1000, crt0.s that just sets up program and rts when done?, syscalls.c that pulls trap
   * Load file into memory, jump to 0x1000
 * Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 12MB on Rev 2
@@ -350,7 +355,7 @@ Need a rev1 branch for continuing experiments and main branch under development 
 
 ## Summary
 
-* BQ3285 and a coin cell to be somewhat period-appropriate RTC
+* BQ3285 and a coin cell to be somewhat period-appropriate RTC, or throw on a DS1307 and wave hands
 * 16MHz CPU clock, 16-bit 16MB SDRAM, 16-bit ROM?
 * 16-bit True IDE CF
 * GLUE ATF1508 has same functionality as Rev 1 minus SYSTICK

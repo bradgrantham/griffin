@@ -2,7 +2,7 @@ M68K_GCC = ./m68k-gcc
 M68K_GXX = ./m68k-g++
 M68K_OBJCOPY = ./m68k-objcopy
 
-CPP_SOURCES = rom.cpp ps2.cpp textport.cpp vt102.cpp \
+CPP_SOURCES = rom.cpp ps2.cpp textport.cpp vt102.cpp early_log.cpp splash.cpp \
               font_8x16.cpp font_8x8.cpp font_6x10.cpp
 # splash.cpp
 C_SOURCES = syscalls.c ff.c diskio.c build_info.c
@@ -15,7 +15,7 @@ EXTRA_OBJECTS = # startup_audio.o
 LDSCRIPT = linker.ld
 
 WARNFLAGS = -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror
-COMMONFLAGS = -g -fno-omit-frame-pointer -fanalyzer -Os
+COMMONFLAGS = -g -fno-omit-frame-pointer -fanalyzer -O
 
 CXXFLAGS = --std=c++23 $(COMMONFLAGS) $(WARNFLAGS) -Wold-style-cast
 CFLAGS = --std=c23 $(COMMONFLAGS) $(WARNFLAGS)

@@ -12,6 +12,8 @@
 #include "ps2.h"
 #include "textport.h"
 #include "vt102.h"
+#include "early_log.h"
+#include "splash.h"
 
 using namespace Griffin::reg;
 
@@ -326,6 +328,14 @@ void debug_printf(const char *fmt, ...)
 
     for(const char* s = dummy; *s; s++)
     {
+        // '\n' → '\r\n' so the VT102 replay and any serial-side terminal
+        // both advance to column 0.
+        if (*s == '\n')
+        {
+            early_log_push('\r');
+            debug_serial_putchar('\r');
+        }
+        early_log_push(static_cast<uint8_t>(*s));
         debug_serial_putchar(*s);
     }
 }
@@ -936,7 +946,7 @@ static void generate_checkerboard()
 // can't leave a corrupted image on screen.
 static constexpr size_t FB_BYTES = 80U * 480U;
 
-static bool load_splash()
+[[maybe_unused]] static bool load_splash()
 {
     FILE *fp = fopen("splash.bin", "rb");
     if (!fp)
@@ -1017,25 +1027,52 @@ extern "C" void textport_uart_responder(const char* s, size_t n)
     }
 }
 
-static void textport_demo()
+// syscalls.c hook — flips the textport-enabled flag in the console tee.
+extern "C" void textport_console_set_enabled(int on);
+
+// Bring up the on-screen console.  After this returns, printf goes to
+// DUART AND the textport, the early-log ring is drained onto the textport,
+// and the splash (if any) sits at the top of the screen waiting to scroll
+// off as text fills.
+static void textport_console_enable()
 {
+    constexpr unsigned FB_PITCH_BYTES = 80;        // 640 px / 8
+    constexpr unsigned CONSOLE_COLS   = 80;
+    constexpr unsigned CONSOLE_ROWS   = 30;
+
+    const auto& fr = gtxt::font_8x16_renderer;
+    const unsigned font_h = fr.font->height;
+
     gtxt::g_vt102.set_responder(&textport_uart_responder);
     gtxt::g_textport.configure(
         reinterpret_cast<uint8_t*>(FB_ADDR),
-        80U,                              // pitch in bytes (640 / 8)
-        &gtxt::font_8x16_renderer,
-        80U, 30U);
+        FB_PITCH_BYTES,
+        &fr,
+        CONSOLE_COLS, CONSOLE_ROWS);
+    gtxt::g_vt102.reset();
 
-    // Banner via the VT102 parser so we exercise the full stack.
-    const char* banner =
-        "\x1B[2J\x1B[H"
-        "Griffin textport - VT102, 80x30, 8x16 font\r\n"
-        "\x1B[7m inverse video \x1B[27m  normal\r\n"
-        "\r\n";
-    for (const char* p = banner; *p; ++p)
+    // Splash sits at the top of the FB; the Textport's char buffer for
+    // those rows is still ' ', so the cursor avoids them until scrolling
+    // evicts them.
+    splash_blit_topleft(reinterpret_cast<uint8_t*>(FB_ADDR), FB_PITCH_BYTES);
+    const unsigned splash_rows = splash_rows_for_font_height(font_h);
+    gtxt::g_textport.move_to(0, static_cast<int>(splash_rows));
+
+    // Replay everything we captured since boot.  Each byte goes straight
+    // into the VT102 parser — the syscalls tee has NOT been told the
+    // textport is up yet, so we don't double-emit to DUART.
+    early_log_replay(&gtxt::textport_vt102_putchar);
+    early_log_freeze();
+
+    // Re-emit info that crt0 sent only via timer_puts (and so isn't in
+    // the ring) plus what's now interesting on the visible console.
+    textport_console_set_enabled(1);
+    if (uint32_t dropped = early_log_dropped_count(); dropped)
     {
-        gtxt::g_vt102.put(static_cast<uint8_t>(*p));
+        printf("[early-log: %lu bytes dropped to overflow]\n",
+               static_cast<unsigned long>(dropped));
     }
+    printf("Memory: %lu KB\n", static_cast<unsigned long>(memory_size / 1024U));
 }
 
 static void video_test_init()
@@ -1078,25 +1115,16 @@ int main()
 
     video_test_init();
 
+    // FB is now scanning out a checkerboard; bring up the on-screen
+    // console (splash + ring replay + memory size).  Everything below
+    // this point appears on both DUART and the textport.
+    textport_console_enable();
+
     // Play startup sound
     // uint32_t audio_len = _binary_startup_raw_end - _binary_startup_raw_start;
     // play_audio(_binary_startup_raw_start, audio_len, 11025);
 
     cf_mount_and_list();
-
-    load_splash();
-
-    if(0) {
-        // Low-level bitmap-text smoke test.  Replaces splash on screen with
-        // lorem-ipsum rendered straight from font_8x16_bits into the FB —
-        // no Textport, no VT102, no cursor.  After this we just spin so
-        // nothing else can perturb the framebuffer.
-        bitmap_text_test();
-        printf("bitmap_text_test painted; entering spin loop\n");
-        for (;;) { }
-    } else {
-        textport_demo();
-    }
 
     printf("Input check loop...\n");
 
