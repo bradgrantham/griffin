@@ -1029,7 +1029,7 @@ static void textport_demo()
     // Banner via the VT102 parser so we exercise the full stack.
     const char* banner =
         "\x1B[2J\x1B[H"
-        "Griffin textport — VT102, 80x30, 8x16 font\r\n"
+        "Griffin textport - VT102, 80x30, 8x16 font\r\n"
         "\x1B[7m inverse video \x1B[27m  normal\r\n"
         "\r\n";
     for (const char* p = banner; *p; ++p)
