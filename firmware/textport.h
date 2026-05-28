@@ -117,6 +117,10 @@ private:
     // tick_counter increments at 100 Hz; one cursor phase = 50 ticks.
     uint32_t last_blink_tick_ = 0;
     bool     blink_phase_ = true;      // true = cursor visible
+    // True when put_glyph left the cursor hidden after painting a glyph.
+    // The blink tick uses a shorter idle threshold to reveal the cursor
+    // in this state, then clears the flag and resumes symmetric blinking.
+    bool     output_hidden_ = false;
 
     uint8_t chars_[MAX_COLS * MAX_ROWS];
     uint8_t attrs_[MAX_COLS * MAX_ROWS];

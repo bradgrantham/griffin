@@ -13,8 +13,82 @@ namespace griffin::textport
 
 Textport g_textport;
 
+// --- Fast 32-bit framebuffer movers ---------------------------------------
+//
+// 1bpp framebuffer is at a long-aligned base (0x0F0000) with a long-aligned
+// pitch (80 bytes for 640 px wide).  Scroll counts vary with font height,
+// so we use Duff's device unroll-by-8 to handle an arbitrary long count
+// without a tail loop.  Each `*dst++ = *src++` compiles to a single
+// `move.l (a1)+,(a0)+` on m68k — the fastest copy primitive available.
+//
+// Callers must ensure dst/src/n are all uint32_t-aligned; the call sites
+// in this file compute offsets in whole H*pitch_ units, both of which are
+// multiples of 4.
+
+static inline void fb_move_long_fwd(uint32_t* dst, const uint32_t* src, unsigned n)
+{
+    if (n == 0) { return; }
+    unsigned blocks = (n + 7u) >> 3;
+    switch (n & 7u)
+    {
+        case 0: do { *dst++ = *src++; [[fallthrough]];
+        case 7:      *dst++ = *src++; [[fallthrough]];
+        case 6:      *dst++ = *src++; [[fallthrough]];
+        case 5:      *dst++ = *src++; [[fallthrough]];
+        case 4:      *dst++ = *src++; [[fallthrough]];
+        case 3:      *dst++ = *src++; [[fallthrough]];
+        case 2:      *dst++ = *src++; [[fallthrough]];
+        case 1:      *dst++ = *src++;
+                } while (--blocks > 0);
+    }
+}
+
+// Reverse copy for scroll-down (dst > src).  Pre-decrement form compiles
+// to `move.l -(a1),-(a0)`.  Pass one-past-the-end pointers.
+static inline void fb_move_long_rev(uint32_t* dst_end, const uint32_t* src_end, unsigned n)
+{
+    if (n == 0) { return; }
+    unsigned blocks = (n + 7u) >> 3;
+    switch (n & 7u)
+    {
+        case 0: do { *--dst_end = *--src_end; [[fallthrough]];
+        case 7:      *--dst_end = *--src_end; [[fallthrough]];
+        case 6:      *--dst_end = *--src_end; [[fallthrough]];
+        case 5:      *--dst_end = *--src_end; [[fallthrough]];
+        case 4:      *--dst_end = *--src_end; [[fallthrough]];
+        case 3:      *--dst_end = *--src_end; [[fallthrough]];
+        case 2:      *--dst_end = *--src_end; [[fallthrough]];
+        case 1:      *--dst_end = *--src_end;
+                } while (--blocks > 0);
+    }
+}
+
+static inline void fb_clear_longs(uint32_t* dst, unsigned n)
+{
+    if (n == 0) { return; }
+    unsigned blocks = (n + 7u) >> 3;
+    switch (n & 7u)
+    {
+        case 0: do { *dst++ = 0; [[fallthrough]];
+        case 7:      *dst++ = 0; [[fallthrough]];
+        case 6:      *dst++ = 0; [[fallthrough]];
+        case 5:      *dst++ = 0; [[fallthrough]];
+        case 4:      *dst++ = 0; [[fallthrough]];
+        case 3:      *dst++ = 0; [[fallthrough]];
+        case 2:      *dst++ = 0; [[fallthrough]];
+        case 1:      *dst++ = 0;
+                } while (--blocks > 0);
+    }
+}
+
 // Cursor toggles every 50 ticks (= 0.5s at 100 Hz).
 static constexpr uint32_t BLINK_PERIOD_TICKS = 50;
+
+// After put_glyph leaves the cursor hidden, the blink tick re-reveals it
+// this many ticks (= 50 ms at 100 Hz) of output-idle later.  Short enough
+// that a keystroke pause feels responsive; long enough that a printf burst
+// runs without the cursor flicker dance on every character.
+static constexpr uint32_t CURSOR_REVEAL_TICKS = 5;
 
 void Textport::configure(uint8_t* fb, unsigned pitch_bytes,
                          const FontRenderer* fr,
@@ -58,7 +132,8 @@ void Textport::clear()
 
     // Black the entire framebuffer (faster than per-cell clear and covers
     // any margins outside the textport area).
-    std::memset(fb_, 0, pitch_ * fr_->font->height * rows_);
+    fb_clear_longs(reinterpret_cast<uint32_t*>(fb_),
+                   (pitch_ * fr_->font->height * rows_) >> 2);
 
     cursor_x_ = 0;
     cursor_y_ = 0;
@@ -88,7 +163,11 @@ void Textport::paint_blank_cell_(unsigned cx, unsigned cy)
 
 void Textport::show_cursor_()
 {
-    if (cursor_shown_)
+    // While output_hidden_ is set, the cursor must stay hidden until the
+    // post-output reveal in cursor_blink_tick clears the flag.  This makes
+    // every interleaved cursor-move / scroll show_cursor_() during a
+    // printf burst a no-op, avoiding flicker on \n, CR, etc.
+    if (cursor_shown_ || output_hidden_)
     {
         return;
     }
@@ -109,6 +188,21 @@ void Textport::hide_cursor_()
 void Textport::cursor_blink_tick()
 {
     const uint32_t now = tick_counter;
+    if (output_hidden_)
+    {
+        // Cursor was hidden by put_glyph.  Wait a short idle window so a
+        // continuous output stream doesn't flash the cursor between
+        // characters, then reveal and rejoin the normal symmetric blink.
+        if (now - last_blink_tick_ < CURSOR_REVEAL_TICKS)
+        {
+            return;
+        }
+        output_hidden_ = false;
+        last_blink_tick_ = now;
+        blink_phase_ = true;
+        show_cursor_();
+        return;
+    }
     if (now - last_blink_tick_ < BLINK_PERIOD_TICKS)
     {
         return;
@@ -168,11 +262,13 @@ void Textport::put_glyph(uint8_t c)
     {
         ++cursor_x_;
     }
-    // Force cursor visible on next blink check so it doesn't appear to
-    // lag behind fast output.
-    blink_phase_ = true;
+    // Leave the cursor HIDDEN.  cursor_blink_tick() will reveal it
+    // CURSOR_REVEAL_TICKS after the last put_glyph — skipping two
+    // invert_cell() calls per character during a printf burst, which is
+    // the dominant per-glyph cost on 8x16 / 8x8 fonts.
+    output_hidden_ = true;
+    blink_phase_ = false;
     last_blink_tick_ = tick_counter;
-    show_cursor_();
 }
 
 void Textport::move_to(int x, int y)
@@ -310,8 +406,8 @@ void Textport::scroll_region_up_(int n)
             std::memset(&attrs_[y * MAX_COLS], 0,   cols_);
         }
         const unsigned H = fr_->font->height;
-        std::memset(fb_ + scroll_top_ * H * pitch_, 0,
-                    static_cast<size_t>(region_rows) * H * pitch_);
+        fb_clear_longs(reinterpret_cast<uint32_t*>(fb_ + scroll_top_ * H * pitch_),
+                       (static_cast<unsigned>(region_rows) * H * pitch_) >> 2);
         return;
     }
 
@@ -335,8 +431,11 @@ void Textport::scroll_region_up_(int n)
     const unsigned region_bytes =
         static_cast<unsigned>(region_rows) * H * pitch_;
     uint8_t* base = fb_ + scroll_top_ * H * pitch_;
-    std::memmove(base, base + shift_bytes, region_bytes - shift_bytes);
-    std::memset(base + region_bytes - shift_bytes, 0, shift_bytes);
+    fb_move_long_fwd(reinterpret_cast<uint32_t*>(base),
+                     reinterpret_cast<const uint32_t*>(base + shift_bytes),
+                     (region_bytes - shift_bytes) >> 2);
+    fb_clear_longs(reinterpret_cast<uint32_t*>(base + region_bytes - shift_bytes),
+                   shift_bytes >> 2);
 }
 
 void Textport::scroll_region_down_(int n)
@@ -351,8 +450,8 @@ void Textport::scroll_region_down_(int n)
             std::memset(&attrs_[y * MAX_COLS], 0,   cols_);
         }
         const unsigned H = fr_->font->height;
-        std::memset(fb_ + scroll_top_ * H * pitch_, 0,
-                    static_cast<size_t>(region_rows) * H * pitch_);
+        fb_clear_longs(reinterpret_cast<uint32_t*>(fb_ + scroll_top_ * H * pitch_),
+                       (static_cast<unsigned>(region_rows) * H * pitch_) >> 2);
         return;
     }
 
@@ -374,8 +473,12 @@ void Textport::scroll_region_down_(int n)
     const unsigned region_bytes =
         static_cast<unsigned>(region_rows) * H * pitch_;
     uint8_t* base = fb_ + scroll_top_ * H * pitch_;
-    std::memmove(base + shift_bytes, base, region_bytes - shift_bytes);
-    std::memset(base, 0, shift_bytes);
+    // Reverse copy: shift content from [base .. base+region-shift) to
+    // [base+shift .. base+region).  Pass one-past-end pointers.
+    fb_move_long_rev(reinterpret_cast<uint32_t*>(base + region_bytes),
+                     reinterpret_cast<const uint32_t*>(base + region_bytes - shift_bytes),
+                     (region_bytes - shift_bytes) >> 2);
+    fb_clear_longs(reinterpret_cast<uint32_t*>(base), shift_bytes >> 2);
 }
 
 void Textport::scroll_up_region(int n)
@@ -484,7 +587,8 @@ void Textport::erase_in_display(int mode)
         std::memset(&attrs_[y * MAX_COLS], 0,   cols_);
         // Clear pixel row(s) for this character row.
         const unsigned H = fr_->font->height;
-        std::memset(fb_ + static_cast<unsigned>(y) * H * pitch_, 0, H * pitch_);
+        fb_clear_longs(reinterpret_cast<uint32_t*>(fb_ + static_cast<unsigned>(y) * H * pitch_),
+                       (H * pitch_) >> 2);
     }
     show_cursor_();
 }
