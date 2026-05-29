@@ -340,7 +340,7 @@ void debug_printf(const char *fmt, ...)
     }
 }
 
-extern uint32_t memory_size;
+extern volatile uint32_t memory_size;
 extern const char *build_date;
 extern const char *build_provenance;
 
@@ -972,6 +972,164 @@ static constexpr size_t FB_BYTES = 80U * 480U;
 }
 
 // ---------------------------------------------------------------------------
+// Per-line palette image viewer
+//
+// The 1bpp framebuffer only distinguishes pixel=1 (foreground) from pixel=0
+// (background), but VIDEO_PALETTE chooses the two R3G3B2 colours those map
+// to, and it can be rewritten between scanlines.  By feeding a fresh fg/bg
+// pair before each of the 480 active lines we get an effectively 480-colour
+// image (two chosen colours per row).
+//
+// Timing facts taken from cpld/video/video.v (VGA 640x480@60, 25.175 MHz dot
+// clock, 800x525 raster, ~31.78 us/line, SYSCLK 14 MHz => ~445 SYSCLK/line):
+//
+//   * VIDEO_STATUS.LINE_TOGGLE = v_cnt[0]; it flips at every scanline
+//     boundary (h_cnt 799->0), which is the SAME edge at which the new
+//     line's active pixels begin (active is h_cnt 0..639; the horizontal
+//     blank 640..799 sits BEFORE the toggle, not after it).
+//   * The vsync IRQ (which crt0's _video_isr counts into video_frame_counter)
+//     latches at v_cnt==490 — i.e. 35 blanking lines (~1.11 ms) BEFORE active
+//     line 0, not at line 0 itself.
+//
+// So the loop: resync on the frame counter (lands us ~1.1 ms early, with
+// plenty of slack to set line 0's palette), bridge the remaining blanking
+// lines, then latch one palette word per LINE_TOGGLE edge for lines 1..479.
+//
+// Two honest caveats (see notes in the chat for full reasoning):
+//   1. Because the toggle fires AT active-start, the palette write for lines
+//      1..479 lands a few SYSCLK into the visible line, so the leftmost
+//      ~30-40 px of those lines briefly show the previous row's palette.
+//      Line 0 is clean (set during vblank).  A tear-free version would phase-
+//      delay each write into the prior line's hblank; not done here.
+//   2. Interrupts stay ENABLED (the PS/2 ISR must assemble the byte that
+//      ends the loop, and the DUART ms-tick keeps running).  A tick/PS2 ISR
+//      can delay one palette write, widening that sliver on the odd line.
+//      ISRs are far shorter than a line, so edges are never missed.
+
+static constexpr unsigned VIEWER_LINES     = 480;
+static constexpr size_t   VIEWER_PAL_WORDS = VIEWER_LINES;            // one fg/bg word per line
+static constexpr size_t   VIEWER_PAL_BYTES = VIEWER_PAL_WORDS * sizeof(uint16_t);
+
+// LINE_TOGGLE edges from observing the vsync IRQ (v_cnt~=491 after ISR
+// latency) until v_cnt wraps to 0 (active line 0).  Off-by-one here only
+// shifts the whole palette set vertically by one scanline (invisible), so
+// no precise tuning is needed.
+static constexpr unsigned VIEWER_VBLANK_BRIDGE_EDGES = 34;
+
+extern volatile uint32_t video_frame_counter;
+
+// Spin until VIDEO_STATUS.LINE_TOGGLE differs from *prev*, then record the
+// new value.  Loop body is a single byte read + compare (~10-15 SYSCLK),
+// well under the ~445 SYSCLK scanline, so an edge is detected within a px or
+// two of the boundary.
+static inline void viewer_wait_line_edge(uint8_t &prev)
+{
+    uint8_t cur;
+    do
+    {
+        cur = VIDEO_STATUS & Griffin::VIDEO_STATUS_LINE_TOGGLE_MASK;
+    } while (cur == prev);
+    prev = cur;
+}
+
+// Drive *palettes* (VIEWER_PAL_WORDS fg/bg words, D[15:8]=fg, D[7:0]=bg, each
+// byte R3G3B2) onto VIDEO_PALETTE, one per active scanline, frame after
+// frame.  Returns when a PS/2 byte is waiting in the input queue.
+static void show_palette_per_line(const uint16_t *palettes)
+{
+    for (;;)
+    {
+        // Resync to the top of a frame.  _video_isr bumps the counter on the
+        // vsync rising edge (v_cnt==490).  This is also the only place we
+        // poll for the exit condition — once per frame (~16 ms) is plenty.
+        uint32_t frame = video_frame_counter;
+        while (video_frame_counter == frame)
+        {
+            // if (ps2_received_ready())
+            // {
+                // return;
+            // }
+        }
+
+        // ~1.11 ms remain before active line 0 — ample slack to set its
+        // palette during vertical blank (so line 0 is tear-free).
+        VIDEO_PALETTE = palettes[0];
+
+        // Bridge the remaining blanking lines so the first edge consumed
+        // below is the 0->1 transition that starts active line 1.
+        uint8_t toggle = VIDEO_STATUS & Griffin::VIDEO_STATUS_LINE_TOGGLE_MASK;
+        for (unsigned i = 0; i < VIEWER_VBLANK_BRIDGE_EDGES; i++)
+        {
+            viewer_wait_line_edge(toggle);
+        }
+
+        // Lines 1..479: each edge marks the start of the next active line.
+        for (unsigned line = 1; line < VIEWER_LINES; line++)
+        {
+            viewer_wait_line_edge(toggle);
+            VIDEO_PALETTE = palettes[line];
+        }
+    }
+}
+
+// Load a 640x480 1bpp bitmap (FB_BYTES) into the framebuffer and its
+// companion per-line palette set (VIEWER_PAL_WORDS words), then run the
+// per-line palette display until a PS/2 key is pressed.  ENGINE DMA and
+// VIDEO scanout are expected to already be enabled (video_test_init).
+static void view_image(const char *image_path, const char *palette_path)
+{
+    FILE *img = fopen(image_path, "rb");
+    if (!img)
+    {
+        printf("view_image: cannot open %s\n", image_path);
+        return;
+    }
+    size_t img_got = fread(reinterpret_cast<void *>(FB_ADDR), 1, FB_BYTES, img);
+    fclose(img);
+    if (img_got != FB_BYTES)
+    {
+        printf("view_image: %s short read (%lu of %lu bytes)\n", image_path,
+               static_cast<unsigned long>(img_got),
+               static_cast<unsigned long>(FB_BYTES));
+        return;
+    }
+
+    // malloc, not new[]: array operator new[] is the throwing allocator,
+    // which drags libstdc++'s exception machinery (.eh_frame) and random.o
+    // (-> undefined getentropy) into the link and overflows ROM.  newlib
+    // malloc/free keeps the bare-metal image lean.
+    uint16_t *palettes = static_cast<uint16_t *>(malloc(VIEWER_PAL_BYTES));
+    if (!palettes)
+    {
+        printf("view_image: out of memory for palette set\n");
+        return;
+    }
+    FILE *pal = fopen(palette_path, "rb");
+    if (!pal)
+    {
+        printf("view_image: cannot open %s\n", palette_path);
+        free(palettes);
+        return;
+    }
+    size_t pal_got = fread(palettes, 1, VIEWER_PAL_BYTES, pal);
+    fclose(pal);
+    if (pal_got != VIEWER_PAL_BYTES)
+    {
+        printf("view_image: %s short read (%lu of %lu bytes)\n", palette_path,
+               static_cast<unsigned long>(pal_got),
+               static_cast<unsigned long>(VIEWER_PAL_BYTES));
+        free(palettes);
+        return;
+    }
+
+    printf("view_image: %s + %s loaded; per-line palette running "
+           "(press a PS/2 key to exit)\n", image_path, palette_path);
+    show_palette_per_line(palettes);
+
+    free(palettes);
+}
+
+// ---------------------------------------------------------------------------
 // Textport demo: drive an 80x30 VT102-compatible textport on the framebuffer
 // ---------------------------------------------------------------------------
 
@@ -1072,7 +1230,7 @@ static void textport_console_enable()
         printf("[early-log: %lu bytes dropped to overflow]\n",
                static_cast<unsigned long>(dropped));
     }
-    printf("Memory: %lu KB\n", static_cast<unsigned long>(memory_size / 1024U));
+    printf("Memory: %ld KB\n", memory_size);
 }
 
 static void video_test_init()
@@ -1086,7 +1244,6 @@ static void video_test_init()
     printf("ENGINE: DMA enabled, page=0x%02X\n", FB_PAGE);
 
     VIDEO_PALETTE = 0xFF00;     // fg=white, bg=black
-    VIDEO_BACKGROUND = 0x00;    // black border
     VIDEO_CLRERR = 0;           // clear any stale FIFO_ERROR
     VIDEO_CTRL = Griffin::VIDEO_CTRL_ENABLE_MASK;
 
@@ -1125,6 +1282,10 @@ int main()
     // play_audio(_binary_startup_raw_start, audio_len, 11025);
 
     cf_mount_and_list();
+
+    // Per-line palette image viewer.  Names hardcoded for now; runs until a
+    // PS/2 key is pressed, then falls through to the normal input loop.
+    view_image("millie2.bin", "millie2-palette.bin");
 
     printf("Input check loop...\n");
 

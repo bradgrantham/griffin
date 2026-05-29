@@ -129,7 +129,7 @@ vec_copy:
     move.w  #0xFF00, 0x400000 - 4
     cmp.w   #0xAA55, 0x400000 - 2
     bne     test_3m
-    move    #4096, memory_size
+    move.l  #4096, memory_size
     move.l  #0x400000, _stack_top
     move.l  #0x400000, %sp
     lea     memory_4m, %a1
@@ -141,7 +141,7 @@ test_3m:
     move.w  #0xFF00, 0x300000 - 4
     cmp.w   #0xAA55, 0x300000 - 2
     bne     test_2m
-    move    #3072, memory_size
+    move.l  #3072, memory_size
     move.l  #0x300000, _stack_top
     move.l  #0x300000, %sp
     lea     memory_3m, %a1
@@ -153,7 +153,7 @@ test_2m:
     move.w  #0xFF00, 0x200000 - 4
     cmp.w   #0xAA55, 0x200000 - 2
     bne     test_1m
-    move    #2048, memory_size
+    move.l  #2048, memory_size
     move.l  #0x200000, _stack_top
     move.l  #0x200000, %sp
     lea     memory_2m, %a1
@@ -165,7 +165,7 @@ test_1m:
     move.w  #0xAA55, 0x40000 - 2
     cmp.w   #0xAA55, 0x80000 - 2
     beq     set_256k
-    move    #1024, memory_size
+    move.l  #1024, memory_size
     move.l  #0x100000, _stack_top
     move.l  #0x100000, %sp
     lea     memory_1m, %a1
@@ -173,7 +173,7 @@ test_1m:
     jmp     timer_puts
 
 set_256k:
-    move    #256, memory_size
+    move.l  #256, memory_size
     move.l  #0x40000, _stack_top
     move.l  #0x40000, %sp
     lea     memory_256k, %a1
@@ -217,7 +217,7 @@ memory_size_done:
     | Then for each address line A1..A17 (word-aligned power-of-2
     | offset), write a different pattern and verify it didn't
     | clobber the baseline (i.e. the two addresses are distinct).
-    lea     0x0400, %a0             | baseline: above vector table
+    lea     _monitor_end, %a0       | baseline: above .monitor_data
     move.w  #0xA500, (%a0)          | baseline pattern
 
     | Walk address lines A1..A17.  Memory_size (in KB) tells us
@@ -225,14 +225,14 @@ memory_size_done:
     move.l  #0x0002, %d2            | offset = 1<<1 (A1, word-aligned)
 
 .addr_line_loop:
-    | Check that offset + 0x400 is within bank 1
+    | Check that offset + baseline is within bank 1
     move.l  %d2, %d3
-    add.l   #0x0400, %d3
+    add.l   #_monitor_end, %d3
     cmp.l   #0x40000, %d3           | bank 1 is 256K
     bge     .addr_test_done
 
     | Write distinct pattern at offset + baseline
-    move.l  #0x0400, %a1
+    move.l  #_monitor_end, %a1
     add.l   %d2, %a1
     move.w  #0x5A01, (%a1)          | different from baseline
 
