@@ -5,7 +5,7 @@ M68K_OBJCOPY = ./m68k-objcopy
 CPP_SOURCES = rom.cpp ps2.cpp textport.cpp vt102.cpp early_log.cpp splash.cpp \
               font_8x16.cpp font_8x8.cpp font_6x10.cpp
 # splash.cpp
-C_SOURCES = syscalls.c ff.c diskio.c build_info.c
+C_SOURCES = syscalls.c ff.c ffunicode.c diskio.c build_info.c
 ASM_SOURCES = crt0.s
 
 REAL_SOURCES = $(ASM_SOURCES) $(CPP_SOURCES) $(filter-out build_info.c,$(C_SOURCES))
@@ -23,7 +23,7 @@ ASFLAGS = -g
 LDFLAGS = $(COMMONFLAGS) -T $(LDSCRIPT)
 
 # Third-party C sources we don't control: build with relaxed warning flags
-LENIENT_C_SOURCES = ff.c diskio.c
+LENIENT_C_SOURCES = ff.c ffunicode.c diskio.c
 LENIENT_CFLAGS = $(COMMONFLAGS) -Wall
 $(LENIENT_C_SOURCES:.c=.o): CFLAGS = $(LENIENT_CFLAGS)
 
