@@ -210,6 +210,28 @@ module Video
     assign nVIDEO_IRQ = ~video_irq_latched;
 
     // ----------------------------------------------------------------
+    // LINE_TOGGLE — flips at end of visible pixel scanout (h_cnt
+    // 639->640), i.e. at the start of horizontal blank.  CPU polls
+    // STATUS bit 0 and then has the whole blanking interval (~160 px,
+    // ~6.35 us) to rewrite PALETTE before the next active line begins,
+    // so per-line palette swaps are tear-free.  Fires on every scanline
+    // (active and blank) to preserve the ~31.5 kHz per-line cadence the
+    // firmware's vblank-bridge relies on.
+    // ----------------------------------------------------------------
+    reg line_toggle;
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            line_toggle <= 1'b0;
+        end
+        else if (h_cnt == H_ACTIVE - 10'd1)   // 639: flips as h_cnt becomes 640
+        begin
+            line_toggle <= ~line_toggle;
+        end
+    end
+
+    // ----------------------------------------------------------------
     // CPU register interface (SYSCLK domain)
     // ----------------------------------------------------------------
     wire cpu_selected = ~nVIDEO_SELECT & ~nAS;
@@ -291,7 +313,7 @@ module Video
     wire ctrl_read = cpu_reading & (A == 5'h02) & ~nLDS;
 
     wire any_read = status_read | ctrl_read;
-    wire [15:0] read_data = status_read ? {15'd0, v_cnt[0]}
+    wire [15:0] read_data = status_read ? {15'd0, line_toggle}
                                         : {14'd0, fifo_error, video_enable};
 
     assign D = any_read ? read_data : 16'bz;

@@ -1032,11 +1032,41 @@ static inline void viewer_wait_line_edge(uint8_t &prev)
     prev = cur;
 }
 
+// Raise the 68000 interrupt priority mask to 5: a level-N IRQ is serviced
+// only when N > mask, so this blocks PS/2 (level 4) and the DUART C/T tick
+// (level 5) while still admitting the VIDEO vsync (level 6) and the NMI
+// (level 7).  Returns the previous SR for restoration.  (The mask is a
+// threshold, so the DUART tick can't be blocked without also blocking PS/2.)
+static inline uint16_t ipl_raise_to_5(void)
+{
+    uint16_t sr;
+    __asm__ volatile (
+        "move.w %%sr,%0\n\t"
+        "andi.w #0xF8FF,%%sr\n\t"   // clear I-mask field (bits 10:8)
+        "ori.w  #0x0500,%%sr"       // set I-mask = 5
+        : "=d"(sr) :: "memory"
+    );
+    return sr;
+}
+
+static inline void sr_restore(uint16_t sr)
+{
+    __asm__ volatile ("move.w %0,%%sr" :: "d"(sr) : "memory");
+}
+
 // Drive *palettes* (VIEWER_PAL_WORDS fg/bg words, D[15:8]=fg, D[7:0]=bg, each
 // byte R3G3B2) onto VIDEO_PALETTE, one per active scanline, frame after
 // frame.  Returns when a PS/2 byte is waiting in the input queue.
+//
+// Interrupts at level <= 5 are masked for the duration: the DUART 100 Hz tick
+// (level 5) fires 1-2x/frame and its ROM-wait-state ISR can exceed a scanline,
+// delaying the tight per-line loop below enough to miss a LINE_TOGGLE edge
+// (which shifts every line beneath it and makes the lower frame flicker).
+// VIDEO vsync (level 6) stays enabled — the per-frame resync needs it.
 static void show_palette_per_line(const uint16_t *palettes)
 {
+    [[maybe_unused]] const uint16_t saved_sr = ipl_raise_to_5();
+
     for (;;)
     {
         // Resync to the top of a frame.  _video_isr bumps the counter on the
@@ -1045,8 +1075,11 @@ static void show_palette_per_line(const uint16_t *palettes)
         uint32_t frame = video_frame_counter;
         while (video_frame_counter == frame)
         {
-            // if (ps2_received_ready())
+            // PS/2 IRQs are masked here, so a key-driven exit must POLL the
+            // input (not rely on the ISR queue) and restore SR before leaving:
+            // if (ps2_key_polled())
             // {
+                // sr_restore(saved_sr);
                 // return;
             // }
         }
@@ -1122,8 +1155,7 @@ static void view_image(const char *image_path, const char *palette_path)
         return;
     }
 
-    printf("view_image: %s + %s loaded; per-line palette running "
-           "(press a PS/2 key to exit)\n", image_path, palette_path);
+    // printf("view_image: %s + %s loaded; per-line palette running (press a PS/2 key to exit)\n", image_path, palette_path);
     show_palette_per_line(palettes);
 
     free(palettes);
@@ -1285,7 +1317,7 @@ int main()
 
     // Per-line palette image viewer.  Names hardcoded for now; runs until a
     // PS/2 key is pressed, then falls through to the normal input loop.
-    view_image("millie2.bin", "millie2-palette.bin");
+    view_image("oops.bin", "oops-palette.bin");
 
     printf("Input check loop...\n");
 

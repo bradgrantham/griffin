@@ -285,7 +285,7 @@ peripherals:
         description: "Video status."
         bits:
           - { bit: "0", name: LINE_TOGGLE,
-              description: "v_cnt[0] — toggles each scanline (31.469 kHz)" }
+              description: "Toggles each scanline (31.469 kHz) at end of visible pixel scanout (h_cnt 639->640, start of hblank), so PALETTE can be rewritten during blank before the next active line" }
       - offset: 0x09
         name: CLRERR
         access: write
@@ -478,6 +478,12 @@ constants:
   CF_CMD_SET_8BIT:      0x01
   CF_DH_LBA:            0xE0
   PS2_RX_QUEUE_SIZE:    64
+
+  # ENGINE bus-arbitration burst chunk: words transferred per BR/BGACK cycle
+  # before releasing the bus.  Deliberately shorter than a scanline (40 words)
+  # so a single burst (~2.36 us) cannot occupy the whole hblank (~6.35 us),
+  # leaving the bus free for the CPU's per-line VIDEO_PALETTE write.
+  ENGINE_WORDS_PER_BURST: 10
 
 bodges:
   - "Reroute A6 pad on U12 to A18"

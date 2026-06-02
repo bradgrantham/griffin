@@ -9,8 +9,14 @@
 // (640x480 pixels / 16 pixels per word = one frame).
 //
 // Flow control: when FIFO half-full deasserts (room available),
-// ENGINE requests bus and transfers exactly 40 words (one scanline).
-// Then releases bus and waits for next HF deassert.
+// ENGINE requests bus and transfers WORDS_PER_BURST words, then releases
+// the bus and waits for the next HF deassert.  The burst is deliberately
+// shorter than a scanline (10 words ~= 2.36 us vs the 6.35 us hblank) so a
+// burst can't monopolize the whole blanking interval: VIDEO stops draining
+// during hblank, ENGINE tops off the FIFO and goes idle, leaving the bus
+// free for the CPU's per-line VIDEO_PALETTE write.  word_counter is the
+// frame-wide address counter and is independent of the burst chunking, so
+// the framebuffer is still read in order and the image is unchanged.
 
 `include "../../griffin.generated.vh"
 
@@ -86,12 +92,14 @@ module Engine
     reg dma_en;
 
     // ----------------------------------------------------------------
-    // Row burst counter — counts 0 to 39 within each row transfer
+    // Burst counter — counts words within the current bus-master burst,
+    // 0 to WORDS_PER_BURST-1.  Independent of scanline boundaries: bursts
+    // chunk the frame-wide word stream for arbitration, nothing more.
     // ----------------------------------------------------------------
 
-    localparam [5:0] WORDS_PER_ROW = 6'd40;
+    localparam [5:0] WORDS_PER_BURST = `ENGINE_WORDS_PER_BURST;
     reg [5:0] burst_cnt;
-    wire end_of_row = (burst_cnt == WORDS_PER_ROW - 6'd1);
+    wire end_of_burst = (burst_cnt == WORDS_PER_BURST - 6'd1);
 
     // Frame boundary — reset word counter after 19200 words
     localparam [14:0] WORDS_PER_FRAME = 15'd19200;
@@ -255,7 +263,7 @@ module Engine
                         word_counter <= word_counter + 15'd1;
                     end
 
-                    if (end_of_row)
+                    if (end_of_burst)
                     begin
                         state <= STATE_RELEASE;
                     end

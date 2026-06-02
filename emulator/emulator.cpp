@@ -1039,13 +1039,13 @@ struct VideoState
     uint64_t clock_next_line = 0;
     uint64_t frac_accum = 0;
     int v_cnt = 0;
+    bool line_toggle = false;        // VIDEO_STATUS.LINE_TOGGLE
 
     bool irq_latched = false;
 
     bool video_enable = false;
     uint8_t palette_fg = 0xFF;
     uint8_t palette_bg = 0x00;
-    uint8_t background_color = 0x00;
     bool fifo_error = false;
 
     SDL_Window *window = nullptr;
@@ -1056,6 +1056,15 @@ struct VideoState
 
     uint8_t scanline_bytes[BYTES_PER_LINE] = {};
     bool scanline_valid = false;
+
+    // Per-line palette-write instrumentation (enabled with --video-stats).
+    // Measures whether the firmware's viewer keeps up with the scanline rate:
+    // writes/frame should be ~480 with ~0 skipped lines if it is keeping up.
+    bool stats = false;
+    int  stat_writes = 0;
+    int  stat_skipped = 0;
+    int  stat_last_write_vcnt = -1;
+    bool stat_last_write_active = false;
 
     bool init()
     {
@@ -1114,7 +1123,7 @@ struct VideoState
         uint32_t *row = &framebuffer[line * H_ACTIVE];
         if (!video_enable || !scanline_valid)
         {
-            uint32_t bg = r3g3b2_to_argb(background_color);
+            uint32_t bg = r3g3b2_to_argb(0);
             for (int i = 0; i < H_ACTIVE; i++)
             {
                 row[i] = bg;
@@ -1157,13 +1166,37 @@ struct VideoState
                 render_scanline(v_cnt);
             }
 
-            v_cnt++;
+            // LINE_TOGGLE flips at the end of each line's visible scanout
+            // (video.v: h_cnt 639->640, start of hblank).  In this atomic-line
+            // model that is the instant the line's pixels are committed, i.e.
+            // here, after render and before advancing v_cnt.  Free-running on
+            // every scanline (active and blank), never reset per frame, so it
+            // produces an edge at every line boundary including the odd 524->0
+            // wrap — matching the hardware flip-flop.
+            line_toggle = !line_toggle;
 
+            // VSYNC IRQ: hardware latches at (v_cnt==V_SYNC_START && h_last) —
+            // the END of line 490.  In this model that is the current iteration,
+            // before v_cnt is advanced.  Latching after the increment (i.e. when
+            // v_cnt becomes V_SYNC_START) fires one line early and shifts the
+            // per-line palette image up by a scanline.
             if (v_cnt == V_SYNC_START)
             {
                 irq_latched = true;
                 present_frame();
+
+                if (stats)
+                {
+                    fprintf(stderr, "video frame: %d palette writes, %d lines skipped\n",
+                            stat_writes, stat_skipped);
+                    stat_writes = 0;
+                    stat_skipped = 0;
+                    stat_last_write_vcnt = -1;
+                    stat_last_write_active = false;
+                }
             }
+
+            v_cnt++;
 
             if (v_cnt >= V_TOTAL)
             {
@@ -1190,7 +1223,7 @@ struct VideoState
         }
         if (addr == VIDEO_STATUS)
         {
-            return v_cnt & 1;
+            return line_toggle ? VIDEO_STATUS_LINE_TOGGLE_MASK : 0;
         }
         return 0;
     }
@@ -1209,10 +1242,6 @@ struct VideoState
         {
             fifo_error = false;
         }
-        else if (addr == VIDEO_BACKGROUND)
-        {
-            background_color = val;
-        }
     }
 
     void write_reg16(uint32_t addr, uint16_t val)
@@ -1221,6 +1250,23 @@ struct VideoState
         {
             palette_fg = (val >> 8) & 0xFF;
             palette_bg = val & 0xFF;
+
+            if (stats)
+            {
+                bool active = (v_cnt < V_ACTIVE);
+                // Only count skips between consecutive ACTIVE-line writes.  The
+                // big gap from the vblank palettes[0] write, across the viewer's
+                // ~34-line vblank bridge, to the first active write is expected
+                // — not a missed scanline.
+                if (active && stat_last_write_active && stat_last_write_vcnt >= 0)
+                {
+                    int d = v_cnt - stat_last_write_vcnt;
+                    if (d > 1) { stat_skipped += d - 1; }
+                }
+                stat_last_write_vcnt = v_cnt;
+                stat_last_write_active = active;
+                stat_writes++;
+            }
         }
     }
 };
@@ -1238,13 +1284,22 @@ struct VideoState
 
 struct EngineState
 {
-    // engine.v STATE_ADDR + STATE_WAIT_DTACK + STATE_LATCH = 3 sysclks/word
-    // (RAM DTACK is 0 wait states), plus arbitration overhead per burst.
-    static constexpr uint32_t WORDS_PER_BURST = 40;
+    // This atomic per-line model charges one lump of DMA stall per scanline;
+    // it does not simulate individual bus bursts (and so cannot reproduce the
+    // intra-line palette tearing those cause on real hardware).  The stall is
+    // the full line of pixel data — 40 words (640px / 16px-per-word) — at
+    // STATE_ADDR + STATE_WAIT_DTACK + STATE_LATCH = 3 sysclks/word (RAM DTACK
+    // is 0 wait states), plus one arbitration overhead per bus burst.  ENGINE
+    // releases the bus every ENGINE_WORDS_PER_BURST words, so a line incurs
+    // ceil(WORDS_PER_LINE / burst) arbitrations — smaller bursts cost a little
+    // more total stall.
+    static constexpr uint32_t WORDS_PER_LINE = 40;
     static constexpr uint32_t SYSCLKS_PER_WORD = 3;
     static constexpr uint32_t ARBITRATION_SYSCLKS = 3;
-    static constexpr uint32_t SYSCLKS_PER_BURST =
-        WORDS_PER_BURST * SYSCLKS_PER_WORD + ARBITRATION_SYSCLKS;
+    static constexpr uint32_t BURSTS_PER_LINE =
+        (WORDS_PER_LINE + Griffin::ENGINE_WORDS_PER_BURST - 1) / Griffin::ENGINE_WORDS_PER_BURST;
+    static constexpr uint32_t SYSCLKS_PER_LINE =
+        WORDS_PER_LINE * SYSCLKS_PER_WORD + BURSTS_PER_LINE * ARBITRATION_SYSCLKS;
 
     uint8_t source_page = 0;
     bool dma_en = false;
@@ -1892,6 +1947,11 @@ public:
         return video.init();
     }
 
+    void enable_video_stats()
+    {
+        video.stats = true;
+    }
+
     bool open_cf(const char *path, bool read_only)
     {
         return cf.open(path, read_only);
@@ -1942,6 +2002,19 @@ public:
         }
 
         duart.check_timer(getClock());
+        ps2.check_timer(getClock());
+        update_ipl();
+    }
+
+    // Advance the video scanline timer.  Must be called every CPU step, not
+    // batched at the ~1 ms poll_io() rate: a scanline is only ~445 SYSCLK, so
+    // polling at 1 ms would render ~31 lines per call all sharing one palette
+    // (and freeze VIDEO_STATUS between polls), collapsing per-line palette
+    // updates into coarse bands.  check_timer() early-returns when no line
+    // boundary has been crossed, and the SDL present fires only once per frame
+    // (at v_cnt == V_SYNC_START), so calling this every step is cheap.
+    void service_video()
+    {
         uint32_t dma_stall = video.check_timer(getClock(),
             [this](int line, uint8_t *dst, uint32_t &stall) -> bool
             {
@@ -1954,14 +2027,13 @@ public:
                 {
                     dst[i] = peek_ram8(base + i);
                 }
-                stall += EngineState::SYSCLKS_PER_BURST;
+                stall += EngineState::SYSCLKS_PER_LINE;
                 return true;
             });
         if (dma_stall > 0)
         {
             sync(static_cast<int>(dma_stall));
         }
-        ps2.check_timer(getClock());
         update_ipl();
     }
 
@@ -2074,6 +2146,7 @@ int main(int argc, const char** argv)
     auto ram_config = GriffinEmulator::RAM_1_BANK_256K;
     const char *cf_path = nullptr;
     bool cf_ro = false;
+    bool video_stats = false;
 
     while((argc > 0) && (argv[0][0] == '-')) {
 	if(strcmp(argv[0], "--cf") == 0) {
@@ -2116,6 +2189,10 @@ int main(int argc, const char** argv)
             ram_config = ram_configs.at(k);
             argv += 2;
             argc -= 2;
+        } else if(strcmp(argv[0], "--video-stats") == 0) {
+            video_stats = true;
+            argv += 1;
+            argc -= 1;
         } else if(
             (strcmp(argv[0], "-help") == 0) ||
             (strcmp(argv[0], "-h") == 0) ||
@@ -2143,6 +2220,11 @@ int main(int argc, const char** argv)
     const char *romname = argv[0];
 
     GriffinEmulator emulator(ram_config);
+
+    if (video_stats)
+    {
+        emulator.enable_video_stats();
+    }
 
     if (cf_path)
     {
@@ -2211,6 +2293,7 @@ int main(int argc, const char** argv)
             printf("%04X: %s\n", emulator.getPC(), str);
         }
         emulator.execute();
+        emulator.service_video();
         auto clock_now = emulator.getClock();
         auto now = time(0);
 
