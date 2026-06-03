@@ -1034,12 +1034,15 @@ struct VideoState
     static constexpr int V_ACTIVE = 480;
     static constexpr int V_SYNC_START = 490;
     static constexpr int H_ACTIVE = 640;
+    static constexpr int H_TOTAL = 800;                  // LINE_NUM / 560
+    static constexpr int HBLANK_PX = H_TOTAL - H_ACTIVE; // 160 px of blanking
     static constexpr int BYTES_PER_LINE = 80;
 
     uint64_t clock_next_line = 0;
     uint64_t frac_accum = 0;
     int v_cnt = 0;
     bool line_toggle = false;        // VIDEO_STATUS.LINE_TOGGLE
+    uint64_t last_toggle_clock = 0;  // SYSCLK at the most recent LINE_TOGGLE edge
 
     bool irq_latched = false;
 
@@ -1065,6 +1068,20 @@ struct VideoState
     int  stat_skipped = 0;
     int  stat_last_write_vcnt = -1;
     bool stat_last_write_active = false;
+
+    // Per-line palette-write LANDING instrumentation.  The hardware palette is
+    // single-buffered and live, so the byte position at which a CPU palette
+    // write takes effect is (write_clock - last_toggle_clock) converted to
+    // pixels, minus the HBLANK_PX of blanking that follows the toggle.  A
+    // landing <= 0 means the write completed during hblank (tear-free); a
+    // positive landing is how many pixels into the next visible line the new
+    // palette appears (the artifact seen on real hardware).  The emulator's
+    // atomic per-line render can't show this spatially, but it models the CPU
+    // cycle cost faithfully, so the measured landing is meaningful.
+    long stat_land_sum = 0;
+    int  stat_land_n   = 0;
+    long stat_land_min = 0;
+    long stat_land_max = 0;
 
     bool init()
     {
@@ -1174,6 +1191,10 @@ struct VideoState
             // produces an edge at every line boundary including the odd 524->0
             // wrap — matching the hardware flip-flop.
             line_toggle = !line_toggle;
+            // clock_next_line still holds THIS line's boundary clock (it is
+            // advanced at the bottom of the loop), which is the instant of the
+            // toggle edge the firmware polls — the reference for landing math.
+            last_toggle_clock = clock_next_line;
 
             // VSYNC IRQ: hardware latches at (v_cnt==V_SYNC_START && h_last) —
             // the END of line 490.  In this model that is the current iteration,
@@ -1187,12 +1208,21 @@ struct VideoState
 
                 if (stats)
                 {
-                    fprintf(stderr, "video frame: %d palette writes, %d lines skipped\n",
-                            stat_writes, stat_skipped);
+                    long avg = stat_land_n ? (stat_land_sum / stat_land_n) : 0;
+                    fprintf(stderr,
+                            "video frame: %d palette writes, %d lines skipped; "
+                            "palette landing px (in visible line): min %ld avg %ld max %ld "
+                            "[<=0 = in hblank, tear-free]\n",
+                            stat_writes, stat_skipped,
+                            stat_land_min, avg, stat_land_max);
                     stat_writes = 0;
                     stat_skipped = 0;
                     stat_last_write_vcnt = -1;
                     stat_last_write_active = false;
+                    stat_land_sum = 0;
+                    stat_land_n   = 0;
+                    stat_land_min = 0;
+                    stat_land_max = 0;
                 }
             }
 
@@ -1244,7 +1274,7 @@ struct VideoState
         }
     }
 
-    void write_reg16(uint32_t addr, uint16_t val)
+    void write_reg16(uint32_t addr, uint16_t val, uint64_t clock_now)
     {
         if (addr == VIDEO_PALETTE)
         {
@@ -1266,6 +1296,28 @@ struct VideoState
                 stat_last_write_vcnt = v_cnt;
                 stat_last_write_active = active;
                 stat_writes++;
+
+                // Landing: pixels from the toggle edge to this write, minus the
+                // hblank that follows the edge.  pixels = sysclk * H_TOTAL / line.
+                uint64_t latency = clock_now - last_toggle_clock;
+                long latency_px =
+                    static_cast<long>((latency * H_TOTAL * LINE_DEN) / LINE_NUM);
+                long landing = latency_px - HBLANK_PX;
+                if (active)
+                {
+                    if (stat_land_n == 0)
+                    {
+                        stat_land_min = landing;
+                        stat_land_max = landing;
+                    }
+                    else
+                    {
+                        if (landing < stat_land_min) { stat_land_min = landing; }
+                        if (landing > stat_land_max) { stat_land_max = landing; }
+                    }
+                    stat_land_sum += landing;
+                    stat_land_n++;
+                }
             }
         }
     }
@@ -1908,7 +1960,7 @@ public:
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            video.write_reg16(addr, val);
+            video.write_reg16(addr, val, getClock());
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
             engine.write_reg8(addr + 1, low);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
