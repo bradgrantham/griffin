@@ -918,220 +918,40 @@ static int debug_getline(char *buf, int maxlen)
 }
 
 // ---------------------------------------------------------------------------
-// Video init — generate checkerboard, start ENGINE DMA, enable scanout
+// Video framebuffer — palette-and-pixels layout, start ENGINE DMA, enable scanout
+//
+// Each scanline in memory is a 4-byte header (word 0 = {fg, bg} R3G3B2
+// palette, word 1 reserved) followed by 80 pixel bytes.  ENGINE streams the
+// header through the FIFO so VIDEO latches the per-line palette in-band — no
+// CPU palette register, no per-line timing.  The stride is a multiple of 4 so
+// the textport's long-word framebuffer movers stay valid.
 // ---------------------------------------------------------------------------
 
-static constexpr uint32_t FB_ADDR = 0x0F0000;
-static constexpr uint8_t  FB_PAGE = 0x0F;
-
-static void generate_checkerboard()
-{
-    volatile uint8_t *fb = reinterpret_cast<volatile uint8_t *>(FB_ADDR);
-    constexpr uint32_t BYTES_PER_ROW = 80;
-    constexpr uint32_t ROWS = 480;
-
-    for (uint32_t y = 0; y < ROWS; y++)
-    {
-        uint8_t pattern = ((y / 4) & 1) ? 0x0F : 0xF0;
-        for (uint32_t x = 0; x < BYTES_PER_ROW; x++)
-        {
-            fb[y * BYTES_PER_ROW + x] = pattern;
-        }
-    }
-}
-
-// Attempt to load splash.bin from the mounted filesystem into the framebuffer.
-// Returns true on success.  Framebuffer is 80 bytes/row * 480 rows = 38400 bytes
-// for 640x480 1bpp.  On any failure restores the checkerboard so a partial read
-// can't leave a corrupted image on screen.
-static constexpr size_t FB_BYTES = 80U * 480U;
-
-[[maybe_unused]] static bool load_splash()
-{
-    FILE *fp = fopen("splash.bin", "rb");
-    if (!fp)
-    {
-        printf("splash: fopen(\"splash.bin\") failed; falling back to checkerboard\n");
-        return false;
-    }
-
-    size_t got = fread(reinterpret_cast<void *>(FB_ADDR), 1, FB_BYTES, fp);
-    fclose(fp);
-
-    if (got != FB_BYTES)
-    {
-        printf("splash: short read (%lu of %lu bytes); falling back to checkerboard\n",
-               static_cast<unsigned long>(got), static_cast<unsigned long>(FB_BYTES));
-        generate_checkerboard();
-        return false;
-    }
-
-    printf("splash: loaded %lu bytes from splash.bin into framebuffer\n",
-           static_cast<unsigned long>(FB_BYTES));
-    return true;
-}
+static constexpr uint32_t FB_ADDR         = 0x0F0000;
+static constexpr uint8_t  FB_PAGE         = 0x0F;
+static constexpr unsigned FB_LINES        = 480;
+static constexpr unsigned FB_PIXEL_BYTES  = Griffin::VIDEO_PIXEL_BYTES_PER_LINE; // 80
+static constexpr unsigned FB_PIXEL_OFFSET = Griffin::VIDEO_LINE_PIXEL_OFFSET;    // 4
+static constexpr unsigned FB_STRIDE       = Griffin::VIDEO_LINE_STRIDE_BYTES;    // 84
+static constexpr uint16_t FB_DEFAULT_PALETTE = 0xFF00;  // fg=white, bg=black
 
 // ---------------------------------------------------------------------------
-// Per-line palette image viewer
+// Per-line-palette image viewer
 //
-// The 1bpp framebuffer only distinguishes pixel=1 (foreground) from pixel=0
-// (background), but VIDEO_PALETTE chooses the two R3G3B2 colours those map
-// to, and it can be rewritten between scanlines.  By feeding a fresh fg/bg
-// pair before each of the 480 active lines we get an effectively 480-colour
-// image (two chosen colours per row).
-//
-// Timing facts taken from cpld/video/video.v (VGA 640x480@60, 25.175 MHz dot
-// clock, 800x525 raster, ~31.78 us/line, SYSCLK 14 MHz => ~445 SYSCLK/line):
-//
-//   * VIDEO_STATUS.LINE_TOGGLE = v_cnt[0]; it flips at every scanline
-//     boundary (h_cnt 799->0), which is the SAME edge at which the new
-//     line's active pixels begin (active is h_cnt 0..639; the horizontal
-//     blank 640..799 sits BEFORE the toggle, not after it).
-//   * The vsync IRQ (which crt0's _video_isr counts into video_frame_counter)
-//     latches at v_cnt==490 — i.e. 35 blanking lines (~1.11 ms) BEFORE active
-//     line 0, not at line 0 itself.
-//
-// So the loop: resync on the frame counter (lands us ~1.1 ms early, with
-// plenty of slack to set line 0's palette), bridge the remaining blanking
-// lines, then latch one palette word per LINE_TOGGLE edge for lines 1..479.
-//
-// Two honest caveats (see notes in the chat for full reasoning):
-//   1. Because the toggle fires AT active-start, the palette write for lines
-//      1..479 lands a few SYSCLK into the visible line, so the leftmost
-//      ~30-40 px of those lines briefly show the previous row's palette.
-//      Line 0 is clean (set during vblank).  A tear-free version would phase-
-//      delay each write into the prior line's hblank; not done here.
-//   2. Interrupts stay ENABLED (the PS/2 ISR must assemble the byte that
-//      ends the loop, and the DUART ms-tick keeps running).  A tick/PS2 ISR
-//      can delay one palette write, widening that sliver on the odd line.
-//      ISRs are far shorter than a line, so edges are never missed.
-
-static constexpr unsigned VIEWER_LINES     = 480;
-static constexpr size_t   VIEWER_PAL_WORDS = VIEWER_LINES;            // one fg/bg word per line
-static constexpr size_t   VIEWER_PAL_BYTES = VIEWER_PAL_WORDS * sizeof(uint16_t);
-
-// LINE_TOGGLE edges from observing the vsync IRQ (v_cnt~=491 after ISR
-// latency) until v_cnt wraps to 0 (active line 0).  Off-by-one here only
-// shifts the whole palette set vertically by one scanline (invisible), so
-// no precise tuning is needed.
-static constexpr unsigned VIEWER_VBLANK_BRIDGE_EDGES = 34;
-
-extern volatile uint32_t video_frame_counter;
-
-// Spin until VIDEO_STATUS.LINE_TOGGLE differs from *prev*, then record the
-// new value.  Loop body is a single byte read + compare (~10-15 SYSCLK),
-// well under the ~445 SYSCLK scanline, so an edge is detected within a px or
-// two of the boundary.
-static inline void viewer_wait_line_edge(uint8_t &prev)
-{
-    uint8_t cur;
-    do
-    {
-        cur = VIDEO_STATUS & Griffin::VIDEO_STATUS_LINE_TOGGLE_MASK;
-    } while (cur == prev);
-    prev = cur;
-}
-
-// Raise the 68000 interrupt priority mask to 5: a level-N IRQ is serviced
-// only when N > mask, so this blocks PS/2 (level 4) and the DUART C/T tick
-// (level 5) while still admitting the VIDEO vsync (level 6) and the NMI
-// (level 7).  Returns the previous SR for restoration.  (The mask is a
-// threshold, so the DUART tick can't be blocked without also blocking PS/2.)
-static inline uint16_t ipl_raise_to_5(void)
-{
-    uint16_t sr;
-    __asm__ volatile (
-        "move.w %%sr,%0\n\t"
-        "andi.w #0xF8FF,%%sr\n\t"   // clear I-mask field (bits 10:8)
-        "ori.w  #0x0500,%%sr"       // set I-mask = 5
-        : "=d"(sr) :: "memory"
-    );
-    return sr;
-}
-
-static inline void sr_restore(uint16_t sr)
-{
-    __asm__ volatile ("move.w %0,%%sr" :: "d"(sr) : "memory");
-}
-
-// Drive *palettes* (VIEWER_PAL_WORDS fg/bg words, D[15:8]=fg, D[7:0]=bg, each
-// byte R3G3B2) onto VIDEO_PALETTE, one per active scanline, frame after
-// frame.  Returns when a PS/2 byte is waiting in the input queue.
-//
-// Interrupts at level <= 5 are masked for the duration: the DUART 100 Hz tick
-// (level 5) fires 1-2x/frame and its ROM-wait-state ISR can exceed a scanline,
-// delaying the tight per-line loop below enough to miss a LINE_TOGGLE edge
-// (which shifts every line beneath it and makes the lower frame flicker).
-// VIDEO vsync (level 6) stays enabled — the per-frame resync needs it.
-static void show_palette_per_line(const uint16_t *palettes)
-{
-    [[maybe_unused]] const uint16_t saved_sr = ipl_raise_to_5();
-
-    for (;;)
-    {
-        // Resync to the top of a frame.  _video_isr bumps the counter on the
-        // vsync rising edge (v_cnt==490).  This is also the only place we
-        // poll for the exit condition — once per frame (~16 ms) is plenty.
-        uint32_t frame = video_frame_counter;
-        while (video_frame_counter == frame)
-        {
-            // PS/2 IRQs are masked here, so a key-driven exit must POLL the
-            // input (not rely on the ISR queue) and restore SR before leaving:
-            // if (ps2_key_polled())
-            // {
-                // sr_restore(saved_sr);
-                // return;
-            // }
-        }
-
-        // ~1.11 ms remain before active line 0 — ample slack to set its
-        // palette during vertical blank (so line 0 is tear-free).
-        VIDEO_PALETTE = palettes[0];
-
-        // Bridge the remaining blanking lines so the first edge consumed
-        // below is the 0->1 transition that starts active line 1.
-        uint8_t toggle = VIDEO_STATUS & Griffin::VIDEO_STATUS_LINE_TOGGLE_MASK;
-        for (unsigned i = 0; i < VIEWER_VBLANK_BRIDGE_EDGES; i++)
-        {
-            viewer_wait_line_edge(toggle);
-        }
-
-        // Lines 1..479: each edge marks the start of the next active line.
-        for (unsigned line = 1; line < VIEWER_LINES; line++)
-        {
-            viewer_wait_line_edge(toggle);
-            VIDEO_PALETTE = palettes[line];
-        }
-    }
-}
-
-// Load a 640x480 1bpp bitmap (FB_BYTES) into the framebuffer and its
-// companion per-line palette set (VIEWER_PAL_WORDS words), then run the
-// per-line palette display until a PS/2 key is pressed.  ENGINE DMA and
-// VIDEO scanout are expected to already be enabled (video_test_init).
+// Loads a 640x480 1bpp image and its companion 480-word per-line palette set,
+// interleaving them into the palette-and-pixels framebuffer: each scanline's
+// palette word lands in the header (bytes 0..1) and the 80 pixel bytes follow
+// at FB_PIXEL_OFFSET.  ENGINE + VIDEO then display it with per-line palettes
+// automatically (no CPU palette timing), so this just lays out the framebuffer
+// and returns once a PS/2 key is pressed.
+// ---------------------------------------------------------------------------
 static void view_image(const char *image_path, const char *palette_path)
 {
-    FILE *img = fopen(image_path, "rb");
-    if (!img)
-    {
-        printf("view_image: cannot open %s\n", image_path);
-        return;
-    }
-    size_t img_got = fread(reinterpret_cast<void *>(FB_ADDR), 1, FB_BYTES, img);
-    fclose(img);
-    if (img_got != FB_BYTES)
-    {
-        printf("view_image: %s short read (%lu of %lu bytes)\n", image_path,
-               static_cast<unsigned long>(img_got),
-               static_cast<unsigned long>(FB_BYTES));
-        return;
-    }
-
-    // malloc, not new[]: array operator new[] is the throwing allocator,
-    // which drags libstdc++'s exception machinery (.eh_frame) and random.o
-    // (-> undefined getentropy) into the link and overflows ROM.  newlib
-    // malloc/free keeps the bare-metal image lean.
-    uint16_t *palettes = static_cast<uint16_t *>(malloc(VIEWER_PAL_BYTES));
+    // Per-line palette set: 480 words, D[15:8]=fg, D[7:0]=bg, each byte R3G3B2.
+    // malloc, not new[]: the throwing array-new drags in libstdc++ exception
+    // machinery and overflows ROM; newlib malloc/free keeps the image lean.
+    constexpr size_t PAL_BYTES = FB_LINES * sizeof(uint16_t);
+    uint16_t *palettes = static_cast<uint16_t *>(malloc(PAL_BYTES));
     if (!palettes)
     {
         printf("view_image: out of memory for palette set\n");
@@ -1144,21 +964,54 @@ static void view_image(const char *image_path, const char *palette_path)
         free(palettes);
         return;
     }
-    size_t pal_got = fread(palettes, 1, VIEWER_PAL_BYTES, pal);
+    size_t pal_got = fread(palettes, 1, PAL_BYTES, pal);
     fclose(pal);
-    if (pal_got != VIEWER_PAL_BYTES)
+    if (pal_got != PAL_BYTES)
     {
         printf("view_image: %s short read (%lu of %lu bytes)\n", palette_path,
                static_cast<unsigned long>(pal_got),
-               static_cast<unsigned long>(VIEWER_PAL_BYTES));
+               static_cast<unsigned long>(PAL_BYTES));
         free(palettes);
         return;
     }
 
-    // printf("view_image: %s + %s loaded; per-line palette running (press a PS/2 key to exit)\n", image_path, palette_path);
-    show_palette_per_line(palettes);
+    FILE *img = fopen(image_path, "rb");
+    if (!img)
+    {
+        printf("view_image: cannot open %s\n", image_path);
+        free(palettes);
+        return;
+    }
 
+    // Interleave into the strided framebuffer one scanline at a time: palette
+    // word into the header, then the line's 80 pixel bytes after the header.
+    bool ok = true;
+    for (unsigned line = 0; line < FB_LINES; line++)
+    {
+        uint8_t *lp = reinterpret_cast<uint8_t *>(FB_ADDR + line * FB_STRIDE);
+        *reinterpret_cast<uint16_t *>(lp) = palettes[line];
+        size_t got = fread(lp + FB_PIXEL_OFFSET, 1, FB_PIXEL_BYTES, img);
+        if (got != FB_PIXEL_BYTES)
+        {
+            ok = false;
+            break;
+        }
+    }
+    fclose(img);
     free(palettes);
+    if (!ok)
+    {
+        printf("view_image: %s short read\n", image_path);
+        return;
+    }
+
+    // The image now scans out with its per-line palettes in-band — no CPU work.
+    // Block until a PS/2 key arrives (interrupts stay enabled), then return.
+    while (!ps2_received_ready())
+    {
+        // idle; ENGINE/VIDEO refresh the screen from the framebuffer
+    }
+    (void)ps2_getchar();
 }
 
 // ---------------------------------------------------------------------------
@@ -1193,9 +1046,10 @@ namespace griffin::textport {
 
     gtxt::g_textport.configure(
         reinterpret_cast<uint8_t*>(FB_ADDR),
-        80U,                              // pitch bytes (640 px / 8)
+        FB_STRIDE,                        // per-line stride (header + 80 px)
         &gtxt::font_8x16_renderer,
-        80U, 24U);
+        80U, 24U,
+        FB_PIXEL_OFFSET, FB_DEFAULT_PALETTE);
     gtxt::g_vt102.reset();
 
     for (int rep = 0; rep < 10; ++rep)
@@ -1226,7 +1080,6 @@ extern "C" void textport_console_set_enabled(int on);
 // off as text fills.
 static void textport_console_enable()
 {
-    constexpr unsigned FB_PITCH_BYTES = 80;        // 640 px / 8
     constexpr unsigned CONSOLE_COLS   = 80;
     constexpr unsigned CONSOLE_ROWS   = 30;
 
@@ -1236,15 +1089,16 @@ static void textport_console_enable()
     gtxt::g_vt102.set_responder(&textport_uart_responder);
     gtxt::g_textport.configure(
         reinterpret_cast<uint8_t*>(FB_ADDR),
-        FB_PITCH_BYTES,
+        FB_STRIDE,
         &fr,
-        CONSOLE_COLS, CONSOLE_ROWS);
+        CONSOLE_COLS, CONSOLE_ROWS,
+        FB_PIXEL_OFFSET, FB_DEFAULT_PALETTE);
     gtxt::g_vt102.reset();
 
     // Splash sits at the top of the FB; the Textport's char buffer for
     // those rows is still ' ', so the cursor avoids them until scrolling
-    // evicts them.
-    splash_blit_topleft(reinterpret_cast<uint8_t*>(FB_ADDR), FB_PITCH_BYTES);
+    // evicts them.  Blit into the pixel region (past the per-line header).
+    splash_blit_topleft(reinterpret_cast<uint8_t*>(FB_ADDR + FB_PIXEL_OFFSET), FB_STRIDE);
     const unsigned splash_rows = splash_rows_for_font_height(font_h);
     gtxt::g_textport.move_to(0, static_cast<int>(splash_rows));
 
@@ -1267,15 +1121,16 @@ static void textport_console_enable()
 
 static void video_test_init()
 {
-    debug_printf("VIDEO: generating 4x4 checkerboard at 0x%06lX\n",
-                 static_cast<unsigned long>(FB_ADDR));
-    generate_checkerboard();
+    debug_printf("VIDEO: palette-and-pixels framebuffer at 0x%06lX (%u-byte stride)\n",
+                 static_cast<unsigned long>(FB_ADDR),
+                 static_cast<unsigned>(FB_STRIDE));
 
+    // The framebuffer is laid out (palette headers + pixels) by whoever draws
+    // into it next — textport_console_enable() clears it immediately after.
     ENGINE_SOURCE_PAGE = FB_PAGE;
     ENGINE_CTRL = Griffin::ENGINE_CTRL_DMA_EN_MASK;
     printf("ENGINE: DMA enabled, page=0x%02X\n", FB_PAGE);
 
-    VIDEO_PALETTE = 0xFF00;     // fg=white, bg=black
     VIDEO_CLRERR = 0;           // clear any stale FIFO_ERROR
     VIDEO_CTRL = Griffin::VIDEO_CTRL_ENABLE_MASK;
 
@@ -1372,37 +1227,6 @@ int main()
             uint32_t hh = seconds / 3600;
             printf("%02ld:%02ld:%02ld\n", hh, mm, ss);
             last_clock_print_ms = now_ms;
-
-            if(seconds > 10) {
-                uint8_t color;
-                switch(seconds % 8) {
-                    case 0:
-                        color = 0xFF;
-                        break;
-                    case 1:
-                        color = 0xE3;
-                        break;
-                    case 2:
-                        color = 0xFC;
-                        break;
-                    case 3:
-                        color = 0xE0;
-                        break;
-                    case 4:
-                        color = 0x0;
-                        break;
-                    case 5:
-                        color = 0x1C;
-                        break;
-                    case 6:
-                        color = 0x13;
-                        break;
-                    default: case 7:
-                        color = 0x1F;
-                        break;
-                }
-                VIDEO_PALETTE = (color << 8) | (0xFF ^ color);
-            }
         }
     }
 }

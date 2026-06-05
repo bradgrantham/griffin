@@ -92,9 +92,13 @@ static constexpr uint32_t CURSOR_REVEAL_TICKS = 5;
 
 void Textport::configure(uint8_t* fb, unsigned pitch_bytes,
                          const FontRenderer* fr,
-                         unsigned cols, unsigned rows)
+                         unsigned cols, unsigned rows,
+                         unsigned pixel_offset, uint16_t palette_word)
 {
-    fb_    = fb;
+    fb_            = fb;
+    pixel_offset_  = pixel_offset;
+    palette_word_  = palette_word;
+    pix_           = fb + pixel_offset;
     pitch_ = pitch_bytes;
     fr_    = fr;
     cols_  = (cols > MAX_COLS) ? MAX_COLS : static_cast<uint8_t>(cols);
@@ -131,15 +135,35 @@ void Textport::clear()
     }
 
     // Black the entire framebuffer (faster than per-cell clear and covers
-    // any margins outside the textport area).
-    fb_clear_longs(reinterpret_cast<uint32_t*>(fb_),
-                   (pitch_ * fr_->font->height * rows_) >> 2);
+    // any margins outside the textport area), restamping palette headers.
+    clear_scanlines_(fb_, fr_->font->height * rows_);
 
     cursor_x_ = 0;
     cursor_y_ = 0;
     cursor_hanging_ = false;
     cursor_shown_ = false;
     show_cursor_();
+}
+
+// Clear n_scanlines worth of pixels at line base `base`, then restamp each
+// scanline's in-band palette header — the fast long-clear above zeros the
+// header (fg=bg=0 -> invisible text), so we rewrite palette_word_ into bytes
+// [0..1] of every cleared scanline.  No-op header stamp for the legacy
+// headerless layout (pixel_offset_ == 0).
+void Textport::clear_scanlines_(uint8_t* base, unsigned n_scanlines)
+{
+    fb_clear_longs(reinterpret_cast<uint32_t*>(base),
+                   (n_scanlines * pitch_) >> 2);
+    if (pixel_offset_ == 0)
+    {
+        return;
+    }
+    uint8_t* p = base;
+    for (unsigned s = 0; s < n_scanlines; ++s)
+    {
+        *reinterpret_cast<uint16_t*>(p) = palette_word_;
+        p += pitch_;
+    }
 }
 
 void Textport::bell()
@@ -151,14 +175,14 @@ void Textport::paint_cell_(unsigned cx, unsigned cy)
 {
     const uint8_t c    = chars_[idx_(cx, cy)];
     const bool    inv  = (attrs_[idx_(cx, cy)] & ATTR_INVERSE) != 0;
-    fr_->draw_cell(fb_, pitch_, *fr_, cx, cy, c, inv);
+    fr_->draw_cell(pix_, pitch_, *fr_, cx, cy, c, inv);
 }
 
 void Textport::paint_blank_cell_(unsigned cx, unsigned cy)
 {
     chars_[idx_(cx, cy)] = ' ';
     attrs_[idx_(cx, cy)] = 0;
-    fr_->draw_cell(fb_, pitch_, *fr_, cx, cy, ' ', false);
+    fr_->draw_cell(pix_, pitch_, *fr_, cx, cy, ' ', false);
 }
 
 void Textport::show_cursor_()
@@ -171,7 +195,7 @@ void Textport::show_cursor_()
     {
         return;
     }
-    fr_->invert_cell(fb_, pitch_, *fr_, cursor_x_, cursor_y_);
+    fr_->invert_cell(pix_, pitch_, *fr_, cursor_x_, cursor_y_);
     cursor_shown_ = true;
 }
 
@@ -181,7 +205,7 @@ void Textport::hide_cursor_()
     {
         return;
     }
-    fr_->invert_cell(fb_, pitch_, *fr_, cursor_x_, cursor_y_);
+    fr_->invert_cell(pix_, pitch_, *fr_, cursor_x_, cursor_y_);
     cursor_shown_ = false;
 }
 
@@ -406,8 +430,8 @@ void Textport::scroll_region_up_(int n)
             std::memset(&attrs_[y * MAX_COLS], 0,   cols_);
         }
         const unsigned H = fr_->font->height;
-        fb_clear_longs(reinterpret_cast<uint32_t*>(fb_ + scroll_top_ * H * pitch_),
-                       (static_cast<unsigned>(region_rows) * H * pitch_) >> 2);
+        clear_scanlines_(fb_ + scroll_top_ * H * pitch_,
+                         static_cast<unsigned>(region_rows) * H);
         return;
     }
 
@@ -434,8 +458,8 @@ void Textport::scroll_region_up_(int n)
     fb_move_long_fwd(reinterpret_cast<uint32_t*>(base),
                      reinterpret_cast<const uint32_t*>(base + shift_bytes),
                      (region_bytes - shift_bytes) >> 2);
-    fb_clear_longs(reinterpret_cast<uint32_t*>(base + region_bytes - shift_bytes),
-                   shift_bytes >> 2);
+    clear_scanlines_(base + region_bytes - shift_bytes,
+                     static_cast<unsigned>(n) * H);
 }
 
 void Textport::scroll_region_down_(int n)
@@ -450,8 +474,8 @@ void Textport::scroll_region_down_(int n)
             std::memset(&attrs_[y * MAX_COLS], 0,   cols_);
         }
         const unsigned H = fr_->font->height;
-        fb_clear_longs(reinterpret_cast<uint32_t*>(fb_ + scroll_top_ * H * pitch_),
-                       (static_cast<unsigned>(region_rows) * H * pitch_) >> 2);
+        clear_scanlines_(fb_ + scroll_top_ * H * pitch_,
+                         static_cast<unsigned>(region_rows) * H);
         return;
     }
 
@@ -478,7 +502,7 @@ void Textport::scroll_region_down_(int n)
     fb_move_long_rev(reinterpret_cast<uint32_t*>(base + region_bytes),
                      reinterpret_cast<const uint32_t*>(base + region_bytes - shift_bytes),
                      (region_bytes - shift_bytes) >> 2);
-    fb_clear_longs(reinterpret_cast<uint32_t*>(base), shift_bytes >> 2);
+    clear_scanlines_(base, static_cast<unsigned>(n) * H);
 }
 
 void Textport::scroll_up_region(int n)
@@ -587,8 +611,7 @@ void Textport::erase_in_display(int mode)
         std::memset(&attrs_[y * MAX_COLS], 0,   cols_);
         // Clear pixel row(s) for this character row.
         const unsigned H = fr_->font->height;
-        fb_clear_longs(reinterpret_cast<uint32_t*>(fb_ + static_cast<unsigned>(y) * H * pitch_),
-                       (H * pitch_) >> 2);
+        clear_scanlines_(fb_ + static_cast<unsigned>(y) * H * pitch_, H);
     }
     show_cursor_();
 }

@@ -5,18 +5,18 @@
 // the VIDEO CPLD for scanout.
 //
 // Address: {source_page[7:0], word_counter[14:0]} = A[23:1].
-// Framebuffer is 64KB-aligned.  Counter resets at 19200 words
-// (640x480 pixels / 16 pixels per word = one frame).
+// Framebuffer is 64KB-aligned.  Counter resets at one frame of words
+// (480 lines * 42 words/line = 20160; each line is a 4-byte palette/
+// reserved header plus 80 pixel bytes — see VIDEO_LINE_* in griffin.yml).
 //
 // Flow control: when FIFO half-full deasserts (room available),
 // ENGINE requests bus and transfers WORDS_PER_BURST words, then releases
 // the bus and waits for the next HF deassert.  The burst is deliberately
 // shorter than a scanline (10 words ~= 2.36 us vs the 6.35 us hblank) so a
-// burst can't monopolize the whole blanking interval: VIDEO stops draining
-// during hblank, ENGINE tops off the FIFO and goes idle, leaving the bus
-// free for the CPU's per-line VIDEO_PALETTE write.  word_counter is the
-// frame-wide address counter and is independent of the burst chunking, so
-// the framebuffer is still read in order and the image is unchanged.
+// burst can't monopolize the whole blanking interval, keeping the bus
+// responsive to the CPU.  word_counter is the frame-wide address counter and
+// is independent of the burst chunking, so the framebuffer (per-line palette
+// header + pixels) is read in order and the image is unchanged.
 
 `include "../../griffin.generated.vh"
 
@@ -101,8 +101,10 @@ module Engine
     reg [5:0] burst_cnt;
     wire end_of_burst = (burst_cnt == WORDS_PER_BURST - 6'd1);
 
-    // Frame boundary — reset word counter after 19200 words
-    localparam [14:0] WORDS_PER_FRAME = 15'd19200;
+    // Frame boundary — reset word counter after one frame of words.  With the
+    // palette-and-pixels layout each line is 42 words (4-byte header + 80 pixel
+    // bytes), so a frame is 480 * 42 = 20160 words.
+    localparam [14:0] WORDS_PER_FRAME = `ENGINE_WORDS_PER_FRAME;
     wire end_of_frame = (word_counter == WORDS_PER_FRAME - 15'd1);
 
     // ----------------------------------------------------------------

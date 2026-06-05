@@ -468,7 +468,11 @@ def write_verilog_include(hw: dict, path: Path) -> None:
         w("// Constants")
         for cname, cval in consts.items():
             v = parse_int(cval)
-            w(f"`define {cname} 8'h{v:02X}")
+            # Size the Verilog literal to the value (min 8 bits) so constants
+            # above 0xFF aren't silently truncated by a fixed 8-bit width.
+            nbits  = max(8, v.bit_length())
+            digits = (nbits + 3) // 4
+            w(f"`define {cname} {nbits}'h{v:0{digits}X}")
         w("")
 
     path.write_text('\n'.join(lines) + '\n')

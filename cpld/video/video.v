@@ -9,8 +9,16 @@
 // reads alternately: EVEN first, then ODD, yielding big-endian byte
 // order.  Q[8:0] outputs are shared (active one at a time); separate
 // nRE pins select which FIFO to read.  Each byte is 8 pixels, MSB
-// first.  The current pixel bit selects between two CPU-writable
-// R3G3B2 palette entries (fg/bg).
+// first.  The current pixel bit selects between two R3G3B2 palette
+// entries (fg/bg).
+//
+// Palette-and-pixels: each scanline in memory begins with a 4-byte
+// header — word 0 = {fg, bg} (R3G3B2 each), word 1 = reserved — that
+// ENGINE streams through the FIFO ahead of the 80 pixel bytes.  VIDEO
+// pops the header during hblank, latching fg/bg before the line's
+// pixels, so the per-line palette is carried in-band with the pixel
+// data and stays perfectly synchronized to scanout with no CPU
+// involvement (no PALETTE register, no LINE_TOGGLE).
 //
 module Video
 (
@@ -104,7 +112,14 @@ module Video
     localparam V_SYNC_START  = V_ACTIVE + V_FRONT_PORCH;        // 490
     localparam V_SYNC_END    = V_SYNC_START + V_SYNC;            // 492
 
-    localparam BYTES_PER_LINE = 7'd80;
+    // Per-line FIFO read layout: a 4-byte header (word 0 = {fg, bg},
+    // word 1 = reserved) followed by 80 pixel bytes.  The header is read
+    // during hblank and latched into the palette; pixels are shifted out
+    // during active video.  Total reads/line = 84 (= 42 16-bit words),
+    // matching ENGINE's 42-word-per-line framebuffer stride.
+    localparam HEADER_BYTES   = 7'd4;
+    localparam PIXEL_BYTES    = 7'd80;
+    localparam BYTES_PER_LINE = HEADER_BYTES + PIXEL_BYTES;   // 84
 
     // ----------------------------------------------------------------
     // Horizontal and vertical counters (PIXEL_CLK domain)
@@ -210,28 +225,6 @@ module Video
     assign nVIDEO_IRQ = ~video_irq_latched;
 
     // ----------------------------------------------------------------
-    // LINE_TOGGLE — flips at end of visible pixel scanout (h_cnt
-    // 639->640), i.e. at the start of horizontal blank.  CPU polls
-    // STATUS bit 0 and then has the whole blanking interval (~160 px,
-    // ~6.35 us) to rewrite PALETTE before the next active line begins,
-    // so per-line palette swaps are tear-free.  Fires on every scanline
-    // (active and blank) to preserve the ~31.5 kHz per-line cadence the
-    // firmware's vblank-bridge relies on.
-    // ----------------------------------------------------------------
-    reg line_toggle;
-    always @(posedge PIXEL_CLK or posedge RESET)
-    begin
-        if (RESET)
-        begin
-            line_toggle <= 1'b0;
-        end
-        else if (h_cnt == H_ACTIVE - 10'd1)   // 639: flips as h_cnt becomes 640
-        begin
-            line_toggle <= ~line_toggle;
-        end
-    end
-
-    // ----------------------------------------------------------------
     // CPU register interface (SYSCLK domain)
     // ----------------------------------------------------------------
     wire cpu_selected = ~nVIDEO_SELECT & ~nAS;
@@ -282,39 +275,15 @@ module Video
         end
     end
 
-    // Palette register (offset 0x0E, A[5:1] = 5'h07)
-    reg [7:0] palette_bg;
-    reg [7:0] palette_fg;
-
-    always @(posedge SYSCLK or posedge RESET)
-    begin
-        if (RESET)
-        begin
-            palette_bg <= 8'h00;
-            palette_fg <= 8'hFF;
-        end
-        else if (cpu_writing & (A == 5'h07))
-        begin
-            if (~nLDS)
-            begin
-                palette_bg <= D[7:0];
-            end
-            if (~nUDS)
-            begin
-                palette_fg <= D[15:8];
-            end
-        end
-    end
-
-    // STATUS read (offset 0x07, A[5:1] = 5'h03)
-    wire status_read = cpu_reading & (A == 5'h03) & ~nLDS;
+    // Palette (fg/bg) is no longer CPU-written — it arrives in-band via the
+    // FIFO header word and is latched in the PIXEL_CLK domain (see the FIFO
+    // read block below, where palette_fg/palette_bg are declared).
 
     // CTRL read (offset 0x05, A[5:1] = 5'h02)
     wire ctrl_read = cpu_reading & (A == 5'h02) & ~nLDS;
 
-    wire any_read = status_read | ctrl_read;
-    wire [15:0] read_data = status_read ? {15'd0, line_toggle}
-                                        : {14'd0, fifo_error, video_enable};
+    wire any_read = ctrl_read;
+    wire [15:0] read_data = {14'd0, fifo_error, video_enable};
 
     assign D = any_read ? read_data : 16'bz;
 
@@ -386,10 +355,20 @@ module Video
     reg       fifo_loading;
     reg       fifo_select;    // 0 = EVEN (MSB), 1 = ODD (LSB)
 
+    // Palette latched in-band from the FIFO header (PIXEL_CLK domain).
+    // byte_cnt 0 = fg (EVEN of header word 0), byte_cnt 1 = bg (ODD of
+    // header word 0); byte_cnt 2,3 = reserved word (consumed, discarded).
+    reg [7:0] palette_fg;
+    reg [7:0] palette_bg;
+
     // Next line will be active: v_cnt 0..478 -> lines 1..479; v_cnt 524 -> line 0
     wire next_line_active = (v_cnt < V_ACTIVE - 10'd1) | (v_cnt == V_TOTAL - 10'd1);
 
-    wire preload = (h_cnt == H_TOTAL - 10'd2) & next_line_active & frame_active;
+    // Preload the line's first FIFO byte 34 px before line end (was 2 px for
+    // the pixel-only design).  The extra 32 px = the 4 header bytes at 8 px
+    // each, read during hblank, so the first PIXEL byte still loads at h 799
+    // and drives h 0 exactly as before.
+    wire preload = (h_cnt == H_TOTAL - 10'd34) & next_line_active & frame_active;
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
@@ -404,6 +383,8 @@ module Video
             fifo_select    <= 1'b0;
             saved_9th_bit  <= 1'b1;
             fifo_err_tog   <= 1'b0;
+            palette_fg     <= 8'hFF;
+            palette_bg     <= 8'h00;
         end
         else if (preload)
         begin
@@ -430,6 +411,15 @@ module Video
             if (~fifo_select)
             begin
                 saved_9th_bit <= FIFO_Q8;
+            end
+            // Latch the in-band palette from the header word (bytes 0,1).
+            if (byte_cnt == 7'd0)
+            begin
+                palette_fg <= FIFO_Q;
+            end
+            if (byte_cnt == 7'd1)
+            begin
+                palette_bg <= FIFO_Q;
             end
         end
         else if (byte_cnt > 7'd0 & byte_cnt <= BYTES_PER_LINE)

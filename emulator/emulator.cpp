@@ -1034,15 +1034,11 @@ struct VideoState
     static constexpr int V_ACTIVE = 480;
     static constexpr int V_SYNC_START = 490;
     static constexpr int H_ACTIVE = 640;
-    static constexpr int H_TOTAL = 800;                  // LINE_NUM / 560
-    static constexpr int HBLANK_PX = H_TOTAL - H_ACTIVE; // 160 px of blanking
     static constexpr int BYTES_PER_LINE = 80;
 
     uint64_t clock_next_line = 0;
     uint64_t frac_accum = 0;
     int v_cnt = 0;
-    bool line_toggle = false;        // VIDEO_STATUS.LINE_TOGGLE
-    uint64_t last_toggle_clock = 0;  // SYSCLK at the most recent LINE_TOGGLE edge
 
     bool irq_latched = false;
 
@@ -1057,31 +1053,10 @@ struct VideoState
     bool sdl_ok = false;
     std::vector<uint32_t> framebuffer;
 
+    // Per-line framebuffer: the header word's two bytes set this line's palette
+    // (read in fetch_active_line), then the 80 pixel bytes follow.
     uint8_t scanline_bytes[BYTES_PER_LINE] = {};
     bool scanline_valid = false;
-
-    // Per-line palette-write instrumentation (enabled with --video-stats).
-    // Measures whether the firmware's viewer keeps up with the scanline rate:
-    // writes/frame should be ~480 with ~0 skipped lines if it is keeping up.
-    bool stats = false;
-    int  stat_writes = 0;
-    int  stat_skipped = 0;
-    int  stat_last_write_vcnt = -1;
-    bool stat_last_write_active = false;
-
-    // Per-line palette-write LANDING instrumentation.  The hardware palette is
-    // single-buffered and live, so the byte position at which a CPU palette
-    // write takes effect is (write_clock - last_toggle_clock) converted to
-    // pixels, minus the HBLANK_PX of blanking that follows the toggle.  A
-    // landing <= 0 means the write completed during hblank (tear-free); a
-    // positive landing is how many pixels into the next visible line the new
-    // palette appears (the artifact seen on real hardware).  The emulator's
-    // atomic per-line render can't show this spatially, but it models the CPU
-    // cycle cost faithfully, so the measured landing is meaningful.
-    long stat_land_sum = 0;
-    int  stat_land_n   = 0;
-    long stat_land_min = 0;
-    long stat_land_max = 0;
 
     bool init()
     {
@@ -1183,19 +1158,6 @@ struct VideoState
                 render_scanline(v_cnt);
             }
 
-            // LINE_TOGGLE flips at the end of each line's visible scanout
-            // (video.v: h_cnt 639->640, start of hblank).  In this atomic-line
-            // model that is the instant the line's pixels are committed, i.e.
-            // here, after render and before advancing v_cnt.  Free-running on
-            // every scanline (active and blank), never reset per frame, so it
-            // produces an edge at every line boundary including the odd 524->0
-            // wrap — matching the hardware flip-flop.
-            line_toggle = !line_toggle;
-            // clock_next_line still holds THIS line's boundary clock (it is
-            // advanced at the bottom of the loop), which is the instant of the
-            // toggle edge the firmware polls — the reference for landing math.
-            last_toggle_clock = clock_next_line;
-
             // VSYNC IRQ: hardware latches at (v_cnt==V_SYNC_START && h_last) —
             // the END of line 490.  In this model that is the current iteration,
             // before v_cnt is advanced.  Latching after the increment (i.e. when
@@ -1205,25 +1167,6 @@ struct VideoState
             {
                 irq_latched = true;
                 present_frame();
-
-                if (stats)
-                {
-                    long avg = stat_land_n ? (stat_land_sum / stat_land_n) : 0;
-                    fprintf(stderr,
-                            "video frame: %d palette writes, %d lines skipped; "
-                            "palette landing px (in visible line): min %ld avg %ld max %ld "
-                            "[<=0 = in hblank, tear-free]\n",
-                            stat_writes, stat_skipped,
-                            stat_land_min, avg, stat_land_max);
-                    stat_writes = 0;
-                    stat_skipped = 0;
-                    stat_last_write_vcnt = -1;
-                    stat_last_write_active = false;
-                    stat_land_sum = 0;
-                    stat_land_n   = 0;
-                    stat_land_min = 0;
-                    stat_land_max = 0;
-                }
             }
 
             v_cnt++;
@@ -1251,10 +1194,6 @@ struct VideoState
             return (fifo_error ? VIDEO_CTRL_RB_FIFO_ERROR_MASK : 0)
                  | (video_enable ? VIDEO_CTRL_RB_ENABLE_MASK : 0);
         }
-        if (addr == VIDEO_STATUS)
-        {
-            return line_toggle ? VIDEO_STATUS_LINE_TOGGLE_MASK : 0;
-        }
         return 0;
     }
 
@@ -1271,54 +1210,6 @@ struct VideoState
         else if (addr == VIDEO_CLRERR)
         {
             fifo_error = false;
-        }
-    }
-
-    void write_reg16(uint32_t addr, uint16_t val, uint64_t clock_now)
-    {
-        if (addr == VIDEO_PALETTE)
-        {
-            palette_fg = (val >> 8) & 0xFF;
-            palette_bg = val & 0xFF;
-
-            if (stats)
-            {
-                bool active = (v_cnt < V_ACTIVE);
-                // Only count skips between consecutive ACTIVE-line writes.  The
-                // big gap from the vblank palettes[0] write, across the viewer's
-                // ~34-line vblank bridge, to the first active write is expected
-                // — not a missed scanline.
-                if (active && stat_last_write_active && stat_last_write_vcnt >= 0)
-                {
-                    int d = v_cnt - stat_last_write_vcnt;
-                    if (d > 1) { stat_skipped += d - 1; }
-                }
-                stat_last_write_vcnt = v_cnt;
-                stat_last_write_active = active;
-                stat_writes++;
-
-                // Landing: pixels from the toggle edge to this write, minus the
-                // hblank that follows the edge.  pixels = sysclk * H_TOTAL / line.
-                uint64_t latency = clock_now - last_toggle_clock;
-                long latency_px =
-                    static_cast<long>((latency * H_TOTAL * LINE_DEN) / LINE_NUM);
-                long landing = latency_px - HBLANK_PX;
-                if (active)
-                {
-                    if (stat_land_n == 0)
-                    {
-                        stat_land_min = landing;
-                        stat_land_max = landing;
-                    }
-                    else
-                    {
-                        if (landing < stat_land_min) { stat_land_min = landing; }
-                        if (landing > stat_land_max) { stat_land_max = landing; }
-                    }
-                    stat_land_sum += landing;
-                    stat_land_n++;
-                }
-            }
         }
     }
 };
@@ -1338,14 +1229,14 @@ struct EngineState
 {
     // This atomic per-line model charges one lump of DMA stall per scanline;
     // it does not simulate individual bus bursts (and so cannot reproduce the
-    // intra-line palette tearing those cause on real hardware).  The stall is
-    // the full line of pixel data — 40 words (640px / 16px-per-word) — at
+    // intra-line tearing those cause on real hardware).  The stall is the full
+    // line — 42 words (4-byte palette/reserved header + 80 pixel bytes) — at
     // STATE_ADDR + STATE_WAIT_DTACK + STATE_LATCH = 3 sysclks/word (RAM DTACK
     // is 0 wait states), plus one arbitration overhead per bus burst.  ENGINE
     // releases the bus every ENGINE_WORDS_PER_BURST words, so a line incurs
     // ceil(WORDS_PER_LINE / burst) arbitrations — smaller bursts cost a little
     // more total stall.
-    static constexpr uint32_t WORDS_PER_LINE = 40;
+    static constexpr uint32_t WORDS_PER_LINE = Griffin::VIDEO_WORDS_PER_LINE;  // 42
     static constexpr uint32_t SYSCLKS_PER_WORD = 3;
     static constexpr uint32_t ARBITRATION_SYSCLKS = 3;
     static constexpr uint32_t BURSTS_PER_LINE =
@@ -1358,7 +1249,8 @@ struct EngineState
 
     uint32_t fb_line_addr(int line) const
     {
-        return (uint32_t(source_page) << 16) | (uint32_t(line) * 80);
+        return (uint32_t(source_page) << 16)
+             | (uint32_t(line) * Griffin::VIDEO_LINE_STRIDE_BYTES);
     }
 
     uint8_t read_reg(uint32_t addr) const
@@ -1960,7 +1852,9 @@ public:
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            video.write_reg16(addr, val, getClock());
+            // VIDEO has only 8-bit registers now (palette is in-band via the
+            // FIFO); route a word write to the low byte like ENGINE.
+            video.write_reg8(addr + 1, low);
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
             engine.write_reg8(addr + 1, low);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
@@ -1997,11 +1891,6 @@ public:
     bool init_video()
     {
         return video.init();
-    }
-
-    void enable_video_stats()
-    {
-        video.stats = true;
     }
 
     bool open_cf(const char *path, bool read_only)
@@ -2060,11 +1949,10 @@ public:
 
     // Advance the video scanline timer.  Must be called every CPU step, not
     // batched at the ~1 ms poll_io() rate: a scanline is only ~445 SYSCLK, so
-    // polling at 1 ms would render ~31 lines per call all sharing one palette
-    // (and freeze VIDEO_STATUS between polls), collapsing per-line palette
-    // updates into coarse bands.  check_timer() early-returns when no line
-    // boundary has been crossed, and the SDL present fires only once per frame
-    // (at v_cnt == V_SYNC_START), so calling this every step is cheap.
+    // polling at 1 ms would render ~31 lines per call, collapsing per-line
+    // palette updates into coarse bands.  check_timer() early-returns when no
+    // line boundary has been crossed, and the SDL present fires only once per
+    // frame (at v_cnt == V_SYNC_START), so calling this every step is cheap.
     void service_video()
     {
         uint32_t dma_stall = video.check_timer(getClock(),
@@ -2074,10 +1962,15 @@ public:
                 {
                     return false;
                 }
+                // Palette-and-pixels: each line begins with a 4-byte header —
+                // word 0 = {fg, bg}, word 1 reserved — followed by the pixels.
                 uint32_t base = engine.fb_line_addr(line);
+                video.palette_fg = peek_ram8(base + 0);
+                video.palette_bg = peek_ram8(base + 1);
+                uint32_t px = base + Griffin::VIDEO_LINE_PIXEL_OFFSET;
                 for (int i = 0; i < VideoState::BYTES_PER_LINE; i++)
                 {
-                    dst[i] = peek_ram8(base + i);
+                    dst[i] = peek_ram8(px + i);
                 }
                 stall += EngineState::SYSCLKS_PER_LINE;
                 return true;
@@ -2198,7 +2091,6 @@ int main(int argc, const char** argv)
     auto ram_config = GriffinEmulator::RAM_1_BANK_256K;
     const char *cf_path = nullptr;
     bool cf_ro = false;
-    bool video_stats = false;
 
     while((argc > 0) && (argv[0][0] == '-')) {
 	if(strcmp(argv[0], "--cf") == 0) {
@@ -2241,10 +2133,6 @@ int main(int argc, const char** argv)
             ram_config = ram_configs.at(k);
             argv += 2;
             argc -= 2;
-        } else if(strcmp(argv[0], "--video-stats") == 0) {
-            video_stats = true;
-            argv += 1;
-            argc -= 1;
         } else if(
             (strcmp(argv[0], "-help") == 0) ||
             (strcmp(argv[0], "-h") == 0) ||
@@ -2272,11 +2160,6 @@ int main(int argc, const char** argv)
     const char *romname = argv[0];
 
     GriffinEmulator emulator(ram_config);
-
-    if (video_stats)
-    {
-        emulator.enable_video_stats();
-    }
 
     if (cf_path)
     {

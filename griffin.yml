@@ -278,27 +278,15 @@ peripherals:
               description: "Current ENABLE state" }
           - { bit: "1", name: FIFO_ERROR,
               description: "Sticky: 9th-bit toggle mismatch detected (FIFO sync lost). Clear with CLRERR." }
-      - offset: 0x07
-        name: STATUS
-        access: read
-        width: 8
-        description: "Video status."
-        bits:
-          - { bit: "0", name: LINE_TOGGLE,
-              description: "Toggles each scanline (31.469 kHz) at end of visible pixel scanout (h_cnt 639->640, start of hblank), so PALETTE can be rewritten during blank before the next active line" }
       - offset: 0x09
         name: CLRERR
         access: write
         width: 8
         description: "Write any value to clear FIFO_ERROR sticky bit."
-      - offset: 0x0E
-        name: PALETTE
-        access: write
-        width: 16
-        description: |
-          Two-entry 1bpp palette.  D[15:8] = foreground (pixel=1),
-          D[7:0] = background (pixel=0).  Each byte is R3G3B2.
-          Reset default: fg=0xFF (white), bg=0x00 (black).
+        # Palette is no longer a CPU register: the per-line fg/bg pair travels
+        # in-band as the first word of each scanline (see VIDEO_LINE_* constants)
+        # and VIDEO latches it from the FIFO during hblank.  The former PALETTE
+        # (0x0E) and STATUS/LINE_TOGGLE (0x07) registers are retired.
 
   CF:
     part: "Compact Flash (True IDE)"
@@ -480,10 +468,25 @@ constants:
   PS2_RX_QUEUE_SIZE:    64
 
   # ENGINE bus-arbitration burst chunk: words transferred per BR/BGACK cycle
-  # before releasing the bus.  Deliberately shorter than a scanline (40 words)
-  # so a single burst (~2.36 us) cannot occupy the whole hblank (~6.35 us),
-  # leaving the bus free for the CPU's per-line VIDEO_PALETTE write.
+  # before releasing the bus.  Deliberately shorter than a scanline so a single
+  # burst (~2.36 us) cannot occupy the whole hblank (~6.35 us).
   ENGINE_WORDS_PER_BURST: 10
+
+  # Palette-and-pixels framebuffer layout.  Each scanline in memory is a
+  # 4-byte header followed by the 80 pixel bytes:
+  #   bytes 0..1 = palette word {fg, bg} (R3G3B2 each), latched in-band by
+  #               VIDEO during hblank ahead of the line's pixels
+  #   bytes 2..3 = reserved (keeps the stride a multiple of 4 so firmware's
+  #               long-aligned framebuffer movers / fast scroll still work)
+  #   bytes 4..83 = 80 pixel bytes (640 px, 1bpp, MSB-leftmost)
+  # ENGINE streams VIDEO_WORDS_PER_LINE 16-bit words per line; VIDEO consumes
+  # the same count, so palette and pixels stay FIFO-synchronized with no CPU
+  # involvement.
+  VIDEO_PIXEL_BYTES_PER_LINE: 80
+  VIDEO_LINE_PIXEL_OFFSET:     4      # byte offset of pixel data within a line
+  VIDEO_LINE_STRIDE_BYTES:     84     # 4-byte header + 80 pixel bytes
+  VIDEO_WORDS_PER_LINE:        42     # stride / 2
+  ENGINE_WORDS_PER_FRAME:      20160  # 480 lines * 42 words
 
 bodges:
   - "Reroute A6 pad on U12 to A18"
