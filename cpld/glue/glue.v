@@ -178,26 +178,30 @@ module glue (
 
     localparam [23:0] GLUE_CONFIG_ADDR       = `GLUE_CONFIG;
     localparam [23:0] GLUE_DEBUG_ADDR        = `GLUE_DEBUG_OUT;
-    localparam [23:0] GLUE_TIMER_ADDR        = `GLUE_TIMER;
-    localparam [23:0] GLUE_TIMER_ARM_ADDR    = `GLUE_TIMER_ARM;
+    localparam [23:0] GLUE_PS2_TX_DATA_ADDR  = `GLUE_PS2_TX_DATA;
     // PS2_STATUS and PS2_CLEAR share 0xF00011 (R/W sides of the same slot).
     localparam [23:0] GLUE_PS2_STATUS_ADDR   = `GLUE_PS2_STATUS;
     localparam [23:0] GLUE_PS2_CTRL_ADDR     = `GLUE_PS2_CTRL;
+    localparam [23:0] GLUE_PS2_RX_DATA_ADDR  = `GLUE_PS2_RX_DATA;
 
     wire debug_out_select      = glue_select & lo_byte_selected & write
                                  & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
     wire debug_in_select       = glue_select & lo_byte_selected & read
                                  & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
-    wire timer_write_select = glue_select & lo_byte_selected & write
-                              & (A_lo[5:1] == GLUE_TIMER_ADDR[5:1]);
-    wire timer_arm_select   = glue_select & lo_byte_selected & write
-                              & (A_lo[5:1] == GLUE_TIMER_ARM_ADDR[5:1]);
+    // PS2_TX_DATA spans two word slots (0x09/0x0B): decode on A_lo[5:2]
+    // and let A_lo[1] carry the firmware-computed odd-parity bit.  The
+    // write itself starts the host->device TX frame.
+    wire ps2_tx_data_select    = glue_select & lo_byte_selected & write
+                                 & (A_lo[5:2] == GLUE_PS2_TX_DATA_ADDR[5:2]);
+    wire ps2_tx_parity         = A_lo[1];
     wire ps2_status_read_select  = glue_select & lo_byte_selected & read
                                    & (A_lo[5:1] == GLUE_PS2_STATUS_ADDR[5:1]);
     wire ps2_clear_write_select  = glue_select & lo_byte_selected & write
                                    & (A_lo[5:1] == GLUE_PS2_STATUS_ADDR[5:1]);
     wire ps2_ctrl_write_select   = glue_select & lo_byte_selected & write
                                    & (A_lo[5:1] == GLUE_PS2_CTRL_ADDR[5:1]);
+    wire ps2_rx_data_read_select = glue_select & lo_byte_selected & read
+                                   & (A_lo[5:1] == GLUE_PS2_RX_DATA_ADDR[5:1]);
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -205,7 +209,8 @@ module glue (
     // All other times the pins are tristated so the CPU, ROM, RAM,
     // etc. can drive the bus.
     // ----------------------------------------------------------------
-    wire glue_read_active = debug_in_select | ps2_status_read_select;
+    wire glue_read_active = debug_in_select | ps2_status_read_select
+                          | ps2_rx_data_read_select;
 
     reg [7:0] glue_read_data;
     always @(*) begin
@@ -213,11 +218,16 @@ module glue (
         if (debug_in_select)
             glue_read_data = {7'd0, DEBUG_IN};
         else if (ps2_status_read_select)
-            glue_read_data = {4'd0,
-                              ps2_clk_sync[1],       // bit 3: CLK_LIVE
-                              ps2_data_sync[1],      // bit 2: DATA_LIVE
-                              ps2_data_in_latched,   // bit 1: DATA_IN
-                              ps2_bit_ready};        // bit 0: BIT_READY
+            glue_read_data = {1'b0,
+                              ps2_clk_sync[1],   // bit 6: CLK_LIVE
+                              ps2_data_sync[1],  // bit 5: DATA_LIVE
+                              rx_frame_err,      // bit 4: RX_FRAME_ERR
+                              rx_parity_bit,     // bit 3: RX_PARITY
+                              tx_ack,            // bit 2: TX_ACK
+                              tx_done,           // bit 1: TX_DONE
+                              rx_ready};         // bit 0: RX_READY
+        else if (ps2_rx_data_read_select)
+            glue_read_data = rx_byte;
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;
@@ -244,118 +254,135 @@ module glue (
     assign DEBUG_OUT = debug_out_reg;
 
     // ----------------------------------------------------------------
-    // GLUE_TIMER — 8-bit auto-reload timer running directly on SYSCLK
+    // PS/2 frame engine (GLUE_PS2_TX_DATA / _STATUS / _CLEAR / _CTRL /
+    // _RX_DATA) — replaces the old per-bit assist and the GLUE timer.
     //
-    // Effective period = (N+1) SYSCLK (N = 1..255).  Direct SYSCLK
-    // resolution lets bit-bang UART pick a per-bit count within 1
-    // SYSCLK of any target baud, e.g. 115200 baud at 14 MHz wants
-    // 121 or 122 SYSCLK/bit (~0.4 % error vs the old 5-bit /8 timer
-    // which only managed ~1.3 % at 14 MHz).
+    // Half-duplex.  Shared between RX and TX: the CLK/DATA synchronizers,
+    // the falling-edge detect, the frame counter, and the open-drain
+    // pins.  All host-side action happens on the synchronized PS2_CLK
+    // *falling* edge (RX samples there; TX changes DATA there so it is
+    // stable for the device's rising-edge sample), so one edge detector
+    // drives both directions.
     //
-    // Writing GLUE_TIMER loads the period and starts a free-running
-    // countdown that auto-reloads on zero.  Writing 0 stops it.
-    // GLUE_TIMER_ARM blocks all DTACK until the next zero-crossing.
+    // RX: idle + falling edge + DATA low => start bit; assemble 10 more
+    //     bits (d0..d7, parity, stop) and raise RX_READY (one IRQ/byte).
+    // TX: CPU inhibits CLK >=100us, then writes PS2_TX_DATA (parity in
+    //     address bit 1).  The write presents the start bit, releases
+    //     CLK, and shifts {stop,parity,d7..d0,start} out LSB-first on
+    //     each falling edge; the 11th edge samples the device ACK and
+    //     sets TX_DONE.
     //
-    //   move.b  #120, TIMER       ; (120+1) = 121 SYSCLK per tick
-    // .loop:
-    //   <set up next bit>
-    //   move.b  #0, TIMER_ARM     ; arm — next bus cycle stalls
-    //   move.b  d0, DEBUG_OUT     ; toggles exactly 121 SYSCLK apart
-    //   dbra    d1, .loop
-    //   move.b  #0, TIMER         ; stop
-    // ----------------------------------------------------------------
-    reg [7:0] timer_period;
-    reg [7:0] timer_cnt;
-    reg       timer_armed;
-
-    wire timer_zero = (timer_cnt == 8'd0);
-
-    always @(posedge SYSCLK) begin
-        if (RESET) begin
-            timer_period     <= 8'd0;
-            timer_cnt        <= 8'd0;
-            timer_armed      <= 1'b0;
-        end else begin
-            if (timer_write_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD)) begin
-                timer_period <= D[7:0];
-                timer_cnt    <= D[7:0];
-            end else if (timer_period != 8'd0) begin
-                if (timer_zero) begin
-                    timer_cnt   <= timer_period;
-                    timer_armed <= 1'b0;
-                end else begin
-                    timer_cnt <= timer_cnt - 8'd1;
-                end
-            end
-
-            // --- Arm flag (GLUE_TIMER) ---
-            if (timer_arm_select & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))
-                timer_armed <= 1'b1;
-        end
-    end
-
-    // ----------------------------------------------------------------
-    // PS/2 bit-level IRQ source (GLUE_PS2_STATUS / _CLEAR / _CTRL)
+    // frame_cnt is an upcounter with an all-ones terminal (cheap compare
+    // on the ATF1508): 11 falling edges reach 4'd15.  RX loads 4'd5 on
+    // the start edge it consumes; TX loads 4'd4 at arm before any edge.
     //
-    // The CPU does all PS/2 protocol work (frame counting, parity,
-    // start/stop, TX shifting).  This block is the minimal
-    // deterministic primitive it needs: on each synchronized falling
-    // edge of PS2_CLK, latch PS2_DATA into ps2_data_in_latched, set
-    // ps2_bit_ready, and assert the GLUE level-4 IRQ.  The ISR reads
-    // STATUS, then writes CLEAR.BIT_READY=1 to acknowledge.
-    //
-    // PS2_CLK uses a 3-FF shift register so the oldest two registered
-    // samples give a glitch-free edge detect without a separate
-    // "previous" flop.  PS2_DATA uses 2 FFs — the stage-1 value is
-    // sampled at the same moment bit_ready is set so ISR sees the
-    // bit that was on the line at the clock edge.
+    // PS2_CLK uses a 3-FF synchronizer so the two oldest registered
+    // samples give a glitch-free falling-edge detect; PS2_DATA uses 2.
     // ----------------------------------------------------------------
     reg [2:0] ps2_clk_sync;
     reg [1:0] ps2_data_sync;
-    reg       ps2_data_in_latched;
-    reg       ps2_bit_ready;
-    reg       ps2_ctrl_clk_drive_low;
-    reg       ps2_ctrl_data_drive_low;
 
-    // Falling edge on the two oldest synchronized CLK samples.
+    reg        rx_active;
+    reg        tx_active;
+    reg [3:0]  frame_cnt;
+    reg [9:0]  rx_sr;        // shifts in d0..d7, parity, stop (start consumed)
+    reg [10:0] tx_sr;        // {stop,parity,d7..d0,start}; bit 0 sent first
+
+    reg        rx_ready;
+    reg [7:0]  rx_byte;
+    reg        rx_parity_bit;
+    reg        rx_frame_err;
+    reg        tx_done;
+    reg        tx_ack;
+
+    reg        ps2_ctrl_clk_drive_low;
+    reg        ps2_ctrl_data_drive_low;
+
     wire ps2_clk_falling = ps2_clk_sync[2] & ~ps2_clk_sync[1];
+    wire ps2_data_in     = ps2_data_sync[1];
+
+    wire [3:0] frame_cnt_next = frame_cnt + 4'd1;
+    wire       frame_last     = &frame_cnt_next;            // 11th falling edge
+    wire [9:0] rx_sr_next     = {ps2_data_in, rx_sr[9:1]};  // new bit at top
 
     always @(posedge SYSCLK) begin
         if (RESET) begin
-            ps2_clk_sync            <= 3'b111;  // idle high
+            ps2_clk_sync            <= 3'b111;   // idle high
             ps2_data_sync           <= 2'b11;
-            ps2_data_in_latched     <= 1'b0;
-            ps2_bit_ready           <= 1'b0;
+            rx_active               <= 1'b0;
+            tx_active               <= 1'b0;
+            frame_cnt               <= 4'd0;
+            rx_sr                   <= 10'd0;
+            tx_sr                   <= 11'd0;
+            rx_ready                <= 1'b0;
+            rx_byte                 <= 8'd0;
+            rx_parity_bit           <= 1'b0;
+            rx_frame_err            <= 1'b0;
+            tx_done                 <= 1'b0;
+            tx_ack                  <= 1'b1;
             ps2_ctrl_clk_drive_low  <= 1'b0;
             ps2_ctrl_data_drive_low <= 1'b0;
         end else begin
-            ps2_clk_sync  <= {ps2_clk_sync[1:0],  PS2_CLK};
-            ps2_data_sync <= {ps2_data_sync[0],   PS2_DATA};
+            ps2_clk_sync  <= {ps2_clk_sync[1:0], PS2_CLK};
+            ps2_data_sync <= {ps2_data_sync[0],  PS2_DATA};
 
-            // Falling edge captures a new bit and asserts IRQ.
-            // A write-1-to-clear via PS2_CLEAR ack takes precedence —
-            // if the ISR acks the same cycle a new edge arrives, the
-            // new edge still sets the flag so nothing is lost.
-            if (ps2_clk_falling) begin
-                ps2_data_in_latched <= ps2_data_sync[1];
-                ps2_bit_ready       <= 1'b1;
-            end else if (ps2_clear_write_select & D[0]) begin
-                ps2_bit_ready       <= 1'b0;
-            end
-
+            // --- CPU register writes ---
             if (ps2_ctrl_write_select) begin
                 ps2_ctrl_clk_drive_low  <= D[0];
                 ps2_ctrl_data_drive_low <= D[1];
             end
+
+            // --- TX arm (the PS2_TX_DATA write).  One-shot: ~tx_active
+            //     blocks re-arm across the multi-cycle bus access. ---
+            if (ps2_tx_data_select & ~tx_active & ~rx_active) begin
+                tx_sr     <= {1'b1, ps2_tx_parity, D[7:0], 1'b0};
+                tx_active <= 1'b1;
+                frame_cnt <= 4'd4;            // +11 edges -> 4'd15
+            end
+
+            // --- Falling edge: advance whichever transfer is active ---
+            if (ps2_clk_falling) begin
+                if (tx_active) begin
+                    frame_cnt <= frame_cnt_next;
+                    tx_sr     <= {1'b1, tx_sr[10:1]};
+                    if (frame_last) begin
+                        tx_ack    <= ps2_data_in;  // device ACK (0 = ok)
+                        tx_active <= 1'b0;
+                        tx_done   <= 1'b1;
+                    end
+                end else if (rx_active) begin
+                    frame_cnt <= frame_cnt_next;
+                    rx_sr     <= rx_sr_next;
+                    if (frame_last) begin
+                        rx_byte       <= rx_sr_next[7:0];
+                        rx_parity_bit <= rx_sr_next[8];
+                        rx_frame_err  <= ~rx_sr_next[9];  // stop must be 1
+                        rx_ready      <= 1'b1;
+                        rx_active     <= 1'b0;
+                    end
+                end else if (~ps2_data_in) begin
+                    rx_active <= 1'b1;          // start bit detected
+                    frame_cnt <= 4'd5;          // this edge counted
+                end
+            end
+
+            // --- W1C acks (PS2_CLEAR) ---
+            if (ps2_clear_write_select) begin
+                if (D[0]) rx_ready <= 1'b0;
+                if (D[1]) tx_done  <= 1'b0;
+            end
         end
     end
 
-    assign ps2_irq_active = ps2_bit_ready;
+    assign ps2_irq_active = rx_ready | tx_done;
 
-    // Open-drain: drive 0 only when CPU asserts *_DRIVE_LOW; otherwise
-    // tri-state so the external pull-up takes the line high.
-    assign PS2_CLK  = ps2_ctrl_clk_drive_low  ? 1'b0 : 1'bz;
-    assign PS2_DATA = ps2_ctrl_data_drive_low ? 1'b0 : 1'bz;
+    // Open-drain.  During TX the engine owns both pins: CLK released
+    // (device clocks), DATA reflects the current frame bit (drive low
+    // when the bit is 0).  Otherwise the CPU's PS2_CTRL drives them.
+    wire ps2_clk_drive_low  = ps2_ctrl_clk_drive_low & ~tx_active;
+    wire ps2_data_drive_low = tx_active ? ~tx_sr[0] : ps2_ctrl_data_drive_low;
+    assign PS2_CLK  = ps2_clk_drive_low  ? 1'b0 : 1'bz;
+    assign PS2_DATA = ps2_data_drive_low ? 1'b0 : 1'bz;
 
     // ----------------------------------------------------------------
     // DTACK generation
@@ -391,12 +418,7 @@ module glue (
         ((~nDUART_SELECT)   & ~nDUART_DTACK) |  // DUART
         (AUDIO_LE           & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO
 
-    // Timer armed gate: when armed and timer is not at zero, block
-    // ALL DTACK to freeze the CPU until the next zero-crossing.
-    // The timer ticks every SYSCLK, so the stall releases the cycle
-    // the counter reaches zero (the same cycle the armed flag clears).
-    assign nDTACK = ~dtack_comb
-                  | (timer_armed & ~timer_zero);
+    assign nDTACK = ~dtack_comb;
 
 
 endmodule

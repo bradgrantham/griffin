@@ -45,81 +45,81 @@ peripherals:
           - { bit: "0", name: ROM_OVERLAY_DISABLE, default: 0,
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
       - offset: 0x09
-        name: TIMER
+        name: PS2_TX_DATA
         access: write
         width: 8
         description: |
-          8-bit auto-reload timer period (bits 7:0), ticks every SYSCLK.
-          Counter counts N+1 states (N down to 0 inclusive), so
-          effective period = (N+1) SYSCLK cycles (N = 1..255, range
-          2..256 clocks, ~143 ns..18.3 µs at 14 MHz).  Writing a non-zero
-          value loads the period register and starts a free-running
-          countdown that auto-reloads on reaching 0.  Writing 0 stops
-          the timer.  Use with TIMER_ARM to create deterministic
-          periodic I/O timing without cycle counting.  For periods > 256,
-          chain multiple TIMER_ARM writes.
+          Byte to transmit host->device; the write itself starts the frame.
+          GLUE presents the start bit on DATA, releases PS2_CLK (the CPU
+          must have inhibited it >=100 us first via PS2_CTRL.CLK), then
+          shifts start/8-data-LSB-first/parity/stop out on each device
+          PS2_CLK falling edge and samples the device ACK into TX_ACK,
+          raising TX_DONE (level-4 IRQ) on completion.
+
+          This register spans two word slots: address bit 1 carries the
+          firmware-computed odd-parity bit (no hardware XOR), so write
+          to PS2_TX_DATA for parity 0 or PS2_TX_DATA+PS2_TX_DATA_PARITY
+          (offset 0x0B) for parity 1.  Ignored while a TX or RX frame
+          is already in progress.
         bits:
-          - { bit: "7:0", name: PERIOD, description: "Countdown period in SYSCLK cycles (1-255)" }
-      - offset: 0x0B
-        name: TIMER_ARM
-        access: write
-        width: 8
-        description: |
-          Arm the timer gate.  Any write sets the armed flag; data
-          value is ignored.  While armed, ALL bus DTACK is blocked
-          (CPU frozen) until the timer countdown reaches 0.  Armed
-          flag auto-clears on the next timer zero-crossing.
-          Typical use: arm, then issue the periodic I/O write — the
-          stall absorbs variable instruction timing so the period
-          between successive I/O operations is exactly TIMER clocks.
+          - { bit: "7:0", name: DATA, description: "Data byte to send (write triggers TX)" }
       - offset: 0x11
         name: PS2_STATUS
         access: read
         width: 8
         description: |
-          PS/2 bit-level RX status.  The CPLD synchronizes PS2_CLK,
-          detects falling edges, latches PS2_DATA into DATA_IN, and
-          sets BIT_READY (which asserts the GLUE level-4 IRQ).  All
-          frame-level protocol (start/parity/stop, 11-bit counting,
-          overrun, TX bit shifting) is handled in firmware — this
-          register exposes only the single latched bit per IRQ.
+          PS/2 frame-engine status.  GLUE assembles a full 11-bit RX
+          frame (start/8-data-LSB-first/parity/stop) and raises one IRQ
+          per byte via RX_READY; the data byte is read from PS2_RX_DATA.
+          TX completion is signalled by TX_DONE.  Both are W1C via
+          PS2_CLEAR.  Firmware validates RX parity from RX_PARITY.
         bits:
-          - { bit: "0", name: BIT_READY,
-              description: "1 = a falling edge has been detected and DATA_IN is valid; W1C via PS2_CLEAR" }
-          - { bit: "1", name: DATA_IN,
-              description: "PS2_DATA sample latched on the falling edge that set BIT_READY" }
-          - { bit: "2", name: DATA_LIVE,
-              description: "Unlatched synchronized PS2_DATA pin state (use for TX ACK sampling outside the IRQ handshake)" }
-          - { bit: "3", name: CLK_LIVE,
+          - { bit: "0", name: RX_READY,
+              description: "1 = a received byte is in PS2_RX_DATA; asserts level-4 IRQ; W1C via PS2_CLEAR" }
+          - { bit: "1", name: TX_DONE,
+              description: "1 = host->device frame finished; asserts level-4 IRQ; W1C via PS2_CLEAR" }
+          - { bit: "2", name: TX_ACK,
+              description: "Device ACK sampled on the final clock of the last TX (0 = acknowledged)" }
+          - { bit: "3", name: RX_PARITY,
+              description: "Received parity bit of the latched byte (firmware checks odd parity)" }
+          - { bit: "4", name: RX_FRAME_ERR,
+              description: "1 = received stop bit was not 1 (framing error)" }
+          - { bit: "5", name: DATA_LIVE,
+              description: "Unlatched synchronized PS2_DATA pin state (debug)" }
+          - { bit: "6", name: CLK_LIVE,
               description: "Unlatched synchronized PS2_CLK pin state (debug)" }
       - offset: 0x11
         name: PS2_CLEAR
         access: write
         width: 8
         description: |
-          Write-1-to-clear for PS2_STATUS latched flags.  Write
-          BIT_READY=1 to acknowledge the current bit IRQ and arm
-          the next falling-edge capture; the GLUE IRQ de-asserts
-          on the same cycle.
+          Write-1-to-clear for PS2_STATUS latched flags / IRQ ack.
+          The GLUE level-4 IRQ de-asserts on the same cycle once both
+          RX_READY and TX_DONE are clear.
         bits:
-          - { bit: "0", name: BIT_READY,
-              description: "Write 1 to clear BIT_READY (ISR ack)" }
+          - { bit: "0", name: RX_READY, description: "Write 1 to clear RX_READY (RX byte ISR ack)" }
+          - { bit: "1", name: TX_DONE,  description: "Write 1 to clear TX_DONE (TX completion ISR ack)" }
       - offset: 0x13
         name: PS2_CTRL
         access: write
         width: 8
         description: |
-          Open-drain drive control for PS2_CLK and PS2_DATA.  Each
-          bit acts as the pin's output enable and always drives 0
-          when asserted; the pin tri-states to the external pull-up
-          otherwise.  Firmware handles TX-of-1 by leaving
-          DATA_DRIVE_LOW=0 and relying on the pull-up, so no
-          DATA_OUT_VALUE bit is needed.
+          Open-drain drive control for PS2_CLK and PS2_DATA for the TX inhibit handshake.
+          Each bit drives the pin low when set and tri-states to the
+          external pull-up otherwise.  While a TX frame is in progress
+          the engine owns both pins and ignores CLK here.
         bits:
           - { bit: "0", name: CLK,
               description: "1 = drive PS2_CLK low (inhibit device / request-to-send); 0 = tri-state" }
           - { bit: "1", name: DATA,
-              description: "1 = drive PS2_DATA low (TX 0-bit or request-to-send data line); 0 = tri-state (TX 1-bit)" }
+              description: "1 = drive PS2_DATA low; 0 = tri-state (pull-up high)" }
+      - offset: 0x15
+        name: PS2_RX_DATA
+        access: read
+        width: 8
+        description: "Assembled PS/2 data byte; valid while RX_READY is set."
+        bits:
+          - { bit: "7:0", name: DATA, description: "Received scancode byte (LSB-first on the wire)" }
 
   ROM:
     part: "2x 64K byte-wide EPROM/Flash"
@@ -466,6 +466,10 @@ constants:
   CF_CMD_SET_8BIT:      0x01
   CF_DH_LBA:            0xE0
   PS2_RX_QUEUE_SIZE:    64
+
+  # PS/2 TX parity is carried in address bit 1 of PS2_TX_DATA:
+  #   write GLUE_PS2_TX_DATA + (parity ? PS2_TX_DATA_PARITY : 0)
+  PS2_TX_DATA_PARITY:   0x02
 
   # ENGINE bus-arbitration burst chunk: words transferred per BR/BGACK cycle
   # before releasing the bus.  Deliberately shorter than a scanline so a single

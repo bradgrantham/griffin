@@ -22,6 +22,7 @@
   * emulator in emulator/ and the intent is to at least emulate the 68k and MMIO accesses.  TBD whether to emulate the ATF1508's using Verilator.
 
 * When possible, store new hardware definitions in griffin.yml; register addresses, bits and bitfields, constants, protocol between peripherals, constants, and then generate included headers.
+  * In a register `description:`, keep the **first sentence on one physical line ending in a period**, with no mid-text periods in it (e.g. avoid `FOO.BAR`).  codegen.py uses that first sentence verbatim — newlines included — as the C header `//` comment, so a wrapped first sentence leaks bare text into griffin.generated.h/.refs.h and breaks the build.  (The .inc/.vh outputs only emit the access keyword, so only the C++ headers are sensitive.)
 
 * Keep in mind for instruction-counted loops that there are ROM wait states.
 
@@ -33,14 +34,16 @@
 
 * ATF1508 CPLD's are best at deterministic behavior, parallel processing, and high-speed response/signaling, but have limited real-estate so functionality must be kept as minimal as possible
 * The CPU is configurable and flexible but instructions take variable time, flow may be stalled by DTACK and interrupts, and real-time response is difficult.
+* Video DMA stalls and jitters CPU timing (DTACK + FIFO refill), so anything hard-real-time must be device-clocked or live in a dedicated peripheral — never a CPU bit-loop or a per-bit ISR that has to `rte` in time for the next edge.
 * Therefore carefully split responsibility between the CPLDs and CPU. Examples:
-  * A complete UART RX and TX doesn't fit in GLUE, but GLUE implements a free-running reloaded "TIMER" so that CPU code can have more deterministic hard timing and perform UART RX and TX in a loop.
+  * A complete UART RX and TX doesn't fit in GLUE, so serial uses the 68681 DUART (its own baud generator + FIFO make byte timing independent of CPU stalls).  (An earlier GLUE "TIMER" that stalled DTACK for bit-bang serial was removed because video DMA broke its timing.)
+  * PS/2 is a GLUE frame engine that assembles a whole frame and raises one IRQ per byte (and shifts TX out on the device clock), rather than a per-bit IRQ the CPU could miss under DMA.
   * Rather than encoding progressive versus interlaced DMA, just have a "row stride" that the CPU can set and also add once in the video blank ISR to set up field 1. (for future video)
 * Prefer C++23 with correct idioms when possible, C when it makes more sense than C++, use assembly when the code must be in assembly.
 
 ## Building components
 
-* Generate C++, Verilog, and assembly includes for components with `make` at project root.
+* Generate C++, Verilog, and assembly includes for components with `make` at project root.  After editing griffin.yml, run this first — before building firmware/CPLD/emulator — since all three consume the generated files.
 * Build glue and other CPLD Verilog in cpld/ with `make {thing}`; {edif,fit,io,jed,pin,svf,tt3} files are outputs.  When planning, ignore the outputs (especially .fit)
 * Configure emulator CMake in emulator/ with `cmake -Bbuild .` and build with `cmake --build build`
 * Build the ROM in firmware/ with `make`.  The toolchain is made from a Docker image of an Ubuntu 24 build of crosstool-ng for m68k-unknown-elf for 68000 and not for 68832; see firmware/m68k-crosstool-ng.config, firmware/m68k-{g++,gcc,objcopy,objdump}, BUILD_TOOLCHAIN_CONTAINER, Dockerfile.  The toolchain .tar.gz might not be in git.

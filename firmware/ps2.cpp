@@ -9,16 +9,14 @@ struct ps2_state_t
     uint32_t rx_head;
     uint32_t rx_tail;
 
-    uint8_t  rx_clocks;
-    uint16_t rx_data;
-
     uint8_t  err_flags;
     uint16_t err_data;
 
-    bool  kbd_sending;
-    bool  kbd_next_clk_is_ack;
-    uint8_t  kbd_tx_bits;
-    uint16_t kbd_tx_data;
+    // TX completion handshake.  tx_busy is set by ps2_send_byte before it
+    // triggers the frame and cleared by the ISR on TX_DONE; tx_ack holds
+    // the sampled device ACK (0 = acknowledged).
+    volatile bool tx_busy;
+    volatile bool tx_ack_failed;
 };
 
 [[gnu::section("monitor_data")]] volatile ps2_state_t ps2;
@@ -42,16 +40,14 @@ void ps2_init()
 {
     ps2.rx_head = 0;
     ps2.rx_tail = 0;
-    ps2.rx_clocks = 0;
-    ps2.rx_data = 0;
     ps2.err_flags = 0;
     ps2.err_data = 0;
-    ps2.kbd_sending = 0;
-    ps2.kbd_next_clk_is_ack = 0;
-    ps2.kbd_tx_bits = 0;
-    ps2.kbd_tx_data = 0;
+    ps2.tx_busy = 0;
+    ps2.tx_ack_failed = 0;
     GLUE_PS2_CTRL = 0;
-    GLUE_PS2_CLEAR = Griffin::GLUE_PS2_CLEAR_BIT_READY_MASK;
+    // Clear any latched RX/TX flags from power-up.
+    GLUE_PS2_CLEAR = Griffin::GLUE_PS2_CLEAR_RX_READY_MASK
+                   | Griffin::GLUE_PS2_CLEAR_TX_DONE_MASK;
 }
 
 /* ---- IRQ mask helpers ---------------------------------------------- */
@@ -75,9 +71,12 @@ static inline void irq_restore(uint16_t sr)
 }
 
 /* ---- Odd-parity helper --------------------------------------------- */
-/* Returns 1 if (XOR of input bits) is even (so total with parity bit
- * becomes odd), else 0.  XOR-fold beats a loop on 68000. */
-static inline uint8_t odd_parity_bit(uint8_t x) {
+/* Returns the odd-parity bit for x: 0 if x already has an odd number of
+ * 1s, 1 otherwise (so data+parity is always odd).  Used both to generate
+ * the TX parity bit and to validate a received frame's parity.
+ * XOR-fold beats a loop on 68000. */
+static inline uint8_t odd_parity_bit(uint8_t x)
+{
     x ^= x >> 4;
     x ^= x >> 2;
     x ^= x >> 1;
@@ -85,161 +84,111 @@ static inline uint8_t odd_parity_bit(uint8_t x) {
 }
 
 /* ====================================================================
- * ps2_isr — PS/2 bit-level IRQ (GLUE level 4)
+ * ps2_isr — PS/2 frame IRQ (GLUE level 4)
  *
- * Fires once per falling edge of PS2_CLK.  Accumulates 11-bit frames
- * (start, 8 data LSB first, odd parity, stop), validates them, and
- * enqueues the data byte.  TX shares this ISR: when kbd_sending is set,
- * each falling edge shifts the next bit of kbd_tx_data onto DATA.
+ * GLUE assembles whole frames now, so this fires at most once per byte
+ * (RX_READY) and once per TX completion (TX_DONE), not per bit.  RX:
+ * read the byte from PS2_RX_DATA, validate parity (from RX_PARITY) and
+ * framing (RX_FRAME_ERR), enqueue.  TX: latch the ACK and clear tx_busy.
+ * Both flags are acknowledged write-1-to-clear via PS2_CLEAR.
  * ==================================================================== */
 void ps2_isr(void)
 {
-    /* Read status (captures the bit that was on DATA at the falling
-     * edge) then ack BIT_READY so the next edge can latch cleanly. */
     uint8_t status = GLUE_PS2_STATUS;
-    GLUE_PS2_CLEAR = Griffin::GLUE_PS2_CLEAR_BIT_READY_MASK;
 
-    /* TX branch */
-    if (ps2.kbd_sending)
+    /* ---- TX completion ------------------------------------------- */
+    if (status & Griffin::GLUE_PS2_STATUS_TX_DONE_MASK)
     {
-        /* Decrement remaining-bit counter; when it hits 0, frame done. */
-        ps2.kbd_tx_bits = ps2.kbd_tx_bits - 1;
-        if (ps2.kbd_tx_bits == 0)
+        ps2.tx_ack_failed = (status & Griffin::GLUE_PS2_STATUS_TX_ACK_MASK) ? 1 : 0;
+        ps2.tx_busy = 0;
+        GLUE_PS2_CLEAR = Griffin::GLUE_PS2_CLEAR_TX_DONE_MASK;
+    }
+
+    /* ---- RX byte ------------------------------------------------- */
+    if (status & Griffin::GLUE_PS2_STATUS_RX_READY_MASK)
+    {
+        uint8_t byte = GLUE_PS2_RX_DATA;
+        uint8_t rx_parity =
+            (status >> Griffin::GLUE_PS2_STATUS_RX_PARITY_SHIFT) & 1u;
+
+        /* Ack first so a fast follow-on frame can re-arm immediately. */
+        GLUE_PS2_CLEAR = Griffin::GLUE_PS2_CLEAR_RX_READY_MASK;
+
+        if (status & Griffin::GLUE_PS2_STATUS_RX_FRAME_ERR_MASK)
         {
-            /* All 11 bits placed.  Release DATA so the device can pull
-             * it low on the next clock to line-ACK. */
-            GLUE_PS2_CTRL = 0;
-            ps2.kbd_next_clk_is_ack = 1;
-            ps2.kbd_sending = 0;
+            ps2.err_data = byte;
+            ps2.err_flags |= PS2_ERROR_FRAMING;
             return;
         }
 
-        /* Place bit 0 of kbd_tx_data onto DATA.
-         * Open-drain: bit=0 -> drive=1 (pull low),
-         *             bit=1 -> drive=0 (release, pull-up -> high). */
-        uint16_t txd = ps2.kbd_tx_data;
-        GLUE_PS2_CTRL = (txd & 1u) ? 0u : Griffin::GLUE_PS2_CTRL_DATA_MASK;
-        ps2.kbd_tx_data = txd >> 1;
-        return;
+        /* Odd parity: the received parity bit must match what we'd
+         * generate for this data byte. */
+        if (rx_parity != odd_parity_bit(byte))
+        {
+            ps2.err_data = byte;
+            ps2.err_flags |= PS2_ERROR_PARITY;
+            return;
+        }
+
+        /* Enqueue.  ISR is sole writer of tail; mainline is sole writer
+         * of head, so no masking of the indices is needed. */
+        uint32_t next = (ps2.rx_tail + 1u) & (Griffin::PS2_RX_QUEUE_SIZE - 1u);
+        if (next == ps2.rx_head)
+        {
+            ps2.err_flags |= PS2_ERROR_OVERRUN;
+            return;
+        }
+        ps2.rx_queue[ps2.rx_tail] = byte;
+        ps2.rx_tail = next;
     }
-
-    /* ACK-discard: edge following last TX bit is the device's line-ACK.
-     * Consume it without shifting into the RX data accumulator. */
-    if (ps2.kbd_next_clk_is_ack)
-    {
-        ps2.kbd_next_clk_is_ack = 0;
-        return;
-    }
-
-    /* ---- RX path -------------------------------------------------- */
-    uint16_t bit = (status >> Griffin::GLUE_PS2_STATUS_DATA_IN_SHIFT) & 1u;
-
-    /* Shift data accumulator right, insert new bit at position 10.
-     * Final layout: bit 0 = start, bits 1..8 = data LSB first,
-     *               bit 9 = parity, bit 10 = stop. */
-    ps2.rx_data = (ps2.rx_data >> 1) | (bit << 10);
-
-    ps2.rx_clocks = ps2.rx_clocks + 1;
-    if (ps2.rx_clocks < 11) {
-        return;
-    }
-
-    /* Start bit must be 0, stop bit must be 1. */
-    if ((ps2.rx_data & 0x0001u) || !(ps2.rx_data & 0x0400u)) {
-        ps2.err_data = ps2.rx_data;
-        ps2.err_flags |= PS2_ERROR_FRAMING;          /* framing */
-        return;
-    }
-
-    /* Odd parity: XOR of bits 1..9 must be 1. */
-    uint16_t pbits = (ps2.rx_data >> 1) & 0x01FFu;
-    /* Reuse the same fold trick on 9 bits. */
-    pbits ^= pbits >> 8;
-    pbits ^= pbits >> 4;
-    pbits ^= pbits >> 2;
-    pbits ^= pbits >> 1;
-    if (!(pbits & 1u)) {
-        ps2.err_data = ps2.rx_data;
-        ps2.err_flags |= PS2_ERROR_PARITY;          /* parity */
-        return;
-    }
-
-    /* Extract data byte: bits 1..8. */
-    uint8_t byte = (uint8_t)(ps2.rx_data >> 1);
-
-    /* Enqueue.  ISR is sole writer of tail; mainline is sole writer of
-     * head, so no mask needed for the queue indices themselves. */
-    uint32_t next = (ps2.rx_tail + 1u) & (Griffin::PS2_RX_QUEUE_SIZE - 1u);
-    if (next == ps2.rx_head) {
-        ps2.err_flags |= PS2_ERROR_OVERRUN;          /* overrun */
-        return;
-    }
-    ps2.rx_queue[ps2.rx_tail] = byte;
-    ps2.rx_tail = next;
-
-    /* Reset for next */
-    ps2.rx_clocks = 0;
-    ps2.rx_data = 0;
 }
 
 /* ====================================================================
- * ps2_send_byte — transmit one byte host->keyboard.
+ * ps2_send_byte — transmit one byte host->device.
  *
  *   1. Pull CLK low (inhibit) for >=100 us.
- *   2. Pull DATA low (start bit = 0), release CLK.
- *   3. Let the device clock 10 more bits out of kbd_tx_data — handled
- *      by the TX branch of ps2_isr.
- *   4. Release DATA; device acks by pulling DATA low for one clock.
+ *   2. Write the byte to PS2_TX_DATA, with the firmware-computed odd
+ *      parity carried in address bit 1 (PS2_TX_DATA_PARITY).  The write
+ *      itself starts the frame: GLUE presents the start bit, releases
+ *      CLK, and shifts the rest out on the device clock.
+ *   3. Release the CLK inhibit and wait for the TX_DONE IRQ.
  * ==================================================================== */
 void ps2_send_byte(uint8_t b)
 {
-    // Wait for previous send to finish if there is one
-    while(ps2.kbd_sending || ps2.kbd_next_clk_is_ack);
+    /* Wait for any previous send to finish. */
+    while (ps2.tx_busy)
+        ;
 
-    /* Build 11-bit frame:
-     *   bit 0    = start (0)
-     *   bits 1..8 = data LSB first
-     *   bit 9    = odd parity
-     *   bit 10   = stop (1) */
-    uint16_t parity = odd_parity_bit(b);
-    uint16_t frame  = ((uint16_t)b << 1)
-                    | (parity << 9)
-                    | (uint16_t)0x0400u;          /* stop bit */
+    ps2.tx_busy = 1;
 
-    /* Mask IRQs while we touch the CPLD and TX state. */
+    /* Pull CLK low (request-to-send / inhibit).  Mask IRQs only across
+     * the register touch; the inhibit hold is a one-sided minimum so a
+     * stray IRQ stretching it is harmless. */
     uint16_t saved_sr = irq_save();
-
-    /* Pull CLK low (request-to-send / inhibit). */
     GLUE_PS2_CTRL = Griffin::GLUE_PS2_CTRL_CLK_MASK;
+    irq_restore(saved_sr);
 
     /* Hold >=100 us.  At SYSCLK=14 MHz with ROM wait states this loop
-     * runs ~16 cycles/iter; 250 iters ≈ 285 us.
-     *
-     * NOTE: this is the one place where C is genuinely worse than asm —
-     * the compiler is free to retime this loop or, with optimization,
-     * delete it entirely.  Inline asm keeps the timing predictable. */
+     * runs ~16 cycles/iter; 250 iters ≈ 285 us.  Inline asm keeps the
+     * compiler from retiming or deleting the delay. */
     __asm__ volatile (
         "    move.w  #250,%%d0   \n"
         "1:  dbra    %%d0,1b     \n"
         ::: "d0", "cc"
     );
 
-    /* Place start bit (= 0) on DATA and release CLK.
-     * Setting CTRL = DATA only: CLK released, DATA pulled low. */
-    GLUE_PS2_CTRL = Griffin::GLUE_PS2_CTRL_DATA_MASK;
+    /* Trigger TX.  Parity in address bit 1; the write starts the frame
+     * and the engine releases CLK (overriding PS2_CTRL.CLK while busy). */
+    uint8_t parity = odd_parity_bit(b);
+    *(&GLUE_PS2_TX_DATA + (parity ? Griffin::PS2_TX_DATA_PARITY : 0)) = b;
 
-    /* Pre-shift the frame so bit 0 of kbd_tx_data is the first
-     * post-start bit (data0).  The ISR will place that on the first
-     * falling edge and shift until kbd_tx_bits reaches 0. */
-    ps2.kbd_tx_data         = frame >> 1;
-    ps2.kbd_tx_bits         = 11;
-    ps2.kbd_next_clk_is_ack = 0;
-    ps2.kbd_sending         = 1;
+    /* Drop our CLK inhibit so CLK isn't re-driven low after the frame
+     * (the engine ignores PS2_CTRL.CLK only while tx_active). */
+    GLUE_PS2_CTRL = 0;
 
-    /* Clear any BIT_READY latched by our own CLK-falling edge. */
-    GLUE_PS2_CLEAR = Griffin::GLUE_PS2_CLEAR_BIT_READY_MASK;
-
-    irq_restore(saved_sr);
+    /* Wait for the ISR to see TX_DONE. */
+    while (ps2.tx_busy)
+        ;
 }
 
 bool ps2_received_ready()

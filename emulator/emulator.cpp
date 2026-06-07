@@ -554,42 +554,6 @@ struct CFState
 };
 
 // ---------------------------------------------------------------------------
-// GLUE timer emulation — ÷8 prescaler + 5-bit auto-reload counter
-//
-// On real hardware, arming the timer blocks ALL DTACK until the next
-// zero-crossing, freezing the CPU.  Moira executes whole instructions,
-// so we approximate by advancing the clock (sync) at the ARM write.
-// The total cycle count between I/O operations matches hardware.
-// ---------------------------------------------------------------------------
-
-struct TimerState
-{
-    uint8_t period = 0;       // 8-bit register value (0 = stopped)
-    uint64_t start_clock = 0; // SYSCLK when timer was last loaded
-
-    bool running() const { return period != 0; }
-    // Hardware counts N+1 states (N down to 0), so effective period = (N+1) SYSCLK
-    uint32_t period_clocks() const { return static_cast<uint32_t>(period) + 1; }
-
-    // Cycles from 'now' until the next zero-crossing.
-    // Returns 0 if stopped or exactly on a zero-crossing.
-    uint32_t cycles_to_zero(uint64_t now) const
-    {
-        if (!running())
-        {
-            return 0;
-        }
-        uint32_t pc = period_clocks();
-        uint64_t elapsed = (now - start_clock) % pc;
-        if (elapsed == 0)
-        {
-            return 0;
-        }
-        return pc - static_cast<uint32_t>(elapsed);
-    }
-};
-
-// ---------------------------------------------------------------------------
 // SoftUART TX synthesizer — generates an 8N1 bitstream on DEBUG_IN from
 // bytes received on the PTY.  The emulator's firmware bit-bang RX routine
 // polls DEBUG_IN, so we need to present a properly-timed serial waveform.
@@ -1276,14 +1240,14 @@ struct EngineState
 };
 
 // ---------------------------------------------------------------------------
-// PS/2 keyboard emulation — mirrors the minimal CPLD primitive.
+// PS/2 keyboard emulation — mirrors the GLUE PS/2 frame engine.
 //
-// The CPLD latches one PS/2 DATA bit on each synchronized PS2_CLK falling
-// edge and raises IRQ4.  Firmware does all framing/parity in software.
-// Here we model the device side: translate SDL key events into PS/2 Set 2
-// byte streams, then into individual bit events timed at ~80 µs each, and
-// feed them into the latched-bit + BIT_READY register as emulated time
-// advances.
+// GLUE assembles a whole frame and raises IRQ4 once per byte (RX_READY),
+// validating parity/framing in hardware.  Here we model the device side:
+// translate SDL key events into PS/2 Set 2 byte streams and deliver one
+// assembled byte (RX_READY + PS2_RX_DATA) per ~1 ms as emulated time
+// advances.  A PS2_TX_DATA write is treated as an instant, acknowledged
+// host->device transmission (TX_DONE).
 // ---------------------------------------------------------------------------
 
 static uint8_t sdl_to_ps2_set2(SDL_Scancode sc)
@@ -1335,54 +1299,57 @@ static uint8_t sdl_to_ps2_set2(SDL_Scancode sc)
     }
 }
 
-struct PS2BitEvent
+// Odd-parity bit for x: 0 if x already has an odd number of 1s, else 1.
+// Matches the firmware's odd_parity_bit() so the parity GLUE reports for
+// a received byte makes the firmware's check pass.
+static inline bool ps2_odd_parity_bit(uint8_t x)
 {
-    uint64_t fire_clock;
-    uint8_t bit;
-};
+    x ^= x >> 4;
+    x ^= x >> 2;
+    x ^= x >> 1;
+    return ((x & 1u) ^ 1u) != 0;
+}
 
+// Frame-level PS/2 model, mirroring the GLUE PS/2 frame engine: GLUE
+// assembles whole frames, so we deliver one full byte (RX_READY +
+// PS2_RX_DATA) per ~1 ms and treat a PS2_TX_DATA write as an instant,
+// always-acknowledged host->device transmission (TX_DONE).
 struct PS2State
 {
-    static constexpr uint64_t bit_period_sysclk = SYSCLK_HZ / 12500; // ~80 µs
+    static constexpr uint64_t byte_period_sysclk = SYSCLK_HZ / 1000; // ~1 ms
 
-    std::deque<PS2BitEvent> bit_queue;
-    uint8_t data_in_latched = 1;       // idle-high
-    bool bit_ready = false;
-    uint8_t ctrl = 0;
+    std::deque<uint8_t> rx_bytes;
+    uint64_t next_deliver_clock = 0;
+    uint8_t  rx_data = 0;
+    bool     rx_ready = false;
+    bool     tx_done = false;
+    bool     tx_ack_failed = false;    // false = device acknowledged
+    uint8_t  ctrl = 0;
+
     bool init() { return true; }
 
-    // Append an 11-bit PS/2 frame to the pending bit event queue.
+    // Queue a device->host scancode byte for timed delivery.
     void enqueue_byte(uint64_t clock_now, uint8_t byte)
     {
-        uint64_t t = bit_queue.empty()
-            ? clock_now + bit_period_sysclk
-            : bit_queue.back().fire_clock + bit_period_sysclk;
-
-        bit_queue.push_back({t, 0});                          // start
-        t += bit_period_sysclk;
-
-        uint8_t parity = 1;                                   // odd parity
-        for (int i = 0; i < 8; i++)
+        if (rx_bytes.empty())
         {
-            uint8_t b = (byte >> i) & 1;
-            bit_queue.push_back({t, b});
-            parity ^= b;
-            t += bit_period_sysclk;
+            next_deliver_clock = clock_now + byte_period_sysclk;
         }
-
-        bit_queue.push_back({t, parity});                     // parity
-        t += bit_period_sysclk;
-        bit_queue.push_back({t, 1});                          // stop
+        rx_bytes.push_back(byte);
     }
 
     void check_timer(uint64_t clock_now)
     {
-        while (!bit_ready && !bit_queue.empty()
-               && clock_now >= bit_queue.front().fire_clock)
+        if (!rx_ready && !rx_bytes.empty()
+            && clock_now >= next_deliver_clock)
         {
-            data_in_latched = bit_queue.front().bit;
-            bit_ready = true;
-            bit_queue.pop_front();
+            rx_data = rx_bytes.front();
+            rx_bytes.pop_front();
+            rx_ready = true;
+            if (!rx_bytes.empty())
+            {
+                next_deliver_clock = clock_now + byte_period_sysclk;
+            }
         }
     }
 
@@ -1391,11 +1358,21 @@ struct PS2State
         if (abs_addr == GLUE_PS2_STATUS)
         {
             uint8_t v = 0;
-            if (bit_ready)       { v |= GLUE_PS2_STATUS_BIT_READY_MASK; }
-            if (data_in_latched) { v |= GLUE_PS2_STATUS_DATA_IN_MASK; }
+            if (rx_ready)      { v |= GLUE_PS2_STATUS_RX_READY_MASK; }
+            if (tx_done)       { v |= GLUE_PS2_STATUS_TX_DONE_MASK; }
+            if (tx_ack_failed) { v |= GLUE_PS2_STATUS_TX_ACK_MASK; }
+            if (rx_ready && ps2_odd_parity_bit(rx_data))
+            {
+                v |= GLUE_PS2_STATUS_RX_PARITY_MASK;
+            }
+            // Idle-high live pin bits (debug).
             v |= GLUE_PS2_STATUS_DATA_LIVE_MASK;
             v |= GLUE_PS2_STATUS_CLK_LIVE_MASK;
             return v;
+        }
+        if (abs_addr == GLUE_PS2_RX_DATA)
+        {
+            return rx_data;
         }
         return 0;
     }
@@ -1404,18 +1381,24 @@ struct PS2State
     {
         if (abs_addr == GLUE_PS2_CLEAR)
         {
-            if (val & GLUE_PS2_CLEAR_BIT_READY_MASK)
-            {
-                bit_ready = false;
-            }
+            if (val & GLUE_PS2_CLEAR_RX_READY_MASK) { rx_ready = false; }
+            if (val & GLUE_PS2_CLEAR_TX_DONE_MASK)  { tx_done = false; }
         }
         else if (abs_addr == GLUE_PS2_CTRL)
         {
             ctrl = val;
         }
+        else
+        {
+            // PS2_TX_DATA (0x09) or its parity-1 alias (0x0B): instant,
+            // always-acked host->device transmission.
+            (void)val;
+            tx_ack_failed = false;
+            tx_done = true;
+        }
     }
 
-    bool irq_pending() const { return bit_ready; }
+    bool irq_pending() const { return rx_ready || tx_done; }
 };
 
 // ---------------------------------------------------------------------------
@@ -1468,7 +1451,6 @@ class GriffinEmulator : public moira::Moira
     mutable VideoState video;
     mutable EngineState engine;
     mutable PS2State ps2;
-    mutable TimerState timer;
     mutable SoftUARTTX debug_in_tx;
     StdinConsole stdin_console;
     mutable uint8_t dac_value = 0x0;
@@ -1512,9 +1494,10 @@ class GriffinEmulator : public moira::Moira
             // to skip Rev 1 bringup hacks (bitbang serial, VIDEO-IRQ systick).
             return (debug_in_tx.current_bit & GLUE_DEBUG_IN_MASK);
         }
-        if (addr + IO_BASE == GLUE_PS2_STATUS)
+        if (addr + IO_BASE == GLUE_PS2_STATUS
+            || addr + IO_BASE == GLUE_PS2_RX_DATA)
         {
-            return ps2.read_reg(GLUE_PS2_STATUS);
+            return ps2.read_reg(addr + IO_BASE);
         }
         if(debug & DEBUG_IO)
         {
@@ -1571,24 +1554,12 @@ class GriffinEmulator : public moira::Moira
                 printf("[GLUE CONFIG: 0x%02X overlay=%s]\n", val,
                        (val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK) ? "off" : "on");
             }
-        } else if(addr == GLUE_TIMER - IO_BASE) {
-            timer.period = val;
-            timer.start_clock = getClock();
-            if (debug & DEBUG_IO)
-            {
-                printf("[TIMER: period=%u (%u clks)]\n", timer.period, timer.period_clocks());
-            }
-        } else if(addr == GLUE_TIMER_ARM - IO_BASE) {
-            uint32_t stall = timer.cycles_to_zero(getClock());
-            if (stall > 0)
-            {
-                const_cast<GriffinEmulator*>(this)->sync(stall);
-            }
-            if (debug & DEBUG_IO)
-            {
-                printf("[TIMER ARM: stall=%u clks]\n", stall);
-            }
-        } else if(addr + IO_BASE == GLUE_PS2_CLEAR || addr + IO_BASE == GLUE_PS2_CTRL) {
+        } else if(addr + IO_BASE == GLUE_PS2_CLEAR
+                  || addr + IO_BASE == GLUE_PS2_CTRL
+                  || addr + IO_BASE == GLUE_PS2_TX_DATA
+                  || addr + IO_BASE == GLUE_PS2_TX_DATA + PS2_TX_DATA_PARITY) {
+            // PS2_TX_DATA spans 0x09/0x0B (parity in address bit 1); both
+            // alias to the same TX trigger in the frame model.
             ps2.write_reg(addr + IO_BASE, val);
             const_cast<GriffinEmulator*>(this)->update_ipl();
         } else if(addr + IO_BASE >= AUDIO_BASE && addr + IO_BASE < AUDIO_BASE + AUDIO_SIZE) {

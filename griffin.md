@@ -185,10 +185,9 @@ Dedicated ATF1508 CPLD for:
 * Address decode: ~ROM\_SELECT, ~RAM\_BANK\_{n}\_SELECT, ~IO\_SELECT\_MOSI, ~VIDEO\_SELECT, ~CF\_CS0, ~CF\_CS1, ~AUDIO\_LE, ~ENGINE\_SELECT  
 * Invert R/~W to output ~R/W  
 * Decode ~UDS and ~LDS and R/~W into ~WRITE\_LO and ~WRITE\_HI  
-* GLUE_TIMER: 5-bit auto-reload timer with ÷8 prescaler (shared with systick).  Writing a non-zero value to TIMER loads the period and starts a free-running countdown; period = (N+1) × 8 SYSCLK cycles (N=1..31, range 16..256 clocks).  Writing 0 stops it.  Writing TIMER_ARM sets an armed flag that blocks ALL bus DTACK (freezing the CPU) until the timer countdown reaches zero, then auto-clears.  This provides deterministic bit timing for UART without cycle-counting.
-* UART TX at 115200 baud via GLUE_TIMER + DEBUG_OUT: firmware sets TIMER period to 12 ((12+1)×8=104 clocks ≈ 115384 baud at 12 MHz), then for each bit arms the timer and writes DEBUG_OUT.  The arm stall absorbs variable instruction timing so each bit is exactly 104 clocks.  Implemented in crt0.s `timer_putchar`. A fallback 9600 baud bitbang TX (`early_putchar`) exists for pre-timer debugging.
-* UART RX at 115200 baud via GLUE_TIMER + DEBUG_IN: firmware polls DEBUG_IN for start bit, then uses TIMER arm to sample each data bit at the correct interval.  Implemented in crt0.s `debug_getchar_asm`.  
-* Systick: always-running ~183 Hz periodic interrupt (SYSCLK ÷ 65536, sharing the ÷8 prescaler then dividing by 8192).  IRQ gated by CONFIG.SYSTICK_IRQ_ENABLE; timer always runs and pending flag always sets regardless.  Reading SYSTICK_STATUS clears the pending flag and deasserts the IRQ.
+* PS/2 frame engine: GLUE assembles a full 11-bit PS/2 frame in hardware and raises one level-4 IRQ per byte on RX (byte in PS2\_RX\_DATA, parity/framing flags in PS2\_STATUS for firmware to check), and on TX shifts a host-to-device frame out on the device clock (the PS2\_TX\_DATA write presents the start bit and releases CLK; ACK sampled into PS2\_STATUS.TX\_ACK; TX\_DONE IRQ on completion).  Firmware-computed odd parity is carried in PS2\_TX\_DATA address bit 1 (0x09 = parity 0, 0x0B = parity 1).  Half-duplex, one shared shifter.  Replaced an earlier per-bit assist that video DMA could make miss bits.  
+* Serial is the 68681 DUART (Channel A, 115200 8N1), not GLUE.  An earlier GLUE\_TIMER (5-bit ÷8 auto-reload that armed a DTACK stall for deterministic bit timing) drove bit-bang UART TX/RX on DEBUG\_OUT/DEBUG\_IN (`timer_putchar`/`debug_getchar_asm`), but video DMA stalls/jitters the CPU and broke the bit loop, so it was removed.  crt0 now brings the DUART up early and all boot/exception/panic prints go through it (stack-free putchar, TXRDY-poll with timeout to LED blink); pre-DUART failures are LED-blink only.  
+* System tick is the 68681 C/T (100 Hz, level-5 IRQ), not GLUE.  
 * Autovectors: GLUE asserts ~VPA instead of ~DTACK during IACK cycles (FC=111).  Bodge wires freed GLUE pin 75 to CPU ~VPA.
   * 7: VIDEO  
   * 6: ENGINE  
@@ -202,11 +201,10 @@ Dedicated ATF1508 CPLD for:
 * BERR after some number of cycles if DTACK not asserted.  Have one timeout counter for BERR for everything else, like 8 cycles, and then crazy long BERR like 256 for IO\_DTACK  
 * DEBUG\_OUT  
   * Sets or clears debug LED and test point output  
-  * Primary UART TX output — clip FTDI RX to test point, 115200 8N1 via GLUE_TIMER  
+  * Pre-DUART boot "alive" blink, and TX-timeout/panic LED blink (no longer a UART line)  
 * DEBUG_IN
   * Reads test point input  
-  * Primary UART RX input — clip FTDI TX to test point, 115200 8N1 via GLUE_TIMER  
-  * Can generate level-4 autovector IRQ on falling edge (start bit detection)
+  * Unused now that serial is the DUART (formerly the bit-bang UART RX input)
 * Registers: see [griffin.yml](griffin.yml).
 
 ## VIDEO
@@ -229,14 +227,13 @@ NTSC, VGA pixel and timing generation - second ATF1508
 
 ## IO processor - PS/2 Keyboard and Mouse, UART, System tick interrupt
 
-For PCB Rev1, IO is GLUE-assisted bit-bang on DEBUG_OUT/DEBUG_IN.  Current status:
+For PCB Rev1, serial is the 68681 DUART and PS/2 is a GLUE frame engine (an earlier GLUE-assisted bit-bang on DEBUG_OUT/DEBUG_IN was removed — video DMA broke its CPU-timed bit loop).  Current status:
 
-* *Working* UART TX at 115200 via GLUE_TIMER + DEBUG_OUT (`timer_putchar`)
-* *Working* UART RX at 115200 via GLUE_TIMER + DEBUG_IN polling (`debug_getchar_asm`)
-  * Need to get to reliable streaming serial so I can send and receive data to some kind of network device e.g. esp32
-* *Working* SYSTICK at ~183Hz from GLUE (SYSCLK/65536) - IRQ gated by CONFIG register
-* Want:* GLUE can generate level-4 IRQ on DEBUG_IN falling edge (start bit) for interrupt-driven RX (maybe)
-* *Want:* PS/2 clock latches the data line and causes interrupt, PS/2 shares an interrupt and exposes which clk through status register
+* *Working* serial via 68681 DUART Channel A, 115200 8N1: interrupt-driven RX + polled TX (`duart_putchar`); crt0 brings it up early so boot/panic output uses it too
+  * Need to get to reliable streaming serial so I can send and receive data to some kind of network device e.g. esp32 (the DUART's FIFO + flow control should get there)
+* *Working* SYSTICK at 100Hz from the 68681 C/T (level-5 IRQ)
+* *Working* PS/2 RX as a GLUE frame engine: one level-4 IRQ per assembled byte (was a fragile per-bit IRQ)
+* *Working* PS/2 TX through the same GLUE frame engine (host-to-device, device ACK sampled); firmware-computed parity carried in the PS2_TX_DATA write address
 
 Previous intent: Keyboard, mouse, serial port through 8051-compatible AT89S52
 
@@ -283,7 +280,7 @@ Previous intent: Keyboard, mouse, serial port through 8051-compatible AT89S52
 
 The '373 audio latch is clocked by GLUE's ~AUDIO\_LE on CPU writes to the audio address; there is no hardware FIFO or DMA engine.  Driving the DAC is a CPU timing problem, with two supported patterns:
 
-* **ISR-driven (OS-friendly, ~8-11 kHz).**  GLUE timer (or a future VIDEO line IRQ) fires periodically; ISR writes one sample and returns.  Ceiling is set by ISR overhead on the 12 MHz 68000 with ROM wait states — probably 8-11 kHz before the ISR eats most of the CPU.  Good enough for a general-purpose OS that must also do other work (CP/M-68K, Fuzix).
+* **ISR-driven (OS-friendly, ~8-11 kHz).**  The 68681 C/T (or a future VIDEO line IRQ) fires periodically; ISR writes one sample and returns.  (The old GLUE-timer + `play_audio` busywait pacing was removed with the GLUE timer.)  Ceiling is set by ISR overhead on the 14 MHz 68000 with ROM wait states — probably 8-11 kHz before the ISR eats most of the CPU.  Good enough for a general-purpose OS that must also do other work (CP/M-68K, Fuzix).
 * **Busywait-driven (game-friendly, up to ~31/15/10 kHz).**  VIDEO exposes a STATUS register whose bit 0 toggles once per visible line (v\_cnt[0]; 31.469 kHz at VGA 640x480@60).  Code polls the toggle, then writes AUDIO.  1x coupling = 31.469 kHz (one sample per flip).  /2 or /3 rate by skipping 1 or 2 lines.  A game that gives up its main loop to audio-plus-framebuffer-writes can spend every non-rendering cycle on audio.
 
 This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; future revisions may repurpose the pin.

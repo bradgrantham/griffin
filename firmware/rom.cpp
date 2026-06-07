@@ -251,40 +251,17 @@ extern "C" cf_error cf_write_sectors(uint32_t lba, uint8_t count, const uint8_t 
 // Debug serial output
 // ---------------------------------------------------------------------------
 
-/**
- * Send one character at 115200 baud (8N1) via GLUE timer + DEBUG_OUT.
- * Uses the GLUE_TIMER ARM mechanism for precise bit timing.
- */
-extern "C" void debug_serial_putchar(const char s);
+// Console putchar.  Routes to the 68681 DUART Channel A, which crt0's
+// early init brings up at 115200 8N1 before main() runs.  Replaces the
+// former GLUE timer bit-bang serial.
+extern "C" void duart_putchar(uint8_t ch);   // defined below
 
-asm(
-    ".global debug_serial_putchar     \n"
-    "debug_serial_putchar:            \n"
-    "    move.b  7(%sp), %d0 \n"
-    "    lea     .Lret_stub(%pc), %a5 \n"
-    "    jmp     timer_putchar \n"
-    ".Lret_stub:                   \n"
-    "    rts                  \n"
-);
+extern "C" void debug_serial_putchar(const char s)
+{
+    duart_putchar(static_cast<uint8_t>(s));
+}
 
-/**
- * Bitbang one character at 9600 baud (8N1) through DEBUG_OUT.
- * Kept as a fallback for debugging the GLUE UART itself.
- */
-extern "C" void debug_serial_putchar_bitbang(const char s);
-
-asm(
-    ".global debug_serial_putchar_bitbang \n"
-    "debug_serial_putchar_bitbang:        \n"
-    "    move.l  %d2, -(%sp) \n"
-    "    move.b  11(%sp), %d0 \n"
-    "    lea     .Lret_stub_bb(%pc), %a5 \n"
-    "    jmp     early_putchar \n"
-    ".Lret_stub_bb:                   \n"
-    "    move.l  (%sp)+, %d2\n"
-    "    rts                  \n"
-);
-
+#if 0
 /**
  * Bit-bang receive one byte at 115200 via DEBUG_IN + GLUE timer.
  * Returns 0–255 on success, -1 on timeout (~1ms).
@@ -301,6 +278,7 @@ asm(
     "    move.l  (%sp)+, %d2     \n"
     "    rts                     \n"
 );
+#endif
 
 extern "C" void panic(const char *s);
 
@@ -374,7 +352,7 @@ extern "C" uint32_t get_milliseconds()
 }
 
 // ---------------------------------------------------------------------------
-// 68681 DUART — Channel A console (38400 8N1)
+// 68681 DUART — Channel A console (115200 8N1)
 // ---------------------------------------------------------------------------
 
 // CRA/CRB command encodings
@@ -412,37 +390,32 @@ bool duart_received_ready()
 // Defined in syscalls.c — switches write()/read() to DUART backend
 extern "C" void duart_console_enable();
 
-static void duart_38400_init()
+// Runtime DUART setup: RX interrupt + 100 Hz C/T tick.  The baud rate
+// and 8N1 framing (115200) are already programmed by crt0's early
+// duart_early_tx_init, so this must NOT re-touch CSRA/MR/the BRG-test
+// flip-flop (entering BRG test is a TOGGLE — doing it twice would undo
+// the early init).  It only flushes RX, sets the C/T tick, and enables
+// interrupts.
+static void duart_runtime_init()
 {
-    debug_printf("DUART: init\n");
+    debug_printf("DUART: runtime init (RX irq + 100 Hz tick)\n");
 
-    // Initialize RX queue state before enabling any DUART interrupts.
-    // .monitor_data is NOLOAD and not cleared by the BSS init loop.
+    // RX queue state (.monitor_data is NOLOAD, not cleared by BSS init).
     uart_rx_head = 0;
     uart_rx_tail = 0;
     uart_rx_overflow = 0;
 
-    // ---- MC68681 Init: Channel A, 38400 8N1, RxRDY interrupt ----
-
-    // Reset Channel A
+    // Flush the RX path (baud/format left as the early init set them).
+    // Do NOT reset TX — that would interrupt the live console.
     DUART_CRA = DUART_CMD_RESET_RX;
-    DUART_CRA = DUART_CMD_RESET_TX;
-    DUART_CRA = DUART_CMD_RESET_MR_PTR;
+    DUART_CRA = DUART_CMD_RESET_ERR;
 
-    // MR1A: 8 data bits, no parity
-    DUART_MR1A = 0x13;
-    // MR2A: 1 stop bit, normal mode (MR pointer auto-advanced)
-    DUART_MR1A = 0x07;
-
-    // ACR: BRG set 0, C/T = Timer mode on X1/CLK direct (bits 6:4 = 110)
+    // ACR: BRG set 0 (bit 7 = 0, baud unchanged), C/T = Timer mode on
+    // X1/CLK direct (bits 6:4 = 110) for the system tick.
     DUART_ACR = (0x6U << Griffin::DUART_ACR_CT_MODE_SHIFT);
 
-    // CSRA: Tx and Rx both = BRG 38400 (code 1100 = 0xC)
-    DUART_CSRA = 0xcc;
-
-    // C/T preload: F_irq = DUART_CLOCK / preload (Timer mode fires every
-    // square-wave half-period = preload input cycles).  TICK_HZ chosen
-    // here as a firmware convention.
+    // C/T preload: Timer mode fires every square-wave half-period
+    // = preload input cycles.  TICK_HZ is a firmware convention.
     static constexpr uint32_t TICK_HZ = 100;
     static constexpr uint32_t TICK_PRELOAD = Griffin::DUART_CLOCK / TICK_HZ / 2;
     static_assert(TICK_PRELOAD > 0 && TICK_PRELOAD < 0x10000,
@@ -450,96 +423,20 @@ static void duart_38400_init()
     DUART_CTUR = (TICK_PRELOAD >> 8) & 0xFF;
     DUART_CTLR =  TICK_PRELOAD       & 0xFF;
 
-    // Enable RXRDYA + CTR_READY interrupts.  Both share the level-5
-    // autovector; _duart_isr distinguishes them via the ISR snapshot.
+    // RXRDYA + CTR_READY share the level-5 autovector; _duart_isr
+    // distinguishes them via the ISR snapshot.
     DUART_IMR = Griffin::DUART_ISR_RXRDYA_MASK | Griffin::DUART_ISR_CTR_READY_MASK;
+    DUART_IVR = 0x0;
+
+    DUART_CRA = DUART_CMD_ENABLE_TXRX;
 
     // Read STARTCC to kick off the C/T (the read itself is the side effect).
     uint8_t startcc_discard = DUART_STARTCC;
     (void)startcc_discard;
 
-    // Clear DUART IVR - chasing a bug
-    DUART_IVR = 0x0;
-
-    // Enable TX and RX
-    DUART_CRA = DUART_CMD_ENABLE_TXRX;
-
-    // Report status via bit-bang debug path
     uint8_t sra = DUART_SRA;
-    debug_printf("DUART: SRA=0x%02X", sra);
-    if (sra & Griffin::DUART_SRA_TXRDY_MASK)
-    {
-        debug_printf(" TXRDY");
-    }
-    if (sra & Griffin::DUART_SRA_TXEMT_MASK)
-    {
-        debug_printf(" TXEMT");
-    }
-    debug_printf("\n");
-
-    if (!(sra & Griffin::DUART_SRA_TXRDY_MASK))
-    {
-        debug_printf("DUART: WARNING — TXRDY not set after init\n");
-    }
-}
-
-// Dummy-read BRG test register (offset 0x2) to toggle extended-rate mode.
-// MUST be volatile so the compiler doesn't drop it — the read itself is
-// the side effect. - only works on SCC68681/XR68C681
-static inline void duart_enter_brg_test()
-{
-    volatile uint8_t discard = *reinterpret_cast<volatile uint8_t*>(
-        Griffin::DUART_BASE + 0x2);
-    (void)discard;
-}
-
-// only works on SCC68681/XR68C681
-[[maybe_unused]] static void duart_115200_init()
-{
-    debug_printf("DUART: init\n");
-
-    // Initialize RX queue state before enabling any DUART interrupts.
-    // .monitor_data is NOLOAD and not cleared by the BSS init loop.
-    uart_rx_head = 0;
-    uart_rx_tail = 0;
-    uart_rx_overflow = 0;
-
-    // ---- MC68681 Init: Channel A, 115200 8N1, RxRDY interrupt ----
-    // Reset Channel A
-    DUART_CRA = DUART_CMD_RESET_RX;
-    DUART_CRA = DUART_CMD_RESET_TX;
-    DUART_CRA = DUART_CMD_RESET_MR_PTR;
-
-    // Enter BRG test mode BEFORE programming CSR — the CSR code meanings
-    // change with the test flip-flop, so order matters if we want to be
-    // sure we never transiently select an unintended rate.
-    // (Assumes hardware reset has cleared the flop-flop; see note above.)
-    duart_enter_brg_test();
-
-    // MR1A: 8 data bits, no parity
-    DUART_MR1A = 0x13;
-    // MR2A: 1 stop bit, normal mode
-    DUART_MR1A = 0x07;
-    // ACR: BRG set 0 (bit 7 = 0), no IP change int
-    DUART_ACR = 0x00;
-    // CSRA: Tx and Rx both = code 0110 → 115200 in BRG test mode
-    DUART_CSRA = 0x66;
-
-    DUART_IMR = Griffin::DUART_ISR_RXRDYA_MASK;
-    DUART_IVR = 0x0;
-    DUART_CRA = DUART_CMD_ENABLE_TXRX;
-
-    // Report status via bit-bang debug path
-    uint8_t sra = DUART_SRA;
-    debug_printf("DUART: SRA=0x%02X", sra);
-    if (sra & Griffin::DUART_SRA_TXRDY_MASK) { debug_printf(" TXRDY"); }
-    if (sra & Griffin::DUART_SRA_TXEMT_MASK) { debug_printf(" TXEMT"); }
-    debug_printf("\n");
-
-    if (!(sra & Griffin::DUART_SRA_TXRDY_MASK))
-    {
-        debug_printf("DUART: WARNING — TXRDY not set after init\n");
-    }
+    debug_printf("DUART: SRA=0x%02X%s\n", sra,
+                 (sra & Griffin::DUART_SRA_TXRDY_MASK) ? " TXRDY" : " (no TXRDY!)");
 }
 
 [[maybe_unused]] static void dump_hex(uint32_t base_addr, const uint8_t *data, int size)
@@ -658,79 +555,9 @@ static void cf_mount_and_list()
     }
 }
 
-// ---------------------------------------------------------------------------
-// Audio playback via GLUE timer + AUDIO_DAC
-// ---------------------------------------------------------------------------
-
-// Embedded startup sound (linked from startup_audio.o)
-extern "C" const int8_t _binary_startup_raw_start[];
-extern "C" const int8_t _binary_startup_raw_end[];
-
-// Stream signed 8-bit samples to the DAC at the given sample rate.
-// Uses the GLUE auto-reload timer to get deterministic sample timing:
-// each sample period is broken into 'arms' timer stalls of (period+1)*8
-// SYSCLK clocks each.  The stall absorbs instruction overhead.
-[[maybe_unused]] static void play_audio(const int8_t *buf, uint32_t len, uint32_t sample_rate)
-{
-    // Find best timer period (1-31) and arm count to match sample_rate.
-    uint32_t target = Griffin::SYSCLK_HZ / sample_rate;
-    uint8_t best_period = 1;
-    uint16_t best_arms = 1;
-    uint32_t best_error = UINT32_MAX;
-
-    for (uint8_t n = 1; n <= 31; n++)
-    {
-        uint32_t tick = (static_cast<uint32_t>(n) + 1) * 8;
-        uint16_t arms = static_cast<uint16_t>((target + tick / 2) / tick);
-        if (arms < 1)
-        {
-            arms = 1;
-        }
-        uint32_t actual = arms * tick;
-        uint32_t err = (actual > target) ? actual - target : target - actual;
-        if (err < best_error)
-        {
-            best_error = err;
-            best_period = n;
-            best_arms = arms;
-        }
-    }
-
-    GLUE_TIMER = best_period;
-
-    // Inner loop in inline asm for tightness.
-    // Per sample: write (sample + 128) to DAC, then arm the timer best_arms times.
-    // The timer stall freezes the CPU each arm, giving deterministic timing.
-    //
-    // Local register variables force GCC to allocate buf/count/arms_m1 to
-    // specific registers — the asm body references them by name, so they
-    // must not be relegated to arbitrary regs by the constraint allocator.
-    register const int8_t *buf_ptr asm("a0") = buf;
-    register uint16_t count asm("d3") = static_cast<uint16_t>(len - 1);
-    register uint16_t arms_m1 asm("d2") = best_arms - 1;
-
-    asm volatile (
-        "    bra.s   2f                   \n"  // enter loop
-        "1:                               \n"  // .sample_loop
-        "    move.b  (%%a0)+, %%d0        \n"  // load signed sample
-        "    addi.b  #0x80, %%d0          \n"  // signed -> unsigned
-        "    move.b  %%d0, (%[dac])       \n"  // write DAC
-        "    move.w  %%d2, %%d1           \n"  // arm counter
-        "3:                               \n"  // .arm_loop
-        "    move.b  %%d0, (%[arm])       \n"  // arm (CPU stalls)
-        "    dbra    %%d1, 3b             \n"
-        "2:                               \n"  // .test
-        "    dbra    %%d3, 1b             \n"
-        : "+a" (buf_ptr), "+d" (count)
-        : [dac] "a" (&AUDIO_DAC),
-          [arm] "a" (&GLUE_TIMER_ARM),
-          "d" (arms_m1)
-        : "d0", "d1", "memory"
-    );
-
-    GLUE_TIMER = 0;
-    AUDIO_DAC = 0x80;  // silence (center)
-}
+// NOTE: play_audio() (GLUE timer + AUDIO_DAC sample pacing) was removed
+// with the GLUE timer.  Deterministic audio sample timing now needs a
+// different source (e.g. the DUART C/T or a future DMA path).
 
 // Pop one byte from the event ring buffer.  Returns false if empty.
 // No interrupt masking needed — head is only modified here (single consumer).
@@ -750,6 +577,7 @@ extern "C" {
 extern long read(int file, void *__buf, size_t len);
 };
 
+#if 0
 // ---------------------------------------------------------------------------
 // Debug monitor — interactive memory read/write via bitbang serial.
 // Runs before DUART init so the DUART can be poked from here.
@@ -916,6 +744,8 @@ static int debug_getline(char *buf, int maxlen)
         }
     }
 }
+
+#endif
 
 // ---------------------------------------------------------------------------
 // Video framebuffer — palette-and-pixels layout, start ENGINE DMA, enable scanout
@@ -1108,7 +938,7 @@ static void textport_console_enable()
     early_log_replay(&gtxt::textport_vt102_putchar);
     early_log_freeze();
 
-    // Re-emit info that crt0 sent only via timer_puts (and so isn't in
+    // Re-emit info that crt0 sent only via duart_puts (and so isn't in
     // the ring) plus what's now interesting on the visible console.
     textport_console_set_enabled(1);
     if (uint32_t dropped = early_log_dropped_count(); dropped)
@@ -1144,18 +974,18 @@ int main()
 
     // debug_monitor();
 
-    // Initialize 68681 DUART and switch console output from bit-bang
-    // to DUART.  Everything before this point prints via debug_printf
-    // (GLUE bit-bang); everything after prints via printf (DUART
-    // Channel A, 38400 8N1).
-    duart_38400_init();
+    // The DUART Channel A console was already brought up at 115200 8N1
+    // by crt0's early init, so debug_printf above has been going out the
+    // DUART all along.  Here we add the RX interrupt + 100 Hz tick and
+    // switch the C library console (printf/read) to the DUART backend.
+    duart_runtime_init();
 
     for(auto c: "DUART TX\n")
     {
         if(c) duart_putchar(c);
     }
     duart_console_enable();
-    printf("Console on DUART Channel A, 38400 8N1\n");
+    printf("Console on DUART Channel A, 115200 8N1\n");
 
     video_test_init();
 

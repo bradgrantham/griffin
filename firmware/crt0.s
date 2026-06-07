@@ -85,18 +85,25 @@ _start:
     move.b #0x01, GLUE_DEBUG_OUT
     move.b #0x00, GLUE_DEBUG_OUT
     move.b #0x01, GLUE_DEBUG_OUT
-    /* Leave DEBUG_OUT high — UART idle state.
-       Hold idle long enough (~12 bit times at 115200 ≈ 1500 SYSCLK)
-       for any UART receiver that mistook the bring-up pulses for a
-       start bit to flush its mid-frame state and return to idle. */
-    move.w  #199, %d0
-.Luart_idle_settle:
-    dbra    %d0, .Luart_idle_settle
+    /* ---- Early DUART init: Channel A, 115200 8N1, TX+RX enabled ----
+       Pure MMIO; works before RAM/stack.  This is the bootstrap/panic
+       console.  Full RX-interrupt + 100 Hz tick setup happens later in
+       C (duart_runtime_init), which must NOT re-touch baud/BRG.
+       The BRG extended-rate select (dummy read of the BRG-test register
+       at DUART_BASE+2) is a TOGGLE, so it is done exactly once, here. */
+    move.b  #0x30, DUART_CRA          | reset transmitter
+    move.b  #0x10, DUART_CRA          | reset MR pointer
+    tst.b   DUART_BASE + 0x2          | enter BRG extended-rate (toggle)
+    move.b  #0x13, DUART_MR1A         | MR1A: 8 data bits, no parity
+    move.b  #0x07, DUART_MR1A         | MR2A: 1 stop bit (pointer auto-advanced)
+    move.b  #0x00, DUART_ACR          | BRG set 0
+    move.b  #0x66, DUART_CSRA         | Tx/Rx = 115200 (BRG extended mode)
+    move.b  #0x05, DUART_CRA          | enable TX + RX
 
     /* Hello via hardware UART */
     lea     hellostr, %a1
     lea     .Lret3(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .Lret3:
 
     /* Switch out ROM overlay — must be a raw write because RAM is not
@@ -108,7 +115,7 @@ _start:
 
     lea     rom_unshadowed, %a1
     lea     .rom_un(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .rom_un:
 
     /* Copy ROM vector table to RAM */
@@ -121,7 +128,7 @@ vec_copy:
 
     lea     vtab_copied, %a1
     lea     .vtab_cop(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .vtab_cop:
 
     /* Probe RAM and print result */
@@ -134,7 +141,7 @@ vec_copy:
     move.l  #0x400000, %sp
     lea     memory_4m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 
 test_3m:
     move.w  #0xAA55, 0x300000 - 2
@@ -146,7 +153,7 @@ test_3m:
     move.l  #0x300000, %sp
     lea     memory_3m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 
 test_2m:
     move.w  #0xAA55, 0x200000 - 2
@@ -158,7 +165,7 @@ test_2m:
     move.l  #0x200000, %sp
     lea     memory_2m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 
 test_1m:
     move.w  #0xFF00, 0x80000 - 2
@@ -170,7 +177,7 @@ test_1m:
     move.l  #0x100000, %sp
     lea     memory_1m, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 
 set_256k:
     move.l  #256, memory_size
@@ -178,7 +185,7 @@ set_256k:
     move.l  #0x40000, %sp
     lea     memory_256k, %a1
     lea     memory_size_done(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 
 memory_size_done:
 
@@ -252,7 +259,7 @@ memory_size_done:
     | --- RAM test passed ---
     lea     msg_ram_ok, %a1
     lea     ram_test_done(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 
 ram_test_done:
 
@@ -315,7 +322,7 @@ _halt:
     .global monitor_panic
 monitor_panic:
     lea     panic_loop(%pc), %a6
-    jmp     debug_puts
+    jmp     duart_puts
 panic_loop:
     move.b  #0x01, GLUE_DEBUG_OUT
 | Courtesy Claude Opus 4.6
@@ -335,173 +342,63 @@ panic_loop:
 
     bra     panic_loop
 
-| early_putchar: bitbang one character at 9600 baud (8N1)
-| Input:  d0.b = character to send
-| Return: jmp (a5)
-| Clobbers: d0, d1, d2, a0
+| ====================================================================
+| DUART Channel A console primitives (replace the old GLUE bit-bang).
+|
+| All are stack-free (jmp (%a5)/(%a6) return convention) so they run
+| from the earliest boot (before RAM/stack), the stack-free RAM test,
+| and the exception handlers.  The DUART has its own baud generator and
+| TX holding register, so byte timing is independent of CPU stalls and
+| video DMA — no IRQ masking or cycle-counting needed.  duart_early_tx_init
+| (inlined in _start) must run before any of these.
+| ====================================================================
 
-    .equ CYCLES_PER_BIT, SYSCLK_HZ / 9600
-    .equ DELAY_LOOP_COUNT, (CYCLES_PER_BIT - 20) / 10
+    .equ DUART_TX_TIMEOUT, 200000   | TXRDY poll budget before giving up
 
-    .global early_putchar
-early_putchar:
-    lea     GLUE_DEBUG_OUT, %a0
-
-    | Build 10-bit frame: start(0) + 8 data bits + stop(1)
-    andi.w  #0x00FF, %d0        | clear upper byte
-    lsl.w   #1, %d0             | shift data up, bit 0 = 0 (start bit)
-    ori.w   #0x0200, %d0        | set bit 9 (stop bit)
-
-    move.w  #9, %d1             | 10 bits (0..9)
-
-.Lbit_loop:
-    lsr.w   #1, %d0             | LSB -> carry
-    bcs.s   .Lsend_one
-
-    move.b  #0x00, (%a0)        | send 0
-    bra.s   .Ldelay
-
-.Lsend_one:
-    move.b  #0x01, (%a0)        | send 1
-
-.Ldelay:
-    move.w  #DELAY_LOOP_COUNT, %d2
-.Ldelay_loop:
-    dbra    %d2, .Ldelay_loop
-
-    dbra    %d1, .Lbit_loop
-
-    move.b  #0x01, (%a0)        | return to idle high
-
+| duart_putchar_raw: poll TXRDY, then send %d0.b.  On TXRDY timeout the
+| DUART is wedged — fall into an infinite LED blink.
+| Input:  d0.b = character
+| Return: jmp (%a5)
+| Clobbers: d0, d1
+    .global duart_putchar_raw
+duart_putchar_raw:
+    move.l  #DUART_TX_TIMEOUT, %d1
+.Ldpc_wait:
+    btst    #DUART_SRA_TXRDY_SHIFT, DUART_SRA
+    bne.s   .Ldpc_send
+    subq.l  #1, %d1
+    bne.s   .Ldpc_wait
+    bra     duart_blink_forever
+.Ldpc_send:
+    move.b  %d0, DUART_TBA
     jmp     (%a5)
 
-| debug_puts: send null-terminated string at (a1) via bitbang
-| Return via jmp (a6)
-| Clobbers: a0, d0, d1, d2, a5, a1
-debug_puts:
+| duart_puts: send null-terminated string at (%a1).
+| Return via jmp (%a6).  Clobbers: d0, d1, a1, a5
+duart_puts:
     move.b  (%a1)+, %d0
-    beq.s   .Ldone
-    lea     .Lret_puts(%pc), %a5
-    jmp     early_putchar
-.Lret_puts:
-    bra.s   debug_puts
-.Ldone:
+    beq.s   .Ldputs_done
+    lea     .Ldputs_ret(%pc), %a5
+    jmp     duart_putchar_raw
+.Ldputs_ret:
+    bra.s   duart_puts
+.Ldputs_done:
     jmp     (%a6)
 
-    /* GLUE TIMER period: (N+1) SYSCLK per tick → N = round(SYSCLK_HZ/BAUD) - 1 */
-    .equ TIMER_FULL_BIT, (SYSCLK_HZ + 115200 / 2) / 115200 - 1
-
-| timer_putchar: send one character at 115200 via GLUE timer + DEBUG_OUT
-| Input:  d0.b = character to send
-| Return: jmp (a5)
-| Clobbers: d0, d1, a0
-|
-| Masks all IRQs (except level 7) for the duration of the byte so a
-| vsync IRQ cannot fire between bits and stretch one bit period past the
-| timer's next zero-crossing — which would re-arm to the *following* zero
-| and corrupt the frame.
-|
-| SR is saved/restored in the upper word of d1 rather than on the stack:
-| timer_putchar runs from the very first hello message in _start, before
-| RAM has been probed and SP has been set, so (sp) is not safe.  d1's
-| lower word is reused as the bit counter; dbra is a word op so the
-| upper word is preserved across the loop.
-    .global timer_putchar
-timer_putchar:
-    | Stash SR in upper word of d1, then mask all IRQs.
-    move.w  %sr, %d1
-    swap    %d1
-    ori.w   #0x0700, %sr
-
-    lea     GLUE_DEBUG_OUT, %a0
-
-    | Build 10-bit frame: start(0) + 8 data bits + stop(1)
-    andi.w  #0x00FF, %d0
-    lsl.w   #1, %d0             | shift data up, bit 0 = 0 (start bit)
-    ori.w   #0x0200, %d0        | set bit 9 (stop bit)
-
-    move.b  #TIMER_FULL_BIT, GLUE_TIMER
-
-    move.w  #9, %d1             | low word: 10 bits (0..9); high word: saved SR
-
-.Ltx_bit:
-    move.b  #0, GLUE_TIMER_ARM | arm — next bus access stalls
-    move.b  %d0, (%a0)         | stalled write; only bit 0 reaches DEBUG_OUT
-    lsr.w   #1, %d0            | shift to next bit
-    dbra    %d1, .Ltx_bit      | word op — upper word of d1 (saved SR) preserved
-
-    | Hold stop bit for one full bit time
-    move.b  #0, GLUE_TIMER_ARM
-    tst.b   (%a0)              | stall (dummy read, discard)
-
-    move.b  #0, GLUE_TIMER     | stop timer
-
-    | Restore SR from upper word of d1 (low word is 0xFFFF after dbra exit).
-    swap    %d1
-    move.w  %d1, %sr
-    jmp     (%a5)
-
-| timer_puts: send null-terminated string at (a1) via timer bitbang
-| Return via jmp (a6)
-| Clobbers: a0, d0, d1, a5, a1
-timer_puts:
-    move.b  (%a1)+, %d0
-    beq.s   .Ltimer_puts_done
-    lea     .Ltimer_ret_puts(%pc), %a5
-    jmp     timer_putchar
-.Ltimer_ret_puts:
-    bra.s   timer_puts
-.Ltimer_puts_done:
-    jmp     (%a6)
-
-| debug_getchar_asm: bit-bang receive one byte at 115200 via GLUE timer
-| Input:  none
-| Output: d0.b = received byte, or d0.l = -1 on timeout (~1ms)
-| Return: jmp (a5)
-| Clobbers: d0, d1, d2, a0
-
-    /* GLUE TIMER period: (N+1) SYSCLK per tick → N = round(SYSCLK_HZ/BAUD) - 1 */
-    .equ TIMER_FULL_BIT, (SYSCLK_HZ + 115200 / 2) / 115200 - 1
-    /* ~1 ms timeout: each poll iteration is roughly 24 SYSCLK with ROM wait states */
-    .equ RX_TIMEOUT_COUNT, SYSCLK_HZ / 24000
-
-    .global debug_getchar_asm
-debug_getchar_asm:
-    lea     GLUE_DEBUG_IN, %a0
-    move.w  #RX_TIMEOUT_COUNT, %d1
-
-.Lrx_poll:
-    btst    #GLUE_DEBUG_IN_SHIFT, (%a0)
-    beq.s   .Lrx_got_start
-    dbra    %d1, .Lrx_poll
-
-    moveq   #-1, %d0
-    jmp     (%a5)
-
-.Lrx_got_start:
-    | Start full-bit timer — detection latency + instruction overhead
-    | (~146 clocks from edge) naturally centers in D0 (center at 156)
-    move.b  #TIMER_FULL_BIT, GLUE_TIMER
-
-    | Sample 8 data bits (LSB first)
-    moveq   #0, %d0
-    moveq   #7, %d2
-
-.Lrx_bit:
-    move.b  #0, GLUE_TIMER_ARM
-    move.b  (%a0), %d1              | stall, then read DEBUG_IN
-    lsr.b   #1, %d1                 | bit 0 -> X flag
-    roxr.b  #1, %d0                 | X -> MSB of d0, shift right
-    dbra    %d2, .Lrx_bit
-
-    | Wait through stop bit
-    move.b  #0, GLUE_TIMER_ARM
-    tst.b   (%a0)
-
-    | Stop timer
-    move.b  #0, GLUE_TIMER
-
-    jmp     (%a5)
+| duart_blink_forever: TX-timeout / pre-DUART failure indicator.
+| Blinks DEBUG_OUT (~20 Hz) forever.  Stack-free.  Clobbers d0,d1,d7.
+    .global duart_blink_forever
+duart_blink_forever:
+    moveq   #0, %d7
+.Ldbf_loop:
+    eori.b  #0x01, %d7
+    move.b  %d7, GLUE_DEBUG_OUT
+    move.w  #EXC_FAST_OUTER, %d1
+.Ldbf_delay:
+    move.w  #(EXC_INNER - 1), %d0
+    dbra    %d0, .
+    dbra    %d1, .Ldbf_delay
+    bra     .Ldbf_loop
 
 | ====================================================================
 | Exception handlers — diagnostic blink loops on DEBUG_OUT
@@ -523,7 +420,7 @@ debug_getchar_asm:
 _exc_bus_error:
     lea     msg_bus_error, %a1
     lea     .bussp(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 
 .bussp:
 | print sp first
@@ -532,30 +429,30 @@ _exc_bus_error:
     lsr.l     #8, %d0
     lsr.l     #8, %d0
     lea     .bussp3(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .bussp3:
     move.l %sp, %d0
     lsr.l    #8, %d0
     lsr.l    #8, %d0
     lea     .bussp2(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .bussp2:
     move.l %sp, %d0
     lsr.l    #8, %d0
     lea     .bussp1(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .bussp1:
     move.l %sp, %d0
     lea     .bussp0(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .bussp0:
     move.b  #':', %d0
     lea     .busspcolon(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 .busspcolon:
     move.b  #' ', %d0
     lea     .busspspace(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 .busspspace:
 
 .exc_bus_dump:
@@ -569,99 +466,99 @@ _exc_bus_error:
     | Word 0 — status word
     move.b  0(%sp), %d0
     lea     .busw0lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw0lo:
     move.b  1(%sp), %d0
     lea     .busw0sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw0sp:
     move.b  #' ', %d0
     lea     .busw1hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 1 — access address high
 .busw1hi:
     move.b  2(%sp), %d0
     lea     .busw1lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw1lo:
     move.b  3(%sp), %d0
     lea     .busw1sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw1sp:
     move.b  #' ', %d0
     lea     .busw2hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 2 — access address low
 .busw2hi:
     move.b  4(%sp), %d0
     lea     .busw2lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw2lo:
     move.b  5(%sp), %d0
     lea     .busw2sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw2sp:
     move.b  #' ', %d0
     lea     .busw3hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 3 — instruction register
 .busw3hi:
     move.b  6(%sp), %d0
     lea     .busw3lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw3lo:
     move.b  7(%sp), %d0
     lea     .busw3sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw3sp:
     move.b  #' ', %d0
     lea     .busw4hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 4 — SR
 .busw4hi:
     move.b  8(%sp), %d0
     lea     .busw4lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw4lo:
     move.b  9(%sp), %d0
     lea     .busw4sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw4sp:
     move.b  #' ', %d0
     lea     .busw5hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 5 — PC high
 .busw5hi:
     move.b  10(%sp), %d0
     lea     .busw5lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw5lo:
     move.b  11(%sp), %d0
     lea     .busw5sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw5sp:
     move.b  #' ', %d0
     lea     .busw6hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 6 — PC low
 .busw6hi:
     move.b  12(%sp), %d0
     lea     .busw6lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw6lo:
     move.b  13(%sp), %d0
     lea     .busw6nl(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .busw6nl:
     move.b  #'\n', %d0
     lea     .exc_bus_blink(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 .exc_bus_blink:
     moveq   #0, %d7
 .bus_err_loop:
@@ -679,7 +576,7 @@ _exc_bus_error:
 _exc_address_error:
     lea     msg_addr_error, %a1
     lea     .exc_addr_dump(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 
 .exc_addr_dump:
     | Stack frame layout (14 bytes):
@@ -695,128 +592,128 @@ _exc_address_error:
     lsr.l    #8, %d0
     lsr.l    #8, %d0
     lea     .addrsp3(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .addrsp3:
     move.l %sp, %d0
     lsr.l    #8, %d0
     lsr.l    #8, %d0
     lea     .addrsp2(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .addrsp2:
     move.l %sp, %d0
     lsr.l    #8, %d0
     lea     .addrsp1(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .addrsp1:
     move.l %sp, %d0
     lea     .addrsp0(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .addrsp0:
     move.b  #':', %d0
     lea     .addrspcolon(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 .addrspcolon:
     move.b  #' ', %d0
     lea     .addrspspace(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 .addrspspace:
 
     | Word 0 — status word
     move.b  0(%sp), %d0
     lea     .w0lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w0lo:
     move.b  1(%sp), %d0
     lea     .w0sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w0sp:
     move.b  #' ', %d0
     lea     .w1hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 1 — access address high
 .w1hi:
     move.b  2(%sp), %d0
     lea     .w1lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w1lo:
     move.b  3(%sp), %d0
     lea     .w1sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w1sp:
     move.b  #' ', %d0
     lea     .w2hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 2 — access address low
 .w2hi:
     move.b  4(%sp), %d0
     lea     .w2lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w2lo:
     move.b  5(%sp), %d0
     lea     .w2sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w2sp:
     move.b  #' ', %d0
     lea     .w3hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 3 — instruction register
 .w3hi:
     move.b  6(%sp), %d0
     lea     .w3lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w3lo:
     move.b  7(%sp), %d0
     lea     .w3sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w3sp:
     move.b  #' ', %d0
     lea     .w4hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 4 — SR
 .w4hi:
     move.b  8(%sp), %d0
     lea     .w4lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w4lo:
     move.b  9(%sp), %d0
     lea     .w4sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w4sp:
     move.b  #' ', %d0
     lea     .w5hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 5 — PC high
 .w5hi:
     move.b  10(%sp), %d0
     lea     .w5lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w5lo:
     move.b  11(%sp), %d0
     lea     .w5sp(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w5sp:
     move.b  #' ', %d0
     lea     .w6hi(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
     | Word 6 — PC low
 .w6hi:
     move.b  12(%sp), %d0
     lea     .w6lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w6lo:
     move.b  13(%sp), %d0
     lea     .w6nl(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .w6nl:
     move.b  #'\n', %d0
     lea     .exc_addr_blink(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
 .exc_addr_blink:
     moveq   #0, %d7
@@ -835,7 +732,7 @@ _exc_illegal_insn:
     move.l  _stack_top, %sp
     lea     msg_illegal_insn, %a1
     lea     .exc_illegal_blink(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .exc_illegal_blink:
     moveq   #0, %d7
 .illegal_loop:
@@ -944,227 +841,227 @@ _default_handler:
 _default_handler_5:
     lea     panic_loop(%pc), %a6
     move.b  6, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_6:
     lea     panic_loop(%pc), %a6
     move.b  #6, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_7:
     lea     panic_loop(%pc), %a6
     move.b  #7, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_8:
     lea     panic_loop(%pc), %a6
     move.b  #8, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_9:
     lea     panic_loop(%pc), %a6
     move.b  #9, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_10:
     lea     panic_loop(%pc), %a6
     move.b  #10, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_11:
     lea     panic_loop(%pc), %a6
     move.b  #11, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_12:
     lea     panic_loop(%pc), %a6
     move.b  #12, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_13:
     lea     panic_loop(%pc), %a6
     move.b  #13, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_14:
     lea     panic_loop(%pc), %a6
     move.b  #14, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_15:
     lea     panic_loop(%pc), %a6
     move.b  #15, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_16:
     lea     panic_loop(%pc), %a6
     move.b  #16, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_17:
     lea     panic_loop(%pc), %a6
     move.b  #17, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_18:
     lea     panic_loop(%pc), %a6
     move.b  #18, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_19:
     lea     panic_loop(%pc), %a6
     move.b  #19, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_20:
     lea     panic_loop(%pc), %a6
     move.b  #20, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_21:
     lea     panic_loop(%pc), %a6
     move.b  #21, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_22:
     lea     panic_loop(%pc), %a6
     move.b  #22, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_23:
     lea     panic_loop(%pc), %a6
     move.b  #23, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_24:
     lea     panic_loop(%pc), %a6
     move.b  #24, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_25:
     lea     panic_loop(%pc), %a6
     move.b  #25, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_26:
     lea     panic_loop(%pc), %a6
     move.b  #26, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_27:
     lea     panic_loop(%pc), %a6
     move.b  #27, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_28:
     lea     panic_loop(%pc), %a6
     move.b  #28, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_29:
     lea     panic_loop(%pc), %a6
     move.b  #29, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_30:
     lea     panic_loop(%pc), %a6
     move.b  #30, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_31:
     lea     panic_loop(%pc), %a6
     move.b  #31, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_32:
     lea     panic_loop(%pc), %a6
     move.b  #32, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_33:
     lea     panic_loop(%pc), %a6
     move.b  #33, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_34:
     lea     panic_loop(%pc), %a6
     move.b  #34, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_35:
     lea     panic_loop(%pc), %a6
     move.b  #35, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_36:
     lea     panic_loop(%pc), %a6
     move.b  #36, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_37:
     lea     panic_loop(%pc), %a6
     move.b  #37, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_38:
     lea     panic_loop(%pc), %a6
     move.b  #38, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_39:
     lea     panic_loop(%pc), %a6
     move.b  #39, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_40:
     lea     panic_loop(%pc), %a6
     move.b  #40, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_41:
     lea     panic_loop(%pc), %a6
     move.b  #41, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_42:
     lea     panic_loop(%pc), %a6
     move.b  #42, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_43:
     lea     panic_loop(%pc), %a6
     move.b  #43, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_44:
     lea     panic_loop(%pc), %a6
     move.b  #44, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_45:
     lea     panic_loop(%pc), %a6
     move.b  #45, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_46:
     lea     panic_loop(%pc), %a6
     move.b  #46, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_47:
     lea     panic_loop(%pc), %a6
     move.b  #47, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_48:
     lea     panic_loop(%pc), %a6
     move.b  #48, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 _default_handler_49:
     lea     panic_loop(%pc), %a6
     move.b  #49, %d0
-    jmp     timer_hex8
+    jmp     duart_hex8
 
 
 | ====================================================================
@@ -1175,7 +1072,7 @@ _default_handler_49:
 ram_test_fail_data:
     lea     msg_ram_data_fail, %a1
     lea     .rtf_data_vals(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .rtf_data_vals:
     bra     ram_test_fail_common
 
@@ -1184,7 +1081,7 @@ ram_test_fail_allones:
     move.w  #0xFFFF, %d2
     lea     msg_ram_data_fail, %a1
     lea     .rtf_ao_vals(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .rtf_ao_vals:
     bra     ram_test_fail_common
 
@@ -1193,7 +1090,7 @@ ram_test_fail_allzeros:
     move.w  #0x0000, %d2
     lea     msg_ram_data_fail, %a1
     lea     .rtf_az_vals(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .rtf_az_vals:
     bra     ram_test_fail_common
 
@@ -1201,17 +1098,17 @@ ram_test_fail_allzeros:
 ram_test_fail_addr:
     lea     msg_ram_addr_fail, %a1
     lea     .rtf_addr_vals(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .rtf_addr_vals:
     | fall through
 
 | Common: print "exp=XXXX got=XXXX\n" using %d2=expected %d3=actual,
-| then blink.  Stack-free, uses timer_putchar hex output.
+| then blink.  Stack-free, uses duart_putchar_raw hex output.
 ram_test_fail_common:
     | Print expected value (in %d2) as 4 hex chars
     lea     msg_exp, %a1
     lea     .rtf_exp_val(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .rtf_exp_val:
     move.w  %d2, %d4               | save expected
     move.w  %d3, %d5               | save actual
@@ -1220,29 +1117,29 @@ ram_test_fail_common:
     lsr.w   #8, %d0
     andi.b  #0xFF, %d0
     lea     .rtf_exp_hi2(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .rtf_exp_hi2:
     move.b  %d4, %d0
     lea     .rtf_got_label(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .rtf_got_label:
     lea     msg_got, %a1
     lea     .rtf_got_val(%pc), %a6
-    jmp     timer_puts
+    jmp     duart_puts
 .rtf_got_val:
     move.w  %d5, %d0
     lsr.w   #8, %d0
     andi.b  #0xFF, %d0
     lea     .rtf_got_lo(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .rtf_got_lo:
     move.b  %d5, %d0
     lea     .rtf_crlf(%pc), %a6
-    jmp     timer_hex8
+    jmp     duart_hex8
 .rtf_crlf:
     move.b  #0x0A, %d0
     lea     ram_fail_blink(%pc), %a5
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
 | Blink DEBUG_OUT at ~2 Hz forever (RAM test failure)
 ram_fail_blink:
@@ -1257,29 +1154,29 @@ ram_fail_blink:
     dbra    %d1, .rfb_delay
     bra     .rfb_loop
 
-| timer_hex8: send %d0.b as 2 hex chars via timer bitbang
-| Return via jmp (%a6).  Clobbers %d0, %d6.
-timer_hex8:
+| duart_hex8: send %d0.b as 2 hex chars via the DUART.
+| Return via jmp (%a6).  Clobbers %d0, %d1, %d6.
+duart_hex8:
     move.b  %d0, %d6
     lsr.b   #4, %d0
     lea     .uh8_lo(%pc), %a5
-    jmp     timer_hex4
+    jmp     duart_hex4
 .uh8_lo:
     move.b  %d6, %d0
     move.l  %a6, %a5
-    jmp     timer_hex4
+    jmp     duart_hex4
 
-| timer_hex4: send low nibble of %d0 as hex ASCII via timer bitbang
-| Tail-calls timer_putchar; returns via jmp (%a5).  Clobbers %d0.
-timer_hex4:
+| duart_hex4: send low nibble of %d0 as hex ASCII via the DUART.
+| Tail-calls duart_putchar_raw; returns via jmp (%a5).  Clobbers %d0, %d1.
+duart_hex4:
     andi.b  #0x0F, %d0
     cmpi.b  #10, %d0
     blt.s   .uh4_digit
     addi.b  #('A' - 10), %d0
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 .uh4_digit:
     addi.b  #'0', %d0
-    jmp     timer_putchar
+    jmp     duart_putchar_raw
 
 
 | ====================================================================
