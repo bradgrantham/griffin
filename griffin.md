@@ -294,19 +294,14 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 
 Clean everything up for Rev 2, get as much tested as possible
 
-* Prototype 640x240 mono composite - works
-  * slight instability on one FIFO - ODD? READ is sometimes lost, causing FIFO to lag scanout. - try resistors inline 47Ω on FIFO_READ lines at CPLD a la Claude
 * Console
   * What to do about PS/2?  Want some kind of raw SDL/GLFW-like keycode operation for graphical apps.
     * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader
-  
 * SW improvements
   * graphics routines, take "blit" out of splash.cpp
   * clean up syscalls
-  * better console factorization - ring buffer, DUART port 1, console
   * factor out font - should be selectable by enum
   
-
 * Booter & apps
   * Need trap interface to ROM calls
     * get_time, open/close/read/write/etc, sbrk?
@@ -350,6 +345,8 @@ Need a rev1 branch for continuing experiments and main branch under development 
 
 * Any revelations from rev1 feed into rev2
 
+Need a survey and record of bodges
+
 ## Summary
 
 * BQ3285 and a coin cell to be somewhat period-appropriate RTC, or throw on a DS1307 and wave hands
@@ -387,41 +384,26 @@ Need a rev1 branch for continuing experiments and main branch under development 
 
   - 25.175MHz pixel clock, 640x480@60
   - Pair of 7200 shift registers on the bus (may need transceivers because of capacitance?)
+    - Possibly need resistors inline and capacitors to ground based on jumper-to-solderless experiment
+  
   
   * VIDEO CPLD drives timing and sync; pulls bytes from 7200 shift registers
     * Probably pull even then odd bytes to limit macrocells but maybe 16 bits at a time if simplicity requires it)
     * ENABLE bit in register, enable *after* ENGINE
     * VBLANK IRQ
-    * If next 9th bit from 7200s register isn't the reverse of the saved one, set a FIFO_ERROR bit in a register
-      * Saved one needs to be 1 on reset
-    * Can test this without the 7200s; just do junk for what's read
-    * Bonus - if fits, PALETTE register for two 8-bit palette values
-    * Bonus - if fits, BACKGROUND register for an 8-bit palette value
+    * If fits, PALETTE register for two 8-bit palette values
     * Bonus - 2bpp mode at 320x240 - is there room for 4 palette entries?  Need to move to external circuitry for this?
   * ENGINE CPLD drives 16-bit DMA, latches pair of 7200 shift registers
     * base 64K-aligned FB_BASE register for pixel DMA data
     * When one of the 7200 is half-full (/HF signal), DMA burst 32 and latch words from framebuffer RAM
     * ENABLE bit in register - enable *before* VIDEO
-    * toggles 9th bit in 7200 per byte; should be 0 on reset so that video sees toggle as first thing
-    * Is there a sane test without the 7200 in place?
     * Bonus - if it fits, actually stream lines instead of 32 bytes, line up with VIDEO scanout so CPU can change DMA between frames for e.g. double buffering
-    * Bonus - every 80 words (every two lines) stream a word and either write to AUDIO or trigger AUDIO_LE; 13KHz streaming
-  * 7200 is in the mail.  Could ENGINE itself have a byte FIFO big enough to work?
+    * Bonus - every 80 words (every two lines) stream a word and either write to AUDIO or trigger AUDIO_LE; 13KHz streaming - would need to stream a word every two lines in vblank area too
 
 
-- Audio with configurable or maybe just 22S/s rate stereo through another CPLD - smaller? 1504?
-  * Do DMA for audio, much more tractable than video DMA
+- Audio from a FIFO, CPU writes the FIFO (in e.g. VBLANK)
   
-  * Configure as much as the CPLD can do
-  
-  * Get a decent audio DAC, 2x 8 bit - stereo
-  
-  * Could I also ADC?  Like flip a high-order bit on writes so low page is out and high page is in?
-  
-  * Let memory be 8-bit and in rapid succession latch left, right outputs and then read left, right inputs and write to memory
-  
-  * 22KB * stereo = 44KB / sec; 10Hz ISR can memcpy, need 4.4KB buffer so dedicate 8KB to output and 8KB to input, 16KB from end of memory
-    * 4MB - 16KB = 0x3FC000, 8KB counter = 13 bits
+  - Need a single line from VIDEO that is 1/2 the line rate (16KHz)
   
 
 ## Board changes
@@ -498,3 +480,9 @@ m68k NOMMU build - may have bitrotted versus Coldfire
 https://github.com/AcceleratedLinux/accelerated-linux
 
 https://github.com/fifteenhex/m68kjunk
+
+# Rev 3
+
+68030 + 68882 + >=32MB + USB + Ethernet + at least 800x600x8? - make a proper Linux workstation
+
+1 CPLD or 2 CPLDs in concert are a DMA list processor?
