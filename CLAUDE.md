@@ -53,7 +53,25 @@
 
 * If changing Verilog, verify it fits the CPLD (or improves utilization if that's the task) before making other source changes.  If the change doesn't fit there's no point in updating the source.
 * sanity/sanity.bin and firmware/rom.bin should execute in emulator/emulator/build/emulator.
-  * note that UART TX and RX is through a PTY.
+  * note that by default UART TX and RX is through a PTY and video is an SDL window — both are interactive and awkward to drive unattended.
+
+#### Debugging the emulator unattended (Claude Code)
+
+The default pty console + SDL window can't be driven or read by an automated agent, and the emulator otherwise runs forever. Use these `emulator` flags (added for exactly this) to run headless, script I/O, capture output, and self-terminate — no `timeout`/perl wrapper needed:
+
+* `--console-stdio` — DUART Channel A on stdin/stdout instead of a pty, so you can pipe input and capture the console: `printf 'cmd\r' | ./build/emulator --console-stdio ... rom.bin`
+* `--console-in FILE` / `--console-out FILE` — back the DUART console with files. `--console-out` is the **cleanest** capture: it isolates the DUART console in the file, while the separate bit-banged `DEBUG_OUT` soft-UART still goes to stdout (so it won't garble the captured console).
+* `--headless` — don't open the SDL window; the framebuffer is still filled by DMA.
+* `--screenshot FILE` — write the framebuffer to `FILE` (BMP) on exit. Convert to PNG to view: `sips -s format png FILE.bmp --out FILE.png`.
+* `--run-cycles N` — stop after N emulated SYSCLK cycles. This is the reliable way to make a run terminate; output is byte-for-byte deterministic across runs at the same N.
+* `--no-throttle` — skip real-time pacing so a bounded run finishes fast.
+
+Typical unattended invocation from `emulator/`:
+```bash
+printf 'help\r' | ./build/emulator --headless --console-stdio \
+    --no-throttle --run-cycles 100000000 ../firmware/rom.bin
+```
+With no automation flags the emulator behaves exactly as before (pty + SDL window, runs until QUIT/`~.`).
 
 ## General design guidelines
 

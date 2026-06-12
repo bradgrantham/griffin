@@ -43,10 +43,19 @@ using namespace Griffin;
 // read() receives keystrokes.  Works on macOS and Linux.
 struct PTYConsole
 {
-    int master_fd = -1;
+    // The console funnels reads through read_fd and writes through write_fd.
+    // For the default pty both are the master fd; for automation they can be
+    // stdin/stdout or input/output files.
+    int master_fd = -1;             // pty master (owned), -1 if not a pty
+    int read_fd = -1;
+    int write_fd = -1;
+    bool close_read_fd = false;     // close read_fd in dtor (file mode)
+    bool close_write_fd = false;    // close write_fd in dtor (file mode)
     mutable bool have_pending = false;
     mutable uint8_t pending = 0;
+    mutable bool input_eof = false; // read() returned 0 — no more console input
 
+    // Default interactive console: allocate a pty and print the slave path.
     bool open()
     {
         int slave_fd;
@@ -58,6 +67,35 @@ struct PTYConsole
         fprintf(stderr, "Console PTY: %s\n", ttyname(slave_fd));
         close(slave_fd);
         fcntl(master_fd, F_SETFL, O_NONBLOCK);
+        read_fd = master_fd;
+        write_fd = master_fd;
+        return true;
+    }
+
+    // Console on stdin/stdout, for piped automation.
+    bool open_stdio()
+    {
+        read_fd = STDIN_FILENO;
+        write_fd = STDOUT_FILENO;
+        fcntl(read_fd, F_SETFL, O_NONBLOCK);
+        return true;
+    }
+
+    // Console backed by files; either path may be null to disable that side.
+    bool open_files(const char* in_path, const char* out_path)
+    {
+        if(in_path)
+        {
+            read_fd = ::open(in_path, O_RDONLY | O_NONBLOCK);
+            if(read_fd < 0) { perror(in_path); return false; }
+            close_read_fd = true;
+        }
+        if(out_path)
+        {
+            write_fd = ::open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if(write_fd < 0) { perror(out_path); return false; }
+            close_write_fd = true;
+        }
         return true;
     }
 
@@ -66,6 +104,14 @@ struct PTYConsole
         if(master_fd >= 0)
         {
             close(master_fd);
+        }
+        if(close_read_fd && read_fd >= 0)
+        {
+            close(read_fd);
+        }
+        if(close_write_fd && write_fd >= 0)
+        {
+            close(write_fd);
         }
     }
 
@@ -82,17 +128,21 @@ struct PTYConsole
         {
             return true;
         }
-        if(master_fd < 0)
+        if(read_fd < 0)
         {
             return false;
         }
         uint8_t b;
-        ssize_t n = read(master_fd, &b, 1);
+        ssize_t n = read(read_fd, &b, 1);
         if(n == 1)
         {
             pending = b;
             have_pending = true;
             return true;
+        }
+        if(n == 0)
+        {
+            input_eof = true;
         }
         return false;
     }
@@ -106,19 +156,23 @@ struct PTYConsole
             have_pending = false;
             return true;
         }
-        if(master_fd < 0)
+        if(read_fd < 0)
         {
             return false;
         }
-        ssize_t n = read(master_fd, out, 1);
+        ssize_t n = read(read_fd, out, 1);
+        if(n == 0)
+        {
+            input_eof = true;
+        }
         return n == 1;
     }
 
     void send(uint8_t ch) const
     {
-        if(master_fd >= 0)
+        if(write_fd >= 0)
         {
-            write(master_fd, &ch, 1);
+            write(write_fd, &ch, 1);
         }
     }
 };
@@ -1015,6 +1069,7 @@ struct VideoState
     SDL_Renderer *renderer = nullptr;
     SDL_Texture *texture = nullptr;
     bool sdl_ok = false;
+    bool headless = false;          // skip SDL window; framebuffer still filled
     std::vector<uint32_t> framebuffer;
 
     // Per-line framebuffer: the header word's two bytes set this line's palette
@@ -1024,6 +1079,20 @@ struct VideoState
 
     bool init()
     {
+        // The framebuffer and scanline timing must exist even when no SDL
+        // window is created (headless), because the DMA engine still fills it.
+        framebuffer.resize(H_ACTIVE * V_ACTIVE, 0xFF000000u);
+
+        // Seed the timing accumulator
+        frac_accum = LINE_NUM;
+        clock_next_line = frac_accum / LINE_DEN;
+        frac_accum %= LINE_DEN;
+
+        if (headless)
+        {
+            return true;
+        }
+
         if (!SDL_Init(SDL_INIT_VIDEO))
         {
             fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -1055,15 +1124,36 @@ struct VideoState
             SDL_Quit();
             return false;
         }
-        framebuffer.resize(H_ACTIVE * V_ACTIVE, 0xFF000000u);
         sdl_ok = true;
 
-        // Seed the timing accumulator
-        frac_accum = LINE_NUM;
-        clock_next_line = frac_accum / LINE_DEN;
-        frac_accum %= LINE_DEN;
-
         return true;
+    }
+
+    // Save the current framebuffer to a BMP file.  Works headless — wraps the
+    // existing ARGB8888 pixels in a surface, which needs no window or renderer.
+    void dump_framebuffer(const char* path)
+    {
+        if (framebuffer.empty())
+        {
+            return;
+        }
+        SDL_Surface* surface = SDL_CreateSurfaceFrom(
+            H_ACTIVE, V_ACTIVE, SDL_PIXELFORMAT_ARGB8888,
+            framebuffer.data(), H_ACTIVE * sizeof(uint32_t));
+        if (!surface)
+        {
+            fprintf(stderr, "SDL_CreateSurfaceFrom failed: %s\n", SDL_GetError());
+            return;
+        }
+        if (!SDL_SaveBMP(surface, path))
+        {
+            fprintf(stderr, "SDL_SaveBMP(%s) failed: %s\n", path, SDL_GetError());
+        }
+        else
+        {
+            fprintf(stderr, "Wrote screenshot: %s\n", path);
+        }
+        SDL_DestroySurface(surface);
     }
 
     ~VideoState()
@@ -1849,6 +1939,21 @@ public:
         return pty_console.open();
     }
 
+    bool init_console_stdio()
+    {
+        return pty_console.open_stdio();
+    }
+
+    bool init_console_files(const char* in_path, const char* out_path)
+    {
+        return pty_console.open_files(in_path, out_path);
+    }
+
+    bool console_input_eof() const
+    {
+        return pty_console.input_eof;
+    }
+
     bool init_stdin()
     {
         return stdin_console.open();
@@ -1859,9 +1964,15 @@ public:
         return ps2.init();
     }
 
-    bool init_video()
+    bool init_video(bool headless = false)
     {
+        video.headless = headless;
         return video.init();
+    }
+
+    void dump_framebuffer(const char* path)
+    {
+        video.dump_framebuffer(path);
     }
 
     bool open_cf(const char *path, bool read_only)
@@ -2051,7 +2162,19 @@ struct SoftUART
 
 void usage(const char *progname)
 {
-    printf("%s [-m {256,1024,2048,3072,4096}] [--cf disk.img] [--cf-ro disk.img] rom-filename\n", progname);
+    printf("%s [options] rom-filename\n", progname);
+    printf("  -m {256,1024,2048,3072,4096}  RAM size in K\n");
+    printf("  --cf disk.img                 attach CompactFlash image (read/write)\n");
+    printf("  --cf-ro disk.img              attach CompactFlash image (read-only)\n");
+    printf("\n");
+    printf("  Automation (default is interactive pty console + SDL window):\n");
+    printf("  --console-stdio               DUART console on stdin/stdout instead of a pty\n");
+    printf("  --console-in FILE             feed DUART console input from FILE\n");
+    printf("  --console-out FILE            write DUART console output to FILE\n");
+    printf("  --headless                    do not open an SDL video window\n");
+    printf("  --screenshot FILE             write the framebuffer to FILE (BMP) on exit\n");
+    printf("  --run-cycles N                stop after N emulated SYSCLK cycles\n");
+    printf("  --no-throttle                 run as fast as possible (no real-time pacing)\n");
 }
 
 int main(int argc, const char** argv)
@@ -2062,6 +2185,15 @@ int main(int argc, const char** argv)
     auto ram_config = GriffinEmulator::RAM_1_BANK_256K;
     const char *cf_path = nullptr;
     bool cf_ro = false;
+
+    // Automation options (default: interactive pty + SDL window, run forever).
+    enum { CONSOLE_PTY, CONSOLE_STDIO, CONSOLE_FILES } console_mode = CONSOLE_PTY;
+    const char *console_in_path = nullptr;
+    const char *console_out_path = nullptr;
+    const char *screenshot_path = nullptr;
+    bool headless = false;
+    bool no_throttle = false;
+    uint64_t run_cycles = 0; // 0 = unlimited
 
     while((argc > 0) && (argv[0][0] == '-')) {
 	if(strcmp(argv[0], "--cf") == 0) {
@@ -2102,6 +2234,52 @@ int main(int argc, const char** argv)
                 }
             }
             ram_config = ram_configs.at(k);
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--console-stdio") == 0) {
+            console_mode = CONSOLE_STDIO;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--console-in") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--console-in option requires a file path.\n");
+                exit(EXIT_FAILURE);
+            }
+            console_mode = CONSOLE_FILES;
+            console_in_path = argv[1];
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--console-out") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--console-out option requires a file path.\n");
+                exit(EXIT_FAILURE);
+            }
+            console_mode = CONSOLE_FILES;
+            console_out_path = argv[1];
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--headless") == 0) {
+            headless = true;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--screenshot") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--screenshot option requires a file path.\n");
+                exit(EXIT_FAILURE);
+            }
+            screenshot_path = argv[1];
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--no-throttle") == 0) {
+            no_throttle = true;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--run-cycles") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--run-cycles option requires a cycle count.\n");
+                exit(EXIT_FAILURE);
+            }
+            run_cycles = strtoull(argv[1], nullptr, 0);
             argv += 2;
             argc -= 2;
         } else if(
@@ -2157,15 +2335,39 @@ int main(int argc, const char** argv)
     assert(was_read == static_cast<size_t>(size));
     fclose(fp);
 
-    if(!emulator.init_pty())
+    switch (console_mode)
     {
-        fprintf(stderr, "Failed to open PTY for console\n");
-        exit(EXIT_FAILURE);
+        case CONSOLE_STDIO:
+            if(!emulator.init_console_stdio())
+            {
+                fprintf(stderr, "Failed to set up stdio console\n");
+                exit(EXIT_FAILURE);
+            }
+            break;
+        case CONSOLE_FILES:
+            if(!emulator.init_console_files(console_in_path, console_out_path))
+            {
+                exit(EXIT_FAILURE);
+            }
+            break;
+        case CONSOLE_PTY:
+        default:
+            if(!emulator.init_pty())
+            {
+                fprintf(stderr, "Failed to open PTY for console\n");
+                exit(EXIT_FAILURE);
+            }
+            break;
     }
 
-    emulator.init_stdin();
+    // The DEBUG_IN raw-stdin console would fight --console-stdio over stdin, so
+    // only enable it when the DUART console is not already using stdin.
+    if (console_mode != CONSOLE_STDIO)
+    {
+        emulator.init_stdin();
+    }
 
-    if (!emulator.init_video())
+    if (!emulator.init_video(headless))
     {
         fprintf(stderr, "Warning: SDL/Video init failed, display disabled\n");
     }
@@ -2209,7 +2411,12 @@ int main(int argc, const char** argv)
             clock_next_audio += sysclk_per_audio;
         }
 
-        if (++throttle_counter >= THROTTLE_INTERVAL)
+        if (run_cycles != 0 && clock_now >= run_cycles)
+        {
+            running = false;
+        }
+
+        if (!no_throttle && ++throttle_counter >= THROTTLE_INTERVAL)
         {
             emulator.governor.throttle(clock_now);
             throttle_counter = 0;
@@ -2252,6 +2459,18 @@ int main(int argc, const char** argv)
             then = now;
         }
     }
+
+    if (audio)
+    {
+        fclose(audio);
+    }
+
+    if (screenshot_path)
+    {
+        emulator.dump_framebuffer(screenshot_path);
+    }
+
+    fflush(stdout);
 
     return 0;
 }
