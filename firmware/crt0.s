@@ -88,16 +88,29 @@ _start:
     /* ---- Early DUART init: Channel A, 115200 8N1, TX+RX enabled ----
        Pure MMIO; works before RAM/stack.  This is the bootstrap/panic
        console.  Full RX-interrupt + 100 Hz tick setup happens later in
-       C (duart_runtime_init), which must NOT re-touch baud/BRG.
-       The BRG extended-rate select (dummy read of the BRG-test register
-       at DUART_BASE+2) is a TOGGLE, so it is done exactly once, here. */
-    move.b  #0x30, DUART_CRA          | reset transmitter
-    move.b  #0x10, DUART_CRA          | reset MR pointer
-    tst.b   DUART_BASE + 0x2          | enter BRG extended-rate (toggle)
+       C (duart_runtime_init), which must NOT re-touch baud/CSRA/extend.
+
+       XR68C681 115200: CSR code 0x8 selects 115.2k only when that
+       direction's BRG "Extend" bit (X) is set (datasheet Table 9).  The
+       Extend bit is set by a command-register MISC command, which lives in
+       the UPPER nibble (CRn[7:4]); the lower nibble is the Tx/Rx enable
+       field (Table 2/3).  So "Set Rx extend" = misc 1000b = byte 0x80 and
+       "Set Tx extend" = misc 1010b = byte 0xA0 (NOT 0x08/0x0A — those have
+       a null misc nibble and merely disable Tx/Rx, which is why writing
+       them left TX at 2400 = code 8 with X=0; verified 2026-06-18).  Misc
+       commands 1..B act on the writing register's own channel, so both go
+       to CRA for Channel A (Table 10's "CRB" for Tx is a misleading
+       example).  ACR[7]=0 picks Bit Rate Set #1.  All idempotent writes
+       (no read-toggle), so the result is independent of reset history;
+       extend commands precede the final 0x05 enable. */
+    move.b  #0x30, DUART_CRA          | reset transmitter (misc 0011)
+    move.b  #0x10, DUART_CRA          | reset MR pointer (misc 0001)
     move.b  #0x13, DUART_MR1A         | MR1A: 8 data bits, no parity
     move.b  #0x07, DUART_MR1A         | MR2A: 1 stop bit (pointer auto-advanced)
-    move.b  #0x00, DUART_ACR          | BRG set 0
-    move.b  #0x66, DUART_CSRA         | Tx/Rx = 115200 (BRG extended mode)
+    move.b  #0x00, DUART_ACR          | ACR[7]=0 -> BRG Bit Rate Set #1
+    move.b  #0x80, DUART_CRA          | set Ch A Rx BRG extend bit (misc 1000)
+    move.b  #0xA0, DUART_CRA          | set Ch A Tx BRG extend bit (misc 1010)
+    move.b  #0x88, DUART_CSRA         | Rx=8, Tx=8 -> 115.2k (with extend)
     move.b  #0x05, DUART_CRA          | enable TX + RX
 
     /* Hello via hardware UART */

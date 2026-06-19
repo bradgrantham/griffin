@@ -392,10 +392,12 @@ extern "C" void duart_console_enable();
 
 // Runtime DUART setup: RX interrupt + 100 Hz C/T tick.  The baud rate
 // and 8N1 framing (115200) are already programmed by crt0's early
-// duart_early_tx_init, so this must NOT re-touch CSRA/MR/the BRG-test
-// flip-flop (entering BRG test is a TOGGLE — doing it twice would undo
-// the early init).  It only flushes RX, sets the C/T tick, and enables
-// interrupts.
+// duart_early_tx_init, so this must NOT re-touch CSRA/MR or the BRG
+// Extend bits (set for Ch A via CRA 0x80 (Rx) and CRA 0xA0 (Tx) — misc
+// commands in the upper nibble; the CRA values used here —
+// 0x20/0x40/0x05 — don't disturb them, and ACR is written with bit7=0 so
+// Bit Rate Set #1 is preserved).  It only flushes RX, sets the C/T tick,
+// and enables interrupts.
 static void duart_runtime_init()
 {
     debug_printf("DUART: runtime init (RX irq + 100 Hz tick)\n");
