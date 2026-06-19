@@ -15,9 +15,9 @@
     * netlist is in board/board-pcb-rev-1.distilled.txt except with bodges applied as noted in griffin.yml, produced with kicad_netlist_summary_2.py
     * Rev 1 gerbers are in board/board-gerb
   * GLUE Verilog for ATF1508AS in cpld/glue
-  * XR68C681 DUART
+  * What was an AT89S51 in the board rev and in the distilled netlist is now a XR68C681 DUART on a bodged DIP carrier.
   * Makefile for GLUE, VIDEO, ENGINE in cpld
-  * ROM in firmware/{crt0.s,linker.ld,rom.cpp,Makefile} and associated other files in firmware
+  * ROM in firmware/{crt0.s,linker.ld,rom.cpp,Makefile} and associated other files in firmware/
   * bringup ROM in sanity/{sanity.s,linker.ld,Makefile} (not keeping up to date)
   * emulator in emulator/ and the intent is to at least emulate the 68k and MMIO accesses.  TBD whether to emulate the ATF1508's using Verilator.
 

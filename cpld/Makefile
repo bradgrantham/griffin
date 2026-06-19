@@ -31,6 +31,7 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "transport select jtag" \
     -c "jtag newtap tap0 tap -irlen 10 -expected-id 0x0150803f" \
     -c "jtag newtap tap1 tap -irlen 10 -expected-id 0x0150803f" \
+    -c "adapter speed 2000" \
     -c init
 
 .PHONY: all glue video engine clean

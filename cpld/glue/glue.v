@@ -219,7 +219,7 @@ module glue (
             glue_read_data = {7'd0, DEBUG_IN};
         else if (ps2_status_read_select)
             glue_read_data = {1'b0,
-                              ps2_clk_sync[1],   // bit 6: CLK_LIVE
+                              ps2_clk_clean,     // bit 6: CLK_LIVE (debounced)
                               ps2_data_sync[1],  // bit 5: DATA_LIVE
                               rx_frame_err,      // bit 4: RX_FRAME_ERR
                               rx_parity_bit,     // bit 3: RX_PARITY
@@ -276,11 +276,22 @@ module glue (
     // on the ATF1508): 11 falling edges reach 4'd15.  RX loads 4'd5 on
     // the start edge it consumes; TX loads 4'd4 at arm before any edge.
     //
-    // PS2_CLK uses a 3-FF synchronizer so the two oldest registered
-    // samples give a glitch-free falling-edge detect; PS2_DATA uses 2.
+    // PS2_CLK is metastability-synchronized AND glitch-filtered: the line
+    // rings ~120 ns (~2 SYSCLK at 14 MHz) on each edge.  The debounced
+    // level (ps2_clk_clean) only changes after the synchronized clock holds
+    // a level for PS2_CLK_DEBOUNCE consecutive samples (~286 ns at 4),
+    // comfortably above the ringing and far below the ~30 us PS/2 clock low
+    // time.  This restores the implicit debounce the old per-bit BIT_READY
+    // flag had (multiple ring edges collapsed into one CPU-serviced event);
+    // the hardware frame engine would otherwise count every ring edge and
+    // miscount/storm.  PS2_DATA keeps a 2-FF sync — it is sampled at the
+    // (delayed) clean falling edge, well inside its stable window.
     // ----------------------------------------------------------------
-    reg [2:0] ps2_clk_sync;
-    reg [1:0] ps2_data_sync;
+    localparam integer PS2_CLK_DEBOUNCE = 4;       // consecutive samples to flip
+    reg [PS2_CLK_DEBOUNCE:0] ps2_clk_sr;           // [0]=raw; [DEBOUNCE:1]=window
+    reg                      ps2_clk_clean;        // debounced clock level
+    reg                      ps2_clk_clean_d;      // previous, for edge detect
+    reg [1:0]                ps2_data_sync;
 
     reg        rx_active;
     reg        tx_active;
@@ -298,8 +309,10 @@ module glue (
     reg        ps2_ctrl_clk_drive_low;
     reg        ps2_ctrl_data_drive_low;
 
-    wire ps2_clk_falling = ps2_clk_sync[2] & ~ps2_clk_sync[1];
-    wire ps2_data_in     = ps2_data_sync[1];
+    wire ps2_clk_window_high = &ps2_clk_sr[PS2_CLK_DEBOUNCE:1];   // all samples 1
+    wire ps2_clk_window_low  = ~|ps2_clk_sr[PS2_CLK_DEBOUNCE:1];  // all samples 0
+    wire ps2_clk_falling     = ps2_clk_clean_d & ~ps2_clk_clean;  // debounced fall
+    wire ps2_data_in         = ps2_data_sync[1];
 
     wire [3:0] frame_cnt_next = frame_cnt + 4'd1;
     wire       frame_last     = &frame_cnt_next;            // 11th falling edge
@@ -307,7 +320,9 @@ module glue (
 
     always @(posedge SYSCLK) begin
         if (RESET) begin
-            ps2_clk_sync            <= 3'b111;   // idle high
+            ps2_clk_sr              <= {(PS2_CLK_DEBOUNCE+1){1'b1}};  // idle high
+            ps2_clk_clean           <= 1'b1;
+            ps2_clk_clean_d         <= 1'b1;
             ps2_data_sync           <= 2'b11;
             rx_active               <= 1'b0;
             tx_active               <= 1'b0;
@@ -323,8 +338,13 @@ module glue (
             ps2_ctrl_clk_drive_low  <= 1'b0;
             ps2_ctrl_data_drive_low <= 1'b0;
         end else begin
-            ps2_clk_sync  <= {ps2_clk_sync[1:0], PS2_CLK};
+            ps2_clk_sr    <= {ps2_clk_sr[PS2_CLK_DEBOUNCE-1:0], PS2_CLK};
             ps2_data_sync <= {ps2_data_sync[0],  PS2_DATA};
+            if (ps2_clk_window_high)
+                ps2_clk_clean <= 1'b1;
+            else if (ps2_clk_window_low)
+                ps2_clk_clean <= 1'b0;
+            ps2_clk_clean_d <= ps2_clk_clean;
 
             // --- CPU register writes ---
             if (ps2_ctrl_write_select) begin

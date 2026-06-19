@@ -351,6 +351,12 @@ extern "C" uint32_t get_milliseconds()
    return tick_counter * 10U;
 }
 
+extern "C" void delay_milliseconds(uint32_t millis)
+{
+    uint32_t then = get_milliseconds();
+    while(get_milliseconds() - then < millis);
+}
+
 // ---------------------------------------------------------------------------
 // 68681 DUART — Channel A console (115200 8N1)
 // ---------------------------------------------------------------------------
@@ -970,6 +976,40 @@ static void video_test_init()
                  static_cast<unsigned>(VIDEO_CTRL_RB));
 }
 
+void process_ps2_inputs()
+{
+    uint16_t err_data = ps2_get_err_data();
+    auto err_flags = ps2_get_err_flags();
+    if(err_flags)
+    {
+        printf("ps2 err: 0x%02X (%s%s%s) data=0x%04X\n",
+            err_flags,
+            (err_flags & PS2_ERROR_FRAMING) ? "framing " : "",
+            (err_flags & PS2_ERROR_PARITY) ? "parity " : "",
+            (err_flags & PS2_ERROR_OVERRUN) ? "overrun " : "",
+            err_data);
+    }
+
+    bool saw_BAT_code = false;
+    while(ps2_received_ready())
+    {
+        uint8_t byte = ps2_getchar();
+        printf("ps2: 0x%02X\n", byte);
+        if(byte == 0xAA)
+        {
+            saw_BAT_code = true;
+        }
+    }
+    if(saw_BAT_code)
+    {
+        printf("ps2: BAT OK, sending 0xED\n");
+        ps2_send_byte(0xED);
+        printf("ps2: BAT OK, sending 0x00\n");
+        ps2_send_byte(0x00);
+        printf("ps2: BAT OK, sent 0xED, enqueued 0x00\n");
+    }
+}
+
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
@@ -1024,31 +1064,7 @@ int main()
             }
         }
 
-        uint16_t err_data = ps2_get_err_data();
-        auto err_flags = ps2_get_err_flags();
-        if(err_flags)
-        {
-            printf("ps2 err: 0x%02X (%s%s%s) data=0x%04X\n",
-                err_flags,
-                (err_flags & PS2_ERROR_FRAMING) ? "framing " : "",
-                (err_flags & PS2_ERROR_PARITY) ? "parity " : "",
-                (err_flags & PS2_ERROR_OVERRUN) ? "overrun " : "",
-                err_data);
-        }
-
-        if(ps2_received_ready())
-        {
-            uint8_t byte = ps2_getchar();
-            printf("ps2: 0x%02X\n", byte);
-            if(byte == 0xAA)
-            {
-                printf("ps2: BAT OK, sending 0xED\n");
-                ps2_send_byte(0xED);
-                printf("ps2: BAT OK, sending 0x00\n");
-                ps2_send_byte(0x00);
-                printf("ps2: BAT OK, sent 0xED, enqueued 0x00\n");
-            }
-        }
+        process_ps2_inputs();
 
         uint32_t now_ms = get_milliseconds();
         if(now_ms >= last_clock_print_ms + 1000)
