@@ -130,9 +130,10 @@ CPUCLK - 16MHz oscillator, okay to change and reflash GLUE bitfile if clock is c
 
 ## RTC
 
-Completely forgot from the beginning.
+Completely forgot from the beginning (no RTC on Rev 1).
 
-* Full up on pins in GLUE and in IO MCU, so not easy to add now and board space may not be available  
+* Full up on pins in GLUE and in IO MCU, so not easy to add on Rev 1, and board space may not be available
+* **Rev 2:** DS3231 on I²C via the DUART's spare OP/IP pins — costs no GLUE pins and no bus decode.  See the Rev 2 section.
 
 ## Address map
 
@@ -290,36 +291,35 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 
 # Rev 2
 
-## Investigation Plan
+## SW Investigation Plan
 
 Clean everything up for Rev 2, get as much tested as possible
 
 * Console
   * What to do about PS/2?  Want some kind of raw SDL/GLFW-like keycode operation for graphical apps.
-    * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader
+    * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader?
+    * Open "/dev/fb" and text is discarded?
 * SW improvements
   * graphics routines, take "blit" out of splash.cpp
-  * clean up syscalls
   * factor out font - should be selectable by enum
   
 * Booter & apps
   * Need trap interface to ROM calls
     * get_time, open/close/read/write/etc, sbrk?
     * read(0), write(0) for console
-    * open("/dev/ttyS0") for serial
-  * "App" linker.ld, load at 0x1000, crt0.s that just sets up program and rts when done?, syscalls.c that pulls trap
+    * open("/dev/ttyS0") for DUART port 2 (not currently connected - how to test?  bodge another 6-pin?)
+  * to enable loadable apps : configure linker.ld, load at 0x1000, crt0.s that just sets up program and rts when done?, syscalls.c that pulls trap
   * Load file into memory, jump to 0x1000
+  * Have a shell in the ROM
+  * Image viewer app
+  * BASIC (finish up your basic.cpp)
 * Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 12MB on Rev 2
   * buildroot
     * Need kernel config for: serial, PPP, block devices, CF card, ext4, console with PS/2 and bitmap display
       * bonus: fbdev
-    * need serial driver for xr68C681 - no way to test it at the moment
+    * need serial driver for xr68C681
     * need later a console driver hooking together PS/2 and framebuffer
     * need 68010 config, seems like Claude can get on top of that
-
-## Fiddly bits for later
-
-framing error on first codes from keyboard...?
 
 ## Strategy
 
@@ -341,69 +341,103 @@ Maybe an unstructured English definition managed by AI that states machine capab
 
 Verify electrical behavior of all analog components from netlist
 
-Need a rev1 branch for continuing experiments and main branch under development is rev2
+Need a rev1 branch for continuing experiments and "main" branch under development is rev2
 
-* Any revelations from rev1 feed into rev2
+* Any revelations from rev1 feed into "rev2"
 
-Need a survey and record of bodges
+**Rev 1 bodge record**; each entry is either folded into the Rev 2 schematic natively or carried as a design lesson.
+
+| XR68C681P pin | AT89S52 pin or other signal                      |
+| ------------- | ------------------------------------------------ |
+| A1-A4         | P.0                                              |
+| R/WN          | ~WR                                              |
+| DTACKN        | P1.6                                             |
+| D1-D8         | P2.0-P2.7                                        |
+| RxDA          | RXD                                              |
+| TxDA          | TXD                                              |
+| X1/CLK        | on-carrier 3.6864MHz crystal X1 and 33 pF to GND |
+| X2            | on-carrier 3.6864MHz crystal X2 and 33 pF to GND |
+| RESETN        | RST                                              |
+| CSN           | P1.5                                             |
+| IACKN         | VCC                                              |
+| VCC           | VCC                                              |
+| GND           | GND                                              |
+
+PS/2 CLK and DATA keyboard to GLUE 39 and 40
+
+68000 VPA to GLUE 75
+
+68000 A18 to GLUE 81
+
+Bodging between ENGINE and VIDEO and piggybacked 7200s a la video-fifo-wiring.md but also for both R signals add a 10 pF to GND and 47 Ω at VIDEO (so VIDEO -> 47Ω -> {10 pF -> GND, R})
 
 ## Summary
 
-* BQ3285 and a coin cell to be somewhat period-appropriate RTC, or throw on a DS1307 and wave hands
-* 16MHz CPU clock, 16-bit 16MB SDRAM, 16-bit ROM?
-* 16-bit True IDE CF
-* GLUE ATF1508 has same functionality as Rev 1 minus SYSTICK
-
-  * separate DEBUG LED pin bit; use it more liberally from CPU for boot codes or steady-state (video ISR) or double fault (GLUE)
-
-  * boot serial TX - TIMER gives 8-bit counter on CPU clock with stall for determinism
-
-  * PS/2 input
+* **CPU:** 68010 primary (68000 is a drop-in), 14 MHz SYSCLK
+* **RAM:** 16-bit-wide async SRAM, ~12 MB usable.  Two AS6C6416 (4M×16 = 8 MB each, 55 ns) populate 16 MB, but only 0x000000–0xBFFFFF (12 MB) is addressable — the top 4 MB is peripherals.  Decode *simplifies*: GLUE drives 2 chip selects (chip0 = A23==0, chip1 = A23 & ~A22) instead of 4 banks, /UB,/LB from UDS/LDS — frees 2 GLUE pins and drops the bank-population/sizing logic
+* **ROM:** 2× SST39SF040 in PLCC sockets (1 MB, 16-bit, 5V, 70 ns).  Bench-program the first image in a programmer; in-circuit reflash thereafter via a GLUE-asserted ROM-region write strobe (the flasher runs from RAM — these parts are not read-while-write).  Stretch goal: first-program / OTA over JTAG by driving the CPLD-chain boundary scan (CPU held in reset; address from ENGINE, data from VIDEO/GLUE, ~CS + ~WE from GLUE decode)
+* **CF:** 16-bit True IDE PIO, with IOWR gated by AS in GLUE - **Needs glue.v change to support R/nW-AS -> yields IOWR**
+* **RTC:** DS3231 (TCXO) on I²C via the DUART's spare OP/IP pins — off the bus, **zero GLUE logic** (no A17, no RTC chip-select/strobes, no wait states).  5 V like the DUART so no level translation.  SCL = an OP pin (push-pull is fine — the DS3231 doesn't clock-stretch); SDA is open-drain — an OP pin drives the gate of a small N-FET (e.g. 2N7002, SOT-23) — drain on SDA, source to GND — to pull SDA low, and an IP pin reads the line back; 4.7 kΩ pull-ups to 5 V.  Optional INT#/SQW → a DUART change-detect IP for a 1 Hz / alarm IRQ.  (Chose this over the BQ3285, whose 146818-style multiplexed bus would have cost GLUE an A17 input + AS/DS strobe generation + 3 pins.)
+* **GLUE ATF1508** — address decode, ~R/W + write-strobe generation, autovector ~VPA, PS/2 frame engine. 
+  * separate DEBUG LED pin + NPN driver; used liberally from CPU for boot codes / steady-state (video ISR) / double-fault (GLUE)
   
-  * wire up some jumpers to do things like set clock speed
+  * decode ~AUDIO_SEL (read+write qualified) for the AUDIO CPLD and feed nAUDIO_IRQ into the priority encoder at level 2; add a flash write strobe ~ROM_WE (gated by CONFIG.FLASH_WE_EN, default write-protected)
+
+  * net Rev 2 effect — GLUE comes out *smaller* than Rev 1: RAM 4 bank-selects → 2, RTC moves off-chip (DS3231/I²C, no A17), and the only addition is ~ROM_WE
+  
+  * PS/2 keyboard frame engine stays in GLUE (RX one IRQ/byte, TX shifted on the device clock); no mouse port
+  
+  * wire up some jumpers to do things like set clock speed as input pins are available
 
 
-* Serial I/O
+* **Serial I/O**
+  - boot/panic output goes through DUART Channel A (no more bit-bang); pre-DUART failures are LED-blink only
 
-  - boot diagnostic serial output through bitbang like now
-
-  - 68681 on-board: 2 UARTs, interrupt-based PS/2, systick timer
-
-  - FT4232H on-board for JTAG programming and console UART
+  - XR68C681 on-board : Channel A console, Channel B 2nd is peripheral serial port; C/T gives 100 Hz systick (level 5) + a configurable timer ISR.
 
   - pair of pins for 2nd UART for e.g. ESP32 communication, PPP, ... - as high baud rate as system can drive
 
-  - 68681 UART console output routed through the CPLD so boot serial can be switched out and 68681 in and have one output
-  
+  - DUART OP/IP pins bring out RTS/CTS flow control + change-detect GPIO
+
   - configurable timer ISR
-  
+
   - Also bring out I/O pins
+* **FT4232H on-board** (USB-C, SMT): one chip = 4 independent ports over one cable
+  - Channel A (MPSSE) = JTAG to the CPLD chain (program CPLDs + the stretch-goal flash-over-JTAG)
+  - Channel B = console UART ↔ XR68C681 Channel A; Channel C = 2nd UART ↔ XR68C681 Channel B
+  - Channel D = host-driven board control: assert CPU ~RESET / ~HALT (and the flash-bootstrap enable) so the PC can reset/reflash hands-off.  ~RESET/~HALT are open-drain 5V lines with pull-ups — drive them low to assert (open-drain buffer / FET), release otherwise
+  - FT4232H is 3.3V and not 5V-tolerant: 74LVC245 buffers (3.3V rail, 5V-tolerant inputs) on every line that drives *into* the FT4232H (CPLD TDO, DUART TxD, any ~RESET/~HALT readback); 3.3V→5V lines (TCK/TDI/TMS, FTDI TXD) drive direct
+  - support parts: 12 MHz crystal, 3.3V LDO off the 5V rail, decoupling; 93LC56 EEPROM optional (custom USB identity only — not needed for JTAG/UART)
 
 
-* 640x480 VGA through shared SRAM
+* **Video — VGA ** 640x480@60 1bpp through shared SRAM
 
-  - 25.175MHz pixel clock, 640x480@60
+  - 25.175 MHz pixel clock (separate oscillator from the 14 MHz SYSCLK), 640x480@60
   - Pair of 7200 shift registers on the bus (may need transceivers because of capacitance?)
     - Possibly need resistors inline and capacitors to ground based on jumper-to-solderless experiment
   
   
   * VIDEO CPLD drives timing and sync; pulls bytes from 7200 shift registers
-    * Probably pull even then odd bytes to limit macrocells but maybe 16 bits at a time if simplicity requires it)
-    * ENABLE bit in register, enable *after* ENGINE
+    * Pull even then odd bytes to limit macrocells
+    * ENABLE bit in register, enable *after* ENGINE so FIFO is partially filled at VIDEO start
     * VBLANK IRQ
-    * If fits, PALETTE register for two 8-bit palette values
-    * Bonus - 2bpp mode at 320x240 - is there room for 4 palette entries?  Need to move to external circuitry for this?
+    * Palette is in-band: the first word of each scanline carries {fg,bg} (R3G3B2 each) and VIDEO latches it from the FIFO during hblank — there is no PALETTE CPU register
+    * Bonus bitfile addition if it fits : 2bpp 320x240 with 4 palette entries
   * ENGINE CPLD drives 16-bit DMA, latches pair of 7200 shift registers
-    * base 64K-aligned FB_BASE register for pixel DMA data
-    * When one of the 7200 is half-full (/HF signal), DMA burst 32 and latch words from framebuffer RAM
+    * SOURCE_PAGE register = A[23:16] of the 64K-aligned framebuffer base
+    * streams VIDEO_WORDS_PER_LINE words/scanline in ENGINE_WORDS_PER_BURST-word bus bursts paced to HBLANK, latching into the 7200s
     * ENABLE bit in register - enable *before* VIDEO
-    * Bonus - if it fits, actually stream lines instead of 32 bytes, line up with VIDEO scanout so CPU can change DMA between frames for e.g. double buffering
-    * Bonus - every 80 words (every two lines) stream a word and either write to AUDIO or trigger AUDIO_LE; 13KHz streaming - would need to stream a word every two lines in vblank area too
+    * per-line streaming lines up with VIDEO scanout, so the CPU can flip SOURCE_PAGE between frames for double buffering
 
 
-- Audio from a FIFO, CPU writes the FIFO (in e.g. VBLANK)
+* **Audio — dedicated ATF1504AS (PLCC44) at 0xFC0000** (replaces the Rev 1 '373 latch):
+  - 2× 7202 FIFO + 2× 8-bit R2R DAC.  CPU D[15:0] wires straight to the FIFOs (left = D[15:8], right = D[7:0]); the DACs hang off the FIFO outputs
+  - the CPLD only generates ~W (full-word writes to the A17-high alias half), ~R (from a 12-bit sample-rate divider clocked by SYSCLK on a GCLK), and the latched ~HF → nAUDIO_IRQ (level 2)
+  - CPU fills the FIFO in IRQ checking HF; baseline ~15.7 kS/s stereo 8-bit (rate set by the divider).  No mono packing for now
   
-  - Need a single line from VIDEO that is 1/2 the line rate (16KHz)
+  - self-clocked from the AUDIO CPLD's own divider, so no VIDEO line-rate signal is needed
+  
+  - **Need new audio.v and registers in YAML and schematic**
   
 
 ## Board changes
@@ -411,9 +445,12 @@ Need a survey and record of bodges
 - [ ] Schematic (+PCB if necessary)
   - [ ] Need BOM output but some way to select “I have these already”.  
   - [ ] Compile bitfiles for CPLDs and let fitter assign pins in order to let macrocell count be minimized
-  - [ ] Determine a more available ROM technology and design around that.
-    - [ ] Move to 16-bit ROM and commit to OneROM - can it go at 70ns?  I guess I can always wait-state to match if it's slower.
-    - [ ] Would be nice to be able to download a new ROM to it, e.g. flashable OTA
+  - [ ] ROM: 2× SST39SF040 (512K×8, 5V, 70 ns) in PLCC sockets → 1 MB, 16-bit, socketable, in-stock
+    - [ ] GLUE asserts a ROM-region write strobe ~ROM_WE — gated by a new CONFIG.FLASH_WE_EN bit (default off = write-protect) and timed off UDS/LDS; flash /CE←nROM_SELECT, /OE←nR_W, /WE←nROM_WE; word-writes only (shared WE across the two byte-wide chips); flasher stub runs from RAM (not read-while-write)
+    - [ ] image-zero is bench-programmed in a TL866-class programmer; in-circuit reflash thereafter
+    - [ ] stretch: first-program / OTA over JTAG via CPLD-chain boundary scan (no programmer, no socket pull)
+  - [ ] RAM: 2× AS6C6416 (4M×16, 55 ns) → 16 MB populated, 12 MB addressable (0x0–0xBFFFFF); AS6C4008-pair footprint as in-stock fallback.  No SDRAM/PSRAM, no memory controller
+    - [ ] GLUE decodes 2 chip selects (chip0 = A23==0, chip1 = A23 & ~A22) instead of 4 banks; /UB←nUDS, /LB←nLDS, /OE←nR_W — frees 2 GLUE pins, drops bank-sizing
   - [ ] Pullups
     - [ ] JTAG lines
     - [ ] Any CPU lines that may lead or not be driven - 4.7K HALT
@@ -429,24 +466,29 @@ Need a survey and record of bodges
     - [ ] Put all the test points in female header suitable for plugging Dr. Guzman's analyzer into directly - test how it works to have two ganged together and make the headers that shape
   - [ ] Pullups on PS/2 clock and data lines
   - [ ] Make SYSCLK go into a GCLK on CPLDs especially GLUE
-  - [ ] Make audio stereo - one 16-bit write
-    - [ ] If this was wired to ENGINE instead of to the bus then ENGINE could pick up the next sample(s) any time and latch them at the right time (at end of a scanline)
-  - [ ] Wire all CPLDs into the JTAG chain
+  - [ ] Audio: dedicated ATF1504AS (PLCC44) at 0xFC0000 + 2× 7202 FIFO + 2× 8-bit R2R DAC, stereo (one 16-bit write; L=D[15:8], R=D[7:0])
+    - [ ] CPLD generates ~W (full-word writes to A17-high alias), ~R (12-bit SYSCLK divider on a GCLK), and latched ~HF → nAUDIO_IRQ (level 2)
+    - [ ] GLUE: replace write-only ~AUDIO_LE with a read+write-qualified ~AUDIO_SEL routed to the AUDIO CPLD
+  - [ ] Wire all CPLDs into the JTAG chain (GLUE, VIDEO, ENGINE, AUDIO) — also the path for the stretch-goal boundary-scan flashing
   - [x] Put in a driver for a separate DEBUG LED and pin so it doesn’t interfere with debug out voltage level  
-    - [ ] small NPN like a 2N3904 or SOT-23 MMBT3904. Collector to \+5V through the LED and resistor, base to the DEBUG\_OUT pad through a 1K–10K resistor, emitter to ground. The base current is microamps so it won't load the serial line at all, and the LED gets a clean 5V drive independent of your logic levels.
-  - [ ] Put USB-C with PD on the board
-  - [ ] Much more attention to analog components - redesign composite and VGA analog circuitry to be robust
-  - [ ] 68681 DUART replacing AT89S52 (same DIP-40 socket, proper bus drivers, two UARTs, counter/timer, parallel I/O)
-    - [ ] Wire D0-D7, R/~W directly to 68681
+    - [ ] small NPN like a 2N3904 or SOT-23 MMBT3904. Collector to \+5V through the LED and resistor, base to the DEBUG\_OUT pad through a 1K–10K resistor, emitter to ground.
+  - [ ] Put USB-C with two sink resistors on the board - rev1 operates at .84A according to inline USB-C meter
+  - [ ] Much more attention to analog components - redesign the VGA analog circuitry to be robust (composite/NTSC dropped for Rev 2)
+  - [ ] XR68C681 DUART : DIP-40, proper bus drivers, two UARTs, C/T, parallel I/O
+    - [ ] Wire D0-D7, R/~W directly to the XR68C681
     - [ ] Wire A1-A4 to RS1-RS4 (16 registers, 4 select lines)
     - [ ] Wire ~RESET directly from ~RESET net (active-low; AT89S52 RST was active-high via IO_RESET from GLUE — no longer needed)
     - [ ] 3.6864 MHz crystal on X1/X2 for clean baud rate division (replaces MCU Y2 crystal)
     - [ ] Tie ~IACK high (autovectors); frees one GLUE pin
     - [ ] Channel A: terminal UART (replaces DEBUG_OUT/DEBUG_IN bit-bang); Channel B: ESP32 or other network device
-    - [ ] IP0-IP3 have input-change-detect interrupt — could use for PS/2 clock edge detection
-    - [ ] OP0-OP7 directly drive RTS/CTS flow control and other active-low output signals
-    - [ ] PS/2 keyboard/mouse: 68681 IP/OP pins are not bidirectional open-drain, so PS/2 may still need external open-drain buffers or a separate solution
-  - [ ] FT4232H on the board with USB-C: debug console & UART, second UART for whatever, JTAG to CPLDs
+    - [ ] RTS/CTS flow control on both channels: OP0/OP1 + IP0/IP1
+    - [ ] DS3231 RTC on I²C from spare DUART pins: SCL=OP2 (push-pull OK — DS3231 doesn't stretch); SDA driven low by OP3→N-FET gate (2N7002, drain on SDA), read back on IP2; 4.7 kΩ pull-ups to 5 V; optional INT#/SQW→IP change-detect for 1 Hz/alarm IRQ
+    - [ ] leaves OP4-OP7 / IP3+ spare
+  - [ ] FT4232H on the board (USB-C, SMT): 4 ports over one cable — A=JTAG (MPSSE), B=console UART (XR68C681 ChA), C=2nd UART (XR68C681 ChB), D=board control
+    - [ ] Channel D GPIO asserts CPU ~RESET / ~HALT (open-drain onto the 5V pull-up lines) and the flash-bootstrap enable, so the host can reset/reflash the board hands-off
+    - [ ] 74LVC245 level translators (3.3V) on the 5V→3.3V lines into the FT4232H: CPLD TDO, DUART TxD, any ~RESET/~HALT readback; 3.3V→5V lines (TCK/TDI/TMS, FTDI TXD) go direct
+    - [ ] 12 MHz crystal, 3.3V LDO, decoupling; 93LC56 EEPROM optional (custom USB identity only)
+    - [ ] keep a 2×5 JTAG header in parallel for an external programmer / FT4232H isolation
   - [ ] CF card
     - [ ] symbol is junk - redo it.
     - [ ] CF card IOWR should be gated by AS.
@@ -454,21 +496,17 @@ Need a survey and record of bodges
       - [ ] If just the 68000's R/~W passed through, then AS is long gone and data may be junk at time of rise of IOWR.  Fix is to combine them through GLUE.
     - [ ] CF card to 16 bits
     - [ ] CF card schematic has weird pin numbers
+  - [ ] RTC: DS3231 (TCXO) + coin cell on I²C via DUART OP/IP pins (see DUART item) — off the bus, no GLUE logic, no A17, 5 V (no level shift)
 - [ ] PCB only
-  - [ ] SMT parts and footprints? - CF, RAM, 68681?
-  - [ ] CF card DMACK to +5CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
+  - [ ] SMT parts and footprints? - CF, RAM (AS6C6416 TSOP), XR68C681, the AUDIO/ENGINE/VIDEO/GLUE CPLDs
+  - [ ] CF card DMACK to +5, CF card CS0 and CS1 are swapped!!  Fix them for now in Verilog, revisit Verilog and PCB for rev 2
   - [ ] Do more of a hub-and-spoke kind of model, run bus and signals across from CPU, put peripherals above and below with vertical taps
-  - [ ] PS2 footprint and pin mapping was all wrong
+  - [ ] PS2 footprint and pin mapping was all wrong (single keyboard port)
   - [ ] Headphone jack pads - drill partial holes?  
   - [ ] RCA jack retainer feet - drill partial holes?
   - [x] Route A18 to GLUE instead of A6  
   - [x] Wire GLUE VPA back to the CPU in place of ENGINE\_IACK
   - [ ] Decoupling for ROM is too close to the socket if I will be using ZIF - need ZIF footprint
-  - [ ] Crystal and decoupling for MCU is too close to the socket if using ZIF -  need ZIF footprint
-  - [ ] Should design the pin header (like, what part number) into the JTAG, the Adafruit USB-C BOB, and the FTDI serial connector footprint
-  - [ ] Remember that the FT232H breakout should probably be USB-C cable to the rear of the board, so rotate it 90 degrees counter-clockwise and try to leave real estate for it
-    - [ ] Is there a castellated version I could solder on?
-    - [ ] Is there a better version, something smaller with fewer pins?
   - [ ] Flip FTDI - it's 180 degrees so I have to currently put FTDI upside down onto 90-degree header
 
 ## Possible Linux target
