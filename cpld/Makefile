@@ -34,7 +34,7 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "adapter speed 2000" \
     -c init
 
-.PHONY: all glue video engine clean
+.PHONY: all glue video engine audio clean
 
 all: glue video engine
 
@@ -90,6 +90,26 @@ engine/engine.svf: engine/engine.jed
 
 # No flash-engine target yet — ENGINE is not in the JTAG chain on Rev 1
 
+# ------------------------------------------------------------
+# AUDIO (ATF1504AS) — FIT EXPERIMENT, not in `all`
+#
+# Stereo audio peripheral fit test on the smaller 64-macrocell ATF1504.
+# Self-contained (no griffin.generated.vh), no //PIN: lines, and fit with
+# -preassign ignore so the fitter places pins freely to maximize layout.
+# Run on demand: `make audio`, then read audio/audio.fit utilization.
+# ------------------------------------------------------------
+
+audio: audio/audio.svf
+
+audio/audio.edif: audio/audio.v
+	cd audio && $(YOSYS) audio
+
+audio/audio.jed: audio/audio.edif
+	cd audio && $(FITTER) -d ATF1504AS -p PLCC44 audio -preassign ignore -strategy JTAG = on
+
+audio/audio.svf: audio/audio.jed
+	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1504AS $(CURDIR)/audio/audio.jed $(CURDIR)/audio/audio.svf
+
 flash-video: video/video.svf
 	$(OPENOCD_JTAG) \
 	    -c "svf video/video.svf -tap tap0.tap" \
@@ -142,4 +162,5 @@ clean:
 	rm -f glue/glue.edif glue/glue.fit glue/glue.jed glue/glue.vo
 	rm -f video/video.edif video/video.fit video/video.jed video/video.vo
 	rm -f engine/engine.edif engine/engine.fit engine/engine.jed engine/engine.vo
+	rm -f audio/audio.edif audio/audio.fit audio/audio.jed audio/audio.vo
 	rm -f glue/glue-verify.svf video/video-verify.svf
