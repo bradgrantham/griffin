@@ -38,6 +38,11 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
 
 all: glue video engine
 
+# Single source of truth: regenerate ../griffin.generated.vh (a prereq of the
+# .edif targets below) by delegating to the root, keyed to griffin.yml/codegen.py.
+../griffin.generated.%: ../griffin.yml ../codegen.py
+	@$(MAKE) --no-print-directory -C .. codegen
+
 # ------------------------------------------------------------
 # GLUE (ATF1508AS)
 # ------------------------------------------------------------

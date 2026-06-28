@@ -39,6 +39,14 @@ $(LENIENT_C_SOURCES:.c=.o): CFLAGS = $(LENIENT_CFLAGS)
 %.o: %.s
 	$(M68K_GCC) $(ASFLAGS) -c $< -o $@
 
+# Single source of truth: regenerate the YAML-derived includes by delegating to
+# the root (keyed to griffin.yml/codegen.py, so it only runs when they change).
+# The object dependency below recompiles firmware when the headers change.
+../griffin.generated.%: ../griffin.yml ../codegen.py
+	@$(MAKE) --no-print-directory -C .. codegen
+
+$(OBJECTS): ../griffin.generated.h ../griffin.generated.refs.h ../griffin.generated.inc
+
 rom_even.bin rom_odd.bin: rom.bin
 	$(M68K_OBJCOPY) -I binary -O binary --byte=0 --interleave=2 $< rom_even.bin
 	$(M68K_OBJCOPY) -I binary -O binary --byte=1 --interleave=2 $< rom_odd.bin

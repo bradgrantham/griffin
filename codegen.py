@@ -16,7 +16,6 @@ import sys
 import argparse
 import yaml
 from pathlib import Path
-from datetime import date
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +57,7 @@ def fmt_hex(v, min_digits=2):
     return f"0x{v:0{digits}X}"
 
 
-BANNER = f"Generated from griffin.yml by codegen.py on {date.today()} — do not edit"
+BANNER = "Generated from griffin.yml by codegen.py — do not edit (regenerate with: make codegen)"
 
 
 def get_dtack_ws(periph, sysclk_hz):

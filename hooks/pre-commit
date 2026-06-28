@@ -1,0 +1,7 @@
+#!/bin/sh
+# Single-source-of-truth guard: the tracked griffin.yml-derived files must match
+# what codegen produces.  If stale, run 'make codegen' and stage the result.
+make -s check-generated || {
+	echo "ERROR: generated files are stale vs griffin.yml — run 'make codegen' and stage them."
+	exit 1
+}

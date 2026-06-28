@@ -46,15 +46,9 @@ cpld/.config.mk
 # Mac metadata
 .DS_Store
 
-# Generated code
+# Generated code: griffin.generated.* are tracked (single source of truth);
+# only the build stamp stays ignored.
 .codegen.stamp
-griffin.generated.h
-griffin.generated.inc
-griffin.generated.ld
-griffin.generated.mcs51.h
-griffin.generated.vh
-griffin.generated.yml
-griffin.generated.refs.h
 audio.raw
 cf.bin
 duart-setup-115200.mon

@@ -4,6 +4,11 @@ M68K_OBJCOPY = cd $(TOOLCHAIN_DIR) && ./m68k-objcopy
 
 SANITY_DIR = ../sanity
 
+# Single source of truth: regenerate the YAML-derived includes (prereqs of
+# sanity.elf below) by delegating to the root, keyed to griffin.yml/codegen.py.
+../griffin.generated.%: ../griffin.yml ../codegen.py
+	@$(MAKE) --no-print-directory -C .. codegen
+
 sanity_even.bin sanity_odd.bin: sanity.bin
 	$(M68K_OBJCOPY) -I binary -O binary --byte=0 --interleave=2 $(SANITY_DIR)/sanity.bin $(SANITY_DIR)/sanity_even.bin
 	$(M68K_OBJCOPY) -I binary -O binary --byte=1 --interleave=2 $(SANITY_DIR)/sanity.bin $(SANITY_DIR)/sanity_odd.bin
