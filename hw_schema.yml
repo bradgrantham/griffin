@@ -216,6 +216,12 @@ $defs:
         pattern: "^[A-Z][A-Z0-9_]*$"
       description:
         type: string
+      default:
+        description: "Power-on/reset value of this field (integer or 0x/0b literal); codegen ORs bit defaults into the register reset value"
+        oneOf:
+          - type: integer
+          - type: string
+            pattern: "^0[xXbB][0-9a-fA-F_]+$"
       values:
         type: array
         description: Named enumeration of legal values for this field
