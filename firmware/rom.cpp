@@ -765,12 +765,19 @@ static int debug_getline(char *buf, int maxlen)
 // the textport's long-word framebuffer movers stay valid.
 // ---------------------------------------------------------------------------
 
-static constexpr uint32_t FB_ADDR         = 0x0F0000;
-static constexpr uint8_t  FB_PAGE         = FB_ADDR >> 16;  // ENGINE_SOURCE_PAGE = A[23:16]
+// The framebuffer is a 64K-page-aligned allocation from the firmware heap,
+// made once at video init by fb_alloc().  ENGINE_SOURCE_PAGE is page-granular
+// (A[23:16]) and the engine DMAs exactly FB_BYTES from page<<16, so the base
+// must be 64K-aligned and the whole frame (FB_BYTES < 64K) lives in that page.
+// FB_ADDR/FB_PAGE are filled in at runtime — there is no fixed framebuffer
+// address anywhere.
+static uint32_t FB_ADDR                   = 0;
+static uint8_t  FB_PAGE                   = 0;
 static constexpr unsigned FB_LINES        = 480;
 static constexpr unsigned FB_PIXEL_BYTES  = Griffin::VIDEO_PIXEL_BYTES_PER_LINE; // 80
 static constexpr unsigned FB_PIXEL_OFFSET = Griffin::VIDEO_LINE_PIXEL_OFFSET;    // 4
 static constexpr unsigned FB_STRIDE       = Griffin::VIDEO_LINE_STRIDE_BYTES;    // 84
+static constexpr unsigned FB_BYTES        = FB_LINES * FB_STRIDE;                // 40320, < 64K
 static constexpr uint16_t FB_DEFAULT_PALETTE = 0xFF00;  // fg=white, bg=black
 
 // ---------------------------------------------------------------------------
@@ -957,8 +964,31 @@ static void textport_console_enable()
     printf("Memory: %ld KB\n", memory_size);
 }
 
-static void video_test_init()
+// Allocate the framebuffer from the firmware heap, rounded up to a 64K page
+// boundary so its base is a clean ENGINE source page (A[23:16]).  malloc +
+// round-up avoids an aligned_alloc/memalign dependency; it is never freed.
+static void *fb_raw = nullptr;   // retained base of the framebuffer allocation (never freed)
+
+static void fb_alloc()
 {
+    if (FB_ADDR != 0)
+    {
+        return;
+    }
+    fb_raw = malloc(FB_BYTES + 0xFFFFu);
+    if (fb_raw == nullptr)
+    {
+        printf("FB: alloc of %u bytes FAILED -- video disabled\n", FB_BYTES);
+        return;
+    }
+    FB_ADDR = (reinterpret_cast<uint32_t>(fb_raw) + 0xFFFFu) & ~0xFFFFu;
+    FB_PAGE = static_cast<uint8_t>(FB_ADDR >> 16);
+}
+
+static void video_framebuffer_init()
+{
+    fb_alloc();
+
     debug_printf("VIDEO: palette-and-pixels framebuffer at 0x%06lX (%u-byte stride)\n",
                  static_cast<unsigned long>(FB_ADDR),
                  static_cast<unsigned>(FB_STRIDE));
@@ -1029,7 +1059,7 @@ int main()
     duart_console_enable();
     printf("Console on DUART Channel A, 115200 8N1\n");
 
-    video_test_init();
+    video_framebuffer_init();
 
     // FB is now scanning out a checkerboard; bring up the on-screen
     // console (splash + ring replay + memory size).  Everything below

@@ -2181,7 +2181,7 @@ int main(int argc, const char** argv)
     const char *progname = argv[0];
     argc -= 1;
     argv += 1;
-    auto ram_config = GriffinEmulator::RAM_1_BANK_256K;
+    auto ram_config = GriffinEmulator::RAM_4M;   // board is 4MB; firmware places private data high
     const char *cf_path = nullptr;
     bool cf_ro = false;
 

@@ -336,8 +336,12 @@ def write_ld_include(hw: dict, path: Path) -> None:
     w(f"/* {BANNER} */")
     w("")
 
-    # Memory region parameters consumed by the MEMORY block in linker.ld
+    # Memory region parameters consumed by the MEMORY block in linker.ld.
+    # Peripherals that share a linker section (e.g. the four contiguous RAM
+    # banks) are merged into a single ORIGIN/LENGTH spanning from the lowest
+    # base to the highest end, so the linker sees the whole region as one.
     w("/* Memory region origins and lengths for MEMORY { } */")
+    regions = {}  # section name (upper) -> [min_base, max_end], insertion-ordered
     for pname, periph in perifs.items():
         ar = periph.get('address_range')
         if not ar:
@@ -347,11 +351,17 @@ def write_ld_include(hw: dict, path: Path) -> None:
         if not section:
             continue
         base = parse_int(ar['base'])
-        size = parse_int(ar.get('size', 0))
+        end = base + parse_int(ar.get('size', 0))
         sname = section.upper()
-        w(f"{sname}_ORIGIN = {fmt_hex(base, 6)};")
-        if size:
-            w(f"{sname}_LENGTH = {fmt_hex(size, 6)};")
+        if sname in regions:
+            regions[sname][0] = min(regions[sname][0], base)
+            regions[sname][1] = max(regions[sname][1], end)
+        else:
+            regions[sname] = [base, end]
+    for sname, (origin, end) in regions.items():
+        w(f"{sname}_ORIGIN = {fmt_hex(origin, 6)};")
+        if end > origin:
+            w(f"{sname}_LENGTH = {fmt_hex(end - origin, 6)};")
 
     w("")
 

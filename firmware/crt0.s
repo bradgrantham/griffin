@@ -150,7 +150,6 @@ vec_copy:
     cmp.w   #0xAA55, 0x400000 - 2
     bne     test_3m
     move.l  #4096, memory_size
-    move.l  #0x400000, _stack_top
     move.l  #0x400000, %sp
     lea     memory_4m, %a1
     lea     memory_size_done(%pc), %a6
@@ -162,7 +161,6 @@ test_3m:
     cmp.w   #0xAA55, 0x300000 - 2
     bne     test_2m
     move.l  #3072, memory_size
-    move.l  #0x300000, _stack_top
     move.l  #0x300000, %sp
     lea     memory_3m, %a1
     lea     memory_size_done(%pc), %a6
@@ -174,7 +172,6 @@ test_2m:
     cmp.w   #0xAA55, 0x200000 - 2
     bne     test_1m
     move.l  #2048, memory_size
-    move.l  #0x200000, _stack_top
     move.l  #0x200000, %sp
     lea     memory_2m, %a1
     lea     memory_size_done(%pc), %a6
@@ -186,7 +183,6 @@ test_1m:
     cmp.w   #0xAA55, 0x80000 - 2
     beq     set_256k
     move.l  #1024, memory_size
-    move.l  #0x100000, _stack_top
     move.l  #0x100000, %sp
     lea     memory_1m, %a1
     lea     memory_size_done(%pc), %a6
@@ -194,7 +190,6 @@ test_1m:
 
 set_256k:
     move.l  #256, memory_size
-    move.l  #0x40000, _stack_top
     move.l  #0x40000, %sp
     lea     memory_256k, %a1
     lea     memory_size_done(%pc), %a6
@@ -237,7 +232,7 @@ memory_size_done:
     | Then for each address line A1..A17 (word-aligned power-of-2
     | offset), write a different pattern and verify it didn't
     | clobber the baseline (i.e. the two addresses are distinct).
-    lea     _monitor_end, %a0       | baseline: above .monitor_data
+    lea     0x1000, %a0             | baseline: low RAM (app region, free at boot)
     move.w  #0xA500, (%a0)          | baseline pattern
 
     | Walk address lines A1..A17.  Memory_size (in KB) tells us
@@ -247,12 +242,12 @@ memory_size_done:
 .addr_line_loop:
     | Check that offset + baseline is within bank 1
     move.l  %d2, %d3
-    add.l   #_monitor_end, %d3
-    cmp.l   #0x40000, %d3           | bank 1 is 256K
+    add.l   #0x1000, %d3
+    cmp.l   #0x40000, %d3           | test address lines A1..A17 in low RAM
     bge     .addr_test_done
 
     | Write distinct pattern at offset + baseline
-    move.l  #_monitor_end, %a1
+    move.l  #0x1000, %a1
     add.l   %d2, %a1
     move.w  #0x5A01, (%a1)          | different from baseline
 
@@ -296,9 +291,12 @@ data_copy:  cmp.l   %a2, %a1
     bra     data_copy
 data_done:
 
-    /* mark stack */
-    lea     0xFFE00, %a0
-    move.l  #128, %d0
+    /* mark the 512 bytes just below the stack top with 0x55555555.
+       dbra runs count+1 times, so 127 paints exactly 128 longs ending at
+       _stack_top-4 — must not write at _stack_top (one past RAM). */
+    move.l  #_stack_top, %a0
+    sub.l   #0x200, %a0
+    move.l  #127, %d0
 mark_stack:
     move.l  #0x55555555, (%a0)+
     dbra    %d0, mark_stack
@@ -742,7 +740,7 @@ _exc_address_error:
 
 | Illegal Instruction — ~2 Hz toggle (~250ms half-period)
 _exc_illegal_insn:
-    move.l  _stack_top, %sp
+    move.l  #_stack_top, %sp
     lea     msg_illegal_insn, %a1
     lea     .exc_illegal_blink(%pc), %a6
     jmp     duart_puts

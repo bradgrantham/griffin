@@ -164,6 +164,8 @@ peripherals:
       - 14318181: 0
       - 16000000: 0
       - 20000000: 1
+    linker:
+      section: ram
 
   RAM_BANK_3:
     part: "SRAM"
@@ -177,6 +179,8 @@ peripherals:
       - 14318181: 0
       - 16000000: 0
       - 20000000: 1
+    linker:
+      section: ram
 
   RAM_BANK_4:
     part: "SRAM"
@@ -190,6 +194,8 @@ peripherals:
       - 14318181: 0
       - 16000000: 0
       - 20000000: 1
+    linker:
+      section: ram
 
   ENGINE:
     part: ATF1508AS

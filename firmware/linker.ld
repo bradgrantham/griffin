@@ -1,13 +1,21 @@
 ENTRY(_start)
 
-_min_heap = 0x10000;      /* required amount of heap  */
-_min_stack = 0x2000; /* required amount of stack */
+_min_heap = 0x40000;      /* heap holds the 64K-aligned framebuffer + allocations */
+_min_stack = 0x2000;      /* required amount of stack */
 
 INCLUDE ../griffin.generated.ld
 
+/* ---- Firmware RAM map ------------------------------------------------------
+   Low RAM (from _app_base) is the application region; firmware keeps its
+   private data, heap and stack up high so the app load/link base never moves
+   as firmware grows.  The framebuffer is a 64K-aligned heap allocation
+   (fb_alloc), so no fixed framebuffer address is reserved here. */
+_app_base     = 0x001000;   /* loaded apps link and run here (just above vectors) */
+_firmware_ram = 0x380000;   /* firmware .data / .bss / heap base */
+
 MEMORY
 {
-    RAM (rwx) : ORIGIN = RAM_ORIGIN, LENGTH = RAM_LENGTH /* known to be at least 256K but could be 4M */
+    RAM (rwx) : ORIGIN = RAM_ORIGIN, LENGTH = RAM_LENGTH /* 0 .. 4M */
     ROM (rx)  : ORIGIN = ROM_ORIGIN, LENGTH = ROM_LENGTH
 }
 
@@ -16,6 +24,13 @@ SECTIONS
     /* Reserve vector table area in RAM */
     .vectors_ram (NOLOAD) : {
         . = 0x400;
+    } > RAM
+
+    /* Reserve the application region (0x1000 .. _firmware_ram) by advancing the
+       RAM allocation pointer; firmware private RAM then starts up high.  This
+       must be a >RAM section — a bare "." assignment does not move the region. */
+    .app_region (NOLOAD) : {
+        . = ABSOLUTE(_firmware_ram);
     } > RAM
 
     .monitor_data (NOLOAD) : {
