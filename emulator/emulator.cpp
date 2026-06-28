@@ -1701,12 +1701,11 @@ class GriffinEmulator : public moira::Moira
         }
         if (addr >= IO_BASE && addr < IO_BASE + IO_SIZE)
         {
-            unsigned sub = (addr >> 18) & 0x3;
-            if (sub == 1)       // CF: 0xF40000
+            if (addr >= CF_BASE && addr < CF_BASE + CF_SIZE)
             {
                 return CF_DTACK_PENALTY;
             }
-            if (sub == 3)       // AUDIO: 0xFC0000
+            if (addr >= AUDIO_BASE && addr < AUDIO_BASE + AUDIO_SIZE)
             {
                 return AUDIO_DTACK_PENALTY;
             }

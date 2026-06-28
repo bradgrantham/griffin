@@ -766,7 +766,7 @@ static int debug_getline(char *buf, int maxlen)
 // ---------------------------------------------------------------------------
 
 static constexpr uint32_t FB_ADDR         = 0x0F0000;
-static constexpr uint8_t  FB_PAGE         = 0x0F;
+static constexpr uint8_t  FB_PAGE         = FB_ADDR >> 16;  // ENGINE_SOURCE_PAGE = A[23:16]
 static constexpr unsigned FB_LINES        = 480;
 static constexpr unsigned FB_PIXEL_BYTES  = Griffin::VIDEO_PIXEL_BYTES_PER_LINE; // 80
 static constexpr unsigned FB_PIXEL_OFFSET = Griffin::VIDEO_LINE_PIXEL_OFFSET;    // 4
