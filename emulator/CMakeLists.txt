@@ -14,7 +14,22 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL3)
 
+# Single source of truth: regenerate griffin.generated.* from griffin.yml by
+# delegating to the root Makefile (keyed to griffin.yml/codegen.py), the same
+# way the subdir Makefiles do.  emulator.cpp includes ../griffin.generated.h,
+# so the emulator rebuilds whenever the YAML changes.
+set(GRIFFIN_ROOT ${PROJECT_SOURCE_DIR}/..)
+add_custom_command(
+    OUTPUT ${GRIFFIN_ROOT}/griffin.generated.h
+    COMMAND make -C ${GRIFFIN_ROOT} codegen
+    DEPENDS ${GRIFFIN_ROOT}/griffin.yml ${GRIFFIN_ROOT}/codegen.py
+    COMMENT "Regenerating griffin.generated.* from griffin.yml"
+    VERBATIM
+)
+add_custom_target(griffin_generated DEPENDS ${GRIFFIN_ROOT}/griffin.generated.h)
+
 add_executable(emulator emulator.cpp)
+add_dependencies(emulator griffin_generated)
 target_link_libraries(emulator PRIVATE SDL3::SDL3 Moira)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(emulator PRIVATE util)
