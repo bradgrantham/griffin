@@ -1040,6 +1040,8 @@ void process_ps2_inputs()
     }
 }
 
+extern "C" int load_and_run_app(const char *path);   // firmware/loader.cpp
+
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
@@ -1071,6 +1073,11 @@ int main()
     // play_audio(_binary_startup_raw_start, audio_len, 11025);
 
     cf_mount_and_list();
+
+    // Load and run a test application from the CF card.  Hardcoded for now (no
+    // ASCII keyboard yet): "hello" prints via the syscall console and exits,
+    // after which control returns here and the clock loop below resumes.
+    load_and_run_app("hello.bin");
 
     // Per-line palette image viewer.  Names hardcoded for now; runs until a
     // PS/2 key is pressed, then falls through to the normal input loop.
