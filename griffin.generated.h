@@ -295,4 +295,16 @@ static constexpr uint32_t VIDEO_LINE_STRIDE_BYTES = 0x54U;
 static constexpr uint32_t VIDEO_WORDS_PER_LINE = 0x2AU;
 static constexpr uint32_t ENGINE_WORDS_PER_FRAME = 0x4EC0U;
 
+// Syscalls (TRAP #15 ABI; number in d0, args in d1/d2/d3, return in d0)
+static constexpr unsigned SYS_TRAP = 15U;
+static constexpr unsigned SYS_EXIT = 0U;  // Terminate the application and return control to the firmware.
+static constexpr unsigned SYS_WRITE = 1U;  // write(fd in d1, buf in d2, len in d3) to the console or a file.
+static constexpr unsigned SYS_READ = 2U;  // read(fd in d1, buf in d2, len in d3) from the console or a file.
+static constexpr unsigned SYS_OPEN = 3U;  // open(path in d1, flags in d2, mode in d3) and return a file descriptor.
+static constexpr unsigned SYS_CLOSE = 4U;  // close(fd in d1) a previously opened file descriptor.
+static constexpr unsigned SYS_LSEEK = 5U;  // lseek(fd in d1, offset in d2, whence in d3) within an open file.
+static constexpr unsigned SYS_FSTAT = 6U;  // fstat(fd in d1, struct stat in d2) for an open file descriptor.
+static constexpr unsigned SYS_ISATTY = 7U;  // isatty(fd in d1) returns nonzero if the descriptor is a terminal.
+static constexpr unsigned SYS_STAT = 8U;  // stat(path in d1, struct stat in d2) for a named file.
+
 } // namespace Griffin

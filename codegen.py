@@ -235,6 +235,17 @@ def write_c_header(hw: dict, path: Path) -> None:
             w(f"static constexpr uint32_t {cname} = {fmt_hex(v)}U;")
         w("")
 
+    # Syscall ABI numbers (the contract shared by firmware dispatch and apps)
+    sysc = hw.get('syscalls')
+    if sysc:
+        w(f"// Syscalls (TRAP #{sysc['trap']} ABI; number in d0, args in d1/d2/d3, return in d0)")
+        w(f"static constexpr unsigned SYS_TRAP = {sysc['trap']}U;")
+        for call in sysc['calls']:
+            line = f"static constexpr unsigned SYS_{call['name']} = {call['number']}U;"
+            desc = call.get('description')
+            w(f"{line}  // {desc}" if desc else line)
+        w("")
+
     w("} // namespace Griffin")
 
     path.write_text('\n'.join(lines) + '\n')
@@ -316,6 +327,14 @@ def write_asm_include(hw: dict, path: Path) -> None:
         w("| Constants")
         for cname, cval in consts.items():
             w(f".equ {cname}, {fmt_hex(parse_int(cval))}")
+        w("")
+
+    sysc = hw.get('syscalls')
+    if sysc:
+        w("| Syscalls (TRAP-based firmware<->app ABI)")
+        w(f".equ SYS_TRAP, {sysc['trap']}")
+        for call in sysc['calls']:
+            w(f".equ SYS_{call['name']}, {call['number']}")
         w("")
 
     path.write_text('\n'.join(lines) + '\n')

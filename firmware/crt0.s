@@ -54,7 +54,7 @@ vector_table:
     .long   _default_handler_44 | 32-47: TRAP #0-15
     .long   _default_handler_45 | 32-47: TRAP #0-15
     .long   _default_handler_46 | 32-47: TRAP #0-15
-    .long   _default_handler_47 | 32-47: TRAP #0-15
+    .long   _syscall_isr        | 47: TRAP #15 — firmware<->app syscall ABI
 
     .rept 16
     .long   _default_handler | 48-63: Reserved
@@ -841,6 +841,25 @@ _duart_isr:
 _video_isr:
     move.b  #0, VIDEO_CLRINT            | ack VIDEO IRQ
     addq.l  #1, video_frame_counter
+    rte
+
+| ====================================================================
+| _syscall_isr: TRAP #15 — firmware<->application syscall ABI
+|
+| On entry from an app's trap stub: d0 = SYS_* call number, d1/d2/d3 = up
+| to three args (pointers passed as longs).  Marshal them into a C call to
+| sys_dispatch(num, a1, a2, a3); its return (the result, or -errno) is left
+| in d0 for the app.  Per the ABI d0-d3 are caller-clobbered, so there is
+| nothing to preserve; sys_dispatch (C) preserves d2-d7/a2-a6 itself.
+| ====================================================================
+    .global _syscall_isr
+_syscall_isr:
+    move.l  %d3, -(%sp)                | arg3
+    move.l  %d2, -(%sp)                | arg2
+    move.l  %d1, -(%sp)                | arg1
+    move.l  %d0, -(%sp)                | call number
+    jsr     sys_dispatch
+    lea     16(%sp), %sp               | drop the four args (d0 holds the result)
     rte
 
 | _default_handler: catch-all for unexpected exceptions

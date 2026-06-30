@@ -223,3 +223,15 @@
 .equ VIDEO_WORDS_PER_LINE, 0x2A
 .equ ENGINE_WORDS_PER_FRAME, 0x4EC0
 
+| Syscalls (TRAP-based firmware<->app ABI)
+.equ SYS_TRAP, 15
+.equ SYS_EXIT, 0
+.equ SYS_WRITE, 1
+.equ SYS_READ, 2
+.equ SYS_OPEN, 3
+.equ SYS_CLOSE, 4
+.equ SYS_LSEEK, 5
+.equ SYS_FSTAT, 6
+.equ SYS_ISATTY, 7
+.equ SYS_STAT, 8
+

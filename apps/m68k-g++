@@ -1,0 +1,11 @@
+#!/bin/bash
+# Location-independent m68k-g++ wrapper for app builds.  See apps/m68k-gcc.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # .../apps
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REL="$(python3 -c 'import os,sys; print(os.path.relpath(os.getcwd(), sys.argv[1]))' "$REPO_ROOT")"
+exec podman run --platform linux/amd64 --rm \
+    -v "$REPO_ROOT:/work" \
+    -w "/work/$REL" \
+    -u "$(id -u):$(id -g)" \
+    m68k-toolchain \
+    /opt/m68k-unknown-elf/bin/m68k-unknown-elf-g++ "$@"

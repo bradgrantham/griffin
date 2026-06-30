@@ -1,0 +1,16 @@
+#!/bin/bash
+# Location-independent m68k-gcc wrapper for app builds.
+#
+# Unlike firmware/m68k-gcc (which pins the container CWD to firmware/), this
+# mounts the repo root and sets the container CWD to match the caller's CWD, so
+# relative paths (main.c, ../lib/app.ld, ../../griffin.generated.h) resolve the
+# same inside the container as on the host — from any app subdirectory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # .../apps
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REL="$(python3 -c 'import os,sys; print(os.path.relpath(os.getcwd(), sys.argv[1]))' "$REPO_ROOT")"
+exec podman run --platform linux/amd64 --rm \
+    -v "$REPO_ROOT:/work" \
+    -w "/work/$REL" \
+    -u "$(id -u):$(id -g)" \
+    m68k-toolchain \
+    /opt/m68k-unknown-elf/bin/m68k-unknown-elf-gcc "$@"

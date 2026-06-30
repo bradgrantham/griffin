@@ -46,6 +46,10 @@ cpld/.config.mk
 # Mac metadata
 .DS_Store
 
+# App build artifacts (flat binaries + ELFs; .o already covered above)
+apps/*/*.elf
+apps/*/*.bin
+
 # Generated code: griffin.generated.* are tracked (single source of truth);
 # only the build stamp stays ignored.
 .codegen.stamp

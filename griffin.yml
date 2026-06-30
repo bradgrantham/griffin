@@ -498,6 +498,44 @@ constants:
   VIDEO_WORDS_PER_LINE:        42     # stride / 2
   ENGINE_WORDS_PER_FRAME:      20160  # 480 lines * 42 words
 
+# Firmware<->application syscall ABI.  Apps are independent flat binaries linked
+# at _app_base; they reach firmware services with TRAP #15: call number in d0,
+# up to three args in d1/d2/d3 (pointers passed as longs), return value in d0.
+# d0 >= 0 is the result; d0 < 0 is -errno (Linux convention).  d0-d3 are
+# clobbered.  These numbers are the contract shared by the firmware dispatch
+# (sys_dispatch) and the app-side stubs (apps/lib/syscalls.c), which mirror the
+# newlib libgloss functions of the same name in firmware/syscalls.c.
+syscalls:
+  trap: 15
+  calls:
+    - name: EXIT
+      number: 0
+      description: "Terminate the application and return control to the firmware."
+    - name: WRITE
+      number: 1
+      description: "write(fd in d1, buf in d2, len in d3) to the console or a file."
+    - name: READ
+      number: 2
+      description: "read(fd in d1, buf in d2, len in d3) from the console or a file."
+    - name: OPEN
+      number: 3
+      description: "open(path in d1, flags in d2, mode in d3) and return a file descriptor."
+    - name: CLOSE
+      number: 4
+      description: "close(fd in d1) a previously opened file descriptor."
+    - name: LSEEK
+      number: 5
+      description: "lseek(fd in d1, offset in d2, whence in d3) within an open file."
+    - name: FSTAT
+      number: 6
+      description: "fstat(fd in d1, struct stat in d2) for an open file descriptor."
+    - name: ISATTY
+      number: 7
+      description: "isatty(fd in d1) returns nonzero if the descriptor is a terminal."
+    - name: STAT
+      number: 8
+      description: "stat(path in d1, struct stat in d2) for a named file."
+
 bodges:
   - "Reroute A6 pad on U12 to A18"
   - "Route freed GLUE pin 75 to CPU ~VPA"
