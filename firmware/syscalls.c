@@ -196,15 +196,43 @@ int close(int file)
     return 0;
 }
 
-int fstat([[maybe_unused]] int file, [[maybe_unused]] struct stat *st)
+int fstat(int file, struct stat *st)
 {
-    st->st_mode = S_IFCHR;
+    memset(st, 0, sizeof(*st));
+
+    if((file == 0) || (file == 1) || (file == 2))
+    {
+        st->st_mode = S_IFCHR;
+        return 0;
+    }
+
+    int myFile = file - FD_OFFSET;
+    if(myFile < 0 || myFile >= MAX_FILES || !filesOpened[myFile])
+    {
+        errno = EBADF;
+        return -1;
+    }
+#ifdef USE_FATFS
+    // Report a real file so newlib fully buffers the stream instead of
+    // treating it as an interactive character device.
+    st->st_mode = S_IFREG;
+    st->st_size = (off_t)f_size(&files[myFile]);
+    st->st_blksize = 512;
     return 0;
+#else /* not USE_FATFS */
+    errno = EBADF;
+    return -1;
+#endif /* USE_FATFS */
 }
 
-int isatty([[maybe_unused]] int file)
+int isatty(int file)
 {
-    return 1;
+    if((file == 0) || (file == 1) || (file == 2))
+    {
+        return 1;
+    }
+    errno = ENOTTY;
+    return 0;
 }
 
 off_t lseek (int file, off_t ptr, int dir)
@@ -270,16 +298,90 @@ static int console_try_getchar(void)
     return -1;
 }
 
-// Non-blocking: is a console input byte immediately available?  Lets a caller
-// (e.g. a monitor loop that also has background work) avoid read()'s block
-// without needing fcntl/O_NONBLOCK: poll this, and only read(0) when true.
+// --- cooked line discipline (the ICANON/ECHO/ICRNL analog) -----------------
+// Applied after the keyboard/DUART merge so both sources get identical
+// treatment, and only in cooked mode -- raw scancodes pass through untouched.
+// Chars accumulate in cons_line with echo and editing; read() sees nothing
+// until the line is terminated by Enter (CR arrives from both the keyboard
+// and serial terminals; translated to '\n' a la ICRNL) or by Ctrl-D.  Ctrl-D
+// on an empty line makes the next read() return 0 (EOF), so stdio sees a
+// clean end-of-file.  Backspace/DEL rubs out; Ctrl-U kills the line.
+
+#define CONS_LINE_MAX 128
+static char   cons_line[CONS_LINE_MAX];
+static size_t cons_line_len   = 0;   /* chars in the line being edited */
+static size_t cons_line_pos   = 0;   /* consumed by read() so far */
+static int    cons_line_done  = 0;   /* line terminated, ready to drain */
+static int    cons_eof_pending = 0;  /* Ctrl-D on empty line: read() -> 0 */
+
+static void cons_rubout(void)
+{
+    if (cons_line_len > 0)
+    {
+        cons_line_len--;
+        putchar_fn('\b');
+        putchar_fn(' ');
+        putchar_fn('\b');
+    }
+}
+
+// Translate and edit any bytes waiting in the facilities' rings.  Stops as
+// soon as a line is complete so type-ahead past Enter stays queued in the
+// facilities until the current line is drained.
+static void console_cooked_pump(void)
+{
+    int c;
+    while (!cons_line_done && !cons_eof_pending
+           && (c = console_try_getchar()) >= 0)
+    {
+        if (c == '\r')                      /* ICRNL */
+        {
+            c = '\n';
+        }
+
+        if (c == 0x04)                      /* Ctrl-D: VEOF */
+        {
+            if (cons_line_len == 0) { cons_eof_pending = 1; }
+            else                    { cons_line_done = 1; }
+        }
+        else if (c == 0x08 || c == 0x7F)    /* BS/DEL: rub out */
+        {
+            cons_rubout();
+        }
+        else if (c == 0x15)                 /* Ctrl-U: kill line */
+        {
+            while (cons_line_len > 0) { cons_rubout(); }
+        }
+        else if (c == '\n')
+        {
+            putchar_fn('\n');
+            if (cons_line_len < CONS_LINE_MAX)
+            {
+                cons_line[cons_line_len++] = '\n';
+            }
+            cons_line_done = 1;
+        }
+        else if (cons_line_len < CONS_LINE_MAX - 1)
+        {
+            cons_line[cons_line_len++] = (char)c;
+            putchar_fn((uint8_t)c);         /* ECHO */
+        }
+        /* else: line full, drop the char */
+    }
+}
+
+// Non-blocking: will read(0) return immediately?  Pumps the line editor as a
+// side effect, so a poll loop (e.g. rom.cpp's clock loop) echoes and edits
+// live while the user types; true only once a whole line (or EOF, or a raw
+// scancode) is ready.  This is the no-fcntl substitute for O_NONBLOCK.
 bool console_input_ready(void)
 {
     if (griffin_is_raw())
     {
         return keyboard_raw_ready();
     }
-    return keyboard_ready() || duart_received_ready();
+    console_cooked_pump();
+    return cons_line_done || cons_eof_pending;
 }
 
 ssize_t read(int file, void *buf, size_t len)
@@ -287,17 +389,51 @@ ssize_t read(int file, void *buf, size_t len)
     char *ptr = (char *)buf;
     if(file < 0) { errno =  EINVAL; return -1; }
 
+    if(len == 0) { return 0; }
+
     if((file == 0) || (file == 1) || (file == 2)) {
-        for (size_t i = 0; i < len; i++)
+        if (griffin_is_raw())
         {
+            // Raw: block for the first scancode, then return whatever else
+            // is immediately available (POSIX short-read semantics).
             int c;
-            while ((c = console_try_getchar()) < 0)
+            while ((c = console_try_getchar()) < 0) { }
+            size_t n = 0;
+            ptr[n++] = (char)c;
+            while (n < len && (c = console_try_getchar()) >= 0)
             {
-                /* block: spin until a byte is available */
+                ptr[n++] = (char)c;
             }
-            *ptr++ = (char)c;
+            return (ssize_t)n;
         }
-        return (ssize_t)len;
+
+        // Cooked: block until a full line (or EOF) is ready, then return up
+        // to len bytes of it.  Never demands len bytes -- newlib's stdio
+        // refills with large reads and expects a tty to return a short read
+        // at the line boundary.
+        while (!cons_line_done && !cons_eof_pending)
+        {
+            console_cooked_pump();
+        }
+
+        if (cons_line_done)
+        {
+            size_t avail = cons_line_len - cons_line_pos;
+            size_t n = (len < avail) ? len : avail;
+            memcpy(ptr, &cons_line[cons_line_pos], n);
+            cons_line_pos += n;
+            if (cons_line_pos == cons_line_len)
+            {
+                cons_line_len  = 0;
+                cons_line_pos  = 0;
+                cons_line_done = 0;
+            }
+            return (ssize_t)n;
+        }
+
+        /* EOF: deliver it once, then resume normal reads. */
+        cons_eof_pending = 0;
+        return 0;
     } else {
         int myFile = file - FD_OFFSET;
         if(!filesOpened[myFile]) {
