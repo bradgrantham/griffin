@@ -261,25 +261,6 @@ extern "C" void debug_serial_putchar(const char s)
     duart_putchar(static_cast<uint8_t>(s));
 }
 
-#if 0
-/**
- * Bit-bang receive one byte at 115200 via DEBUG_IN + GLUE timer.
- * Returns 0–255 on success, -1 on timeout (~1ms).
- */
-extern "C" int debug_getchar(void);
-
-asm(
-    ".global debug_getchar       \n"
-    "debug_getchar:              \n"
-    "    move.l  %d2, -(%sp)     \n"
-    "    lea     .Lret_gc(%pc), %a5 \n"
-    "    jmp     debug_getchar_asm \n"
-    ".Lret_gc:                   \n"
-    "    move.l  (%sp)+, %d2     \n"
-    "    rts                     \n"
-);
-#endif
-
 extern "C" void panic(const char *s);
 
 asm(
@@ -477,6 +458,32 @@ static void duart_runtime_init()
 
 static FATFS fatfs;
 
+// List one directory of the mounted filesystem.  Shared by the boot-time
+// CF report and the monitor's "ls" command.
+static void list_directory(const char *path)
+{
+    DIR dir;
+    FILINFO fno;
+    FRESULT res = f_opendir(&dir, path);
+    if (res != FR_OK)
+    {
+        printf("ls: cannot open %s (FatFS err %d)\n", path, res);
+        return;
+    }
+    for (;;)
+    {
+        res = f_readdir(&dir, &fno);
+        if (res != FR_OK || fno.fname[0] == '\0')
+        {
+            break;
+        }
+        printf("  %c %7lu  %s\n",
+               (fno.fattrib & AM_DIR) ? 'd' : '-',
+               static_cast<unsigned long>(fno.fsize), fno.fname);
+    }
+    f_closedir(&dir);
+}
+
 static void cf_mount_and_list()
 {
     cf_error err = cf_init();
@@ -541,26 +548,8 @@ static void cf_mount_and_list()
         printf("  %lu KB free / %lu KB total\n", free_kb, total_kb);
     }
 
-    // List root directory
-    DIR dir;
-    FILINFO fno;
-    res = f_opendir(&dir, "/");
-    if (res == FR_OK)
-    {
-        printf("Root directory:\n");
-        for (;;)
-        {
-            res = f_readdir(&dir, &fno);
-            if (res != FR_OK || fno.fname[0] == '\0')
-            {
-                break;
-            }
-            printf("  %c %7lu  %s\n",
-                   (fno.fattrib & AM_DIR) ? 'd' : '-',
-                   static_cast<unsigned long>(fno.fsize), fno.fname);
-        }
-        f_closedir(&dir);
-    }
+    printf("Root directory:\n");
+    list_directory("/");
 }
 
 // NOTE: play_audio() (GLUE timer + AUDIO_DAC sample pacing) was removed
@@ -585,12 +574,8 @@ extern "C" {
 extern long read(int file, void *__buf, size_t len);
 };
 
-#if 0
-// ---------------------------------------------------------------------------
-// Debug monitor — interactive memory read/write via bitbang serial.
-// Runs before DUART init so the DUART can be poked from here.
-// ---------------------------------------------------------------------------
-
+// Parse an ASCII hex string; if end is non-null it receives a pointer to the
+// first non-hex character.  Used by the monitor's ADDR/VAL/LEN arguments.
 static uint32_t parse_hex(const char *s, const char **end)
 {
     uint32_t val = 0;
@@ -621,139 +606,6 @@ static uint32_t parse_hex(const char *s, const char **end)
     }
     return val;
 }
-
-static const char *skip_spaces(const char *s)
-{
-    while (*s == ' ')
-    {
-        s++;
-    }
-    return s;
-}
-
-static int debug_getline(char *buf, int maxlen)
-{
-    int pos = 0;
-    for (;;)
-    {
-        int ch = debug_getchar();
-        if (ch < 0)
-        {
-            continue;
-        }
-        if (ch == '\r' || ch == '\n')
-        {
-            debug_serial_putchar('\r');
-            debug_serial_putchar('\n');
-            buf[pos] = '\0';
-            return pos;
-        }
-        if (ch == 0x7F || ch == 0x08)
-        {
-            if (pos > 0)
-            {
-                pos--;
-                debug_serial_putchar('\b');
-                debug_serial_putchar(' ');
-                debug_serial_putchar('\b');
-            }
-        }
-        else if (pos < maxlen - 1)
-        {
-            buf[pos++] = static_cast<char>(ch);
-            debug_serial_putchar(static_cast<char>(ch));
-        }
-    }
-}
-
-[[maybe_unused]] static void debug_monitor()
-{
-    debug_printf("Monitor: r ADDR [LEN] | w ADDR VAL | q\n");
-
-    char line[80];
-
-    for (;;)
-    {
-        debug_printf("> ");
-        debug_getline(line, sizeof(line));
-
-        const char *p = skip_spaces(line);
-        char cmd = *p;
-
-        if (cmd == '\0')
-        {
-            continue;
-        }
-
-        if (cmd == 'q' || cmd == 'Q')
-        {
-            debug_printf("Continuing boot...\n");
-            return;
-        }
-
-        if (cmd == 'r' || cmd == 'R')
-        {
-            p = skip_spaces(p + 1);
-            const char *end;
-            uint32_t addr = parse_hex(p, &end);
-            p = skip_spaces(end);
-            uint32_t len = 1;
-            if (*p)
-            {
-                len = parse_hex(p, &end);
-            }
-            if (len == 0)
-            {
-                len = 1;
-            }
-            if (len > 256)
-            {
-                len = 256;
-            }
-
-            for (uint32_t off = 0; off < len; off += 16)
-            {
-                uint32_t row = (len - off < 16) ? (len - off) : 16;
-                debug_printf("%06lX:", static_cast<unsigned long>(addr + off));
-                for (uint32_t i = 0; i < row; i++)
-                {
-                    uint8_t val = *reinterpret_cast<volatile uint8_t *>(addr + off + i);
-                    debug_printf(" %02X", val);
-                }
-                debug_printf("\n");
-            }
-        }
-        else if (cmd == 'w' || cmd == 'W')
-        {
-            p = skip_spaces(p + 1);
-            const char *end;
-            uint32_t addr = parse_hex(p, &end);
-            p = skip_spaces(end);
-            if (*p)
-            {
-                uint32_t val = parse_hex(p, &end);
-                *reinterpret_cast<volatile uint8_t *>(addr) = static_cast<uint8_t>(val);
-                debug_printf("%06lX <- %02X\n", static_cast<unsigned long>(addr), val & 0xFF);
-            }
-            else
-            {
-                debug_printf("usage: w ADDR VAL\n");
-            }
-        }
-        else if (cmd == 'h' || cmd == 'H' || cmd == '?')
-        {
-            debug_printf("r ADDR [LEN] - read bytes (LEN default 1, max 256)\n");
-            debug_printf("w ADDR VAL   - write byte\n");
-            debug_printf("q            - quit monitor, continue boot\n");
-        }
-        else
-        {
-            debug_printf("?\n");
-        }
-    }
-}
-
-#endif
 
 // ---------------------------------------------------------------------------
 // Video framebuffer — palette-and-pixels layout, start ENGINE DMA, enable scanout
@@ -1043,11 +895,211 @@ void process_ps2_inputs()
 extern "C" int load_and_run_app(const char *path);   // firmware/loader.cpp
 extern "C" bool console_input_ready(void);           // firmware/syscalls.c
 
+// ---------------------------------------------------------------------------
+// Monitor — the firmware's top-level command loop.
+//
+// Line editing, echo, and CR->NL live in the console layer (syscalls.c), so
+// this just waits for a completed line, tokenizes it, and dispatches.  While
+// idle it polls console_input_ready() -- which pumps the line editor -- and
+// keeps the textport cursor blinking.
+// ---------------------------------------------------------------------------
+
+// Drain one completed line from fd 0.  Only called when console_input_ready()
+// says read() won't block; bytes of a completed line return immediately.
+// read() returning 0 is Ctrl-D EOF, treated as an empty line.
+static size_t monitor_read_line(char *buf, size_t maxlen)
+{
+    size_t n = 0;
+    for (;;)
+    {
+        char c;
+        if (read(0, &c, 1) != 1)
+        {
+            break;
+        }
+        if (c == '\n')
+        {
+            break;
+        }
+        if (n < maxlen - 1)
+        {
+            buf[n++] = c;
+        }
+    }
+    buf[n] = '\0';
+    return n;
+}
+
+// Split line in place on spaces.  Returns the argument count.
+static int split_args(char *line, char *argv[], int max_args)
+{
+    int argc = 0;
+    char *p = line;
+    while (argc < max_args)
+    {
+        while (*p == ' ')
+        {
+            p++;
+        }
+        if (*p == '\0')
+        {
+            break;
+        }
+        argv[argc++] = p;
+        while (*p != '\0' && *p != ' ')
+        {
+            p++;
+        }
+        if (*p == '\0')
+        {
+            break;
+        }
+        *p++ = '\0';
+    }
+    return argc;
+}
+
+static void monitor_help()
+{
+    printf("read  ADDR [LEN]     (rd)  dump LEN bytes (default 1, max 256)\n");
+    printf("write ADDR VAL       (wr)  write byte VAL at ADDR\n");
+    printf("ls [PATH]                  list directory (default /)\n");
+    printf("time                       print time since boot\n");
+    printf("run FILE                   load and run FILE from CF\n");
+    printf("view IMAGE PALETTE         show image until a key is pressed\n");
+    printf("help                 (?)   this text\n");
+}
+
+static void monitor_cmd_read(int argc, char *argv[])
+{
+    if (argc < 2)
+    {
+        printf("usage: read ADDR [LEN]\n");
+        return;
+    }
+    uint32_t addr = parse_hex(argv[1], nullptr);
+    uint32_t len = (argc > 2) ? parse_hex(argv[2], nullptr) : 1;
+    if (len == 0)
+    {
+        len = 1;
+    }
+    if (len > 256)
+    {
+        len = 256;
+    }
+
+    for (uint32_t off = 0; off < len; off += 16)
+    {
+        uint32_t row = (len - off < 16) ? (len - off) : 16;
+        printf("%06lX:", static_cast<unsigned long>(addr + off));
+        for (uint32_t i = 0; i < row; i++)
+        {
+            uint8_t val = *reinterpret_cast<volatile uint8_t *>(addr + off + i);
+            printf(" %02X", val);
+        }
+        printf("\n");
+    }
+}
+
+static void monitor_cmd_write(int argc, char *argv[])
+{
+    if (argc < 3)
+    {
+        printf("usage: write ADDR VAL\n");
+        return;
+    }
+    uint32_t addr = parse_hex(argv[1], nullptr);
+    uint32_t val = parse_hex(argv[2], nullptr);
+    *reinterpret_cast<volatile uint8_t *>(addr) = static_cast<uint8_t>(val);
+    printf("%06lX <- %02X\n", static_cast<unsigned long>(addr),
+           static_cast<unsigned>(val & 0xFF));
+}
+
+static void monitor_cmd_time()
+{
+    uint32_t seconds = get_milliseconds() / 1000;
+    uint32_t ss = seconds % 60;
+    uint32_t mm = (seconds / 60) % 60;
+    uint32_t hh = seconds / 3600;
+    printf("%02ld:%02ld:%02ld since boot\n", hh, mm, ss);
+}
+
+[[noreturn]] static void monitor()
+{
+    char line[80];
+    char *argv[4];
+
+    for (;;)
+    {
+        printf("> ");
+        fflush(stdout);   // prompt has no newline; stdout is line-buffered
+
+        while (!console_input_ready())
+        {
+            gtxt::g_textport.cursor_blink_tick();
+        }
+        monitor_read_line(line, sizeof(line));
+
+        int argc = split_args(line, argv, 4);
+        if (argc == 0)
+        {
+            continue;
+        }
+        const char *cmd = argv[0];
+
+        if (strcmp(cmd, "read") == 0 || strcmp(cmd, "rd") == 0)
+        {
+            monitor_cmd_read(argc, argv);
+        }
+        else if (strcmp(cmd, "write") == 0 || strcmp(cmd, "wr") == 0)
+        {
+            monitor_cmd_write(argc, argv);
+        }
+        else if (strcmp(cmd, "ls") == 0)
+        {
+            list_directory((argc > 1) ? argv[1] : "/");
+        }
+        else if (strcmp(cmd, "time") == 0)
+        {
+            monitor_cmd_time();
+        }
+        else if (strcmp(cmd, "run") == 0)
+        {
+            if (argc < 2)
+            {
+                printf("usage: run FILE\n");
+            }
+            else
+            {
+                int result = load_and_run_app(argv[1]);
+                printf("%s: exited with status %d\n", argv[1], result);
+            }
+        }
+        else if (strcmp(cmd, "view") == 0)
+        {
+            if (argc < 3)
+            {
+                printf("usage: view IMAGE PALETTE\n");
+            }
+            else
+            {
+                view_image(argv[1], argv[2]);
+            }
+        }
+        else if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0)
+        {
+            monitor_help();
+        }
+        else
+        {
+            printf("%s? try \"help\"\n", cmd);
+        }
+    }
+}
+
 int main()
 {
     debug_printf("Firmware Build: %s, GIT %s\n", build_date, build_provenance);
-
-    // debug_monitor();
 
     // The DUART Channel A console was already brought up at 115200 8N1
     // by crt0's early init, so debug_printf above has been going out the
@@ -1075,47 +1127,6 @@ int main()
 
     cf_mount_and_list();
 
-    // Load and run a test application from the CF card.  Hardcoded for now (no
-    // ASCII keyboard yet): "hello" prints via the syscall console and exits,
-    // after which control returns here and the clock loop below resumes.
-    load_and_run_app("hello.bin");
-
-    // Per-line palette image viewer.  Names hardcoded for now; runs until a
-    // PS/2 key is pressed, then falls through to the normal input loop.
-    view_image("oops.bin", "oops-palette.bin");
-
-    printf("Input echo loop (hex) + 1 Hz clock...\n");
-
-    // read(0) blocks, which would stall the clock.  Rather than implement
-    // fcntl/O_NONBLOCK, poll the console layer's non-blocking predicate and
-    // only read(0) when a byte is already waiting -- so read() returns at
-    // once and the loop stays free to tick the clock.  process_ps2_inputs()
-    // is intentionally gone: it drained the same ps2_getchar() queue the
-    // keymap now consumes, so it would steal scancodes from decode.
-    uint32_t last_clock_print_ms = get_milliseconds();
-    for (;;)
-    {
-        gtxt::g_textport.cursor_blink_tick();
-
-        if(console_input_ready())
-        {
-            unsigned char ch;
-            if(read(0, &ch, 1) == 1)
-            {
-                printf("received: 0x%02X '%c'\n", ch,
-                             (ch >= 0x20 && ch < 0x7F) ? ch : '.');
-            }
-        }
-
-        uint32_t now_ms = get_milliseconds();
-        if(now_ms >= last_clock_print_ms + 1000)
-        {
-            uint32_t seconds = now_ms / 1000;
-            uint32_t ss = seconds % 60;
-            uint32_t mm = (seconds / 60) % 60;
-            uint32_t hh = seconds / 3600;
-            printf("%02ld:%02ld:%02ld\n", hh, mm, ss);
-            last_clock_print_ms = now_ms;
-        }
-    }
+    printf("Monitor ready; 'help' for commands\n");
+    monitor();
 }
