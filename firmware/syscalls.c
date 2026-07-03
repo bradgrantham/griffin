@@ -83,9 +83,12 @@ static FIL files[MAX_FILES];    /* starting with fd=3, so fd 3 through 3 + MAX_F
 
 #endif /* USE_FATFS */
 
+#include "keymap.h"
+
 void debug_serial_putchar(uint8_t ch);
 void duart_putchar(uint8_t ch);
 uint8_t duart_getchar(void);
+bool duart_received_ready(void);
 int  textport_vt102_putchar(int c);
 void early_log_push(uint8_t c);
 
@@ -93,7 +96,6 @@ void early_log_push(uint8_t c);
 // console_tee_putchar().  write() never inspects these directly.
 static int console_duart_enabled    = 0;
 static int console_textport_enabled = 0;
-static int console_is_duart         = 0;   // gates blocking read() below
 
 // Internal: emit one byte to every currently-enabled sink.  No newline
 // translation here — translation is the job of console_tee_putchar().
@@ -133,7 +135,6 @@ static void (*putchar_fn)(uint8_t) = console_tee_putchar;
 void duart_console_enable(void)
 {
     console_duart_enabled = 1;
-    console_is_duart      = 1;
 }
 
 // Called by textport_console_enable() (C++) after it has replayed and
@@ -246,6 +247,41 @@ off_t lseek (int file, off_t ptr, int dir)
     }
 }
 
+// Console input policy in one place, the consumer "higher function": merge
+// the keyboard facility (keymap.cpp, PS/2 -> ASCII) with the serial console
+// (DUART).  Each facility owns its own ring.  In raw mode the keyboard hands
+// back scancodes and the DUART is not consulted.  Non-blocking: returns the
+// next byte, or -1 if none is waiting.  Polling this also pumps the keymap
+// (translates any pending scancodes) as a side effect.
+static int console_try_getchar(void)
+{
+    if (griffin_is_raw())
+    {
+        return keyboard_raw_ready() ? (int)keyboard_raw_getchar() : -1;
+    }
+    if (keyboard_ready())
+    {
+        return (int)keyboard_getchar();
+    }
+    if (duart_received_ready())
+    {
+        return (int)duart_getchar();
+    }
+    return -1;
+}
+
+// Non-blocking: is a console input byte immediately available?  Lets a caller
+// (e.g. a monitor loop that also has background work) avoid read()'s block
+// without needing fcntl/O_NONBLOCK: poll this, and only read(0) when true.
+bool console_input_ready(void)
+{
+    if (griffin_is_raw())
+    {
+        return keyboard_raw_ready();
+    }
+    return keyboard_ready() || duart_received_ready();
+}
+
 ssize_t read(int file, void *buf, size_t len)
 {
     char *ptr = (char *)buf;
@@ -254,14 +290,12 @@ ssize_t read(int file, void *buf, size_t len)
     if((file == 0) || (file == 1) || (file == 2)) {
         for (size_t i = 0; i < len; i++)
         {
-            if (console_is_duart)
+            int c;
+            while ((c = console_try_getchar()) < 0)
             {
-                *ptr++ = (char)duart_getchar();
+                /* block: spin until a byte is available */
             }
-            else
-            {
-                *ptr++ = 0;
-            }
+            *ptr++ = (char)c;
         }
         return (ssize_t)len;
     } else {

@@ -1340,7 +1340,9 @@ struct EngineState
 // host->device transmission (TX_DONE).
 // ---------------------------------------------------------------------------
 
-static uint8_t sdl_to_ps2_set2(SDL_Scancode sc)
+// Returns the set-2 make code, with 0xE0-prefixed (extended) keys encoded as
+// 0xE0xx in the high/low bytes.  0 = unmapped.
+static uint16_t sdl_to_ps2_set2(SDL_Scancode sc)
 {
     switch (sc)
     {
@@ -1385,6 +1387,38 @@ static uint8_t sdl_to_ps2_set2(SDL_Scancode sc)
         case SDL_SCANCODE_BACKSPACE: return 0x66;
         case SDL_SCANCODE_ESCAPE:    return 0x76;
         case SDL_SCANCODE_TAB:       return 0x0D;
+
+        case SDL_SCANCODE_LSHIFT:    return 0x12;
+        case SDL_SCANCODE_RSHIFT:    return 0x59;
+        case SDL_SCANCODE_LCTRL:     return 0x14;
+        case SDL_SCANCODE_LALT:      return 0x11;
+        case SDL_SCANCODE_CAPSLOCK:  return 0x58;
+
+        case SDL_SCANCODE_MINUS:        return 0x4E;
+        case SDL_SCANCODE_EQUALS:       return 0x55;
+        case SDL_SCANCODE_LEFTBRACKET:  return 0x54;
+        case SDL_SCANCODE_RIGHTBRACKET: return 0x5B;
+        case SDL_SCANCODE_SEMICOLON:    return 0x4C;
+        case SDL_SCANCODE_APOSTROPHE:   return 0x52;
+        case SDL_SCANCODE_GRAVE:        return 0x0E;
+        case SDL_SCANCODE_COMMA:        return 0x41;
+        case SDL_SCANCODE_PERIOD:       return 0x49;
+        case SDL_SCANCODE_SLASH:        return 0x4A;
+        case SDL_SCANCODE_BACKSLASH:    return 0x5D;
+
+        case SDL_SCANCODE_RCTRL:     return 0xE014;
+        case SDL_SCANCODE_RALT:      return 0xE011;
+        case SDL_SCANCODE_UP:        return 0xE075;
+        case SDL_SCANCODE_DOWN:      return 0xE072;
+        case SDL_SCANCODE_RIGHT:     return 0xE074;
+        case SDL_SCANCODE_LEFT:      return 0xE06B;
+        case SDL_SCANCODE_HOME:      return 0xE06C;
+        case SDL_SCANCODE_END:       return 0xE069;
+        case SDL_SCANCODE_PAGEUP:    return 0xE07D;
+        case SDL_SCANCODE_PAGEDOWN:  return 0xE07A;
+        case SDL_SCANCODE_INSERT:    return 0xE070;
+        case SDL_SCANCODE_DELETE:    return 0xE071;
+
         default: return 0;
     }
 }
@@ -2011,14 +2045,20 @@ public:
                 {
                     continue;
                 }
-                uint8_t code = sdl_to_ps2_set2(ev.key.scancode);
+                uint16_t code = sdl_to_ps2_set2(ev.key.scancode);
                 if (code != 0)
                 {
+                    // Extended keys are 0xE0xx: E0 xx for make, E0 F0 xx
+                    // for break (the E0 prefix precedes the F0).
+                    if ((code & 0xFF00u) == 0xE000u)
+                    {
+                        ps2.enqueue_byte(getClock(), 0xE0);
+                    }
                     if (ev.type == SDL_EVENT_KEY_UP)
                     {
                         ps2.enqueue_byte(getClock(), 0xF0);
                     }
-                    ps2.enqueue_byte(getClock(), code);
+                    ps2.enqueue_byte(getClock(), static_cast<uint8_t>(code & 0xFFu));
                 }
             }
         }

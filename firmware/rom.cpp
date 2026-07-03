@@ -388,7 +388,7 @@ extern "C" uint8_t duart_getchar()
     return ch;
 }
 
-bool duart_received_ready()
+extern "C" bool duart_received_ready()
 {
     return uart_rx_head != uart_rx_tail;
 }
@@ -1041,6 +1041,7 @@ void process_ps2_inputs()
 }
 
 extern "C" int load_and_run_app(const char *path);   // firmware/loader.cpp
+extern "C" bool console_input_ready(void);           // firmware/syscalls.c
 
 int main()
 {
@@ -1083,25 +1084,28 @@ int main()
     // PS/2 key is pressed, then falls through to the normal input loop.
     view_image("oops.bin", "oops-palette.bin");
 
-    printf("Input check loop...\n");
+    printf("Input echo loop (hex) + 1 Hz clock...\n");
 
+    // read(0) blocks, which would stall the clock.  Rather than implement
+    // fcntl/O_NONBLOCK, poll the console layer's non-blocking predicate and
+    // only read(0) when a byte is already waiting -- so read() returns at
+    // once and the loop stays free to tick the clock.  process_ps2_inputs()
+    // is intentionally gone: it drained the same ps2_getchar() queue the
+    // keymap now consumes, so it would steal scancodes from decode.
     uint32_t last_clock_print_ms = get_milliseconds();
     for (;;)
     {
         gtxt::g_textport.cursor_blink_tick();
 
-        if(duart_received_ready())
+        if(console_input_ready())
         {
             unsigned char ch;
-            long result = read(0, &ch, 1);
-            if(result == 1)
+            if(read(0, &ch, 1) == 1)
             {
                 printf("received: 0x%02X '%c'\n", ch,
                              (ch >= 0x20 && ch < 0x7F) ? ch : '.');
             }
         }
-
-        process_ps2_inputs();
 
         uint32_t now_ms = get_milliseconds();
         if(now_ms >= last_clock_print_ms + 1000)
