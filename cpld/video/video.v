@@ -13,7 +13,8 @@
 // entries (fg/bg).
 //
 // Palette-and-pixels: each scanline in memory begins with a 4-byte
-// header — word 0 = {fg, bg} (R3G3B2 each), word 1 = reserved — that
+// header — word 0 = {fg, bg} (R3G3B2 each), word 1 bit 0 = per-line
+// mode select (0 = direct 1bpp, 1 = micro-HAM; see microham.txt) — that
 // ENGINE streams through the FIFO ahead of the 80 pixel bytes.  VIDEO
 // pops the header during hblank, latching fg/bg before the line's
 // pixels, so the per-line palette is carried in-band with the pixel
@@ -128,7 +129,22 @@ module Video
     reg [9:0] h_cnt;
     reg [9:0] v_cnt;
 
-    wire h_last = (h_cnt == H_TOTAL - 10'd1);  // 799
+    // h_last is registered (compare against 798, one cycle early) so
+    // consumers see one signal instead of a 10-bit h_cnt compare —
+    // this keeps the 10 h_cnt bits out of the v_cnt LAB's UIM fan-in.
+    reg h_last;
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            h_last <= 1'b0;
+        end
+        else
+        begin
+            h_last <= (h_cnt == H_TOTAL - 10'd2);
+        end
+    end
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
@@ -198,7 +214,7 @@ module Video
 
     reg [2:0] vsync_sync;
     reg       video_irq_latched;
-    wire      clrint_write = cpu_writing & (A == 5'h01) & ~nLDS;
+    wire      clrint_write;   // assigned below, after the CPU bus decode
     wire      vsync_edge   = vsync_sync[2] ^ vsync_sync[1];
 
     always @(posedge SYSCLK or posedge RESET)
@@ -237,6 +253,10 @@ module Video
     wire cpu_selected = ~nVIDEO_SELECT & ~nAS;
     wire cpu_reading  = cpu_selected & R_nW;
     wire cpu_writing  = cpu_selected & ~R_nW;
+
+    // CLRINT (offset 0x03, A[5:1] = 5'h01) — declared with the VSYNC
+    // interrupt logic above
+    assign clrint_write = cpu_writing & (A == 5'h01) & ~nLDS;
 
     // CTRL register (offset 0x05, A[5:1] = 5'h02)
     reg video_enable;
@@ -292,6 +312,9 @@ module Video
     // CTRL read (offset 0x05, A[5:1] = 5'h02)
     wire ctrl_read = cpu_reading & (A == 5'h02) & ~nLDS;
 
+    // Set by the 9th-bit error detector below
+    reg fifo_error;
+
     wire any_read = ctrl_read;
     wire [15:0] read_data = {13'd0, video_irqenb, fifo_error, video_enable};
 
@@ -316,7 +339,6 @@ module Video
     reg fifo_err_tog;
 
     reg [2:0] err_sync;
-    reg       fifo_error;
     wire      err_edge = err_sync[2] ^ err_sync[1];
 
     always @(posedge SYSCLK or posedge RESET)
@@ -343,33 +365,37 @@ module Video
     // ----------------------------------------------------------------
     // FIFO read logic and pixel shift register (PIXEL_CLK domain)
     //
-    // Read 80 bytes per active line from two FIFOs alternately (EVEN
-    // first, then ODD, then EVEN, ...).  Each byte is 8 pixels (MSB
-    // first).  Only the selected FIFO's nRE is asserted; the other
-    // stays high.  fifo_select toggles after each byte load.
+    // Read 84 bytes per line (4 header + 80 pixel) from two FIFOs
+    // alternately (EVEN first, then ODD, then EVEN, ...).  Each pixel
+    // byte is 8 pixels (MSB first).  Only the selected FIFO's nRE is
+    // asserted; the other stays high.  fifo_select toggles after each
+    // byte load.
     //
-    // Preload: assert nRE at h_cnt == 798 when the next line is
-    // active, so shift_reg is loaded at h_cnt == 799 and the first
-    // pixel is ready at h_cnt == 0.  fifo_select resets to 0 (EVEN)
-    // at the start of each line.
+    // Preload: assert nRE at h_cnt == 766 (via the registered preload
+    // signal) when the next line is active; the 4 header bytes are
+    // read during h 767..799, the first pixel byte is loaded at the
+    // end of h 799, and pixel 0 is in shift_reg[7] during h_cnt == 0.
+    // fifo_select resets to 0 (EVEN) at the start of each line.
     //
-    // Mid-line: nRE is asserted at bit_cnt == 6 (overlapping the
-    // second-to-last pixel of the current byte); data is captured
-    // at bit_cnt == 7, and the new byte's MSB drives the pixel
-    // output starting the next cycle (via current_pixel_reg pipeline).
+    // Mid-line: nRE is asserted at bit position 6 within the byte
+    // (h_cnt[2:0] == 6, overlapping the second-to-last pixel of the
+    // current byte); data is captured at bit position 7, and the new
+    // byte's MSB drives the pixel output starting the next cycle (via
+    // current_pixel_reg pipeline).
     // ----------------------------------------------------------------
 
     reg [7:0] shift_reg;
-    reg [2:0] bit_cnt;
     reg [6:0] byte_cnt;
     reg       fifo_loading;
     reg       fifo_select;    // 0 = EVEN (MSB), 1 = ODD (LSB)
 
     // Palette latched in-band from the FIFO header (PIXEL_CLK domain).
     // byte_cnt 0 = fg (EVEN of header word 0), byte_cnt 1 = bg (ODD of
-    // header word 0); byte_cnt 2,3 = reserved word (consumed, discarded).
+    // header word 0); byte_cnt 2 = mode high byte (ignored), byte_cnt 3
+    // = mode low byte (bit 0 = mode select, see microham.txt).
     reg [7:0] palette_fg;
     reg [7:0] palette_bg;
+    reg       mode_ham;       // header word 1 bit 0: 0 = direct 1bpp, 1 = micro-HAM
 
     // Next line will be active: v_cnt 0..478 -> lines 1..479; v_cnt 524 -> line 0
     wire next_line_active = (v_cnt < V_ACTIVE - 10'd1) | (v_cnt == V_TOTAL - 10'd1);
@@ -378,14 +404,46 @@ module Video
     // the pixel-only design).  The extra 32 px = the 4 header bytes at 8 px
     // each, read during hblank, so the first PIXEL byte still loads at h 799
     // and drives h 0 exactly as before.
-    wire preload = (h_cnt == H_TOTAL - 10'd34) & next_line_active & frame_active;
+    //
+    // preload is registered (computed one cycle early, at h 765) so the
+    // FIFO block's ~13 registers see a single-literal enable instead of
+    // each replicating the h_cnt compare and next_line_active product
+    // terms — that duplication alone overflowed the CPLD.
+    reg preload;
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            preload <= 1'b0;
+        end
+        else
+        begin
+            preload <= (h_cnt == H_TOTAL - 10'd35) & next_line_active & frame_active;
+        end
+    end
+
+    // Sticky flag: a preload has occurred since reset, so the pixel
+    // shifter is (or has been) running.  See the shift condition below.
+    reg line_run;
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            line_run <= 1'b0;
+        end
+        else
+        begin
+            line_run <= line_run | preload;
+        end
+    end
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
         if (RESET)
         begin
             shift_reg      <= 8'd0;
-            bit_cnt        <= 3'd0;
             byte_cnt       <= 7'd0;
             nFIFO_RE_EVEN  <= 1'b1;
             nFIFO_RE_ODD   <= 1'b1;
@@ -395,6 +453,7 @@ module Video
             fifo_err_tog   <= 1'b0;
             palette_fg     <= 8'hFF;
             palette_bg     <= 8'h00;
+            mode_ham       <= 1'b0;
         end
         else if (preload)
         begin
@@ -403,7 +462,6 @@ module Video
             fifo_loading   <= 1'b1;
             fifo_select    <= 1'b0;
             byte_cnt       <= 7'd0;
-            bit_cnt        <= 3'd0;
         end
         else if (fifo_loading)
         begin
@@ -412,7 +470,6 @@ module Video
             nFIFO_RE_ODD   <= 1'b1;
             fifo_loading   <= 1'b0;
             byte_cnt       <= byte_cnt + 7'd1;
-            bit_cnt        <= 3'd0;
             fifo_select    <= ~fifo_select;
             if (~fifo_select & (FIFO_Q8 == saved_9th_bit))
             begin
@@ -431,17 +488,34 @@ module Video
             begin
                 palette_bg <= FIFO_Q;
             end
+            if (byte_cnt == 7'd3)
+            begin
+                mode_ham <= FIFO_Q[0];
+            end
         end
-        else if (byte_cnt > 7'd0 & byte_cnt <= BYTES_PER_LINE)
+        // The original shift condition 0 < byte_cnt <= 84 is true from
+        // the first preload after reset onward (byte_cnt only returns
+        // to 0 at a preload, with fifo_loading set), so the single
+        // sticky line_run literal replaces a 7-product byte_cnt != 0
+        // guard that was replicated into every shift-register bit.
+        // Likewise byte_cnt < 84 reduces to
+        // ~&{byte_cnt[6],byte_cnt[4],byte_cnt[2]} (84 = 7'b1010100; no
+        // smaller value has all three bits set).  ABC can't derive
+        // these range invariants, so the cheap forms are spelled out —
+        // the CPLD can't spare the product terms.
+        else if (line_run)
         begin
             shift_reg <= {shift_reg[6:0], 1'b0};
-            if (bit_cnt == 3'd6 & byte_cnt < BYTES_PER_LINE)
+            // Bit position within the byte is h_cnt[2:0]: the preload
+            // at h 765/766 puts byte boundaries at h == 0 (mod 8), and
+            // H_TOTAL (800) is a multiple of 8, so a separate bit_cnt
+            // register is redundant.
+            if (h_cnt[2:0] == 3'd6 & ~(byte_cnt[6] & byte_cnt[4] & byte_cnt[2]))
             begin
                 nFIFO_RE_EVEN <= fifo_select;
                 nFIFO_RE_ODD  <= ~fifo_select;
                 fifo_loading  <= 1'b1;
             end
-            bit_cnt <= bit_cnt + 3'd1;
         end
         else
         begin
@@ -454,11 +528,11 @@ module Video
     // ----------------------------------------------------------------
     // VGA color output (PIXEL_CLK domain)
     //
-    // Pipeline current_pixel and active_video through one FF stage
-    // before the color output FFs.  This limits each color FF's
-    // fan-in to 4 signals (current_pixel_reg, active_video_reg,
-    // palette_fg[bit], palette_bg[bit]) — well under the ATF1508's
-    // 40-signal per-LAB limit.
+    // Pipeline current_pixel and active_video through one FF stage;
+    // the micro-HAM decoder below turns those into the ham_held color
+    // register (both modes), and each VGA output FF reads a single
+    // ham_held bit — fan-in 1, far under the ATF1508's 40-signal
+    // per-LAB limit.
     // ----------------------------------------------------------------
 
     wire current_pixel = shift_reg[7];
@@ -480,7 +554,103 @@ module Video
         end
     end
 
-    wire [7:0] pixel_color = current_pixel_reg ? palette_fg : palette_bg;
+    // ----------------------------------------------------------------
+    // Micro-HAM decoder (mode 1, see microham.txt) — PIXEL_CLK domain
+    //
+    // Consumes current_pixel_reg one bit per pixel clock during active
+    // video (same pipeline stage as the mode-0 display path, so mode 0
+    // is untouched).  Bits parse as 2- or 4-bit codes that modify an
+    // 8-bit held R3G3B2 color:
+    //   0_p    : held <- palette entry p (1 = fg, 0 = bg)
+    //   10_g_r : held green <- ggg, held red <- rrr
+    //   11_g_b : held green <- ggg, held blue <- bb
+    // Serial decode with no lookahead: the updated held color appears
+    // on the pixel after its code's last bit; pixels within a code
+    // show the previous held color.  Between lines the state resets
+    // and held tracks palette_fg, so each line starts with held = fg
+    // (no state carries across lines).
+    //
+    // ham_held doubles as the display color register for BOTH modes:
+    // in mode 0 the ham_lp enable is forced on every cycle, so held
+    // loads (px ? fg : bg) each pixel — direct 1bpp is just a HAM
+    // "0_p" load every pixel.  The VGA output FFs then read only
+    // ham_held (fan-in 1 per bit), and palette fg/bg fan into a
+    // single LAB instead of three.  This adds one pipeline stage in
+    // both modes (whole image shifts 1 px within the porches — sync
+    // is unaffected) and the blanking-region color becomes fg rather
+    // than bg (held tracks fg between lines, per the spec's
+    // held <- fg line init).
+    //
+    // The parse state is one-hot registered write-enables (ham_lp,
+    // ham_t, ham_g, ham_rb_r, ham_rb_b) rather than a binary state
+    // register: each ham_held bit then sees only single-literal
+    // enables, so its hold term is one product and the whole bit fits
+    // in a macrocell's 5 product terms with no foldback expanders and
+    // no mode_ham literal in the datapath.  (A binary-coded state
+    // register overflowed the held bits' product terms into ~32 extra
+    // foldbacks; a separate held register + output mux blew LAB
+    // fan-in; both failed grouping.)
+    // ----------------------------------------------------------------
+
+    reg [7:0] ham_held;
+    reg       ham_lp;     // load palette color: every cycle in mode 0, or p of 0_p
+    reg       ham_t;      // this cycle's bit is the second bit of a 1x code
+    reg       ham_g;      // this cycle's bit is g of 10_g_r / 11_g_b
+    reg       ham_rb_r;   // this cycle's bit is r of 10_g_r
+    reg       ham_rb_b;   // this cycle's bit is b of 11_g_b
+    reg       ham_type;   // latched second code bit: 0 = 10_g_r, 1 = 11_g_b
+
+    wire act = active_video_reg;
+    wire px  = current_pixel_reg;
+
+    // In mode 0, ham_lp is constantly 1, so ham_first is constantly 0
+    // and the ham_t/g/rb enables can never fire — the parser is inert.
+    wire ham_first = ~ham_lp & ~ham_t & ~ham_g & ~ham_rb_r & ~ham_rb_b;
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            ham_lp   <= 1'b0;
+            ham_t    <= 1'b0;
+            ham_g    <= 1'b0;
+            ham_rb_r <= 1'b0;
+            ham_rb_b <= 1'b0;
+            ham_type <= 1'b0;
+        end
+        else
+        begin
+            ham_lp   <= ~mode_ham | (act & ham_first & ~px);
+            ham_t    <= act & ham_first & px;
+            ham_g    <= act & ham_t;
+            ham_rb_r <= act & ham_g & ~ham_type;   // ham_type latched entering ham_g
+            ham_rb_b <= act & ham_g & ham_type;
+            ham_type <= ham_t ? px : ham_type;
+        end
+    end
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            ham_held <= 8'd0;
+        end
+        else
+        begin
+            ham_held[7:5] <= ~act     ? palette_fg[7:5] :
+                             ham_lp   ? (px ? palette_fg[7:5] : palette_bg[7:5]) :
+                             ham_rb_r ? {3{px}} :
+                                        ham_held[7:5];
+            ham_held[4:2] <= ~act     ? palette_fg[4:2] :
+                             ham_lp   ? (px ? palette_fg[4:2] : palette_bg[4:2]) :
+                             ham_g    ? {3{px}} :
+                                        ham_held[4:2];
+            ham_held[1:0] <= ~act     ? palette_fg[1:0] :
+                             ham_lp   ? (px ? palette_fg[1:0] : palette_bg[1:0]) :
+                             ham_rb_b ? {2{px}} :
+                                        ham_held[1:0];
+        end
+    end
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
@@ -497,14 +667,14 @@ module Video
         end
         else
         begin
-            VGA_R2 <= pixel_color[7];
-            VGA_R1 <= pixel_color[6];
-            VGA_R0 <= pixel_color[5];
-            VGA_G2 <= pixel_color[4];
-            VGA_G1 <= pixel_color[3];
-            VGA_G0 <= pixel_color[2];
-            VGA_B1 <= pixel_color[1];
-            VGA_B0 <= pixel_color[0];
+            VGA_R2 <= ham_held[7];
+            VGA_R1 <= ham_held[6];
+            VGA_R0 <= ham_held[5];
+            VGA_G2 <= ham_held[4];
+            VGA_G1 <= ham_held[3];
+            VGA_G0 <= ham_held[2];
+            VGA_B1 <= ham_held[1];
+            VGA_B0 <= ham_held[0];
         end
     end
 
