@@ -1562,10 +1562,12 @@ struct ClockGovernor
 
 class GriffinEmulator : public moira::Moira
 {
-    mutable std::vector<uint8_t> RAM_bank1;
-    mutable std::vector<uint8_t> RAM_bank2;
-    mutable std::vector<uint8_t> RAM_bank3;
-    mutable std::vector<uint8_t> RAM_bank4;
+    // Fully-populated 8MB RAM (8x AS6C8016, one contiguous region from 0).
+    static_assert(RAM_BANK_1_BASE == 0);
+    static_assert(RAM_BANK_1_SIZE + RAM_BANK_2_SIZE + RAM_BANK_3_SIZE + RAM_BANK_4_SIZE +
+                  RAM_BANK_5_SIZE + RAM_BANK_6_SIZE + RAM_BANK_7_SIZE + RAM_BANK_8_SIZE ==
+                  RAM_TOTAL_SIZE);
+    mutable std::vector<uint8_t> RAM = std::vector<uint8_t>(RAM_TOTAL_SIZE, 0);
     mutable std::array<uint8_t, ROM_SIZE> ROM{};
     mutable int debug_out_latch = 0;
     mutable bool ROMoverlay = true;
@@ -1758,21 +1760,9 @@ class GriffinEmulator : public moira::Moira
 
     uint8_t peek_ram8(uint32_t addr) const
     {
-        if (RAM_BANK_1.contains(addr) && !RAM_bank1.empty())
+        if (addr < RAM_TOTAL_SIZE)
         {
-            return RAM_bank1[RAM_BANK_1.offset(addr) % RAM_bank1.size()];
-        }
-        if (RAM_BANK_2.contains(addr) && !RAM_bank2.empty())
-        {
-            return RAM_bank2[RAM_BANK_2.offset(addr) % RAM_bank2.size()];
-        }
-        if (RAM_BANK_3.contains(addr) && !RAM_bank3.empty())
-        {
-            return RAM_bank3[RAM_BANK_3.offset(addr) % RAM_bank3.size()];
-        }
-        if (RAM_BANK_4.contains(addr) && !RAM_bank4.empty())
-        {
-            return RAM_bank4[RAM_BANK_4.offset(addr) % RAM_bank4.size()];
+            return RAM[addr];
         }
         return 0;
     }
@@ -1783,31 +1773,12 @@ public:
     bool exit_requested = false;
     ClockGovernor governor;
 
-    enum RAMConfig {RAM_1_BANK_256K, RAM_1M, RAM_2M, RAM_3M, RAM_4M };
-
     uint8_t GetAudioDACValue() const
     {
         return dac_value;
     }
 
-    GriffinEmulator(RAMConfig ram_config)
-    {
-        switch(ram_config)
-        {
-            case RAM_1_BANK_256K:
-                RAM_bank1.resize(256 * 1024, 0);
-                break;
-            case RAM_4M:
-                RAM_bank4.resize(1024 * 1024, 0);
-            case RAM_3M:
-                RAM_bank3.resize(1024 * 1024, 0);
-            case RAM_2M:
-                RAM_bank2.resize(1024 * 1024, 0);
-            case RAM_1M:
-                RAM_bank1.resize(1024 * 1024, 0);
-                break;
-        }
-    }
+    GriffinEmulator() = default;
 
     uint8_t read8(uint32_t addr) const override
     {
@@ -1815,30 +1786,8 @@ public:
         if(debug & DEBUG_BUS) { printf("read of uint8_t at %06X\n", addr); }
         if (ROMoverlay && (addr < ROM_SIZE)) {
             return ROM[addr];
-        } else if (RAM_BANK_1.contains(addr)) {
-            if(RAM_bank1.size() == 0) {
-                return 0;
-            } else {
-                return RAM_bank1[RAM_BANK_1.offset(addr) % RAM_bank1.size()];
-            }
-        } else if (RAM_BANK_2.contains(addr)) {
-            if(RAM_bank2.size() == 0) {
-                return 0;
-            } else {
-                return RAM_bank2[RAM_BANK_2.offset(addr) % RAM_bank2.size()];
-            }
-        } else if (RAM_BANK_3.contains(addr)) {
-            if(RAM_bank3.size() == 0) {
-                return 0;
-            } else {
-                return RAM_bank3[RAM_BANK_3.offset(addr) % RAM_bank3.size()];
-            }
-        } else if (RAM_BANK_4.contains(addr)) {
-            if(RAM_bank4.size() == 0) {
-                return 0;
-            } else {
-                return RAM_bank4[RAM_BANK_4.offset(addr) % RAM_bank4.size()];
-            }
+        } else if (addr < RAM_TOTAL_SIZE) {
+            return RAM[addr];
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return ROM[(addr - ROM_BASE) % ROM_SIZE];
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
@@ -1859,14 +1808,8 @@ public:
         if(debug & DEBUG_BUS) { printf("read of uint16_t at %06X\n", addr); }
         if (ROMoverlay && (addr < ROM_SIZE)) {
             return (ROM[addr] << 8) | ROM[addr + 1];
-        } else if (RAM_BANK_1.contains(addr)) {
-            return (read8(addr) << 8) | read8(addr + 1);
-        } else if (RAM_BANK_2.contains(addr)) {
-            return (read8(addr) << 8) | read8(addr + 1);
-        } else if (RAM_BANK_3.contains(addr)) {
-            return (read8(addr) << 8) | read8(addr + 1);
-        } else if (RAM_BANK_4.contains(addr)) {
-            return (read8(addr) << 8) | read8(addr + 1);
+        } else if (addr < RAM_TOTAL_SIZE) {
+            return (RAM[addr] << 8) | RAM[addr + 1];
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return (ROM[(addr - ROM_BASE) % ROM_SIZE] << 8) | ROM[(addr - ROM_BASE + 1) % ROM_SIZE];
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
@@ -1885,22 +1828,8 @@ public:
     {
         apply_wait_states(addr);
         if(debug & DEBUG_BUS) { printf("write of uint8_t %02X at %06X\n", val, addr); }
-        if (RAM_BANK_1.contains(addr)) {
-            if(RAM_bank1.size() != 0) {
-                RAM_bank1[RAM_BANK_1.offset(addr) % RAM_bank1.size()] = val;
-            } 
-        } else if (RAM_BANK_2.contains(addr)) {
-            if(RAM_bank2.size() != 0) {
-                RAM_bank2[RAM_BANK_2.offset(addr) % RAM_bank2.size()] = val;
-            } 
-        } else if (RAM_BANK_3.contains(addr)) {
-            if(RAM_bank3.size() != 0) {
-                RAM_bank3[RAM_BANK_3.offset(addr) % RAM_bank3.size()] = val;
-            } 
-        } else if (RAM_BANK_4.contains(addr)) {
-            if(RAM_bank4.size() != 0) {
-                RAM_bank4[RAM_BANK_4.offset(addr) % RAM_bank4.size()] = val;
-            } 
+        if (addr < RAM_TOTAL_SIZE) {
+            RAM[addr] = val;
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
@@ -1923,26 +1852,9 @@ public:
         uint8_t high = (val >> 8);
         uint8_t low = (val & 0xFF);
 
-        if (RAM_BANK_1.contains(addr)) {
-            if(RAM_bank1.size() != 0) {
-                RAM_bank1[RAM_BANK_1.offset(addr) % RAM_bank1.size()] = high;
-                RAM_bank1[RAM_BANK_1.offset(addr + 1) % RAM_bank1.size()] = low;
-            }
-        } else if (RAM_BANK_2.contains(addr)) {
-            if(RAM_bank2.size() != 0) {
-                RAM_bank2[RAM_BANK_2.offset(addr) % RAM_bank2.size()] = high;
-                RAM_bank2[RAM_BANK_2.offset(addr + 1) % RAM_bank2.size()] = low;
-            }
-        } else if (RAM_BANK_3.contains(addr)) {
-            if(RAM_bank3.size() != 0) {
-                RAM_bank3[RAM_BANK_3.offset(addr) % RAM_bank3.size()] = high;
-                RAM_bank3[RAM_BANK_3.offset(addr + 1) % RAM_bank3.size()] = low;
-            }
-        } else if (RAM_BANK_4.contains(addr)) {
-            if(RAM_bank4.size() != 0) {
-                RAM_bank4[RAM_BANK_4.offset(addr) % RAM_bank4.size()] = high;
-                RAM_bank4[RAM_BANK_4.offset(addr + 1) % RAM_bank4.size()] = low;
-            }
+        if (addr < RAM_TOTAL_SIZE) {
+            RAM[addr] = high;
+            RAM[addr + 1] = low;
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
@@ -2202,7 +2114,6 @@ struct SoftUART
 void usage(const char *progname)
 {
     printf("%s [options] rom-filename\n", progname);
-    printf("  -m {256,1024,2048,3072,4096}  RAM size in K\n");
     printf("  --cf disk.img                 attach CompactFlash image (read/write)\n");
     printf("  --cf-ro disk.img              attach CompactFlash image (read-only)\n");
     printf("\n");
@@ -2221,7 +2132,6 @@ int main(int argc, const char** argv)
     const char *progname = argv[0];
     argc -= 1;
     argv += 1;
-    auto ram_config = GriffinEmulator::RAM_4M;   // board is 4MB; firmware places private data high
     const char *cf_path = nullptr;
     bool cf_ro = false;
 
@@ -2251,28 +2161,6 @@ int main(int argc, const char** argv)
             }
             cf_path = argv[1];
             cf_ro = true;
-            argv += 2;
-            argc -= 2;
-        } else if(strcmp(argv[0], "-m") == 0) {
-            if(argc < 2) {
-                fprintf(stderr, "-m option requires a memory config in K (256, 1024, 2048, 3072, 4096).\n");
-                exit(EXIT_FAILURE);
-            }
-            static std::map <int, GriffinEmulator::RAMConfig> ram_configs = {
-                {256, GriffinEmulator::RAM_1_BANK_256K},
-                {1024, GriffinEmulator::RAM_1M},
-                {2048, GriffinEmulator::RAM_2M}, 
-                {3072, GriffinEmulator::RAM_3M},
-                {4096, GriffinEmulator::RAM_4M}
-            };
-            int k = atoi(argv[1]);
-            if(!ram_configs.contains(k)) {
-                if(argc < 2) {
-                    fprintf(stderr, "-m size %s unknown, expected 256, 1024, 2048, 3072, or 4096.\n", argv[1]);
-                    exit(EXIT_FAILURE);
-                }
-            }
-            ram_config = ram_configs.at(k);
             argv += 2;
             argc -= 2;
         } else if(strcmp(argv[0], "--console-stdio") == 0) {
@@ -2347,7 +2235,7 @@ int main(int argc, const char** argv)
 
     const char *romname = argv[0];
 
-    GriffinEmulator emulator(ram_config);
+    GriffinEmulator emulator;
 
     if (cf_path)
     {

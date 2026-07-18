@@ -11,11 +11,14 @@ INCLUDE ../griffin.generated.ld
    as firmware grows.  The framebuffer is a 64K-aligned heap allocation
    (fb_alloc), so no fixed framebuffer address is reserved here. */
 _app_base     = 0x001000;   /* loaded apps link and run here (just above vectors) */
-_firmware_ram = 0x380000;   /* firmware .data / .bss / heap base */
+/* firmware .data / .bss / heap base: 512K reserved at the top of RAM, tracking
+   RAM_TOTAL_SIZE from griffin.generated.ld (0x780000 with 8MB of RAM) */
+_firmware_reserve = 0x80000;
+_firmware_ram = RAM_ORIGIN + RAM_TOTAL_SIZE - _firmware_reserve;
 
 MEMORY
 {
-    RAM (rwx) : ORIGIN = RAM_ORIGIN, LENGTH = RAM_LENGTH /* 0 .. 4M */
+    RAM (rwx) : ORIGIN = RAM_ORIGIN, LENGTH = RAM_LENGTH /* 0 .. RAM_TOTAL_SIZE */
     ROM (rx)  : ORIGIN = ROM_ORIGIN, LENGTH = ROM_LENGTH
 }
 

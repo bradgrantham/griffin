@@ -1,7 +1,7 @@
 /* Linker script for Griffin applications.
  *
  * Apps are flat binaries loaded at _app_base (0x1000) and entered at offset 0.
- * The firmware reserves 0x001000 .. 0x380000 (_firmware_ram) for the running
+ * The firmware reserves 0x001000 .. 0x780000 (_firmware_ram) for the running
  * app; firmware private data, heap and stack live above that.  The app gets its
  * own heap (managed by the app-side _sbrk) growing up to _app_stack_top.
  *
@@ -16,7 +16,7 @@ _app_base = 0x1000;
 
 MEMORY
 {
-    APP (rwx) : ORIGIN = 0x1000, LENGTH = 0x37F000   /* 0x001000 .. 0x380000 */
+    APP (rwx) : ORIGIN = 0x1000, LENGTH = 0x77F000   /* 0x001000 .. 0x780000 (_firmware_ram) */
 }
 
 SECTIONS

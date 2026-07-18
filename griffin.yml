@@ -137,8 +137,14 @@ peripherals:
     linker:
       section: rom
 
+  # Rev 2: 8MB main RAM as 8x AS6C8016 (512K x 16, 2.7-5.5V), one bank per chip.
+  # Chip-select decode is NOT in GLUE: GLUE emits a single /RAMCS for the whole
+  # 0x000000-0x7FFFFF range, and an external 74HCT138 (enables gated by /RAMCS,
+  # select inputs A20-A22) generates the eight per-chip /CEs.  This costs one
+  # GLUE output pin instead of eight; do not add per-bank selects to glue.v.
+  # /UB and /LB on each chip come from /UDS and /LDS; /WE and /OE are shared.
   RAM_BANK_1:
-    part: "SRAM"
+    part: "AS6C8016"
     address_range:
       base: 0x000000
       size: 0x100000
@@ -153,7 +159,7 @@ peripherals:
       section: ram
 
   RAM_BANK_2:
-    part: "SRAM"
+    part: "AS6C8016"
     address_range:
       base: 0x100000
       size: 0x100000
@@ -168,7 +174,7 @@ peripherals:
       section: ram
 
   RAM_BANK_3:
-    part: "SRAM"
+    part: "AS6C8016"
     address_range:
       base: 0x200000
       size: 0x100000
@@ -183,9 +189,69 @@ peripherals:
       section: ram
 
   RAM_BANK_4:
-    part: "SRAM"
+    part: "AS6C8016"
     address_range:
       base: 0x300000
+      size: 0x100000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 1
+    linker:
+      section: ram
+
+  RAM_BANK_5:
+    part: "AS6C8016"
+    address_range:
+      base: 0x400000
+      size: 0x100000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 1
+    linker:
+      section: ram
+
+  RAM_BANK_6:
+    part: "AS6C8016"
+    address_range:
+      base: 0x500000
+      size: 0x100000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 1
+    linker:
+      section: ram
+
+  RAM_BANK_7:
+    part: "AS6C8016"
+    address_range:
+      base: 0x600000
+      size: 0x100000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 1
+    linker:
+      section: ram
+
+  RAM_BANK_8:
+    part: "AS6C8016"
+    address_range:
+      base: 0x700000
       size: 0x100000
       width: 16
     dtack:

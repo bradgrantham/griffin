@@ -18,7 +18,7 @@
 #include <unistd.h>
 
 extern "C" char _app_base[];       // 0x001000  (app load/link base, linker.ld)
-extern "C" char _firmware_ram[];   // 0x380000  (top of the app region)
+extern "C" char _firmware_ram[];   // 0x780000  (top of the app region)
 
 static jmp_buf app_ctx;
 static int     app_exit_code = 0;

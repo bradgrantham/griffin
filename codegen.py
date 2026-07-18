@@ -97,6 +97,37 @@ def reg_default(reg):
     return val, has_default
 
 
+def linker_regions(perifs):
+    """Merge peripherals sharing a linker section into address regions.
+    Returns {SECTION_NAME_UPPER: [min_base, max_end]}, insertion-ordered."""
+    regions = {}
+    for pname, periph in perifs.items():
+        ar = periph.get('address_range')
+        if not ar:
+            continue
+        section = (periph.get('linker') or {}).get('section')
+        if not section:
+            continue
+        base = parse_int(ar['base'])
+        end = base + parse_int(ar.get('size', 0))
+        sname = section.upper()
+        if sname in regions:
+            regions[sname][0] = min(regions[sname][0], base)
+            regions[sname][1] = max(regions[sname][1], end)
+        else:
+            regions[sname] = [base, end]
+    return regions
+
+
+def ram_total_size(perifs):
+    """Total bytes of the merged RAM region (0 if no RAM section defined)."""
+    regions = linker_regions(perifs)
+    if 'RAM' not in regions:
+        return 0
+    origin, end = regions['RAM']
+    return end - origin
+
+
 # ---------------------------------------------------------------------------
 # C / C++ header
 # ---------------------------------------------------------------------------
@@ -217,6 +248,14 @@ def write_c_header(hw: dict, path: Path) -> None:
 
         w("")
 
+    # Total RAM, derived from the merged span of all `linker: section: ram`
+    # peripherals so it can never diverge from the banks.
+    ram_total = ram_total_size(perifs)
+    if ram_total:
+        w("// RAM region — total of all RAM banks")
+        w(f"static constexpr uint32_t RAM_TOTAL_SIZE = {fmt_hex(ram_total, 6)}UL;")
+        w("")
+
     # Synthesize IO_BASE / IO_SIZE from peripherals with no linker section
     # that live above the RAM region.
     if io_candidates:
@@ -323,6 +362,12 @@ def write_asm_include(hw: dict, path: Path) -> None:
 
         w("")
 
+    ram_total = ram_total_size(perifs)
+    if ram_total:
+        w("| RAM region — total of all RAM banks")
+        w(f".equ RAM_TOTAL_SIZE, {fmt_hex(ram_total, 6)}")
+        w("")
+
     if consts:
         w("| Constants")
         for cname, cval in consts.items():
@@ -360,27 +405,15 @@ def write_ld_include(hw: dict, path: Path) -> None:
     # banks) are merged into a single ORIGIN/LENGTH spanning from the lowest
     # base to the highest end, so the linker sees the whole region as one.
     w("/* Memory region origins and lengths for MEMORY { } */")
-    regions = {}  # section name (upper) -> [min_base, max_end], insertion-ordered
-    for pname, periph in perifs.items():
-        ar = periph.get('address_range')
-        if not ar:
-            continue
-        linker = periph.get('linker') or {}
-        section = linker.get('section')
-        if not section:
-            continue
-        base = parse_int(ar['base'])
-        end = base + parse_int(ar.get('size', 0))
-        sname = section.upper()
-        if sname in regions:
-            regions[sname][0] = min(regions[sname][0], base)
-            regions[sname][1] = max(regions[sname][1], end)
-        else:
-            regions[sname] = [base, end]
+    regions = linker_regions(perifs)
     for sname, (origin, end) in regions.items():
         w(f"{sname}_ORIGIN = {fmt_hex(origin, 6)};")
         if end > origin:
             w(f"{sname}_LENGTH = {fmt_hex(end - origin, 6)};")
+
+    ram_total = ram_total_size(perifs)
+    if ram_total:
+        w(f"RAM_TOTAL_SIZE = {fmt_hex(ram_total, 6)};")
 
     w("")
 
@@ -490,6 +523,14 @@ def write_verilog_include(hw: dict, path: Path) -> None:
                 reg_width = parse_int(reg.get('width', 8))
                 w(f"`define {pname}_{rname}_DEFAULT {reg_width}'h{dval:02X}")
 
+        w("")
+
+    ram_total = ram_total_size(perifs)
+    if ram_total:
+        nbits  = max(8, ram_total.bit_length())
+        digits = (nbits + 3) // 4
+        w("// RAM region — total of all RAM banks")
+        w(f"`define RAM_TOTAL_SIZE {nbits}'h{ram_total:0{digits}X}")
         w("")
 
     if consts:

@@ -144,54 +144,10 @@ vec_copy:
     jmp     duart_puts
 .vtab_cop:
 
-    /* Probe RAM and print result */
-    move.w  #0xAA55, 0x400000 - 2
-    move.w  #0xFF00, 0x400000 - 4
-    cmp.w   #0xAA55, 0x400000 - 2
-    bne     test_3m
-    move.l  #4096, memory_size
-    move.l  #0x400000, %sp
-    lea     memory_4m, %a1
-    lea     memory_size_done(%pc), %a6
-    jmp     duart_puts
-
-test_3m:
-    move.w  #0xAA55, 0x300000 - 2
-    move.w  #0xFF00, 0x300000 - 4
-    cmp.w   #0xAA55, 0x300000 - 2
-    bne     test_2m
-    move.l  #3072, memory_size
-    move.l  #0x300000, %sp
-    lea     memory_3m, %a1
-    lea     memory_size_done(%pc), %a6
-    jmp     duart_puts
-
-test_2m:
-    move.w  #0xAA55, 0x200000 - 2
-    move.w  #0xFF00, 0x200000 - 4
-    cmp.w   #0xAA55, 0x200000 - 2
-    bne     test_1m
-    move.l  #2048, memory_size
-    move.l  #0x200000, %sp
-    lea     memory_2m, %a1
-    lea     memory_size_done(%pc), %a6
-    jmp     duart_puts
-
-test_1m:
-    move.w  #0xFF00, 0x80000 - 2
-    move.w  #0xAA55, 0x40000 - 2
-    cmp.w   #0xAA55, 0x80000 - 2
-    beq     set_256k
-    move.l  #1024, memory_size
-    move.l  #0x100000, %sp
-    lea     memory_1m, %a1
-    lea     memory_size_done(%pc), %a6
-    jmp     duart_puts
-
-set_256k:
-    move.l  #256, memory_size
-    move.l  #0x40000, %sp
-    lea     memory_256k, %a1
+    /* RAM is fixed at RAM_TOTAL_SIZE (griffin.generated.inc); no probing */
+    move.l  #(RAM_TOTAL_SIZE/1024), memory_size
+    move.l  #RAM_TOTAL_SIZE, %sp
+    lea     memory_8m, %a1
     lea     memory_size_done(%pc), %a6
     jmp     duart_puts
 
@@ -1275,16 +1231,8 @@ msg_addr_error:
     .string "*** ADDRESS ERROR ***\n"
 msg_illegal_insn:
     .string "*** ILLEGAL INSN ***\n"
-memory_4m:
-    .string	"Memory: 4MB\n"
-memory_3m:
-    .string	"Memory: 3MB\n"
-memory_2m:
-    .string	"Memory: 2MB\n"
-memory_1m:
-    .string	"Memory: 1MB\n"
-memory_256k:
-    .string	"Memory: 256KB\n"
+memory_8m:
+    .string	"Memory: 8MB\n"
     
 .section .monitor_data, "aw", @nobits
     .align	2

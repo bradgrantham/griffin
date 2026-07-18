@@ -81,7 +81,7 @@ static constexpr int ROM_DTACK_THRESHOLD = 4;  // ws_cnt threshold for Verilog
 static constexpr int ROM_DTACK_PENALTY = 2;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
-// RAM_BANK_1: SRAM
+// RAM_BANK_1: AS6C8016
 static constexpr uint32_t RAM_BANK_1_BASE = 0x000000UL;
 static constexpr uint32_t RAM_BANK_1_SIZE = 0x100000UL;
 inline constexpr MemoryRange RAM_BANK_1(0x000000UL, 0x100000UL);
@@ -90,7 +90,7 @@ static constexpr int RAM_BANK_1_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Ve
 static constexpr int RAM_BANK_1_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
-// RAM_BANK_2: SRAM
+// RAM_BANK_2: AS6C8016
 static constexpr uint32_t RAM_BANK_2_BASE = 0x100000UL;
 static constexpr uint32_t RAM_BANK_2_SIZE = 0x100000UL;
 inline constexpr MemoryRange RAM_BANK_2(0x100000UL, 0x100000UL);
@@ -99,7 +99,7 @@ static constexpr int RAM_BANK_2_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Ve
 static constexpr int RAM_BANK_2_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
-// RAM_BANK_3: SRAM
+// RAM_BANK_3: AS6C8016
 static constexpr uint32_t RAM_BANK_3_BASE = 0x200000UL;
 static constexpr uint32_t RAM_BANK_3_SIZE = 0x100000UL;
 inline constexpr MemoryRange RAM_BANK_3(0x200000UL, 0x100000UL);
@@ -108,13 +108,49 @@ static constexpr int RAM_BANK_3_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Ve
 static constexpr int RAM_BANK_3_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
-// RAM_BANK_4: SRAM
+// RAM_BANK_4: AS6C8016
 static constexpr uint32_t RAM_BANK_4_BASE = 0x300000UL;
 static constexpr uint32_t RAM_BANK_4_SIZE = 0x100000UL;
 inline constexpr MemoryRange RAM_BANK_4(0x300000UL, 0x100000UL);
 static constexpr int RAM_BANK_4_DTACK_WS = 0;  // wait states at 14000000 Hz
 static constexpr int RAM_BANK_4_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
 static constexpr int RAM_BANK_4_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
+
+// ------------------------------------------------------------
+// RAM_BANK_5: AS6C8016
+static constexpr uint32_t RAM_BANK_5_BASE = 0x400000UL;
+static constexpr uint32_t RAM_BANK_5_SIZE = 0x100000UL;
+inline constexpr MemoryRange RAM_BANK_5(0x400000UL, 0x100000UL);
+static constexpr int RAM_BANK_5_DTACK_WS = 0;  // wait states at 14000000 Hz
+static constexpr int RAM_BANK_5_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
+static constexpr int RAM_BANK_5_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
+
+// ------------------------------------------------------------
+// RAM_BANK_6: AS6C8016
+static constexpr uint32_t RAM_BANK_6_BASE = 0x500000UL;
+static constexpr uint32_t RAM_BANK_6_SIZE = 0x100000UL;
+inline constexpr MemoryRange RAM_BANK_6(0x500000UL, 0x100000UL);
+static constexpr int RAM_BANK_6_DTACK_WS = 0;  // wait states at 14000000 Hz
+static constexpr int RAM_BANK_6_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
+static constexpr int RAM_BANK_6_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
+
+// ------------------------------------------------------------
+// RAM_BANK_7: AS6C8016
+static constexpr uint32_t RAM_BANK_7_BASE = 0x600000UL;
+static constexpr uint32_t RAM_BANK_7_SIZE = 0x100000UL;
+inline constexpr MemoryRange RAM_BANK_7(0x600000UL, 0x100000UL);
+static constexpr int RAM_BANK_7_DTACK_WS = 0;  // wait states at 14000000 Hz
+static constexpr int RAM_BANK_7_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
+static constexpr int RAM_BANK_7_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
+
+// ------------------------------------------------------------
+// RAM_BANK_8: AS6C8016
+static constexpr uint32_t RAM_BANK_8_BASE = 0x700000UL;
+static constexpr uint32_t RAM_BANK_8_SIZE = 0x100000UL;
+inline constexpr MemoryRange RAM_BANK_8(0x700000UL, 0x100000UL);
+static constexpr int RAM_BANK_8_DTACK_WS = 0;  // wait states at 14000000 Hz
+static constexpr int RAM_BANK_8_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
+static constexpr int RAM_BANK_8_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
 // ENGINE: Video framebuffer DMA engine with 7200 FIFO write interface
@@ -270,6 +306,9 @@ static constexpr int AUDIO_DTACK_WS = 1;  // wait states at 14000000 Hz
 static constexpr int AUDIO_DTACK_THRESHOLD = 4;  // ws_cnt threshold for Verilog
 static constexpr int AUDIO_DTACK_PENALTY = 2;  // extra SYSCLK cycles for emulator
 static constexpr uint32_t AUDIO_DAC = 0xFC0001UL;  // WRITE: Write sample to 8-bit R2R DAC output latch
+
+// RAM region — total of all RAM banks
+static constexpr uint32_t RAM_TOTAL_SIZE = 0x800000UL;
 
 // IO region — span of all non-RAM/ROM memory-mapped peripherals
 static constexpr uint32_t IO_BASE = 0xF00000UL;
