@@ -72,8 +72,13 @@ video: video/video.svf
 video/video.edif: video/video.v ../griffin.generated.vh
 	cd video && $(YOSYS) video
 
+# xor_synthesis is load-bearing for VIDEO: with the micro-HAM decoder the
+# design only fits (124/128 logic cells) when the fitter may use the
+# macrocell XOR gates; without it every pass fails grouping/routing.
+# -debug is dropped here — combined with xor_synthesis it has crashed the
+# fitter ("INTERNAL ERROR") while writing the debug simulation files.
 video/video.jed: video/video.edif
-	cd video && $(FITTER) video -preassign keep -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy debug = on -strategy power_reset on -strategy JTAG = on
+	cd video && $(FITTER) video -preassign keep -strategy xor_synthesis = on -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy power_reset on -strategy JTAG = on
 
 video/video.svf: video/video.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/video/video.jed $(CURDIR)/video/video.svf
