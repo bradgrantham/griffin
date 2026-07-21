@@ -564,11 +564,14 @@ module Video
     //   0_p    : held <- palette entry p (1 = fg, 0 = bg)
     //   10_g_r : held green <- ggg, held red <- rrr
     //   11_g_b : held green <- ggg, held blue <- bb
-    // Serial decode with no lookahead: the updated held color appears
-    // on the pixel after its code's last bit; pixels within a code
-    // show the previous held color.  Between lines the state resets
-    // and held tracks palette_fg, so each line starts with held = fg
-    // (no state carries across lines).
+    // Serial decode with no lookahead: ham_held sits in the same
+    // pipeline stage as the display path, so each consumed bit's
+    // effect is visible starting at that bit's own pixel — in 10_g_r
+    // green changes at the g pixel (3rd of the code) and red at the r
+    // pixel (4th); a code's leading prefix bits show the previous
+    // held color.  Between lines the state resets and held tracks
+    // palette_fg, so each line starts with held = fg (no state
+    // carries across lines).
     //
     // ham_held doubles as the display color register for BOTH modes:
     // in mode 0 the ham_lp enable is forced on every cycle, so held
