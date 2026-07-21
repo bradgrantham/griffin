@@ -222,7 +222,14 @@ module Video
         end
     end
 
-    assign nVIDEO_IRQ = ~video_irq_latched;
+    // The vsync timing generator free-runs regardless of ENABLE (it must
+    // already be counting before ENABLE is set, since output starts at the
+    // next vsync boundary), so video_irq_latched sets every frame whether or
+    // not video is in use.  Gate only the pin with IRQENB -- the latch (and
+    // CLRINT's ability to clear it) stays unconditional, matching DUART's
+    // ISR/IMR split, so a late unmask still sees any pending vsync rather
+    // than silently losing it.
+    assign nVIDEO_IRQ = ~(video_irq_latched & video_irqenb);
 
     // ----------------------------------------------------------------
     // CPU register interface (SYSCLK domain)
@@ -233,6 +240,7 @@ module Video
 
     // CTRL register (offset 0x05, A[5:1] = 5'h02)
     reg video_enable;
+    reg video_irqenb;
 
     wire ctrl_write = cpu_writing & (A == 5'h02) & ~nLDS;
 
@@ -241,10 +249,12 @@ module Video
         if (RESET)
         begin
             video_enable <= 1'b0;
+            video_irqenb <= 1'b0;
         end
         else if (ctrl_write)
         begin
             video_enable <= D[0];
+            video_irqenb <= D[1];
         end
     end
 
@@ -283,7 +293,7 @@ module Video
     wire ctrl_read = cpu_reading & (A == 5'h02) & ~nLDS;
 
     wire any_read = ctrl_read;
-    wire [15:0] read_data = {14'd0, fifo_error, video_enable};
+    wire [15:0] read_data = {13'd0, video_irqenb, fifo_error, video_enable};
 
     assign D = any_read ? read_data : 16'bz;
 

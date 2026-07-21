@@ -184,11 +184,16 @@ static constexpr uint32_t VIDEO_CLRINT = 0xE00003UL;  // WRITE: Write any value 
 static constexpr uint32_t VIDEO_CTRL = 0xE00005UL;  // WRITE: Video control register
 static constexpr uint32_t VIDEO_CTRL_ENABLE_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t VIDEO_CTRL_ENABLE_SHIFT = 0U;
+static constexpr uint32_t VIDEO_CTRL_IRQENB_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t VIDEO_CTRL_IRQENB_SHIFT = 1U;
+static constexpr uint32_t VIDEO_CTRL_DEFAULT = 0x00U;
 static constexpr uint32_t VIDEO_CTRL_RB = 0xE00005UL;  // READ: Video control readback
 static constexpr uint32_t VIDEO_CTRL_RB_ENABLE_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t VIDEO_CTRL_RB_ENABLE_SHIFT = 0U;
 static constexpr uint32_t VIDEO_CTRL_RB_FIFO_ERROR_MASK  = 0x02U;  // bits 1:1
 static constexpr uint32_t VIDEO_CTRL_RB_FIFO_ERROR_SHIFT = 1U;
+static constexpr uint32_t VIDEO_CTRL_RB_IRQENB_MASK  = 0x04U;  // bits 2:2
+static constexpr uint32_t VIDEO_CTRL_RB_IRQENB_SHIFT = 2U;
 static constexpr uint32_t VIDEO_CLRERR = 0xE00009UL;  // WRITE: Write any value to clear FIFO_ERROR sticky bit
 
 // ------------------------------------------------------------

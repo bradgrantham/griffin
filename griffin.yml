@@ -332,6 +332,15 @@ peripherals:
           Write any value to clear the latched VIDEO vsync IRQ.  IRQ is
           set on the rising edge of vsync and held until CLRINT is
           written, so firmware must acknowledge in the ISR before RTE.
+
+          The vsync timing generator free-runs regardless of CTRL.ENABLE
+          (it must already be running before ENABLE is set, since pixel
+          output/FIFO reads start at the next vsync boundary), so the
+          latch sets every frame whether or not video is enabled.  Gate
+          the ~VIDEO_IRQ pin itself with CTRL.IRQENB before masking
+          interrupts at the CPU, rather than relying on an ISR always
+          being installed; the latch (this bit's target) still tracks
+          vsync unconditionally, matching DUART's ISR/IMR split.
       - offset: 0x05
         name: CTRL
         access: write
@@ -340,6 +349,8 @@ peripherals:
         bits:
           - { bit: "0", name: ENABLE,
               description: "1 = pixel output and FIFO reads active; 0 = black screen, no reads. Enable after ENGINE." }
+          - { bit: "1", name: IRQENB, default: 0,
+              description: "1 = drive ~VIDEO_IRQ from the latched vsync IRQ; 0 = pin stays deasserted regardless of the latch. Latch still sets every frame either way (see CLRINT); ack with CLRINT before re-enabling to avoid an immediate stale IRQ." }
       - offset: 0x05
         name: CTRL_RB
         access: read
@@ -350,6 +361,8 @@ peripherals:
               description: "Current ENABLE state" }
           - { bit: "1", name: FIFO_ERROR,
               description: "Sticky: 9th-bit toggle mismatch detected (FIFO sync lost). Clear with CLRERR." }
+          - { bit: "2", name: IRQENB,
+              description: "Current IRQENB state" }
       - offset: 0x09
         name: CLRERR
         access: write

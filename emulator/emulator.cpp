@@ -809,6 +809,8 @@ struct DUARTState
     uint8_t ctlr = 0xFF;
     bool ctr_running = false;
     uint64_t ctr_next_fire = 0; // in SYSCLK units
+    uint64_t ctr_start_clock = 0; // SYSCLK at STARTCC; origin for the live count
+    uint16_t ctr_latch = 0;       // value latched by a CUR read (68681 protocol)
 
     // IVR (accepted but unused — autovector mode)
     uint8_t ivr = 0x0F;
@@ -839,6 +841,44 @@ struct DUARTState
             cycles *= 2;
         }
         return cycles * SYSCLK_HZ / DUART_CLOCK;
+    }
+
+    // Live 16-bit down-counter value (preload -> 0, repeating).  The 68681
+    // counter itself always spans one preload countdown regardless of C/T mode,
+    // so this is independent of the ACR square-wave doubling used for IRQs.
+    uint16_t live_count(uint64_t clock_now) const
+    {
+        if (!ctr_running)
+        {
+            return preload();
+        }
+        uint32_t p = preload();
+        if (p == 0)
+        {
+            p = 0x10000;
+        }
+        uint64_t countdown = static_cast<uint64_t>(p) * SYSCLK_HZ / DUART_CLOCK;
+        if (countdown == 0)
+        {
+            return 0;
+        }
+        uint64_t elapsed = (clock_now >= ctr_start_clock)
+                               ? (clock_now - ctr_start_clock) : 0;
+        uint64_t phase = elapsed % countdown;              // 0 .. countdown-1
+        uint64_t remaining = countdown - phase;            // countdown .. 1
+        return static_cast<uint16_t>(static_cast<uint64_t>(p) * remaining / countdown);
+    }
+
+    // CUR (0x0D) latches the live count and returns its high byte; CLR (0x0F)
+    // returns the low byte of the value latched by the preceding CUR read.
+    uint8_t read_counter_byte(uint32_t abs, uint64_t clock_now)
+    {
+        if (abs == DUART_CUR)
+        {
+            ctr_latch = live_count(clock_now);
+            return static_cast<uint8_t>(ctr_latch >> 8);
+        }
+        return static_cast<uint8_t>(ctr_latch & 0xFF);
     }
 
     // Advance timer state — call periodically from poll_io
@@ -1061,6 +1101,9 @@ struct VideoState
     bool irq_latched = false;
 
     bool video_enable = false;
+    bool video_irqenb = false;  // CTRL.IRQENB: gates the ~VIDEO_IRQ pin only;
+                                 // irq_latched itself still sets every vsync
+                                 // regardless (matches video.v / DUART's ISR/IMR split)
     uint8_t palette_fg = 0xFF;
     uint8_t palette_bg = 0x00;
     bool fifo_error = false;
@@ -1238,7 +1281,7 @@ struct VideoState
         return stall_cycles;
     }
 
-    bool irq_pending() const { return irq_latched; }
+    bool irq_pending() const { return irq_latched && video_irqenb; }
     void clear_irq() { irq_latched = false; }
 
     uint8_t read_reg(uint32_t addr) const
@@ -1246,7 +1289,8 @@ struct VideoState
         if (addr == VIDEO_CTRL_RB)
         {
             return (fifo_error ? VIDEO_CTRL_RB_FIFO_ERROR_MASK : 0)
-                 | (video_enable ? VIDEO_CTRL_RB_ENABLE_MASK : 0);
+                 | (video_enable ? VIDEO_CTRL_RB_ENABLE_MASK : 0)
+                 | (video_irqenb ? VIDEO_CTRL_RB_IRQENB_MASK : 0);
         }
         return 0;
     }
@@ -1260,6 +1304,7 @@ struct VideoState
         else if (addr == VIDEO_CTRL)
         {
             video_enable = (val & VIDEO_CTRL_ENABLE_MASK) != 0;
+            video_irqenb = (val & VIDEO_CTRL_IRQENB_MASK) != 0;
         }
         else if (addr == VIDEO_CLRERR)
         {
@@ -1602,10 +1647,18 @@ class GriffinEmulator : public moira::Moira
         {
             uint32_t abs = addr + IO_BASE;
             uint8_t val = duart.read_reg(abs, pty_console);
-            // STARTCC side-effect: initialize ctr_next_fire with current clock
-            if (abs == DUART_STARTCC && duart.ctr_next_fire == 0)
+            // STARTCC restarts the counter from the preload (68681 semantics),
+            // so (re)initialize the fire time and the live-count origin here.
+            if (abs == DUART_STARTCC)
             {
                 duart.ctr_next_fire = getClock() + duart.ctr_period_sysclk();
+                duart.ctr_start_clock = getClock();
+            }
+            // CUR/CLR return the live counter (68681 latch protocol); the
+            // DUARTState stub returns 0, so override with the clock-derived value.
+            if (abs == DUART_CUR || abs == DUART_CLR)
+            {
+                val = duart.read_counter_byte(abs, getClock());
             }
             if (debug & DEBUG_DUART)
             {
@@ -1780,6 +1833,29 @@ public:
 
     GriffinEmulator() = default;
 
+    // Full CPU state dump, shared by the unhandled-access abort() paths and
+    // the GRIFFIN_DUMP_ON_EXIT env-gated dump at normal exit.
+    void dump_cpu_state(const char *why) const
+    {
+        uint32_t pc = getPC();
+        fprintf(stderr, "\n=== CPU state (%s) ===\n", why);
+        fprintf(stderr, "PC=%06X  SR=%04X  SP=%06X\n", pc, getSR(), getSP());
+        for (int i = 0; i < 8; i++)
+            fprintf(stderr, "D%d=%08X%s", i, getD(i), (i % 4 == 3) ? "\n" : "  ");
+        for (int i = 0; i < 8; i++)
+            fprintf(stderr, "A%d=%08X%s", i, getA(i), (i % 4 == 3) ? "\n" : "  ");
+        fprintf(stderr, "--- disassembly from PC ---\n");
+        char str[1024];
+        uint32_t addr = pc;
+        for (int i = 0; i < 16; i++)
+        {
+            int len = disassemble(str, addr);
+            fprintf(stderr, "%06X: %s\n", addr, str);
+            addr += (len > 0) ? (uint32_t)len : 2;
+        }
+        fflush(stderr);
+    }
+
     uint8_t read8(uint32_t addr) const override
     {
         apply_wait_states(addr);
@@ -1797,8 +1873,8 @@ public:
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read8(addr - IO_BASE);
         } else {
-            printf("read of uint8_t at unhandled %06X\n", addr);
-            abort();
+            fprintf(stderr, "read of uint8_t at unhandled %06X\n", addr);
+            dump_cpu_state("unhandled read8"); abort();
         }
     }
 
@@ -1819,8 +1895,8 @@ public:
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read16(addr - IO_BASE);
         } else {
-            printf("read of uint16_t at unhandled %06X\n", addr);
-            abort();
+            fprintf(stderr, "read of uint16_t at unhandled %06X\n", addr);
+            dump_cpu_state("unhandled read16"); abort();
         }
     }
 
@@ -1840,8 +1916,8 @@ public:
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
             engine.write_reg8(addr, val);
         } else {
-            printf("write of uint8_t %02X to unhandled %06X\n", val, addr);
-            abort();
+            fprintf(stderr, "write of uint8_t %02X to unhandled %06X\n", val, addr);
+            dump_cpu_state("unhandled write8"); abort();
         }
     }
 
@@ -1866,8 +1942,8 @@ public:
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write16(addr - IO_BASE, val);
         } else {
-            printf("write of uint16_t %04X to unhandled %06X\n", val, addr);
-            abort();
+            fprintf(stderr, "write of uint16_t %04X to unhandled %06X\n", val, addr);
+            dump_cpu_state("unhandled write16"); abort();
         }
     }
 
@@ -2302,6 +2378,8 @@ int main(int argc, const char** argv)
     SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
 
     emulator.setDasmSyntax(moira::Syntax::GNU_MIT);
+    // Griffin's CPU is a 68010 (VBR/movec, format-8 bus-error frames).
+    emulator.setModel(moira::Model::M68010);
     emulator.reset();
     emulator.governor.reset(emulator.getClock(), emulator.clock_hz);
 
@@ -2385,6 +2463,11 @@ int main(int argc, const char** argv)
             clock_then = clock_now;
             then = now;
         }
+    }
+
+    if (getenv("GRIFFIN_DUMP_ON_EXIT"))
+    {
+        emulator.dump_cpu_state("at exit");
     }
 
     if (audio)
