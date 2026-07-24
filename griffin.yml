@@ -558,8 +558,10 @@ constants:
 
   # ENGINE bus-arbitration burst chunk: words transferred per BR/BGACK cycle
   # before releasing the bus.  Deliberately shorter than a scanline so a single
-  # burst (~2.36 us) cannot occupy the whole hblank (~6.35 us).
-  ENGINE_WORDS_PER_BURST: 10
+  # burst (~2.86 us at 2 CPUCLK cycles/word) cannot occupy the whole hblank
+  # (~6.35 us), and long enough to amortize the ~10-cycle BR/BG/BGACK
+  # handshake that starts each burst.
+  ENGINE_WORDS_PER_BURST: 20
 
   # Palette-and-pixels framebuffer layout.  Each scanline in memory is a
   # 4-byte header followed by the 80 pixel bytes:

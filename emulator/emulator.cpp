@@ -1316,12 +1316,13 @@ struct VideoState
 // ---------------------------------------------------------------------------
 // ENGINE — framebuffer DMA engine (ATF1508AS CPLD).
 //
-// Real hardware bus-masters and bursts 40 16-bit words per scanline into
-// a pair of 7200 FIFOs.  The emulator skips the FIFO model: when a
-// scanline is rendered, VideoState's fetch callback pulls 80 bytes
-// directly from RAM at {SOURCE_PAGE, line*80} and we charge the CPU
-// the equivalent burst time so timing-sensitive code (bit-banged UART,
-// GLUE timer loops) sees the same stall as real hardware.
+// Real hardware bus-masters and streams 42 16-bit words per scanline
+// (4-byte header + 80 pixel bytes) into a pair of 7200 FIFOs.  The
+// emulator skips the FIFO model: when a scanline is rendered,
+// VideoState's fetch callback pulls the line directly from RAM at
+// {SOURCE_PAGE, line*stride} and we charge the CPU the equivalent
+// burst time so timing-sensitive code sees the same stall as real
+// hardware.
 // ---------------------------------------------------------------------------
 
 struct EngineState
@@ -1330,13 +1331,17 @@ struct EngineState
     // it does not simulate individual bus bursts (and so cannot reproduce the
     // intra-line tearing those cause on real hardware).  The stall is the full
     // line — 42 words (4-byte palette/reserved header + 80 pixel bytes) — at
-    // STATE_ADDR + STATE_WAIT_DTACK + STATE_LATCH = 3 sysclks/word (RAM DTACK
-    // is 0 wait states), plus one arbitration overhead per bus burst.  ENGINE
-    // releases the bus every ENGINE_WORDS_PER_BURST words, so a line incurs
-    // ceil(WORDS_PER_LINE / burst) arbitrations — smaller bursts cost a little
-    // more total stall.
+    // ENGINE's 2-cycle streaming rate (STATE_SETTLE + STATE_STROBE per word;
+    // AS held for the whole burst, DTACK ignored), plus a fixed overhead per
+    // bus burst: STATE_ASSERT + STATE_RELEASE = 2 sysclks of extra BGACK-low
+    // time, plus a little dead time in the BR/BG handshake (most of that
+    // overlaps the CPU finishing its own cycle, so it isn't charged in full).
+    // ARBITRATION_SYSCLKS is an estimate pending measurement on hardware.
+    // Bursts chunk the frame-wide word stream, not lines, so a line actually
+    // straddles WORDS_PER_LINE/burst bursts on average; the ceil() here
+    // overcharges slightly (~1%), which is fine for a lump model.
     static constexpr uint32_t WORDS_PER_LINE = Griffin::VIDEO_WORDS_PER_LINE;  // 42
-    static constexpr uint32_t SYSCLKS_PER_WORD = 3;
+    static constexpr uint32_t SYSCLKS_PER_WORD = 2;
     static constexpr uint32_t ARBITRATION_SYSCLKS = 3;
     static constexpr uint32_t BURSTS_PER_LINE =
         (WORDS_PER_LINE + Griffin::ENGINE_WORDS_PER_BURST - 1) / Griffin::ENGINE_WORDS_PER_BURST;

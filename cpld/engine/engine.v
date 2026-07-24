@@ -12,11 +12,24 @@
 // Flow control: when FIFO half-full deasserts (room available),
 // ENGINE requests bus and transfers WORDS_PER_BURST words, then releases
 // the bus and waits for the next HF deassert.  The burst is deliberately
-// shorter than a scanline (10 words ~= 2.36 us vs the 6.35 us hblank) so a
+// shorter than a scanline (20 words ~= 2.86 us vs the 6.35 us hblank) so a
 // burst can't monopolize the whole blanking interval, keeping the bus
 // responsive to the CPU.  word_counter is the frame-wide address counter and
 // is independent of the burst chunking, so the framebuffer (per-line palette
 // header + pixels) is read in order and the image is unchanged.
+//
+// Transfer timing: within a burst ENGINE streams the SRAM in page mode
+// rather than running a full 68000 bus cycle per word.  AS/UDS/LDS are
+// asserted once at burst start and held; the address then advances every
+// 2 CPUCLK cycles with nFIFO_W strobed low in the second cycle of each
+// pair (the FIFOs latch D[15:0] directly from the bus on /W rising).
+// DTACK is ignored: the framebuffer is always 0-wait-state 55 ns SRAM
+// selected combinationally by GLUE from the address (bus_cycle = AS),
+// so the timing is known by construction.  Budget per 143 ns pair:
+// address Tco (~15 ns) + SRAM tAA (55 ns) + prop, data valid ~75 ns
+// after the pair starts, vs /W rising at 143 ns minus ~11 ns FIFO data
+// setup — roughly 55 ns of slack.  This assumption means ENGINE can
+// only ever DMA from 0-WS RAM; revisit if RAM timing changes.
 
 `include "../../griffin.generated.vh"
 
@@ -34,7 +47,9 @@ module Engine
     inout  wire        nLDS,
     inout  wire [2:0]  FC,
 
-    // Bus observation
+    // Bus observation.  Unused since the move to 2-cycle streaming
+    // transfers (DTACK carries no information ENGINE doesn't already
+    // have for 0-WS SRAM); pin retained for the Rev 1 board.
     input  wire        nDTACK_BUS,      // pin 81 (GCLK3)
 
     // CPU register interface
@@ -111,46 +126,41 @@ module Engine
     // DMA state machine
     // ----------------------------------------------------------------
 
-    localparam STATE_IDLE       = 3'd0;
-    localparam STATE_REQUEST    = 3'd1;
-    localparam STATE_WAIT_FREE  = 3'd2;
-    localparam STATE_ADDR       = 3'd3;
-    localparam STATE_WAIT_DTACK = 3'd4;
-    localparam STATE_LATCH      = 3'd5;
-    localparam STATE_RELEASE    = 3'd6;
+    localparam STATE_IDLE      = 3'd0;
+    localparam STATE_REQUEST   = 3'd1;
+    localparam STATE_WAIT_FREE = 3'd2;
+    localparam STATE_ASSERT    = 3'd3;   // assert AS/UDS/LDS, SRAM tCE settle
+    localparam STATE_SETTLE    = 3'd4;   // address settling, /W high
+    localparam STATE_STROBE    = 3'd5;   // /W low; on exit latch word, advance
+    localparam STATE_RELEASE   = 3'd6;
 
     reg [2:0] state;
 
     // 2-FF synchronizers for async inputs sampled by the SM on CPUCLK.
     // Each signal needs its own pair; defends against metastability landing
     // the state register in an unintended encoding.
-    reg nFIFO_HF_meta,   nFIFO_HF_sync;
-    reg nDTACK_BUS_meta, nDTACK_BUS_sync;
-    reg nBG_meta,        nBG_sync;
-    reg nAS_meta,        nAS_sync;
+    reg nFIFO_HF_meta, nFIFO_HF_sync;
+    reg nBG_meta,      nBG_sync;
+    reg nAS_meta,      nAS_sync;
     always @(posedge CPUCLK or posedge RESET)
     begin
         if (RESET)
         begin
-            nFIFO_HF_meta   <= 1'b0;
-            nFIFO_HF_sync   <= 1'b0;
-            nDTACK_BUS_meta <= 1'b1;
-            nDTACK_BUS_sync <= 1'b1;
-            nBG_meta        <= 1'b1;
-            nBG_sync        <= 1'b1;
-            nAS_meta        <= 1'b1;
-            nAS_sync        <= 1'b1;
+            nFIFO_HF_meta <= 1'b0;
+            nFIFO_HF_sync <= 1'b0;
+            nBG_meta      <= 1'b1;
+            nBG_sync      <= 1'b1;
+            nAS_meta      <= 1'b1;
+            nAS_sync      <= 1'b1;
         end
         else
         begin
-            nFIFO_HF_meta   <= nFIFO_HF;
-            nFIFO_HF_sync   <= nFIFO_HF_meta;
-            nDTACK_BUS_meta <= nDTACK_BUS;
-            nDTACK_BUS_sync <= nDTACK_BUS_meta;
-            nBG_meta        <= nBG;
-            nBG_sync        <= nBG_meta;
-            nAS_meta        <= nAS;
-            nAS_sync        <= nAS_meta;
+            nFIFO_HF_meta <= nFIFO_HF;
+            nFIFO_HF_sync <= nFIFO_HF_meta;
+            nBG_meta      <= nBG;
+            nBG_sync      <= nBG_meta;
+            nAS_meta      <= nAS;
+            nAS_sync      <= nAS_meta;
         end
     end
 
@@ -226,33 +236,36 @@ module Engine
                     begin
                         nBGACK <= 1'b0;
                         nBR    <= 1'b1;
-                        state  <= STATE_ADDR;
+                        state  <= STATE_ASSERT;
                     end
                 end
 
-                STATE_ADDR:
+                // AS/UDS/LDS assert once here and hold for the whole
+                // burst.  This state doubles as the first word's settle
+                // cycle: GLUE's combinational chip select follows AS, so
+                // SRAM tCE (55 ns) starts now and data is valid well
+                // before /W rises at the end of the following STROBE.
+                STATE_ASSERT:
                 begin
                     as_out  <= 1'b0;
                     uds_out <= 1'b0;
                     lds_out <= 1'b0;
-                    state   <= STATE_WAIT_DTACK;
+                    state   <= STATE_SETTLE;
                 end
 
-                STATE_WAIT_DTACK:
+                STATE_SETTLE:
                 begin
-                    if (~nDTACK_BUS_sync)
-                    begin
-                        nFIFO_W <= 1'b0;
-                        state   <= STATE_LATCH;
-                    end
+                    nFIFO_W <= 1'b0;
+                    state   <= STATE_STROBE;
                 end
 
-                STATE_LATCH:
+                // /W rising edge latches D[15:0] into both FIFOs; the
+                // address advances on the same edge (SRAM output hold
+                // covers the FIFO's ~0 ns data hold, same relationship
+                // the per-bus-cycle design had between /W and AS).
+                STATE_STROBE:
                 begin
                     nFIFO_W       <= 1'b1;
-                    as_out        <= 1'b1;
-                    uds_out       <= 1'b1;
-                    lds_out       <= 1'b1;
                     q8_toggle_out <= ~q8_toggle_out;
                     burst_cnt     <= burst_cnt + 6'd1;
 
@@ -267,11 +280,14 @@ module Engine
 
                     if (end_of_burst)
                     begin
-                        state <= STATE_RELEASE;
+                        as_out  <= 1'b1;
+                        uds_out <= 1'b1;
+                        lds_out <= 1'b1;
+                        state   <= STATE_RELEASE;
                     end
                     else
                     begin
-                        state <= STATE_ADDR;
+                        state <= STATE_SETTLE;
                     end
                 end
 
@@ -283,9 +299,10 @@ module Engine
 
                 default:
                 begin
-                    state  <= STATE_IDLE;
-                    nBGACK <= 1'b1;
-                    nBR    <= 1'b1;
+                    state   <= STATE_IDLE;
+                    nBGACK  <= 1'b1;
+                    nBR     <= 1'b1;
+                    nFIFO_W <= 1'b1;
                 end
             endcase
         end
