@@ -1493,17 +1493,32 @@ static inline bool ps2_odd_parity_bit(uint8_t x)
 // assembles whole frames, so we deliver one full byte (RX_READY +
 // PS2_RX_DATA) per ~1 ms and treat a PS2_TX_DATA write as an instant,
 // always-acknowledged host->device transmission (TX_DONE).
+//
+// The device side models a generic PS/2 keyboard's command set: host
+// commands get real responses (0xFA ACK, ident bytes, BAT after reset) so
+// guests that fully initialize the keyboard (Linux atkbd probe, u-boot's
+// enable/LED writes) behave as they will on hardware.  Responses ride the
+// same 1 ms/byte RX pacing as scancodes.
 struct PS2State
 {
     static constexpr uint64_t byte_period_sysclk = SYSCLK_HZ / 1000; // ~1 ms
+    // Reset -> BAT completion delay.  Real keyboards take 500-750 ms; use
+    // 300 ms so atkbd's reset timeout (guest jiffies) is comfortably met
+    // while bounded test runs stay short.
+    static constexpr uint64_t bat_delay_sysclk = SYSCLK_HZ * 3 / 10;
 
     std::deque<uint8_t> rx_bytes;
     uint64_t next_deliver_clock = 0;
+    uint64_t bat_due_clock = 0;        // nonzero: BAT (0xAA) pending after reset
     uint8_t  rx_data = 0;
     bool     rx_ready = false;
     bool     tx_done = false;
     bool     tx_ack_failed = false;    // false = device acknowledged
     uint8_t  ctrl = 0;
+    uint8_t  pending_cmd = 0;          // 0xED/0xF3 awaiting their data byte
+    uint8_t  leds = 0;
+    uint8_t  typematic = 0;
+    bool     scanning = true;
 
     bool init() { return true; }
 
@@ -1519,6 +1534,11 @@ struct PS2State
 
     void check_timer(uint64_t clock_now)
     {
+        if (bat_due_clock != 0 && clock_now >= bat_due_clock)
+        {
+            bat_due_clock = 0;
+            enqueue_byte(clock_now, 0xAA);      // BAT passed
+        }
         if (!rx_ready && !rx_bytes.empty()
             && clock_now >= next_deliver_clock)
         {
@@ -1529,6 +1549,61 @@ struct PS2State
             {
                 next_deliver_clock = clock_now + byte_period_sysclk;
             }
+        }
+    }
+
+    // Host->device command byte (a PS2_TX_DATA write): respond like a
+    // standard keyboard.
+    void device_command(uint64_t clock_now, uint8_t byte)
+    {
+        if (pending_cmd == 0xED)        // set LEDs: data byte
+        {
+            leds = byte;
+            pending_cmd = 0;
+            enqueue_byte(clock_now, 0xFA);
+            return;
+        }
+        if (pending_cmd == 0xF3)        // set typematic: data byte
+        {
+            typematic = byte;
+            pending_cmd = 0;
+            enqueue_byte(clock_now, 0xFA);
+            return;
+        }
+        switch (byte)
+        {
+            case 0xFF:                  // reset
+                rx_bytes.clear();
+                pending_cmd = 0;
+                leds = 0;
+                scanning = true;
+                enqueue_byte(clock_now, 0xFA);
+                bat_due_clock = clock_now + bat_delay_sysclk;
+                break;
+            case 0xF2:                  // read ID: MF2 keyboard
+                enqueue_byte(clock_now, 0xFA);
+                enqueue_byte(clock_now, 0xAB);
+                enqueue_byte(clock_now, 0x83);
+                break;
+            case 0xED:                  // set LEDs (data byte follows)
+            case 0xF3:                  // set typematic (data byte follows)
+                pending_cmd = byte;
+                enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xF4:                  // enable scanning
+                scanning = true;
+                enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xF5:                  // disable scanning
+                scanning = false;
+                enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xEE:                  // echo
+                enqueue_byte(clock_now, 0xEE);
+                break;
+            default:                    // unrecognized: resend
+                enqueue_byte(clock_now, 0xFE);
+                break;
         }
     }
 
@@ -1556,7 +1631,7 @@ struct PS2State
         return 0;
     }
 
-    void write_reg(uint32_t abs_addr, uint8_t val)
+    void write_reg(uint32_t abs_addr, uint8_t val, uint64_t clock_now)
     {
         if (abs_addr == GLUE_PS2_CLEAR)
         {
@@ -1570,14 +1645,199 @@ struct PS2State
         else
         {
             // PS2_TX_DATA (0x09) or its parity-1 alias (0x0B): instant,
-            // always-acked host->device transmission.
-            (void)val;
+            // always-acked host->device transmission; the keyboard model
+            // then responds to the command.
             tx_ack_failed = false;
             tx_done = true;
+            device_command(clock_now, val);
         }
     }
 
     bool irq_pending() const { return rx_ready || tx_done; }
+};
+
+// ---------------------------------------------------------------------------
+// Scripted PS/2 keystroke injection (--ps2-in): drives the PS2State model
+// from a file so keyboard-input paths can be tested unattended (headless
+// runs get no SDL key events).  Directives, one per line:
+//   # comment
+//   delay MS         wait MS emulated milliseconds before the next directive
+//   text STRING      type STRING as set-2 make/break sequences (\r, \\ escapes)
+//   raw HH HH ...    inject raw set-2 bytes (e.g. "raw AA" = a stray BAT)
+// Bytes go through PS2State::enqueue_byte, so the normal 1 ms/byte RX
+// pacing and IRQ flow apply.  Scripts should delay past boot stages they
+// don't target: whatever guest is live consumes the scancodes.
+// ---------------------------------------------------------------------------
+
+struct PS2Script
+{
+    struct Event
+    {
+        uint64_t delay_sysclk = 0;          // nonzero: pause
+        std::deque<uint8_t> bytes;          // else: inject these
+    };
+
+    std::deque<Event> events;
+    uint64_t resume_clock = 0;
+
+    // ASCII -> set-2 make code (+ shift requirement).  Codes match
+    // sdl_to_ps2_set2 above.
+    static bool ascii_to_set2(char c, uint8_t &code, bool &shift)
+    {
+        static const uint8_t letters[26] = {
+            0x1C,0x32,0x21,0x23,0x24,0x2B,0x34,0x33,0x43,0x3B,0x42,0x4B,0x3A,
+            0x31,0x44,0x4D,0x15,0x2D,0x1B,0x2C,0x3C,0x2A,0x1D,0x22,0x35,0x1A,
+        };
+        static const uint8_t digits[10] = {
+            0x45,0x16,0x1E,0x26,0x25,0x2E,0x36,0x3D,0x3E,0x46,
+        };
+        // Plain and shifted punctuation, same make code.
+        struct Punct { char plain, shifted; uint8_t code; };
+        static const Punct puncts[] = {
+            { '-','_',0x4E }, { '=','+',0x55 }, { '[','{',0x54 },
+            { ']','}',0x5B }, { '\\','|',0x5D }, { ';',':',0x4C },
+            { '\'','"',0x52 }, { '`','~',0x0E }, { ',','<',0x41 },
+            { '.','>',0x49 }, { '/','?',0x4A },
+        };
+        // Shifted digits: )!@#$%^&*(
+        static const char shifted_digits[11] = ")!@#$%^&*(";
+
+        shift = false;
+        if (c >= 'a' && c <= 'z') { code = letters[c - 'a']; return true; }
+        if (c >= 'A' && c <= 'Z') { code = letters[c - 'A']; shift = true; return true; }
+        if (c >= '0' && c <= '9') { code = digits[c - '0']; return true; }
+        switch (c)
+        {
+            case ' ':  code = 0x29; return true;
+            case '\r': case '\n': code = 0x5A; return true;
+            case '\t': code = 0x0D; return true;
+            case '\b': code = 0x66; return true;
+            case 0x1B: code = 0x76; return true;    // ESC
+        }
+        for (const Punct &p : puncts)
+        {
+            if (c == p.plain)   { code = p.code; return true; }
+            if (c == p.shifted) { code = p.code; shift = true; return true; }
+        }
+        for (int i = 0; i < 10; i++)
+        {
+            if (c == shifted_digits[i]) { code = digits[i]; shift = true; return true; }
+        }
+        return false;
+    }
+
+    static void emit_char(std::deque<uint8_t> &out, char c)
+    {
+        uint8_t code;
+        bool shift;
+        if (!ascii_to_set2(c, code, shift))
+        {
+            fprintf(stderr, "ps2 script: no set-2 mapping for 0x%02X; skipped\n",
+                    (unsigned char)c);
+            return;
+        }
+        if (shift) { out.push_back(0x12); }             // LShift make
+        out.push_back(code);                            // make
+        out.push_back(0xF0); out.push_back(code);       // break
+        if (shift) { out.push_back(0xF0); out.push_back(0x12); }
+    }
+
+    bool load(const char *path)
+    {
+        FILE *fp = fopen(path, "r");
+        if (!fp)
+        {
+            fprintf(stderr, "ps2 script: cannot open %s\n", path);
+            return false;
+        }
+        char line[1024];
+        int lineno = 0;
+        bool ok = true;
+        while (fgets(line, sizeof line, fp))
+        {
+            lineno++;
+            char *p = line;
+            while (*p == ' ' || *p == '\t') { p++; }
+            size_t len = strlen(p);
+            while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r')) { p[--len] = '\0'; }
+            if (*p == '\0' || *p == '#') { continue; }
+
+            if (strncmp(p, "delay ", 6) == 0)
+            {
+                Event ev;
+                ev.delay_sysclk = strtoull(p + 6, nullptr, 0) * (SYSCLK_HZ / 1000);
+                events.push_back(ev);
+            }
+            else if (strncmp(p, "text ", 5) == 0)
+            {
+                Event ev;
+                for (const char *s = p + 5; *s; s++)
+                {
+                    char c = *s;
+                    if (c == '\\' && s[1] != '\0')
+                    {
+                        s++;
+                        switch (*s)
+                        {
+                            case 'r': c = '\r'; break;
+                            case 'n': c = '\n'; break;
+                            case 't': c = '\t'; break;
+                            case 'e': c = 0x1B; break;
+                            case '\\': c = '\\'; break;
+                            default:
+                                fprintf(stderr, "ps2 script:%d: unknown escape \\%c\n",
+                                        lineno, *s);
+                                ok = false;
+                                continue;
+                        }
+                    }
+                    emit_char(ev.bytes, c);
+                }
+                events.push_back(ev);
+            }
+            else if (strncmp(p, "raw ", 4) == 0)
+            {
+                Event ev;
+                const char *s = p + 4;
+                char *end;
+                while (*s)
+                {
+                    unsigned long v = strtoul(s, &end, 16);
+                    if (end == s) { break; }
+                    ev.bytes.push_back(static_cast<uint8_t>(v));
+                    s = end;
+                }
+                events.push_back(ev);
+            }
+            else
+            {
+                fprintf(stderr, "ps2 script:%d: unknown directive: %s\n", lineno, p);
+                ok = false;
+            }
+        }
+        fclose(fp);
+        return ok;
+    }
+
+    void service(uint64_t clock_now, PS2State &ps2)
+    {
+        while (!events.empty() && clock_now >= resume_clock)
+        {
+            Event &ev = events.front();
+            if (ev.delay_sysclk != 0)
+            {
+                resume_clock = clock_now + ev.delay_sysclk;
+            }
+            else
+            {
+                for (uint8_t b : ev.bytes)
+                {
+                    ps2.enqueue_byte(clock_now, b);
+                }
+            }
+            events.pop_front();
+        }
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -1749,7 +2009,7 @@ class GriffinEmulator : public moira::Moira
                   || addr + IO_BASE == GLUE_PS2_TX_DATA + PS2_TX_DATA_PARITY) {
             // PS2_TX_DATA spans 0x09/0x0B (parity in address bit 1); both
             // alias to the same TX trigger in the frame model.
-            ps2.write_reg(addr + IO_BASE, val);
+            ps2.write_reg(addr + IO_BASE, val, getClock());
             const_cast<GriffinEmulator*>(this)->update_ipl();
         } else if(addr + IO_BASE >= AUDIO_BASE && addr + IO_BASE < AUDIO_BASE + AUDIO_SIZE) {
             dac_value = val;
@@ -1841,6 +2101,9 @@ public:
     {
         return dac_value;
     }
+
+    // Scripted keystroke injection (--ps2-in) feeds the PS/2 model directly.
+    PS2State &ps2_model() { return ps2; }
 
     GriffinEmulator() = default;
 
@@ -2285,6 +2548,8 @@ void usage(const char *progname)
     printf("  --console-stdio               DUART console on stdin/stdout instead of a pty\n");
     printf("  --console-in FILE             feed DUART console input from FILE\n");
     printf("  --console-out FILE            write DUART console output to FILE\n");
+    printf("  --ps2-in FILE                 inject PS/2 keystrokes from a script file\n");
+    printf("                                (directives: delay MS | text STRING | raw HH..)\n");
     printf("  --headless                    do not open an SDL video window\n");
     printf("  --screenshot FILE             write the framebuffer to FILE (BMP) on exit\n");
     printf("  --run-cycles N                stop after N emulated SYSCLK cycles\n");
@@ -2303,6 +2568,7 @@ int main(int argc, const char** argv)
     enum { CONSOLE_PTY, CONSOLE_STDIO, CONSOLE_FILES } console_mode = CONSOLE_PTY;
     const char *console_in_path = nullptr;
     const char *console_out_path = nullptr;
+    const char *ps2_in_path = nullptr;
     const char *screenshot_path = nullptr;
     bool headless = false;
     bool no_throttle = false;
@@ -2347,6 +2613,14 @@ int main(int argc, const char** argv)
             }
             console_mode = CONSOLE_FILES;
             console_out_path = argv[1];
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--ps2-in") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--ps2-in option requires a file path.\n");
+                exit(EXIT_FAILURE);
+            }
+            ps2_in_path = argv[1];
             argv += 2;
             argc -= 2;
         } else if(strcmp(argv[0], "--headless") == 0) {
@@ -2400,6 +2674,12 @@ int main(int argc, const char** argv)
     const char *romname = argv[0];
 
     GriffinEmulator emulator;
+
+    PS2Script ps2_script;
+    if (ps2_in_path && !ps2_script.load(ps2_in_path))
+    {
+        exit(EXIT_FAILURE);
+    }
 
     if (cf_path)
     {
@@ -2534,6 +2814,7 @@ int main(int argc, const char** argv)
 
         if (clock_now - previous_io_poll >= IO_POLL_INTERVAL)
         {
+            ps2_script.service(clock_now, emulator.ps2_model());
             emulator.poll_io();
             if (emulator.exit_requested)
             {
