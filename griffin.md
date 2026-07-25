@@ -295,31 +295,20 @@ This leaves the VIDEO→U23 AUDIO\_LE bodge (VIDEO pin 36) unused in Rev 1; futu
 
 Clean everything up for Rev 2, get as much tested as possible
 
-* Console
-  * What to do about PS/2?  Want some kind of raw SDL/GLFW-like keycode operation for graphical apps.
-    * Some kind of "switch to raw mode" call; open "/dev/keyboard" and that becomes a raw keycode reader?
-    * Open "/dev/fb" and text is discarded?
 * SW improvements
   * graphics routines, take "blit" out of splash.cpp
   * factor out font - should be selectable by enum
-  
 * Booter & apps
-  * Need trap interface to ROM calls
-    * get_time, open/close/read/write/etc, sbrk?
-    * read(0), write(0) for console
-    * open("/dev/ttyS0") for DUART port 2 (not currently connected - how to test?  bodge another 6-pin?)
-  * to enable loadable apps : configure linker.ld, load at 0x1000, crt0.s that just sets up program and rts when done?, syscalls.c that pulls trap
-  * Load file into memory, jump to 0x1000
   * Have a shell in the ROM
   * Image viewer app
   * BASIC (finish up your basic.cpp)
 * Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 12MB on Rev 2
-  * buildroot
-    * Need kernel config for: serial, PPP, block devices, CF card, ext4, console with PS/2 and bitmap display
-      * bonus: fbdev
-    * need serial driver for xr68C681
-    * need later a console driver hooking together PS/2 and framebuffer
-    * need 68010 config, seems like Claude can get on top of that
+
+## Possible new hardware features (July 24 2026)
+
+Kind of want a joystick port.
+
+Video through a CLUT RAM?  For 640 pixels wide need a ~15-25ns part, don't have one in my kit
 
 ## Strategy
 
