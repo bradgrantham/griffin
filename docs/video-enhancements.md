@@ -4,7 +4,8 @@ Design notes from 2026-07-24/25 discussion, following the ENGINE 2-cycle
 streaming DMA change (commit 934f7a2).  Nothing here is committed work; this
 is the menu of what that change made possible, with the constraints mapped
 out.  Per project rules, any VIDEO change starts with a fit experiment before
-other source is touched.
+other source is touched.  ENGINE-side ideas (copy accelerator, transparency
+writes) are in the companion docs/engine-blit.md.
 
 ## What the streaming DMA unlocked
 
