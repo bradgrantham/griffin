@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <cinttypes>
+#include <cstdlib>
 #include <deque>
 #include <thread>
 
@@ -1327,19 +1329,22 @@ struct VideoState
 
 struct EngineState
 {
-    // This atomic per-line model charges one lump of DMA stall per scanline;
-    // it does not simulate individual bus bursts (and so cannot reproduce the
-    // intra-line tearing those cause on real hardware).  The stall is the full
-    // line — 42 words (4-byte palette/reserved header + 80 pixel bytes) — at
-    // ENGINE's 2-cycle streaming rate (STATE_SETTLE + STATE_STROBE per word;
-    // AS held for the whole burst, DTACK ignored), plus a fixed overhead per
-    // bus burst: STATE_ASSERT + STATE_RELEASE = 2 sysclks of extra BGACK-low
-    // time, plus a little dead time in the BR/BG handshake (most of that
-    // overlaps the CPU finishing its own cycle, so it isn't charged in full).
+    // SYSCLKS_PER_LINE is the total CPU-stall cost of one scanline's DMA; how
+    // it is *delivered* to the clock (spread across instructions by default,
+    // or as one lump under GRIFFIN_DMA_STALL_LUMP) is decided in
+    // service_video().  Either way this per-line accounting does not simulate
+    // individual bus bursts, so it cannot reproduce the intra-line tearing
+    // those cause on real hardware.  The cost is the full line — 42 words
+    // (4-byte palette/reserved header + 80 pixel bytes) — at ENGINE's 2-cycle
+    // streaming rate (STATE_SETTLE + STATE_STROBE per word; AS held for the
+    // whole burst, DTACK ignored), plus a fixed overhead per bus burst:
+    // STATE_ASSERT + STATE_RELEASE = 2 sysclks of extra BGACK-low time, plus a
+    // little dead time in the BR/BG handshake (most of that overlaps the CPU
+    // finishing its own cycle, so it isn't charged in full).
     // ARBITRATION_SYSCLKS is an estimate pending measurement on hardware.
     // Bursts chunk the frame-wide word stream, not lines, so a line actually
     // straddles WORDS_PER_LINE/burst bursts on average; the ceil() here
-    // overcharges slightly (~1%), which is fine for a lump model.
+    // overcharges slightly (~1%), which is fine at this modeling fidelity.
     static constexpr uint32_t WORDS_PER_LINE = Griffin::VIDEO_WORDS_PER_LINE;  // 42
     static constexpr uint32_t SYSCLKS_PER_WORD = 2;
     static constexpr uint32_t ARBITRATION_SYSCLKS = 3;
@@ -1829,6 +1834,7 @@ public:
 
     uint32_t clock_hz = SYSCLK_HZ;
     bool exit_requested = false;
+    uint64_t dma_stall_debt = 0;   // smooth DMA-stall model: unpaid stall cycles
     ClockGovernor governor;
 
     uint8_t GetAudioDACValue() const
@@ -1840,6 +1846,19 @@ public:
 
     // Full CPU state dump, shared by the unhandled-access abort() paths and
     // the GRIFFIN_DUMP_ON_EXIT env-gated dump at normal exit.
+    void dump_ram_ascii(uint32_t addr, uint32_t len) const
+    {
+        fprintf(stderr, "\n=== RAM %06X..%06X (ASCII) ===\n", addr, addr + len);
+        std::string run;
+        for (uint32_t a = addr; a < addr + len && a < RAM_TOTAL_SIZE; a++)
+        {
+            uint8_t b = peek_ram8(a);
+            run += (b >= 0x20 && b < 0x7f) ? (char)b : (b == '\n' ? '\n' : '.');
+        }
+        fprintf(stderr, "%s\n", run.c_str());
+        fflush(stderr);
+    }
+
     void dump_cpu_state(const char *why) const
     {
         uint32_t pc = getPC();
@@ -1849,6 +1868,22 @@ public:
             fprintf(stderr, "D%d=%08X%s", i, getD(i), (i % 4 == 3) ? "\n" : "  ");
         for (int i = 0; i < 8; i++)
             fprintf(stderr, "A%d=%08X%s", i, getA(i), (i % 4 == 3) ? "\n" : "  ");
+        // Frame-pointer backtrace (kernel builds with -fno-omit-frame-pointer):
+        // a6 chain: [fp] = caller fp, [fp+4] = return address.
+        {
+            uint32_t fp = getA(6);
+            fprintf(stderr, "--- fp backtrace ---\n");
+            for (int i = 0; i < 40 && fp >= 0x1000 && fp < RAM_TOTAL_SIZE - 8; i++)
+            {
+                uint32_t next = (peek_ram8(fp) << 24) | (peek_ram8(fp + 1) << 16)
+                              | (peek_ram8(fp + 2) << 8) | peek_ram8(fp + 3);
+                uint32_t ra   = (peek_ram8(fp + 4) << 24) | (peek_ram8(fp + 5) << 16)
+                              | (peek_ram8(fp + 6) << 8) | peek_ram8(fp + 7);
+                fprintf(stderr, "  fp=%06X ra=%08X\n", fp, ra);
+                if (next <= fp) break;
+                fp = next;
+            }
+        }
         fprintf(stderr, "--- disassembly from PC ---\n");
         char str[1024];
         uint32_t addr = pc;
@@ -2089,9 +2124,57 @@ public:
                 stall += EngineState::SYSCLKS_PER_LINE;
                 return true;
             });
-        if (dma_stall > 0)
+        if (!getenv("GRIFFIN_NO_DMA_STALL"))
         {
-            sync(static_cast<int>(dma_stall));
+            // How the per-line DMA burst is charged to the CPU clock.
+            //
+            // Real ENGINE DMA steals the bus at bus-cycle granularity: it
+            // arbitrates in, streams a burst of words, and releases, stretching
+            // many CPU instructions by a little each.  The CPU's time reference
+            // and its interrupt sampling stay continuous with the instruction
+            // stream.
+            //
+            // The SMOOTH model (default) mirrors that: it accrues the line's
+            // stall as a debt and pays it down a few cycles per CPU step, so
+            // getClock() never leaps between two whole instructions.
+            //
+            // The LUMP model (GRIFFIN_DMA_STALL_LUMP) injects the whole
+            // ~SYSCLKS_PER_LINE burst as one sync() in the gap between two
+            // instructions.  That is cheaper but unphysical: it fast-forwards
+            // the shared clock ~a dozen instructions' worth in a single
+            // interrupt-blind gap, at the video-scanline cadence.  On the
+            // nommu/UP kernel that coarse, video-phased discontinuity mis-times
+            // a scheduler wakeup (a freshly-created kthread never gets run) and
+            // wedges the fbcon boot right after "crng init done" -- even though
+            // the *total* stall (and thus the CPU-vs-jiffies slowdown) is
+            // identical to SMOOTH.  Kept only for A/B and intra-line tearing
+            // studies; do not use it to boot the kernel.
+            if (getenv("GRIFFIN_DMA_STALL_LUMP"))
+            {
+                if (dma_stall > 0)
+                {
+                    sync(static_cast<int>(dma_stall));
+                }
+            }
+            else
+            {
+                dma_stall_debt += dma_stall;
+                if (dma_stall_debt > 0)
+                {
+                    // Pay at most STEP cycles per CPU step.  A scanline is
+                    // ~445 sysclks of guest time and service_video() runs once
+                    // per instruction, so many steps elapse per line and the
+                    // debt drains well within a line at STEP=4 -- keeping the
+                    // clock effectively continuous.  GRIFFIN_DMA_STALL_STEP
+                    // overrides for experiments.
+                    static const char *stepenv = getenv("GRIFFIN_DMA_STALL_STEP");
+                    int step = stepenv ? atoi(stepenv) : 4;
+                    if (step <= 0) step = 4;
+                    int pay = static_cast<int>(std::min<uint64_t>(dma_stall_debt, step));
+                    sync(pay);
+                    dma_stall_debt -= pay;
+                }
+            }
         }
         update_ipl();
     }
@@ -2474,6 +2557,13 @@ int main(int argc, const char** argv)
     {
         emulator.dump_cpu_state("at exit");
     }
+    if (const char *rd = getenv("GRIFFIN_DUMP_RAM"))
+    {
+        uint32_t addr = 0, len = 0;
+        if (sscanf(rd, "%x:%x", &addr, &len) == 2)
+            emulator.dump_ram_ascii(addr, len);
+    }
+
 
     if (audio)
     {
