@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <deque>
 #include <thread>
+#include <vector>
 
 #include <SDL3/SDL.h>
 
@@ -2095,6 +2096,62 @@ public:
     uint32_t clock_hz = SYSCLK_HZ;
     bool exit_requested = false;
     uint64_t dma_stall_debt = 0;   // smooth DMA-stall model: unpaid stall cycles
+
+    // --- PC-sampling profiler (GRIFFIN_PROFILE=START:END, SYSCLK cycles) ---
+    // Deterministic runs make this exact: histogram the PC once per
+    // instruction while the clock is inside [START,END), dump the hottest
+    // 64-byte buckets at exit for symbolization against System.map.
+    static constexpr uint32_t PROFILE_SHIFT = 6;   // 64-byte buckets
+    std::vector<uint32_t> profile_hist;
+    uint64_t profile_start = 0, profile_end = 0;
+    uint64_t profile_samples = 0;
+
+    void profile_init(uint64_t start, uint64_t end)
+    {
+        profile_start = start;
+        profile_end = end;
+        profile_hist.assign(RAM_TOTAL_SIZE >> PROFILE_SHIFT, 0);
+    }
+
+    void profile_sample()
+    {
+        uint64_t now = getClock();
+        if (now < profile_start || now >= profile_end)
+        {
+            return;
+        }
+        uint32_t pc = getPC();
+        if (pc < RAM_TOTAL_SIZE)
+        {
+            profile_hist[pc >> PROFILE_SHIFT]++;
+            profile_samples++;
+        }
+    }
+
+    void profile_dump() const
+    {
+        if (profile_hist.empty() || profile_samples == 0)
+        {
+            return;
+        }
+        // Top 50 buckets.
+        std::vector<uint32_t> idx(profile_hist.size());
+        for (uint32_t i = 0; i < idx.size(); i++) idx[i] = i;
+        std::partial_sort(idx.begin(), idx.begin() + 50, idx.end(),
+            [this](uint32_t a, uint32_t b)
+            { return profile_hist[a] > profile_hist[b]; });
+        fprintf(stderr, "=== PC profile: %" PRIu64 " samples in [%" PRIu64
+                ", %" PRIu64 ") ===\n",
+                profile_samples, profile_start, profile_end);
+        for (int i = 0; i < 50; i++)
+        {
+            uint32_t b = idx[i];
+            if (profile_hist[b] == 0) break;
+            fprintf(stderr, "  %08X %8u %5.2f%%\n",
+                    b << PROFILE_SHIFT, profile_hist[b],
+                    100.0 * profile_hist[b] / profile_samples);
+        }
+    }
     ClockGovernor governor;
 
     uint8_t GetAudioDACValue() const
@@ -2681,6 +2738,20 @@ int main(int argc, const char** argv)
         exit(EXIT_FAILURE);
     }
 
+    if (const char *prof = getenv("GRIFFIN_PROFILE"))
+    {
+        uint64_t s = 0, e = 0;
+        if (sscanf(prof, "%" SCNu64 ":%" SCNu64, &s, &e) == 2 && e > s)
+        {
+            emulator.profile_init(s, e);
+        }
+        else
+        {
+            fprintf(stderr, "GRIFFIN_PROFILE wants START:END (SYSCLK cycles)\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+
     if (cf_path)
     {
         if (!emulator.open_cf(cf_path, cf_ro))
@@ -2774,6 +2845,10 @@ int main(int argc, const char** argv)
             printf("%04X: %s\n", emulator.getPC(), str);
         }
         emulator.execute();
+        if (!emulator.profile_hist.empty())
+        {
+            emulator.profile_sample();
+        }
         emulator.service_video();
         auto clock_now = emulator.getClock();
         auto now = time(0);
@@ -2838,6 +2913,7 @@ int main(int argc, const char** argv)
     {
         emulator.dump_cpu_state("at exit");
     }
+    emulator.profile_dump();
     if (const char *rd = getenv("GRIFFIN_DUMP_RAM"))
     {
         uint32_t addr = 0, len = 0;
