@@ -1151,6 +1151,11 @@ struct VideoState
     SDL_Texture *texture = nullptr;
     bool sdl_ok = false;
     bool headless = false;          // skip SDL window; framebuffer still filled
+    bool want_pixels = true;        // false => nobody views the fb: skip the
+                                     // per-scanline RAM peek + ARGB render
+                                     // (headless with no screenshot).  DMA
+                                     // stall accounting still runs, so guest
+                                     // timing is unchanged.
     std::vector<uint32_t> framebuffer;
 
     // Per-line framebuffer: the header word's two bytes set this line's palette
@@ -1290,7 +1295,8 @@ struct VideoState
             if (v_cnt < V_ACTIVE)
             {
                 scanline_valid = fetch_active_line(v_cnt, scanline_bytes, stall_cycles);
-                render_scanline(v_cnt);
+                if (want_pixels)
+                    render_scanline(v_cnt);
             }
 
             // VSYNC IRQ: hardware latches at (v_cnt==V_SYNC_START && h_last) —
@@ -2394,9 +2400,10 @@ public:
         return ps2.init();
     }
 
-    bool init_video(bool headless = false)
+    bool init_video(bool headless = false, bool want_pixels = true)
     {
         video.headless = headless;
+        video.want_pixels = want_pixels;
         return video.init();
     }
 
@@ -2482,6 +2489,13 @@ public:
                 }
                 // Palette-and-pixels: each line begins with a 4-byte header —
                 // word 0 = {fg, bg}, word 1 reserved — followed by the pixels.
+                // Always charge the DMA stall (guest timing), but skip the
+                // pixel/palette reads when nobody will view the framebuffer.
+                stall += EngineState::SYSCLKS_PER_LINE;
+                if (!video.want_pixels)
+                {
+                    return true;
+                }
                 uint32_t base = engine.fb_line_addr(line);
                 video.palette_fg = peek_ram8(base + 0);
                 video.palette_bg = peek_ram8(base + 1);
@@ -2490,7 +2504,6 @@ public:
                 {
                     dst[i] = peek_ram8(px + i);
                 }
-                stall += EngineState::SYSCLKS_PER_LINE;
                 return true;
             });
         if (!getenv("GRIFFIN_NO_DMA_STALL"))
@@ -2902,7 +2915,11 @@ int main(int argc, const char** argv)
         emulator.init_stdin();
     }
 
-    if (!emulator.init_video(headless))
+    /* Render the framebuffer only if something will look at it: an SDL
+     * window (not headless) or a requested screenshot.  Headless console-
+     * only runs skip all per-scanline pixel work. */
+    bool want_pixels = !headless || (screenshot_path != nullptr);
+    if (!emulator.init_video(headless, want_pixels))
     {
         fprintf(stderr, "Warning: SDL/Video init failed, display disabled\n");
     }
