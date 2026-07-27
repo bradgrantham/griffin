@@ -301,8 +301,9 @@ Clean everything up for Rev 2, get as much tested as possible
 * Booter & apps
   * Have a shell in the ROM
   * Image viewer app
+  * Movie player app with audio - microham mode
   * BASIC (finish up your basic.cpp)
-* Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 12MB on Rev 2
+* Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 8MB RAM + up to 4MB flash on Rev 2
 
 ## Possible new hardware features (July 24 2026)
 
@@ -366,16 +367,18 @@ Bodging between ENGINE and VIDEO and piggybacked 7200s a la video-fifo-wiring.md
 
 * **CPU:** 68010 primary (68000 is a drop-in), 14 MHz SYSCLK.
 * **Clocking:** 14 MHz system oscillator + a separate 25.175 MHz pixel oscillator for VGA.  SYSCLK feeds a GCLK on each CPLD.
-* **RAM:** 16-bit-wide async SRAM, ~12 MB usable.  Two AS6C6416 (4M×16 = 8 MB each, 55 ns) populate 16 MB; only 0x000000–0xBFFFFF (12 MB) is addressable (top 4 MB is peripherals).  GLUE decodes just 2 chip selects (chip0 = A23==0, chip1 = A23 & ~A22) instead of 4 banks, byte lanes from UDS/LDS — no SDRAM/PSRAM, no memory controller.
-* **ROM:** 2× SST39SF040 (1 MB, 16-bit, 5V, 70 ns), socketed.  In-circuit reflashable via a GLUE ROM-region write strobe (~ROM_WE) gated by CONFIG.FLASH_WE_EN (default write-protected); word-writes only, flasher runs from RAM (not read-while-write).  Image-zero is bench-programmed; stretch goal is first-program / OTA over JTAG by driving the CPLD-chain boundary scan (CPU in reset, address from ENGINE, data from VIDEO/GLUE, ~CS+~WE from GLUE).
+* **RAM:** 16-bit-wide async SRAM, 8 MB.  One AS6C6416 (4M×16 = 8 MB, 55 ns) at 0x000000–0x7FFFFF; GLUE decodes a single chip select (A23==0), byte lanes from UDS/LDS — no SDRAM/PSRAM, no memory controller.  (Was 2 chips / 12 MB; 0x800000–0xBFFFFF is now the flash window — see ROM.)
+* **ROM:** 1–2× M29F160FB (16 Mbit 5 V NOR, 1M×16, 55 ns, TSOP48), soldered — replaces the 2× SST39SF040 plan to make room for a Linux kernel + erofs root in flash.  Still in production (Alliance Memory second source; DigiKey/Mouser/TME stock).  FB (bottom boot) preferred: the 16/8/8 KB boot sectors sit at the vector/bootloader end while the erofs image lives in the uniform 64 KB sectors above (FT differs only in sector order).  ×16 mode: BYTE# tied high, flash A0–A19 ← CPU A1–A20, D0–D15 direct — one chip puts 2 MB on the full 16-bit bus (vs 1 MB from the SST pair); an optional second chip selected by A21 makes 4 MB.  Flash window moves 0xC00000 → 0x800000–0xBFFFFF (cheaper decode).  55 ns may allow zero-wait ROM at 14 MHz.  Initial flash and recovery via the on-board RP2350B bridge's UF2 drive (see below), which bus-masters JEDEC cycles into the flash window with the CPU held off.  (Offline fallback: XGecu T48 + ADP_F48_EX-1 TSOP48 adapter)  The CPU can also self-reflash in-circuit via the GLUE ~ROM_WE strobe gated by CONFIG.FLASH_WE_EN (default write-protected), JEDEC 0x555/0x2AA unlock sequences as plain word-writes, flasher runs from RAM (not read-while-write).  RESET# to the ~RESET net.
 * **CF:** 16-bit True IDE PIO; IOWR gated by AS (needs a glue.v change: R/~W + AS → IOWR).
 * **RTC:** DS3231 (TCXO) on I²C via the DUART's spare OP/IP pins — off the bus, zero GLUE logic (no A17, no chip-select/strobes/wait-states), 5 V so no level translation.  SCL = an OP pin (push-pull is fine; DS3231 doesn't clock-stretch); SDA is open-drain via an OP→N-FET pull-down with an IP reading back.  Optional INT#/SQW → a DUART change-detect IP for a 1 Hz/alarm IRQ.  (Chosen over the BQ3285, whose 146818-style multiplexed bus would have cost GLUE A17 + AS/DS strobes + 3 pins.)
-* **GLUE ATF1508:** address decode, ~R/W + write-strobe generation, autovector ~VPA, the PS/2 keyboard frame engine (RX one IRQ/byte, TX on the device clock; no mouse port), and a separate DEBUG-LED driver used for boot codes / video-ISR heartbeat / double-fault.  Decodes ~AUDIO_SEL for the AUDIO CPLD and drives the new ~ROM_WE flash strobe.  Net Rev 2 effect: GLUE is *smaller* than Rev 1 (RAM 4 selects→2, RTC off-chip, only ~ROM_WE added).
-* **Serial I/O — XR68C681 DUART:** Channel A = console (115200 8N1; boot/panic output, no more bit-bang — pre-DUART failures are LED-blink only), Channel B = 2nd serial for ESP32 / PPP / network at the highest sustainable baud.  C/T = 100 Hz systick (level 5) + a configurable timer ISR.  OP/IP pins host RTS/CTS flow control on both channels and the DS3231 I²C; spares remain.
-* **FT4232H bridge (USB-C):** one chip, 4 independent ports over one cable — A (MPSSE) = JTAG to the CPLD chain (and the stretch-goal flash-over-JTAG); B = console ↔ DUART Ch A; C = 2nd UART ↔ DUART Ch B; D = host board control (assert CPU ~RESET/~HALT and the flash-bootstrap enable for hands-off reset/reflash).  It is 3.3 V and not 5 V-tolerant, so lines driving *into* it (CPLD TDO, DUART TxD, any RESET/HALT readback) go through 74LVC245s; 3.3 V→5 V lines drive direct.
+* **GLUE ATF1508:** address decode, ~R/W + write-strobe generation, autovector ~VPA, the PS/2 keyboard frame engine (RX one IRQ/byte, TX on the device clock; no mouse port), and a separate DEBUG-LED driver used for boot codes / video-ISR heartbeat / double-fault.  Decodes ~AUDIO_SEL for the AUDIO CPLD? Drives  ~ROM_WE flash strobe.  ~BOOTSTRAP input from the RP2350B bridge or test header: while asserted, ~ROM_WE follows flash-window writes regardless of CONFIG.FLASH_WE_EN, and any AS-stuck watchdog is relaxed so slow external bus cycles aren't killed.
+* **Serial I/O — XR68C681 DUART:** Channel A = console (115200 8N1; boot/panic output, no more bit-bang — pre-DUART failures are LED-blink only), Channel B = 2nd serial brought out to a TTL header (ESP32 / PPP / an RS232 level-shifter module) — deliberately not routed through USB.  C/T = 100 Hz systick (level 5) + a configurable timer ISR.  OP/IP pins host RTS/CTS flow control on both channels and the DS3231 I²C; spares remain.
+* **RP2350B bus-master (USB-C #1, on-board):**   47 of 48 GPIOs: A1–A23 (23 — A23:22 must be driven to reach the flash window at 0x800000 and the rest of the map), D0–D15 (16), ~AS/~UDS/~LDS/R/~W (4), ~DTACK (1), ~RESET/~HALT/~BOOTSTRAP (3, open-drain on the existing nets).  USB rides the dedicated DP/DM pins (zero GPIO), and no VBUS-sense pin is needed: its USB-C is the board's power input, so VBUS is present whenever the board is on — dumb charger and host-peripheral both work — which also guarantees the powered-5V-tolerance precondition; no level translators.  USB device = **UF2 virtual-FAT drive** (GRIFFIN volume with INFO_UF2.TXT and a CURRENT.BIN readback file; host writes rom.uf2 → assert ~RESET+~HALT+~BOOTSTRAP, bus-master JEDEC erase/program/verify into the flash window, release reset on eject) plus a CDC command channel for scripted flashing and peek/poke — the bring-up tool: read/write RAM and peripheral registers with no working CPU or ROM.  Self-programming via the RP2350 ROM's BOOTSEL USB bootloader on its own port; SWD test points as backup.  Safety: GPIOs default Hi-Z at reset; watchdog so a crash can't stay driving the bus; external resistors, not internal pull-downs (erratum RP2350-E9).  If the one spare pin ever isn't enough, the ~BOOTSTRAP-gated 74HC595 pair on the upper address lines frees ~13.
+* **FT2232H bridge (USB-C #2, data-only):** Channel A (MPSSE) = JTAG to the CPLD chain; B = console ↔ DUART Ch A.  Self-powered from the board 5 V rail (shared 3.3 V LDO); its connector does **not** feed the rail — VBUS goes only to an enumerate-when-cabled sense divider, so there is no back-power path with two hosts attached.  3.3 V and not 5 V-tolerant: lines driving *into* it (CPLD TDO, DUART TxD) get level translation; 3.3 V→5 V lines drive direct.  12 MHz crystal + optional 93LC56 EEPROM.
+* **Debug headers — LA access + "PCB design failed" backup:** two 2×15 0.1" headers laid out to **mirror the LogicAnalyzer level-shifter board's own 2×15 pinout** (24 channels + GND + 3V3 + 5V-reference + 2 external-trigger pins each), so the two on-hand 5 V-tolerant analyzers plug straight on and daisy-chain via their own 3-pin chain connectors into one synchronized 48-channel capture.  Exact channel-to-pin mapping, mating gender, and orientation come from the gusmanb KiCad files at schematic time — the wiki shows it only as a diagram (https://github.com/gusmanb/logicanalyzer/wiki/02---LogicAnalyzer-Hardware).  Channel plan (47 bus/control signals + SYSCLK = 48, an exact fit): **header 1 "what happened"** = D0–D15, ~AS, ~UDS, ~LDS, R/~W, ~DTACK, ~RESET, ~HALT, ~BOOTSTRAP (exactly 24); **header 2 "where"** = A1–A23 + SYSCLK (24).  5V-reference pins fed from the Griffin rail (analyzer's onboard jumper removed → external reference); 3V3 pins NC; trigger pins NC/test pads.  Roles: (1) *Observe:* whole-bus captures as above.  (2) *Backup bus-master:* every signal a master needs is on these same two headers — hold ~RESET+~HALT (68000 tri-states A/D/strobes; GLUE still does its normal decode, so the flash sees ordinary write cycles) — for when the on-board RP2350B is the thing being debugged or its firmware is bricked mid-development.  Bus-cycle mechanics for whoever masters: bit-banged/PIO read_word/write_word (honor ~DTACK or run conservatively slow) + JEDEC unlock/erase/program/verify; programming is flash-limited (~10 µs/word ⇒ ~20–30 s per 2 MB chip).  (3) *Backup CPLD programming* on a small third strip (1×6: TCK/TMS/TDI/TDO + 5 V + GND) — the rev-1-style external JTAG dongle path, live even if the FT2232H path is broken; series resistors between the FT2232H and the JTAG lines let the strip cleanly overdrive an idle FTDI.
 * **Video — VGA 640×480@60 1bpp** (NTSC/composite dropped) over shared SRAM via a pair of 7200 FIFOs.
   * VIDEO CPLD: HSYNC/VSYNC/timing, reads bytes from the 7200s, vsync IRQ (level 6), ENABLE *after* ENGINE.  Palette is in-band — the first word of each scanline carries {fg,bg} (R3G3B2 each), latched from the FIFO during hblank; no PALETTE register.  Bitfile stretch if it fits: 2bpp 320×240 with 4 palette entries (no board impact).
-  * ENGINE CPLD: 16-bit DMA master (level 3).  SOURCE_PAGE = A[23:16] of the 64K-aligned framebuffer; streams VIDEO_WORDS_PER_LINE words/scanline in ENGINE_WORDS_PER_BURST bursts paced to HBLANK; ENABLE *before* VIDEO.  Per-line streaming lets the CPU flip SOURCE_PAGE between frames for double-buffering.
+  * ENGINE CPLD: 16-bit DMA master (level 3).  SOURCE_PAGE = A[23:16] of the 64K-aligned framebuffer; streams VIDEO_WORDS_PER_LINE words/scanline in ENGINE_WORDS_PER_BURST bursts paced to HBLANK; ENABLE *before* VIDEO.  Per-line streaming lets the CPU flip SOURCE_PAGE between frames for double-buffering.  Must reset to DMA-disabled on system ~RESET (guaranteed, not power-on-luck) so the bus is quiet under external bus mastering.
 * **Audio — dedicated ATF1504AS (PLCC44) at 0xFC0000** (replaces the Rev 1 '373 latch): 2× 7202 FIFO + 2× 8-bit R2R DAC, stereo (L = D[15:8], R = D[7:0] straight to the FIFOs).  The CPLD generates ~W (full-word writes to the A17-high alias), ~R (12-bit SYSCLK divider on a GCLK), and ~HF → nAUDIO_IRQ (level 2).  CPU fills the FIFO on the HF IRQ; baseline ~15.7 kS/s; no mono packing.  Self-clocked, so no VIDEO line-rate signal.  (Needs new audio.v + YAML registers.)
 * **Interrupts (autovector):** VIDEO 6, DUART 5, PS/2 4, ENGINE 3, AUDIO 2.
 
@@ -384,23 +387,27 @@ Bodging between ENGINE and VIDEO and piggybacked 7200s a la video-fifo-wiring.md
 *(KiCad watch-list — footprints, pinouts, nets, placement, SI.  Function lives in Rev 2 components above; link, don't restate.)*
 
 ### Footprints & sockets
-- [ ] ROM: 2× SST39SF040 PLCC **sockets** (ZIF clearance — decoupling is currently too close); route ~ROM_WE (new net), /OE←nR_W, /CE←nROM_SELECT
-- [ ] RAM: 2× AS6C6416 TSOP-II; /UB←nUDS, /LB←nLDS, /OE←nR_W
+- [ ] ROM: 1–2× M29F160FB TSOP48, **soldered** (image-zero via the RP2350B bridge; bench T48 + ADP_F48_EX-1 as fallback); route ~ROM_WE (new net), /OE←nR_W, /CE←nROM_SELECT (2nd chip select by A21), BYTE#→+5V, RESET#→~RESET net
+- [ ] RAM: 1× AS6C6416 TSOP-II; /UB←nUDS, /LB←nLDS, /OE←nR_W
 - [ ] Audio: ATF1504 PLCC44; route ~AUDIO_SEL (replaces write-only ~AUDIO_LE)
 - [ ] DUART: XR68C681 DIP-40; A1-A4→RS1-RS4, D0-7 + R/~W direct, ~RESET from ~RESET net, ~IACK tied high (autovectors), 3.6864 MHz crystal on X1/X2 (clearance if ZIF)
-- [ ] FT4232H: SMT footprint rotated so USB-C faces the rear; 12 MHz crystal, 3.3 V LDO, optional 93LC56 EEPROM; 2×5 JTAG header in parallel for an external programmer / isolation
+- [ ] RP2350B: QFN-80 + QSPI flash + 12 MHz crystal; own USB-C (#1 = board power input, rear); BOOTSEL button + SWD test points; route A1–A23, D0–D15, ~AS/~UDS/~LDS/R/~W, ~DTACK, ~RESET/~HALT/~BOOTSTRAP (47 of 48 GPIOs — one spare)
+- [ ] FT2232H: USB-C #2 (data-only, rear); 12 MHz crystal, optional 93LC56 EEPROM; port A JTAG → CPLD chain through series isolation resistors (JTAG backup lives on the debug header, no separate 2×5), port B ↔ DUART Ch A
+- [ ] DUART Ch B TTL header (RS232 level-shifter module optional)
 - [ ] RTC: DS3231 + coin-cell holder; SCL=OP2, SDA via OP3→2N7002 (drain on SDA) + IP2 readback
 - [ ] PS/2: fix footprint + pin mapping (single keyboard port)
 - [ ] decide SMT vs THT for CF, RAM, DUART, and the CPLDs
 - [ ] Headphone-jack pads / RCA retainer feet — partial holes?
+- [ ] Debug headers: 2× 2×15 THT mirroring the gusmanb level-shifter pinout (pull channel map + gender/orientation from the project KiCad; leave clearance for two analyzers side by side or ribbon out); header 1 = D0–D15 + ~AS/~UDS/~LDS/R/~W/~DTACK + ~RESET/~HALT/~BOOTSTRAP, header 2 = A1–A23 + SYSCLK (via a buffered/series-R tap — do not stub the raw clock net); 5V-ref pins from the rail, 3V3 NC, triggers NC/pads; plus 1×6 JTAG backup strip (TCK/TMS/TDI/TDO/5V/GND); keep stubs short; route ~BOOTSTRAP to GLUE (and the RP2350B bridge)
 
 ### Power & decoupling
-- [ ] USB-C with two CC sink resistors (no PD — Rev 1 draws 0.84 A on a plain 5 V sink)
+- [ ] USB-C #1 (RP2350B) with two CC sink resistors is the board power input (no PD — Rev 1 draws 0.84 A on a plain 5 V sink; power-only charger and host-peripheral both fine, hosts advertise ≥1.5 A on C); USB-C #2 (FT2232H) is data-only — VBUS to a sense divider, never the rail, so no back-power path
 - [ ] decoupling cap on every +5V/GND pair, especially the CPLDs
-- [ ] 3.3 V LDO for the FT4232H
+- [ ] 3.3 V LDO for the RP2350B (IOVDD; core is internally regulated)
 
 ### Pull-ups
 - [ ] 4.7K on HALT; any CPU lines that may float or lead
+- [ ] ~AS, ~UDS, ~LDS, R/~W (and ~DTACK if ever tri-stated) — strobes must idle deasserted while the CPU is tri-stated (~RESET+~HALT bus-master mode), else GLUE sees phantom cycles; also cleans up LA captures
 - [ ] PS/2 CLK & DATA
 - [ ] I²C SCL/SDA to 5 V
 - [ ] JTAG lines
@@ -410,7 +417,7 @@ Bodging between ENGINE and VIDEO and piggybacked 7200s a la video-fifo-wiring.md
 - [ ] SYSCLK into a GCLK on every CPLD (especially GLUE)
 - [ ] source termination (33–100 Ω series at CPLD output) on the FIFO control lines — /RE_EVEN, /RE_ODD, /W, q8_toggle (Rev 1: unterminated bodge wires rang and doubled reads → image creep; 10 pF-to-GND was the stopgap)
 - [ ] 7200s on the bus may need transceivers for capacitance; inline R + cap-to-GND per the jumper-to-solderless experiment
-- [ ] 74LVC245 on the 5V→3.3V lines into the FT4232H (TDO, DUART TxD, RESET/HALT readback)
+- [ ] level translation on the 5V→3.3V lines into the FT2232H (CPLD TDO, DUART TxD); the RP2350B needs none (5 V-tolerant while powered, and always powered with the board)
 - [ ] redesign the VGA analog (R-2R ladder + sync) to be robust; place the audio R2R/op-amp near the jack
 
 ### Test & debug access
@@ -430,7 +437,7 @@ Bodging between ENGINE and VIDEO and piggybacked 7200s a la video-fifo-wiring.md
 
 ### Process & layout
 - [ ] HDL first: bring all CPLD bitfiles (GLUE/VIDEO/ENGINE/AUDIO) to a fit with the fitter free to minimize macrocells, then freeze the pinout before routing
-- [ ] hub-and-spoke: bus across from the CPU, peripherals above/below with vertical taps; FT4232H/USB-C to the rear
+- [ ] hub-and-spoke: bus across from the CPU, peripherals above/below with vertical taps; RP2350B + FT2232H with both USB-Cs to the rear
 - [ ] open: more inter-CPLD signals? (decide during HDL)
 - [ ] BOM output with an "I already have these" filter
 
@@ -444,8 +451,31 @@ https://github.com/AcceleratedLinux/accelerated-linux
 
 https://github.com/fifteenhex/m68kjunk
 
+## Shrinkwrapped VCFWest package
+
+Couple of completed machines:
+
+* Rev 2 - if ENGINE can do generalized DMA chain, do that
+  * accelerated memmove and scroll and CF card (firmware routines, Linux)
+* 3D printed case
+* VGA monitors, try to get CRTs - Jim?
+
+Posters
+
+* Block architecture
+* Interesting features
+
+Demos
+
+* Linux - can it support a windowing system?
+  * Move to erofs for root and XIP?
+* BASIC
+* Zaxxon? Or other interesting game
+* Movie player with audio
+* Jukebox with album art
+
 # Rev 3
 
-68030 + 68882 + >=32MB + USB + Ethernet + at least 800x600x8? - make a proper Linux workstation
+68030 + 68882 + >=64MB DRAM + USB (by RP2350?) + Ethernet + at least 800x600x8? - make a proper Linux workstation
 
-1 CPLD or 2 CPLDs in concert are a DMA list processor?
+3.3V, FPGAs
