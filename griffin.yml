@@ -44,6 +44,8 @@ peripherals:
         bits:
           - { bit: "0", name: ROM_OVERLAY_DISABLE, default: 0,
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
+          - { bit: "1", name: FLASH_WE_EN, default: 0,
+              description: "Write 1 to enable the ~ROM_WE strobe so flash-window writes reach the NOR flash (JEDEC program/erase); 0 write-protects flash" }
       - offset: 0x09
         name: PS2_TX_DATA
         access: write
@@ -121,12 +123,20 @@ peripherals:
         bits:
           - { bit: "7:0", name: DATA, description: "Received scancode byte (LSB-first on the wire)" }
 
+  # Rev 2 flash plan (see griffin.md "Rev 2 components"): 1-2x M29F160FB,
+  # 16Mbit 5V NOR (1Mx16, 55ns, TSOP48) in x16 mode (BYTE# high, flash
+  # A0-A19 <- CPU A1-A20).  One chip = 2MB mirrored through the 4MB window;
+  # optional second chip (selected by A21) = 4MB flat.  Window is
+  # 0x800000-0xBFFFFF (decode A23 & ~A22); this displaces RAM above 8MB.
+  # Writes reach the chip only via GLUE ~ROM_WE, gated by CONFIG.FLASH_WE_EN
+  # (or the ~BOOTSTRAP pin for external bus-master programming); program/erase
+  # uses standard JEDEC x16 command sequences at word addresses 0x555/0x2AA.
   ROM:
-    part: "2x 64K byte-wide EPROM/Flash"
+    part: "1-2x M29F160FB 16Mbit 5V NOR flash (1Mx16, 55ns, TSOP48)"
     address_range:
-      base: 0xC00000
-      size: 0x020000    # 128K chip data (2x 64K byte-wide)
-      window: 0x100000  # 1MB decode window; 128K repeats throughout
+      base: 0x800000
+      size: 0x400000    # up to 4MB (2MB per chip; 1-chip build mirrors twice)
+      window: 0x400000  # 4MB decode window at 0x800000-0xBFFFFF
       width: 16
     dtack:
       - 12000000: 1
@@ -137,12 +147,12 @@ peripherals:
     linker:
       section: rom
 
-  # Rev 2: 8MB main RAM as 8x AS6C8016 (512K x 16, 2.7-5.5V), one bank per chip.
-  # Chip-select decode is NOT in GLUE: GLUE emits a single /RAMCS for the whole
-  # 0x000000-0x7FFFFF range, and an external 74HCT138 (enables gated by /RAMCS,
-  # select inputs A20-A22) generates the eight per-chip /CEs.  This costs one
-  # GLUE output pin instead of eight; do not add per-bank selects to glue.v.
-  # /UB and /LB on each chip come from /UDS and /LDS; /WE and /OE are shared.
+  # Rev 2 (current plan, see griffin.md): 8MB main RAM as ONE AS6C6416
+  # (4M x 16, 55ns), single GLUE chip select = A23==0; /UB and /LB from
+  # /UDS and /LDS; /WE and /OE shared.  (Supersedes the earlier 8x AS6C8016
+  # + 74HCT138 scheme.)  The eight 1MB bank entries below are kept for now
+  # because the resulting 0x000000-0x7FFFFF map is identical; collapse them
+  # to one entry when the rev-2 YAML restructuring happens.
   RAM_BANK_1:
     part: "AS6C8016"
     address_range:

@@ -181,7 +181,7 @@ def write_c_header(hw: dict, path: Path) -> None:
         w(f"static constexpr uint32_t {pname}_BASE = {fmt_hex(base, 6)}UL;")
         if size:
             w(f"static constexpr uint32_t {pname}_SIZE = {fmt_hex(size, 6)}UL;")
-        if window and window != size:
+        if window and (window != size or ar.get('window')):
             w(f"static constexpr uint32_t {pname}_WINDOW = {fmt_hex(window, 6)}UL;")
 
         # MemoryRange spans the full decode window so .contains() is correct for address decode.
@@ -323,7 +323,7 @@ def write_asm_include(hw: dict, path: Path) -> None:
         w(f".equ {pname}_BASE, {fmt_hex(base, 6)}")
         if size:
             w(f".equ {pname}_SIZE, {fmt_hex(size, 6)}")
-        if window and window != size:
+        if window and (window != size or ar.get('window')):
             w(f".equ {pname}_WINDOW, {fmt_hex(window, 6)}")
 
         # Interrupt level

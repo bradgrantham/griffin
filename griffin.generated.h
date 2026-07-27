@@ -37,6 +37,8 @@ static constexpr uint32_t GLUE_DEBUG_IN_SHIFT = 0U;
 static constexpr uint32_t GLUE_CONFIG = 0xF00007UL;  // WRITE: GLUE configuration register
 static constexpr uint32_t GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t GLUE_CONFIG_ROM_OVERLAY_DISABLE_SHIFT = 0U;
+static constexpr uint32_t GLUE_CONFIG_FLASH_WE_EN_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t GLUE_CONFIG_FLASH_WE_EN_SHIFT = 1U;
 static constexpr uint32_t GLUE_CONFIG_DEFAULT = 0x00U;
 static constexpr uint32_t GLUE_PS2_TX_DATA = 0xF00009UL;  // WRITE: Byte to transmit host->device; the write itself starts the frame
 static constexpr uint32_t GLUE_PS2_TX_DATA_MASK  = 0xFFU;  // bits 7:0
@@ -71,11 +73,11 @@ static constexpr uint32_t GLUE_PS2_RX_DATA_MASK  = 0xFFU;  // bits 7:0
 static constexpr uint32_t GLUE_PS2_RX_DATA_SHIFT = 0U;
 
 // ------------------------------------------------------------
-// ROM: 2x 64K byte-wide EPROM/Flash
-static constexpr uint32_t ROM_BASE = 0xC00000UL;
-static constexpr uint32_t ROM_SIZE = 0x020000UL;
-static constexpr uint32_t ROM_WINDOW = 0x100000UL;
-inline constexpr MemoryRange ROM(0xC00000UL, 0x100000UL);
+// ROM: 1-2x M29F160FB 16Mbit 5V NOR flash (1Mx16, 55ns, TSOP48)
+static constexpr uint32_t ROM_BASE = 0x800000UL;
+static constexpr uint32_t ROM_SIZE = 0x400000UL;
+static constexpr uint32_t ROM_WINDOW = 0x400000UL;
+inline constexpr MemoryRange ROM(0x800000UL, 0x400000UL);
 static constexpr int ROM_DTACK_WS = 1;  // wait states at 14000000 Hz
 static constexpr int ROM_DTACK_THRESHOLD = 4;  // ws_cnt threshold for Verilog
 static constexpr int ROM_DTACK_PENALTY = 2;  // extra SYSCLK cycles for emulator

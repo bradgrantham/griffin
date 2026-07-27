@@ -1,8 +1,8 @@
 /* Generated from griffin.yml by codegen.py — do not edit (regenerate with: make codegen) */
 
 /* Memory region origins and lengths for MEMORY { } */
-ROM_ORIGIN = 0xC00000;
-ROM_LENGTH = 0x020000;
+ROM_ORIGIN = 0x800000;
+ROM_LENGTH = 0x400000;
 RAM_ORIGIN = 0x000000;
 RAM_LENGTH = 0x800000;
 RAM_TOTAL_SIZE = 0x800000;
