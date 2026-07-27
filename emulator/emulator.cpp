@@ -59,7 +59,7 @@ struct PTYConsole
     mutable bool input_eof = false; // read() returned 0 — no more console input
 
     // Default interactive console: allocate a pty and print the slave path.
-    bool open()
+    bool open(const char *label = "Console PTY")
     {
         int slave_fd;
         if(openpty(&master_fd, &slave_fd, NULL, NULL, NULL) < 0)
@@ -67,7 +67,7 @@ struct PTYConsole
             perror("openpty");
             return false;
         }
-        fprintf(stderr, "Console PTY: %s\n", ttyname(slave_fd));
+        fprintf(stderr, "%s: %s\n", label, ttyname(slave_fd));
         close(slave_fd);
         fcntl(master_fd, F_SETFL, O_NONBLOCK);
         read_fd = master_fd;
@@ -898,17 +898,25 @@ struct DUARTState
         }
     }
 
-    // Compute ISR from live state
-    uint8_t isr(const PTYConsole &pty) const
+    // Compute ISR from live state (a = channel A console, b = channel B)
+    uint8_t isr(const PTYConsole &a, const PTYConsole &b) const
     {
         uint8_t val = 0;
         if (tx_enabled)
         {
             val |= DUART_ISR_TXRDYA_MASK;   // TX always ready
         }
-        if (rx_enabled && pty.is_data_ready())
+        if (rx_enabled && a.is_data_ready())
         {
             val |= DUART_ISR_RXRDYA_MASK;
+        }
+        if (tx_enabled_b)
+        {
+            val |= DUART_ISR_TXRDYB_MASK;
+        }
+        if (rx_enabled_b && b.is_data_ready())
+        {
+            val |= DUART_ISR_RXRDYB_MASK;
         }
         if (ctr_ready)
         {
@@ -917,9 +925,9 @@ struct DUARTState
         return val;
     }
 
-    bool irq_pending(const PTYConsole &pty) const
+    bool irq_pending(const PTYConsole &a, const PTYConsole &b) const
     {
-        return (isr(pty) & imr) != 0;
+        return (isr(a, b) & imr) != 0;
     }
 
     // --- Command register decode (shared by CRA and CRB) ---
@@ -945,7 +953,8 @@ struct DUARTState
         }
     }
 
-    uint8_t read_reg(uint32_t abs_addr, const PTYConsole &pty)
+    uint8_t read_reg(uint32_t abs_addr, const PTYConsole &pty,
+                     const PTYConsole &pty_b)
     {
         switch (abs_addr)
         {
@@ -981,7 +990,7 @@ struct DUARTState
                 return ch;
             }
             case DUART_IPCR:    return 0;
-            case DUART_ISR:     return isr(pty);
+            case DUART_ISR:     return isr(pty, pty_b);
             case DUART_CUR:     return 0;
             case DUART_CLR:     return 0;
             case DUART_MR1B:  // MR1B/MR2B share address
@@ -993,8 +1002,28 @@ struct DUARTState
                 }
                 return val;
             }
-            case DUART_SRB:     return 0;
-            case DUART_RBB:     return 0;
+            case DUART_SRB:
+            {
+                uint8_t val = 0;
+                if (rx_enabled_b && pty_b.is_data_ready())
+                {
+                    val |= DUART_SRA_RXRDY_MASK;    // SRB shares SRA's layout
+                }
+                if (tx_enabled_b)
+                {
+                    val |= DUART_SRA_TXRDY_MASK | DUART_SRA_TXEMT_MASK;
+                }
+                return val;
+            }
+            case DUART_RBB:
+            {
+                uint8_t ch = 0;
+                if (rx_enabled_b)
+                {
+                    pty_b.receive(&ch);
+                }
+                return ch;
+            }
             case DUART_IVR:     return ivr;
             case DUART_IP:      return 0;
             case DUART_STARTCC:
@@ -1018,7 +1047,8 @@ struct DUARTState
         }
     }
 
-    void write_reg(uint32_t abs_addr, uint8_t val, const PTYConsole &pty)
+    void write_reg(uint32_t abs_addr, uint8_t val, const PTYConsole &pty,
+                   const PTYConsole &pty_b)
     {
         switch (abs_addr)
         {
@@ -1065,7 +1095,12 @@ struct DUARTState
             case DUART_CRB:
                 apply_command(val, tx_enabled_b, rx_enabled_b, mr_pointer_b, mr_b);
                 break;
-            case DUART_TBB:     break;
+            case DUART_TBB:
+                if (tx_enabled_b)
+                {
+                    pty_b.send(val);
+                }
+                break;
             case DUART_IVR:     ivr = val; break;
             case DUART_OPCR:    opcr = val; break;
             case DUART_OPR_SET: opr |= val; break;
@@ -1888,6 +1923,7 @@ class GriffinEmulator : public moira::Moira
     mutable int debug_out_latch = 0;
     mutable bool ROMoverlay = true;
     PTYConsole pty_console;
+    PTYConsole pty_console_b;   // DUART channel B (unconnected by default)
     mutable CFState cf;
     mutable DUARTState duart;
     mutable VideoState video;
@@ -1917,7 +1953,7 @@ class GriffinEmulator : public moira::Moira
         if (is_duart_addr(addr))
         {
             uint32_t abs = addr + IO_BASE;
-            uint8_t val = duart.read_reg(abs, pty_console);
+            uint8_t val = duart.read_reg(abs, pty_console, pty_console_b);
             // STARTCC restarts the counter from the preload (68681 semantics),
             // so (re)initialize the fire time and the live-count origin here.
             if (abs == DUART_STARTCC)
@@ -1966,7 +2002,7 @@ class GriffinEmulator : public moira::Moira
         if (is_duart_addr(addr))
         {
             printf("WARNING: 16-bit read from DUART at %06X (firmware should use 8-bit only)\n", addr + IO_BASE);
-            return duart.read_reg(addr + IO_BASE, pty_console);
+            return duart.read_reg(addr + IO_BASE, pty_console, pty_console_b);
         }
         if(debug & DEBUG_IO)
         {
@@ -1984,7 +2020,7 @@ class GriffinEmulator : public moira::Moira
             {
                 printf("[DUART write %06X ← 0x%02X]\n", addr + IO_BASE, val);
             }
-            duart.write_reg(addr + IO_BASE, val, pty_console);
+            duart.write_reg(addr + IO_BASE, val, pty_console, pty_console_b);
         } else if(addr == GLUE_DEBUG_OUT - IO_BASE) {
             auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_MASK;
             auto bit = val & GLUE_DEBUG_OUT_MASK;
@@ -2039,7 +2075,7 @@ class GriffinEmulator : public moira::Moira
         if (is_duart_addr(addr))
         {
             printf("WARNING: 16-bit write 0x%04X to DUART at %06X (firmware should use 8-bit only)\n", val, addr + IO_BASE);
-            duart.write_reg(addr + IO_BASE, val & 0xFF, pty_console);
+            duart.write_reg(addr + IO_BASE, val & 0xFF, pty_console, pty_console_b);
             return;
         }
         if(debug & DEBUG_IO)
@@ -2330,6 +2366,19 @@ public:
         return pty_console.open_files(in_path, out_path);
     }
 
+    // DUART channel B endpoint (--serialb-pty / --serialb-in/-out).  Note:
+    // channel B input EOF is deliberately NOT wired to emulator exit --
+    // only the channel A console governs run lifetime.
+    bool init_serialb_pty()
+    {
+        return pty_console_b.open("Serial B PTY");
+    }
+
+    bool init_serialb_files(const char* in_path, const char* out_path)
+    {
+        return pty_console_b.open_files(in_path, out_path);
+    }
+
     bool console_input_eof() const
     {
         return pty_console.input_eof;
@@ -2504,7 +2553,7 @@ public:
     {
         if (video.irq_pending()) {
             setIPL(VIDEO_IRQ_LEVEL);
-        } else if (duart.irq_pending(pty_console)) {
+        } else if (duart.irq_pending(pty_console, pty_console_b)) {
             setIPL(DUART_IRQ_LEVEL);
         } else if (ps2.irq_pending()) {
             setIPL(GLUE_IRQ_LEVEL);
@@ -2607,6 +2656,10 @@ void usage(const char *progname)
     printf("  --console-out FILE            write DUART console output to FILE\n");
     printf("  --ps2-in FILE                 inject PS/2 keystrokes from a script file\n");
     printf("                                (directives: delay MS | text STRING | raw HH..)\n");
+    printf("  --serialb-pty                 DUART channel B on a host pty (path printed;\n");
+    printf("                                e.g. run host pppd on it for PPP testing)\n");
+    printf("  --serialb-in FILE             feed DUART channel B input from FILE\n");
+    printf("  --serialb-out FILE            write DUART channel B output to FILE\n");
     printf("  --headless                    do not open an SDL video window\n");
     printf("  --screenshot FILE             write the framebuffer to FILE (BMP) on exit\n");
     printf("  --run-cycles N                stop after N emulated SYSCLK cycles\n");
@@ -2626,6 +2679,9 @@ int main(int argc, const char** argv)
     const char *console_in_path = nullptr;
     const char *console_out_path = nullptr;
     const char *ps2_in_path = nullptr;
+    bool serialb_pty = false;
+    const char *serialb_in_path = nullptr;
+    const char *serialb_out_path = nullptr;
     const char *screenshot_path = nullptr;
     bool headless = false;
     bool no_throttle = false;
@@ -2678,6 +2734,26 @@ int main(int argc, const char** argv)
                 exit(EXIT_FAILURE);
             }
             ps2_in_path = argv[1];
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--serialb-pty") == 0) {
+            serialb_pty = true;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--serialb-in") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--serialb-in option requires a file path.\n");
+                exit(EXIT_FAILURE);
+            }
+            serialb_in_path = argv[1];
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--serialb-out") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--serialb-out option requires a file path.\n");
+                exit(EXIT_FAILURE);
+            }
+            serialb_out_path = argv[1];
             argv += 2;
             argc -= 2;
         } else if(strcmp(argv[0], "--headless") == 0) {
@@ -2802,6 +2878,23 @@ int main(int argc, const char** argv)
             break;
     }
 
+    // DUART channel B endpoint (default: unconnected).
+    if (serialb_pty)
+    {
+        if (!emulator.init_serialb_pty())
+        {
+            fprintf(stderr, "Failed to open PTY for serial B\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    else if (serialb_in_path || serialb_out_path)
+    {
+        if (!emulator.init_serialb_files(serialb_in_path, serialb_out_path))
+        {
+            exit(EXIT_FAILURE);
+        }
+    }
+
     // The DEBUG_IN raw-stdin console would fight --console-stdio over stdin, so
     // only enable it when the DUART console is not already using stdin.
     if (console_mode != CONSOLE_STDIO)
@@ -2851,7 +2944,15 @@ int main(int argc, const char** argv)
         }
         emulator.service_video();
         auto clock_now = emulator.getClock();
-        auto now = time(0);
+        // time(2) once per instruction was measurable host overhead; the
+        // once-per-second stats only need a coarse check.
+        static unsigned time_check_countdown = 0;
+        static time_t now = time(0);
+        if (++time_check_countdown >= 65536)
+        {
+            time_check_countdown = 0;
+            now = time(0);
+        }
 
         while(clock_now > clock_next_audio) {
             uint8_t dac_value = emulator.GetAudioDACValue();

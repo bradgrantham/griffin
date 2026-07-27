@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.20)
 project(emulator LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Default to an optimized build: the interpreter core is hot, and an
+# unspecified build type (plain -O0) runs the guest ~3x slower.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
+
 include(FetchContent)
 
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
