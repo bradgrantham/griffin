@@ -84,6 +84,27 @@ struct PTYConsole
         return true;
     }
 
+    // Connect to an EXISTING device/pty bidirectionally (e.g. the host end
+    // of a socat pty bridge).  Unlike open() this doesn't allocate a pty --
+    // it opens a stable path someone else owns, so the peer (host pppd) can
+    // be set up once and outlive many emulator runs.  Raw mode so no line
+    // discipline mangles PPP's HDLC bytes.
+    bool open_dev(const char* path)
+    {
+        int fd = ::open(path, O_RDWR | O_NONBLOCK | O_NOCTTY);
+        if (fd < 0) { perror(path); return false; }
+        struct termios t;
+        if (tcgetattr(fd, &t) == 0)
+        {
+            cfmakeraw(&t);
+            tcsetattr(fd, TCSANOW, &t);
+        }
+        read_fd = fd;
+        write_fd = fd;
+        close_read_fd = true;   // sole owner of this fd
+        return true;
+    }
+
     // Console backed by files; either path may be null to disable that side.
     bool open_files(const char* in_path, const char* out_path)
     {
@@ -2385,6 +2406,11 @@ public:
         return pty_console_b.open_files(in_path, out_path);
     }
 
+    bool init_serialb_dev(const char* path)
+    {
+        return pty_console_b.open_dev(path);
+    }
+
     bool console_input_eof() const
     {
         return pty_console.input_eof;
@@ -2669,8 +2695,9 @@ void usage(const char *progname)
     printf("  --console-out FILE            write DUART console output to FILE\n");
     printf("  --ps2-in FILE                 inject PS/2 keystrokes from a script file\n");
     printf("                                (directives: delay MS | text STRING | raw HH..)\n");
-    printf("  --serialb-pty                 DUART channel B on a host pty (path printed;\n");
-    printf("                                e.g. run host pppd on it for PPP testing)\n");
+    printf("  --serialb-pty                 DUART channel B on a fresh host pty (path printed)\n");
+    printf("  --serialb-dev PATH            DUART channel B on an existing device (e.g. a\n");
+    printf("                                socat pty bridge to a persistent host pppd)\n");
     printf("  --serialb-in FILE             feed DUART channel B input from FILE\n");
     printf("  --serialb-out FILE            write DUART channel B output to FILE\n");
     printf("  --headless                    do not open an SDL video window\n");
@@ -2693,6 +2720,7 @@ int main(int argc, const char** argv)
     const char *console_out_path = nullptr;
     const char *ps2_in_path = nullptr;
     bool serialb_pty = false;
+    const char *serialb_dev_path = nullptr;
     const char *serialb_in_path = nullptr;
     const char *serialb_out_path = nullptr;
     const char *screenshot_path = nullptr;
@@ -2753,6 +2781,14 @@ int main(int argc, const char** argv)
             serialb_pty = true;
             argv += 1;
             argc -= 1;
+        } else if(strcmp(argv[0], "--serialb-dev") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--serialb-dev option requires a device path.\n");
+                exit(EXIT_FAILURE);
+            }
+            serialb_dev_path = argv[1];
+            argv += 2;
+            argc -= 2;
         } else if(strcmp(argv[0], "--serialb-in") == 0) {
             if(argc < 2) {
                 fprintf(stderr, "--serialb-in option requires a file path.\n");
@@ -2897,6 +2933,13 @@ int main(int argc, const char** argv)
         if (!emulator.init_serialb_pty())
         {
             fprintf(stderr, "Failed to open PTY for serial B\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    else if (serialb_dev_path)
+    {
+        if (!emulator.init_serialb_dev(serialb_dev_path))
+        {
             exit(EXIT_FAILURE);
         }
     }
