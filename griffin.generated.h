@@ -161,6 +161,100 @@ static constexpr uint32_t VIDEO_CTRL_RB_IRQENB_SHIFT = 2U;
 static constexpr uint32_t VIDEO_CLRERR = 0xE00009UL;  // WRITE: Write any value to clear FIFO_ERROR sticky bit
 
 // ------------------------------------------------------------
+// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe
+static constexpr uint32_t PORTS_BASE = 0xFC0000UL;
+static constexpr uint32_t PORTS_SIZE = 0x040000UL;
+inline constexpr MemoryRange PORTS(0xFC0000UL, 0x040000UL);
+static constexpr uint32_t PORTS_IRQ_LEVEL = 2U;
+static constexpr int PORTS_DTACK_WS = 0;  // wait states at 14000000 Hz
+static constexpr int PORTS_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
+static constexpr int PORTS_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1 = 0xFC0001UL;  // READ: Joystick port 1 switches, active low (0 = closed)
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_UP_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_UP_SHIFT = 0U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_DOWN_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_DOWN_SHIFT = 1U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_LEFT_MASK  = 0x04U;  // bits 2:2
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_LEFT_SHIFT = 2U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_RIGHT_MASK  = 0x08U;  // bits 3:3
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_RIGHT_SHIFT = 3U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_FIRE_MASK  = 0x10U;  // bits 4:4
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_FIRE_SHIFT = 4U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_PIN9_MASK  = 0x20U;  // bits 5:5
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_PIN9_SHIFT = 5U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_PIN5_MASK  = 0x40U;  // bits 6:6
+static constexpr uint32_t PORTS_JOYSTICK_PORT_1_PIN5_SHIFT = 6U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2 = 0xFC0003UL;  // READ: Joystick port 2 switches, active low (0 = closed)
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_UP_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_UP_SHIFT = 0U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_DOWN_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_DOWN_SHIFT = 1U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_LEFT_MASK  = 0x04U;  // bits 2:2
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_LEFT_SHIFT = 2U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_RIGHT_MASK  = 0x08U;  // bits 3:3
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_RIGHT_SHIFT = 3U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_FIRE_MASK  = 0x10U;  // bits 4:4
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_FIRE_SHIFT = 4U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_PIN9_MASK  = 0x20U;  // bits 5:5
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_PIN9_SHIFT = 5U;
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_PIN5_MASK  = 0x40U;  // bits 6:6
+static constexpr uint32_t PORTS_JOYSTICK_PORT_2_PIN5_SHIFT = 6U;
+static constexpr uint32_t PORTS_PADDLE_A_COUNT = 0xFC0005UL;  // READ: Paddle A position, the pot on port 1 pin 9
+static constexpr uint32_t PORTS_PADDLE_A_COUNT_MASK  = 0xFFU;  // bits 7:0
+static constexpr uint32_t PORTS_PADDLE_A_COUNT_SHIFT = 0U;
+static constexpr uint32_t PORTS_PADDLE_B_COUNT = 0xFC0007UL;  // READ: Paddle B position, the pot on port 1 pin 5
+static constexpr uint32_t PORTS_PADDLE_B_COUNT_MASK  = 0xFFU;  // bits 7:0
+static constexpr uint32_t PORTS_PADDLE_B_COUNT_SHIFT = 0U;
+static constexpr uint32_t PORTS_PS2_MOUSE_TX_DATA = 0xFC0009UL;  // WRITE: Byte to transmit host->mouse; the write itself starts the frame
+static constexpr uint32_t PORTS_PS2_MOUSE_TX_DATA_MASK  = 0xFFU;  // bits 7:0
+static constexpr uint32_t PORTS_PS2_MOUSE_TX_DATA_SHIFT = 0U;
+static constexpr uint32_t PORTS_PADDLE_CONTROL = 0xFC000FUL;  // WRITE: Paddle measurement control, written once per vsync ISR
+static constexpr uint32_t PORTS_PADDLE_CONTROL_DUMP_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t PORTS_PADDLE_CONTROL_DUMP_SHIFT = 0U;
+static constexpr uint32_t PORTS_PADDLE_CONTROL_DEFAULT = 0x00U;
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS = 0xFC0011UL;  // READ: PS/2 mouse frame-engine status
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_RX_READY_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_RX_READY_SHIFT = 0U;
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_TX_DONE_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_TX_DONE_SHIFT = 1U;
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_TX_ACK_MASK  = 0x04U;  // bits 2:2
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_TX_ACK_SHIFT = 2U;
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_RX_PARITY_MASK  = 0x08U;  // bits 3:3
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_RX_PARITY_SHIFT = 3U;
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_RX_FRAME_ERR_MASK  = 0x10U;  // bits 4:4
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_RX_FRAME_ERR_SHIFT = 4U;
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_DATA_LIVE_MASK  = 0x20U;  // bits 5:5
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_DATA_LIVE_SHIFT = 5U;
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_CLK_LIVE_MASK  = 0x40U;  // bits 6:6
+static constexpr uint32_t PORTS_PS2_MOUSE_STATUS_CLK_LIVE_SHIFT = 6U;
+static constexpr uint32_t PORTS_PS2_MOUSE_CLEAR = 0xFC0011UL;  // WRITE: Write-1-to-clear for PS2_MOUSE_STATUS latched flags / IRQ ack
+static constexpr uint32_t PORTS_PS2_MOUSE_CLEAR_RX_READY_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t PORTS_PS2_MOUSE_CLEAR_RX_READY_SHIFT = 0U;
+static constexpr uint32_t PORTS_PS2_MOUSE_CLEAR_TX_DONE_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t PORTS_PS2_MOUSE_CLEAR_TX_DONE_SHIFT = 1U;
+static constexpr uint32_t PORTS_PS2_MOUSE_CTRL = 0xFC0013UL;  // WRITE: Open-drain drive control for PS2_MOUSE_CLK and PS2_MOUSE_DATA for the TX inhibit handshake
+static constexpr uint32_t PORTS_PS2_MOUSE_CTRL_CLK_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t PORTS_PS2_MOUSE_CTRL_CLK_SHIFT = 0U;
+static constexpr uint32_t PORTS_PS2_MOUSE_CTRL_DATA_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t PORTS_PS2_MOUSE_CTRL_DATA_SHIFT = 1U;
+static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA = 0xFC0015UL;  // READ: Assembled PS/2 mouse data byte; valid while RX_READY is set
+static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_MASK  = 0xFFU;  // bits 7:0
+static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_SHIFT = 0U;
+static constexpr uint32_t PORTS_AUDIO_CONTROL = 0xFC001FUL;  // WRITE: Audio FIFO pop control
+static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_SHIFT = 0U;
+static constexpr uint32_t PORTS_AUDIO_CONTROL_CLEAR_HF_IRQ_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t PORTS_AUDIO_CONTROL_CLEAR_HF_IRQ_SHIFT = 1U;
+static constexpr uint32_t PORTS_AUDIO_CONTROL_DEFAULT = 0x00U;
+static constexpr uint32_t PORTS_AUDIO_STATUS = 0xFC001FUL;  // READ: Audio FIFO pop status
+static constexpr uint32_t PORTS_AUDIO_STATUS_HF_IRQ_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t PORTS_AUDIO_STATUS_HF_IRQ_SHIFT = 0U;
+static constexpr uint32_t PORTS_AUDIO_STATUS_HALF_FULL_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t PORTS_AUDIO_STATUS_HALF_FULL_SHIFT = 1U;
+static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_MASK  = 0x04U;  // bits 2:2
+static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_SHIFT = 2U;
+
+// ------------------------------------------------------------
 // CF: Storage via CF card in True IDE 16-bit PIO mode
 static constexpr uint32_t CF_BASE = 0xF40000UL;
 static constexpr uint32_t CF_SIZE = 0x040000UL;
@@ -180,7 +274,7 @@ static constexpr uint32_t CF_STATUS = 0xF4000FUL;  // READ: Device status; poll 
 static constexpr uint32_t CF_COMMAND = 0xF4000FUL;  // WRITE: Issue command; write after setting all other registers
 
 // ------------------------------------------------------------
-// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C / paddle dump
+// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C
 static constexpr uint32_t DUART_BASE = 0xF80000UL;
 static constexpr uint32_t DUART_SIZE = 0x040000UL;
 inline constexpr MemoryRange DUART(0xF80000UL, 0x040000UL);
@@ -267,70 +361,21 @@ static constexpr uint32_t DUART_STOPCC = 0xF8001FUL;  // READ: Stop counter/time
 static constexpr uint32_t DUART_OPR_CLR = 0xF8001FUL;  // WRITE: Output port bit reset (1 bits clear corresponding OP pins)
 
 // ------------------------------------------------------------
-// AUDIO: Stereo FIFO audio output, drained at half the VGA line rate by VIDEO
+// AUDIO: Stereo FIFO audio output, drained at half the VGA line rate by PORTS
 static constexpr uint32_t AUDIO_BASE = 0xC00000UL;
 static constexpr uint32_t AUDIO_SIZE = 0x040000UL;
 inline constexpr MemoryRange AUDIO(0xC00000UL, 0x040000UL);
-static constexpr uint32_t AUDIO_IRQ_LEVEL = 2U;
 static constexpr int AUDIO_DTACK_WS = 0;  // wait states at 14000000 Hz
 static constexpr int AUDIO_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
 static constexpr int AUDIO_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 static constexpr uint32_t AUDIO_FIFO = 0xC00000UL;  // WRITE: Write one stereo sample pair into the audio FIFOs
-
-// ------------------------------------------------------------
-// JOYSTICK: Two Atari-2600-style DE-9 joystick ports read through bus transceivers
-static constexpr uint32_t JOYSTICK_BASE = 0xC40000UL;
-static constexpr uint32_t JOYSTICK_SIZE = 0x040000UL;
-inline constexpr MemoryRange JOYSTICK(0xC40000UL, 0x040000UL);
-static constexpr int JOYSTICK_DTACK_WS = 0;  // wait states at 14000000 Hz
-static constexpr int JOYSTICK_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
-static constexpr int JOYSTICK_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
-static constexpr uint32_t JOYSTICK_STATE = 0xC40000UL;  // READ: Both joystick ports in one word; switch bits are active-low (0 = closed)
-static constexpr uint32_t JOYSTICK_STATE_P1_UP_MASK  = 0x100U;  // bits 8:8
-static constexpr uint32_t JOYSTICK_STATE_P1_UP_SHIFT = 8U;
-static constexpr uint32_t JOYSTICK_STATE_P1_DOWN_MASK  = 0x200U;  // bits 9:9
-static constexpr uint32_t JOYSTICK_STATE_P1_DOWN_SHIFT = 9U;
-static constexpr uint32_t JOYSTICK_STATE_P1_LEFT_MASK  = 0x400U;  // bits 10:10
-static constexpr uint32_t JOYSTICK_STATE_P1_LEFT_SHIFT = 10U;
-static constexpr uint32_t JOYSTICK_STATE_P1_RIGHT_MASK  = 0x800U;  // bits 11:11
-static constexpr uint32_t JOYSTICK_STATE_P1_RIGHT_SHIFT = 11U;
-static constexpr uint32_t JOYSTICK_STATE_P1_FIRE_MASK  = 0x1000U;  // bits 12:12
-static constexpr uint32_t JOYSTICK_STATE_P1_FIRE_SHIFT = 12U;
-static constexpr uint32_t JOYSTICK_STATE_P1_PIN9_MASK  = 0x2000U;  // bits 13:13
-static constexpr uint32_t JOYSTICK_STATE_P1_PIN9_SHIFT = 13U;
-static constexpr uint32_t JOYSTICK_STATE_P1_PIN5_MASK  = 0x4000U;  // bits 14:14
-static constexpr uint32_t JOYSTICK_STATE_P1_PIN5_SHIFT = 14U;
-static constexpr uint32_t JOYSTICK_STATE_P2_UP_MASK  = 0x01U;  // bits 0:0
-static constexpr uint32_t JOYSTICK_STATE_P2_UP_SHIFT = 0U;
-static constexpr uint32_t JOYSTICK_STATE_P2_DOWN_MASK  = 0x02U;  // bits 1:1
-static constexpr uint32_t JOYSTICK_STATE_P2_DOWN_SHIFT = 1U;
-static constexpr uint32_t JOYSTICK_STATE_P2_LEFT_MASK  = 0x04U;  // bits 2:2
-static constexpr uint32_t JOYSTICK_STATE_P2_LEFT_SHIFT = 2U;
-static constexpr uint32_t JOYSTICK_STATE_P2_RIGHT_MASK  = 0x08U;  // bits 3:3
-static constexpr uint32_t JOYSTICK_STATE_P2_RIGHT_SHIFT = 3U;
-static constexpr uint32_t JOYSTICK_STATE_P2_FIRE_MASK  = 0x10U;  // bits 4:4
-static constexpr uint32_t JOYSTICK_STATE_P2_FIRE_SHIFT = 4U;
-static constexpr uint32_t JOYSTICK_STATE_P2_PIN9_MASK  = 0x20U;  // bits 5:5
-static constexpr uint32_t JOYSTICK_STATE_P2_PIN9_SHIFT = 5U;
-static constexpr uint32_t JOYSTICK_STATE_P2_PIN5_MASK  = 0x40U;  // bits 6:6
-static constexpr uint32_t JOYSTICK_STATE_P2_PIN5_SHIFT = 6U;
-
-// ------------------------------------------------------------
-// PADDLE: Two 2600-style paddle position counters clocked by the VGA line rate
-static constexpr uint32_t PADDLE_BASE = 0xC80000UL;
-static constexpr uint32_t PADDLE_SIZE = 0x040000UL;
-inline constexpr MemoryRange PADDLE(0xC80000UL, 0x040000UL);
-static constexpr int PADDLE_DTACK_WS = 0;  // wait states at 14000000 Hz
-static constexpr int PADDLE_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
-static constexpr int PADDLE_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
-static constexpr uint32_t PADDLE_COUNTS = 0xC80000UL;  // READ: Both paddle position counts in one word; paddle A (port 1 pin 9) is D15-D8, paddle B (port 1 pin 5) is D7-D0
 
 // RAM region — total of all RAM banks
 static constexpr uint32_t RAM_TOTAL_SIZE = 0x400000UL;
 
 // IO region — span of all non-RAM/ROM memory-mapped peripherals
 static constexpr uint32_t IO_BASE = 0xF00000UL;
-static constexpr uint32_t IO_SIZE = 0x0C0000UL;
+static constexpr uint32_t IO_SIZE = 0x100000UL;
 
 // Constants
 static constexpr uint32_t CF_STATUS_BSY = 0x80U;
@@ -348,8 +393,6 @@ static constexpr uint32_t AUDIO_FIFO_DEPTH = 0x400U;
 static constexpr uint32_t AUDIO_SAMPLES_PER_SECOND = 0x3D76U;
 static constexpr uint32_t DUART_OP_RTC_SCL = 0x04U;
 static constexpr uint32_t DUART_OP_RTC_SDA_DRIVE = 0x08U;
-static constexpr uint32_t DUART_OP_PADDLE_DUMP = 0x10U;
-static constexpr uint32_t DUART_OP_PADDLE_NCLR = 0x20U;
 static constexpr uint32_t DUART_IP_RTC_SDA = 0x04U;
 static constexpr uint32_t DUART_IP_RTC_NINT = 0x08U;
 static constexpr uint32_t RTC_I2C_ADDR = 0x68U;

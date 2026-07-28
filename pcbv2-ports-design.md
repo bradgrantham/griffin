@@ -308,3 +308,19 @@ left after this delta.  Anything further wants either a bigger package
 (TQFP100, 80 I/O) or a function moved to PORTS.
 
 No logic was shaved.
+
+## Register map: griffin.yml is authoritative
+
+The PORTS register map adopted into griffin.yml on 2026-07-28 **supersedes the
+offsets used by the experiment source in `cpld/ports/ports.v`**.  The adopted
+map puts the mouse channel at the same offsets GLUE uses for the keyboard —
+TX_DATA 0x09 (parity in address bit 1, alias 0x0B), STATUS/CLEAR 0x11, CTRL
+0x13, RX_DATA 0x15 — so firmware's ps2.cpp can become one base-parameterized
+driver serving both channels, with joysticks at 0x01/0x03, paddle counts at
+0x05/0x07, PADDLE_CONTROL at 0x0F and AUDIO_CONTROL/AUDIO_STATUS at 0x1F.
+
+The experiment's internal offsets were chosen for the fit ladder (both PS/2
+channels present, mouse = keyboard + 0x10) and were never meant to be the
+contract.  `ports.v` gets realigned to the griffin.yml map at integration
+time; the decode is a handful of localparams and does not change the measured
+utilisation.

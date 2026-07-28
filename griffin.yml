@@ -324,6 +324,227 @@ peripherals:
         # and VIDEO latches it from the FIFO during hblank.  The former PALETTE
         # (0x0E) and STATUS/LINE_TOGGLE (0x07) registers are retired.
 
+  # Rev 2: PORTS is the fourth ATF1508, added after the fit experiment in
+  # cpld/ports showed a second PS/2 frame engine cannot share GLUE's part with
+  # the first (two channels alone need 140 of 128 nodes; see
+  # pcbv2-ports-design.md).  So the keyboard channel stays in GLUE and PORTS
+  # takes the mouse plus everything the direct-bus '245/'590 pairs used to do.
+  # Measured fit: 111/128 logic cells, 80 FF, 41/64 I/O in PLCC84.
+  #
+  # PORTS has no bus-timing logic of its own: GLUE decodes the region and
+  # hands over ~PORTS_SELECT (cycle-qualified, reads and writes, decoded
+  # exactly like ~DUART_SELECT) and answers DTACK for it, as it does for CF.
+  # The line time base is the VGA HSYNC net tapped from VIDEO -- asynchronous
+  # to SYSCLK and synchronized inside PORTS -- so the paddle counters tick at
+  # the full 31.469 kHz line rate and the audio FIFO pop runs at half that
+  # (15.73 kS/s, AUDIO_SAMPLES_PER_SECOND).  No prescaler anywhere.
+  #
+  # The mouse channel deliberately mirrors GLUE's keyboard register layout at
+  # the same offsets (TX_DATA 0x09, STATUS/CLEAR 0x11, CTRL 0x13, RX_DATA
+  # 0x15) so firmware's ps2.cpp can become one base-parameterized driver
+  # serving GLUE_PS2_* and PORTS_PS2_MOUSE_* from the same code.
+  PORTS:
+    part: ATF1508AS
+    description: "PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe"
+    address_range:
+      base: 0xFC0000
+      size: 0x040000
+      width: 8
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 0
+    interrupt:
+      level: 2
+      signal: ~PORTS_IRQ
+    registers:
+      - offset: 0x01
+        name: JOYSTICK_PORT_1
+        access: read
+        width: 8
+        description: |
+          Joystick port 1 switches, active low (0 = closed).
+          This is the port that also hosts the paddles: PIN9/PIN5 double as
+          SMS-pad button 2 and the raw paddle pot comparator levels, and the
+          paddle fire buttons appear on LEFT/RIGHT (DE-9 pins 3/4) per the
+          2600 convention.  Poll from the vsync ISR; there is no interrupt.
+          Bit 7 reads 1.
+        bits:
+          - { bit: "0", name: UP,    description: "Port 1 up, DE-9 pin 1 (0 = pressed)" }
+          - { bit: "1", name: DOWN,  description: "Port 1 down, DE-9 pin 2" }
+          - { bit: "2", name: LEFT,  description: "Port 1 left, DE-9 pin 3 (also paddle B fire)" }
+          - { bit: "3", name: RIGHT, description: "Port 1 right, DE-9 pin 4 (also paddle A fire)" }
+          - { bit: "4", name: FIRE,  description: "Port 1 fire, DE-9 pin 6" }
+          - { bit: "5", name: PIN9,  description: "Port 1 DE-9 pin 9: SMS button 2 / paddle A pot level" }
+          - { bit: "6", name: PIN5,  description: "Port 1 DE-9 pin 5: paddle B pot level" }
+      - offset: 0x03
+        name: JOYSTICK_PORT_2
+        access: read
+        width: 8
+        description: |
+          Joystick port 2 switches, active low (0 = closed).
+          Same bit order as JOYSTICK_PORT_1, with no paddles on this port.
+          Bit 7 reads 1.
+        bits:
+          - { bit: "0", name: UP,    description: "Port 2 up, DE-9 pin 1 (0 = pressed)" }
+          - { bit: "1", name: DOWN,  description: "Port 2 down, DE-9 pin 2" }
+          - { bit: "2", name: LEFT,  description: "Port 2 left, DE-9 pin 3" }
+          - { bit: "3", name: RIGHT, description: "Port 2 right, DE-9 pin 4" }
+          - { bit: "4", name: FIRE,  description: "Port 2 fire, DE-9 pin 6" }
+          - { bit: "5", name: PIN9,  description: "Port 2 DE-9 pin 9: SMS button 2" }
+          - { bit: "6", name: PIN5,  description: "Port 2 DE-9 pin 5 (spare input)" }
+      - offset: 0x05
+        name: PADDLE_A_COUNT
+        access: read
+        width: 8
+        description: |
+          Paddle A position, the pot on port 1 pin 9.
+          An 8-bit counter advances once per VGA line while the pot's RC ramp
+          holds the comparator sense low, and freezes when the ramp crosses,
+          so the count is proportional to pot resistance (2600-style).  It
+          saturates at 0xFF instead of wrapping, and full scale is 255 lines
+          ~= 8.1 ms, half a frame.  Values need per-unit software calibration:
+          the comparator threshold varies and the pot parallels the 1M
+          pin-5/9 pull-up.
+        bits:
+          - { bit: "7:0", name: COUNT, description: "Line-rate count, saturating at 0xFF" }
+      - offset: 0x07
+        name: PADDLE_B_COUNT
+        access: read
+        width: 8
+        description: |
+          Paddle B position, the pot on port 1 pin 5.
+          Identical in behaviour to PADDLE_A_COUNT and cleared by the same
+          PADDLE_CONTROL DUMP bit.
+        bits:
+          - { bit: "7:0", name: COUNT, description: "Line-rate count, saturating at 0xFF" }
+      - offset: 0x09
+        name: PS2_MOUSE_TX_DATA
+        access: write
+        width: 8
+        description: |
+          Byte to transmit host->mouse; the write itself starts the frame.
+          PORTS presents the start bit on DATA, releases PS2_MOUSE_CLK (the
+          CPU must have inhibited it >=100 us first via PS2_MOUSE_CTRL.CLK),
+          then shifts start/8-data-LSB-first/parity/stop out on each device
+          clock falling edge and samples the device ACK into TX_ACK, raising
+          TX_DONE (level-2 IRQ) on completion.
+
+          This register spans two word slots: address bit 1 carries the
+          firmware-computed odd-parity bit (no hardware XOR), so write
+          to PS2_MOUSE_TX_DATA for parity 0 or PS2_MOUSE_TX_DATA +
+          PS2_TX_DATA_PARITY (offset 0x0B) for parity 1 -- the same constant
+          the GLUE keyboard channel uses.  Ignored while a TX or RX frame is
+          already in progress.
+        bits:
+          - { bit: "7:0", name: DATA, description: "Data byte to send (write triggers TX)" }
+      - offset: 0x0F
+        name: PADDLE_CONTROL
+        access: write
+        width: 8
+        description: |
+          Paddle measurement control, written once per vsync ISR.
+          Setting DUMP drives the discharge-FET line and holds both counters
+          at zero; clearing it releases the caps and starts the next
+          measurement.  This replaces the rev-1 two-pin DUART OP4/OP5 dance,
+          which needed the dump and clear lines driven in opposite states.
+        bits:
+          - { bit: "0", name: DUMP, default: 0,
+              description: "1 = drain the paddle caps and hold both counters at zero; 0 = measure" }
+      - offset: 0x11
+        name: PS2_MOUSE_STATUS
+        access: read
+        width: 8
+        description: |
+          PS/2 mouse frame-engine status.  PORTS assembles a full 11-bit RX
+          frame (start/8-data-LSB-first/parity/stop) and raises one IRQ
+          per byte via RX_READY; the data byte is read from
+          PS2_MOUSE_RX_DATA.  TX completion is signalled by TX_DONE.  Both
+          are W1C via PS2_MOUSE_CLEAR.  Bit layout is identical to GLUE's
+          keyboard PS2_STATUS.
+        bits:
+          - { bit: "0", name: RX_READY,
+              description: "1 = a received byte is in PS2_MOUSE_RX_DATA; asserts level-2 IRQ; W1C via PS2_MOUSE_CLEAR" }
+          - { bit: "1", name: TX_DONE,
+              description: "1 = host->device frame finished; asserts level-2 IRQ; W1C via PS2_MOUSE_CLEAR" }
+          - { bit: "2", name: TX_ACK,
+              description: "Device ACK sampled on the final clock of the last TX (0 = acknowledged)" }
+          - { bit: "3", name: RX_PARITY,
+              description: "Received parity bit of the latched byte (firmware checks odd parity)" }
+          - { bit: "4", name: RX_FRAME_ERR,
+              description: "1 = received stop bit was not 1 (framing error)" }
+          - { bit: "5", name: DATA_LIVE,
+              description: "Unlatched synchronized PS2_MOUSE_DATA pin state (debug)" }
+          - { bit: "6", name: CLK_LIVE,
+              description: "Unlatched synchronized PS2_MOUSE_CLK pin state (debug)" }
+      - offset: 0x11
+        name: PS2_MOUSE_CLEAR
+        access: write
+        width: 8
+        description: |
+          Write-1-to-clear for PS2_MOUSE_STATUS latched flags / IRQ ack.
+          The level-2 IRQ de-asserts on the same cycle once both RX_READY
+          and TX_DONE are clear and the audio half-full latch is also clear
+          (PORTS wire-ORs its interrupt sources onto one pin).
+        bits:
+          - { bit: "0", name: RX_READY, description: "Write 1 to clear RX_READY (RX byte ISR ack)" }
+          - { bit: "1", name: TX_DONE,  description: "Write 1 to clear TX_DONE (TX completion ISR ack)" }
+      - offset: 0x13
+        name: PS2_MOUSE_CTRL
+        access: write
+        width: 8
+        description: |
+          Open-drain drive control for PS2_MOUSE_CLK and PS2_MOUSE_DATA for the TX inhibit handshake.
+          Each bit drives the pin low when set and tri-states to the
+          external pull-up otherwise.  While a TX frame is in progress
+          the engine owns both pins and ignores CLK here.
+        bits:
+          - { bit: "0", name: CLK,
+              description: "1 = drive PS2_MOUSE_CLK low (inhibit device / request-to-send); 0 = tri-state" }
+          - { bit: "1", name: DATA,
+              description: "1 = drive PS2_MOUSE_DATA low; 0 = tri-state (pull-up high)" }
+      - offset: 0x15
+        name: PS2_MOUSE_RX_DATA
+        access: read
+        width: 8
+        description: "Assembled PS/2 mouse data byte; valid while RX_READY is set."
+        bits:
+          - { bit: "7:0", name: DATA, description: "Received packet byte (LSB-first on the wire)" }
+      - offset: 0x1F
+        name: AUDIO_CONTROL
+        access: write
+        width: 8
+        description: |
+          Audio FIFO pop control.  ENABLE gates the read strobe PORTS sends
+          to both 7202s on every second VGA line, so clearing it freezes the
+          DACs on their last sample without disturbing FIFO contents.
+          CLEAR_HF_IRQ is the write-1-to-clear ack for the half-full
+          interrupt reported in AUDIO_STATUS.
+        bits:
+          - { bit: "0", name: ENABLE, default: 0,
+              description: "1 = pop one stereo sample pair every second line (15.73 kS/s); 0 = hold" }
+          - { bit: "1", name: CLEAR_HF_IRQ,
+              description: "Write 1 to clear the latched half-full IRQ (refill ISR ack)" }
+      - offset: 0x1F
+        name: AUDIO_STATUS
+        access: read
+        width: 8
+        description: |
+          Audio FIFO pop status.  HF_IRQ latches when the 7202 half-full
+          flag rises, meaning the FIFO drained below half and firmware
+          should refill; it asserts the shared level-2 IRQ until cleared
+          with AUDIO_CONTROL.CLEAR_HF_IRQ.  HALF_FULL is the live
+          synchronized flag for polling instead.
+        bits:
+          - { bit: "0", name: HF_IRQ,
+              description: "1 = FIFO dropped below half full since the last ack; asserts level-2 IRQ" }
+          - { bit: "1", name: HALF_FULL,
+              description: "Live synchronized 7202 flag: 1 = half full or more" }
+          - { bit: "2", name: ENABLE,
+              description: "Current AUDIO_CONTROL ENABLE state" }
+
   # Rev 2: 16-bit True IDE PIO (rev 1 ran 8-bit via SET_FEATURES).  The
   # 16-bit DATA port is word offset 0x00; task-file registers remain
   # byte-wide on D7-D0 at the odd offsets.  GLUE gates IOWR with AS
@@ -365,7 +586,7 @@ peripherals:
 
   DUART:
     part: "XR68C681"
-    description: "Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C / paddle dump"
+    description: "Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C"
     clock: 3686400
     # pin_allocation -- hardware wiring of the general-purpose OP/IP pins.
     # NOTE the 68681 OP pins drive the COMPLEMENT of their OPR bits: setting
@@ -376,11 +597,11 @@ peripherals:
     #   OP2: RTC_SCL (DS3231 I2C clock, push-pull; DS3231 never stretches)
     #   OP3: RTC_SDA_DRIVE (N-FET gate: pin high pulls SDA low)
     #                                             IP2: RTC_SDA readback
-    #   OP4: PADDLE_DUMP (pin high drains the paddle caps via the 2N7002 gates)
-    #   OP5: ~PADDLE_CLR (pin low clears the '590 counters via /CCLR)
     #                                             IP3: DS3231 ~INT (optional
     #                                                  change-detect 1Hz/alarm IRQ)
-    #   OP6, OP7 spare                            IP4, IP5 spare
+    #   OP4..OP7 spare                            IP4, IP5 spare
+    # (OP4/OP5 drove the rev-1 paddle dump and '590 clear lines; rev 2 does
+    #  both from the PORTS PADDLE_CONTROL DUMP bit, so they are free.)
     address_range:
       base: 0xF80000
       size: 0x040000
@@ -502,13 +723,13 @@ peripherals:
   # touches the data path, and future direct peripherals cost zero GLUE
   # pins -- one spare read strobe and two spare write strobes remain.
   #   0xC00000  AUDIO     (7202 FIFO pair, ~AUDIO_W = write Y0)
-  #   0xC40000  JOYSTICK  ('245 pair,      ~JOY_OE = read Y1)
-  #   0xC80000  PADDLE    ('590 pair,      ~PADDLE_OE = read Y2)
+  #   0xC40000  reserved  (was JOYSTICK '245 pair; joysticks are PORTS registers now)
+  #   0xC80000  reserved  (was PADDLE '590 pair; paddle counters are in PORTS now)
   #   0xCC0000  reserved  (candidate: ENGINE COPY-FIFO read + write ports)
-  # (0xFC0000, the rev-1 74HC373 AUDIO latch slot, is freed.)
+  # (0xFC0000, the rev-1 74HC373 AUDIO latch slot, is the PORTS CPLD.)
   AUDIO:
     part: "2x IDT7202 FIFO + 2x 8-bit R2R DAC"
-    description: "Stereo FIFO audio output, drained at half the VGA line rate by VIDEO"
+    description: "Stereo FIFO audio output, drained at half the VGA line rate by PORTS"
     address_range:
       base: 0xC00000
       size: 0x040000
@@ -519,9 +740,9 @@ peripherals:
       - 14318181: 0
       - 16000000: 0
       - 20000000: 0
-    interrupt:
-      level: 2
-      signal: ~AUDIO_IRQ
+    # No interrupt entry: the 7202 half-full flag is wired to the PORTS CPLD,
+    # which latches it and reports it through ~PORTS_IRQ at level 2 (see
+    # PORTS AUDIO_STATUS.HF_IRQ).  There is no separate ~AUDIO_IRQ line.
     registers:
       - offset: 0x00
         name: FIFO
@@ -533,82 +754,14 @@ peripherals:
           8-bit sample landing directly in its 7202.  ~AUDIO_W comes from
           the 74155 write section gated by GLUE ~IO_WR_EN, which qualifies
           on UDS & LDS & ~R/W -- only deliberate full-word writes clock
-          the FIFOs (no A17 alias trick needed).  VIDEO drives the FIFO
+          the FIFOs (no A17 alias trick needed).  PORTS drives the FIFO
           read strobe at half the 31.469 kHz line rate (~15.7 kS/s, see
-          AUDIO_SAMPLES_PER_SECOND).  The FIFO half-full flag drives
-          ~AUDIO_IRQ (autovector level 2); the ISR refills at most
-          AUDIO_FIFO_DEPTH/2 = 512 pairs (~33 ms of headroom) per service.
+          AUDIO_SAMPLES_PER_SECOND) by dividing the HSYNC tap by two -- not
+          VIDEO, and not a programmable divider.  The FIFO half-full flag
+          goes to PORTS, which latches it into ~PORTS_IRQ (autovector level
+          2); the ISR refills at most AUDIO_FIFO_DEPTH/2 = 512 pairs (~33 ms
+          of headroom) per service and acks with PORTS AUDIO_CONTROL.
 
-  JOYSTICK:
-    part: "2x 74HCT245N"
-    description: "Two Atari-2600-style DE-9 joystick ports read through bus transceivers"
-    address_range:
-      base: 0xC40000
-      size: 0x040000
-      width: 16
-    dtack:
-      - 12000000: 0
-      - 14000000: 0
-      - 14318181: 0
-      - 16000000: 0
-      - 20000000: 0
-    registers:
-      - offset: 0x00
-        name: STATE
-        access: read
-        width: 16
-        description: |
-          Both joystick ports in one word; switch bits are active-low (0 = closed).
-          Port 1 rides D15-D8 (the port that also hosts the paddles), port 2
-          rides D7-D0.  PIN9/PIN5 double as SMS-pad button 2 and the raw
-          paddle pot comparator levels; paddle fire buttons appear on
-          LEFT/RIGHT (DE-9 pins 3/4), per the 2600 convention.  Poll from
-          the vsync ISR; there is no interrupt.
-        bits:
-          - { bit: "8",  name: P1_UP,      description: "Port 1 up, DE-9 pin 1 (0 = pressed)" }
-          - { bit: "9",  name: P1_DOWN,    description: "Port 1 down, DE-9 pin 2" }
-          - { bit: "10", name: P1_LEFT,    description: "Port 1 left, DE-9 pin 3 (also paddle B fire)" }
-          - { bit: "11", name: P1_RIGHT,   description: "Port 1 right, DE-9 pin 4 (also paddle A fire)" }
-          - { bit: "12", name: P1_FIRE,    description: "Port 1 fire, DE-9 pin 6" }
-          - { bit: "13", name: P1_PIN9,    description: "Port 1 DE-9 pin 9: SMS button 2 / paddle A pot level" }
-          - { bit: "14", name: P1_PIN5,    description: "Port 1 DE-9 pin 5: paddle B pot level" }
-          - { bit: "0",  name: P2_UP,      description: "Port 2 up, DE-9 pin 1 (0 = pressed)" }
-          - { bit: "1",  name: P2_DOWN,    description: "Port 2 down, DE-9 pin 2" }
-          - { bit: "2",  name: P2_LEFT,    description: "Port 2 left, DE-9 pin 3" }
-          - { bit: "3",  name: P2_RIGHT,   description: "Port 2 right, DE-9 pin 4" }
-          - { bit: "4",  name: P2_FIRE,    description: "Port 2 fire, DE-9 pin 6" }
-          - { bit: "5",  name: P2_PIN9,    description: "Port 2 DE-9 pin 9: SMS button 2" }
-          - { bit: "6",  name: P2_PIN5,    description: "Port 2 DE-9 pin 5 (spare input)" }
-
-  PADDLE:
-    part: "2x 74HC590"
-    description: "Two 2600-style paddle position counters clocked by the VGA line rate"
-    address_range:
-      base: 0xC80000
-      size: 0x040000
-      width: 16
-    dtack:
-      - 12000000: 0
-      - 14000000: 0
-      - 14318181: 0
-      - 16000000: 0
-      - 20000000: 0
-    registers:
-      - offset: 0x00
-        name: COUNTS
-        access: read
-        width: 16
-        description: |
-          Both paddle position counts in one word; paddle A (port 1 pin 9) is D15-D8, paddle B (port 1 pin 5) is D7-D0.
-          Each '590 counts scanlines while its pot's RC ramp is below the
-          counter's clock-enable threshold and freezes when the ramp
-          crosses, so the count is proportional to pot resistance
-          (2600-style; full scale sized for roughly 240 lines).  The vsync
-          ISR reads COUNTS, then pulses PADDLE_DUMP high and ~PADDLE_CLR
-          low (DUART OP4/OP5) to drain the caps and zero the counters for
-          the next frame.  Values need per-unit software calibration: the
-          '590 enable threshold varies part to part, and the pot parallels
-          the 1M pin-5/9 pull-up.
 
 constants:
   CF_STATUS_BSY:   0x80
@@ -630,15 +783,10 @@ constants:
   # DUART OP/IP masks for the pin_allocation block above.  Reminder: OP pins
   # drive the COMPLEMENT of their OPR bits (OPR_SET drives the pin low), and
   # RTC_SDA_DRIVE has a second inversion through the N-FET (pin high = SDA low).
-  # Paddle sequence per vsync ISR (OP4/OP5 pins are always opposite states):
-  #   read PADDLE_COUNTS
-  #   OPR_CLR=DUMP, OPR_SET=NCLR  -> pin4 high, pin5 low: drain caps + clear counters
-  #   OPR_SET=DUMP, OPR_CLR=NCLR  -> pin4 low, pin5 high: release, measurement runs
-  # i.e. OPR bit DUMP set = timer running; OPR bit NCLR set = counters held clear.
+  # OP4 and OP5 are free in rev 2: they drove the rev-1 paddle dump and clear
+  # lines, which are now the single PORTS PADDLE_CONTROL DUMP bit.
   DUART_OP_RTC_SCL:        0x04   # OP2
   DUART_OP_RTC_SDA_DRIVE:  0x08   # OP3
-  DUART_OP_PADDLE_DUMP:    0x10   # OP4 (pin high = caps draining)
-  DUART_OP_PADDLE_NCLR:    0x20   # OP5 (pin low = counters clearing)
   DUART_IP_RTC_SDA:        0x04   # IP2
   DUART_IP_RTC_NINT:       0x08   # IP3
   RTC_I2C_ADDR:            0x68   # DS3231 7-bit I2C address
