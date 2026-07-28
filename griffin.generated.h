@@ -37,8 +37,6 @@ static constexpr uint32_t GLUE_DEBUG_IN_SHIFT = 0U;
 static constexpr uint32_t GLUE_CONFIG = 0xF00007UL;  // WRITE: GLUE configuration register
 static constexpr uint32_t GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t GLUE_CONFIG_ROM_OVERLAY_DISABLE_SHIFT = 0U;
-static constexpr uint32_t GLUE_CONFIG_FLASH_WE_EN_MASK  = 0x02U;  // bits 1:1
-static constexpr uint32_t GLUE_CONFIG_FLASH_WE_EN_SHIFT = 1U;
 static constexpr uint32_t GLUE_CONFIG_DEFAULT = 0x00U;
 static constexpr uint32_t GLUE_PS2_TX_DATA = 0xF00009UL;  // WRITE: Byte to transmit host->device; the write itself starts the frame
 static constexpr uint32_t GLUE_PS2_TX_DATA_MASK  = 0xFFU;  // bits 7:0
@@ -73,9 +71,9 @@ static constexpr uint32_t GLUE_PS2_RX_DATA_MASK  = 0xFFU;  // bits 7:0
 static constexpr uint32_t GLUE_PS2_RX_DATA_SHIFT = 0U;
 
 // ------------------------------------------------------------
-// ROM: 1-2x M29F160FB 16Mbit 5V NOR flash (1Mx16, 55ns, TSOP48)
+// ROM: 2x W27C512 (64Kx8 DIP-28, socketed; 128KB total)
 static constexpr uint32_t ROM_BASE = 0x800000UL;
-static constexpr uint32_t ROM_SIZE = 0x400000UL;
+static constexpr uint32_t ROM_SIZE = 0x020000UL;
 static constexpr uint32_t ROM_WINDOW = 0x400000UL;
 inline constexpr MemoryRange ROM(0x800000UL, 0x400000UL);
 static constexpr int ROM_DTACK_WS = 1;  // wait states at 14000000 Hz
@@ -83,7 +81,7 @@ static constexpr int ROM_DTACK_THRESHOLD = 4;  // ws_cnt threshold for Verilog
 static constexpr int ROM_DTACK_PENALTY = 2;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
-// RAM_BANK_1: AS6C8016
+// RAM_BANK_1: 2x AS6C4008
 static constexpr uint32_t RAM_BANK_1_BASE = 0x000000UL;
 static constexpr uint32_t RAM_BANK_1_SIZE = 0x100000UL;
 inline constexpr MemoryRange RAM_BANK_1(0x000000UL, 0x100000UL);
@@ -92,7 +90,7 @@ static constexpr int RAM_BANK_1_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Ve
 static constexpr int RAM_BANK_1_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
-// RAM_BANK_2: AS6C8016
+// RAM_BANK_2: 2x AS6C4008
 static constexpr uint32_t RAM_BANK_2_BASE = 0x100000UL;
 static constexpr uint32_t RAM_BANK_2_SIZE = 0x100000UL;
 inline constexpr MemoryRange RAM_BANK_2(0x100000UL, 0x100000UL);
@@ -101,7 +99,7 @@ static constexpr int RAM_BANK_2_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Ve
 static constexpr int RAM_BANK_2_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
-// RAM_BANK_3: AS6C8016
+// RAM_BANK_3: 2x AS6C4008
 static constexpr uint32_t RAM_BANK_3_BASE = 0x200000UL;
 static constexpr uint32_t RAM_BANK_3_SIZE = 0x100000UL;
 inline constexpr MemoryRange RAM_BANK_3(0x200000UL, 0x100000UL);
@@ -110,49 +108,13 @@ static constexpr int RAM_BANK_3_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Ve
 static constexpr int RAM_BANK_3_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
-// RAM_BANK_4: AS6C8016
+// RAM_BANK_4: 2x AS6C4008
 static constexpr uint32_t RAM_BANK_4_BASE = 0x300000UL;
 static constexpr uint32_t RAM_BANK_4_SIZE = 0x100000UL;
 inline constexpr MemoryRange RAM_BANK_4(0x300000UL, 0x100000UL);
 static constexpr int RAM_BANK_4_DTACK_WS = 0;  // wait states at 14000000 Hz
 static constexpr int RAM_BANK_4_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
 static constexpr int RAM_BANK_4_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
-
-// ------------------------------------------------------------
-// RAM_BANK_5: AS6C8016
-static constexpr uint32_t RAM_BANK_5_BASE = 0x400000UL;
-static constexpr uint32_t RAM_BANK_5_SIZE = 0x100000UL;
-inline constexpr MemoryRange RAM_BANK_5(0x400000UL, 0x100000UL);
-static constexpr int RAM_BANK_5_DTACK_WS = 0;  // wait states at 14000000 Hz
-static constexpr int RAM_BANK_5_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
-static constexpr int RAM_BANK_5_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
-
-// ------------------------------------------------------------
-// RAM_BANK_6: AS6C8016
-static constexpr uint32_t RAM_BANK_6_BASE = 0x500000UL;
-static constexpr uint32_t RAM_BANK_6_SIZE = 0x100000UL;
-inline constexpr MemoryRange RAM_BANK_6(0x500000UL, 0x100000UL);
-static constexpr int RAM_BANK_6_DTACK_WS = 0;  // wait states at 14000000 Hz
-static constexpr int RAM_BANK_6_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
-static constexpr int RAM_BANK_6_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
-
-// ------------------------------------------------------------
-// RAM_BANK_7: AS6C8016
-static constexpr uint32_t RAM_BANK_7_BASE = 0x600000UL;
-static constexpr uint32_t RAM_BANK_7_SIZE = 0x100000UL;
-inline constexpr MemoryRange RAM_BANK_7(0x600000UL, 0x100000UL);
-static constexpr int RAM_BANK_7_DTACK_WS = 0;  // wait states at 14000000 Hz
-static constexpr int RAM_BANK_7_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
-static constexpr int RAM_BANK_7_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
-
-// ------------------------------------------------------------
-// RAM_BANK_8: AS6C8016
-static constexpr uint32_t RAM_BANK_8_BASE = 0x700000UL;
-static constexpr uint32_t RAM_BANK_8_SIZE = 0x100000UL;
-inline constexpr MemoryRange RAM_BANK_8(0x700000UL, 0x100000UL);
-static constexpr int RAM_BANK_8_DTACK_WS = 0;  // wait states at 14000000 Hz
-static constexpr int RAM_BANK_8_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
-static constexpr int RAM_BANK_8_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
 // ENGINE: Video framebuffer DMA engine with 7200 FIFO write interface
@@ -199,14 +161,14 @@ static constexpr uint32_t VIDEO_CTRL_RB_IRQENB_SHIFT = 2U;
 static constexpr uint32_t VIDEO_CLRERR = 0xE00009UL;  // WRITE: Write any value to clear FIFO_ERROR sticky bit
 
 // ------------------------------------------------------------
-// CF: Storage via CF card in True IDE 8-bit PIO mode
+// CF: Storage via CF card in True IDE 16-bit PIO mode
 static constexpr uint32_t CF_BASE = 0xF40000UL;
 static constexpr uint32_t CF_SIZE = 0x040000UL;
 inline constexpr MemoryRange CF(0xF40000UL, 0x040000UL);
 static constexpr int CF_DTACK_WS = 7;  // wait states at 14000000 Hz
 static constexpr int CF_DTACK_THRESHOLD = 14;  // ws_cnt threshold for Verilog
 static constexpr int CF_DTACK_PENALTY = 12;  // extra SYSCLK cycles for emulator
-static constexpr uint32_t CF_DATA = 0xF40001UL;  // RW: Data to/from CF card
+static constexpr uint32_t CF_DATA = 0xF40000UL;  // RW: 16-bit data port to/from the CF card
 static constexpr uint32_t CF_ERROR = 0xF40003UL;  // READ: Error register; valid after a command error
 static constexpr uint32_t CF_FEATURES = 0xF40003UL;  // WRITE: Features register; written before issuing SET_FEATURES command
 static constexpr uint32_t CF_SECTOR_COUNT = 0xF40005UL;  // RW: Number of sectors to transfer
@@ -218,7 +180,7 @@ static constexpr uint32_t CF_STATUS = 0xF4000FUL;  // READ: Device status; poll 
 static constexpr uint32_t CF_COMMAND = 0xF4000FUL;  // WRITE: Issue command; write after setting all other registers
 
 // ------------------------------------------------------------
-// DUART: serial IO, maybe some in and out pins
+// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C / paddle dump
 static constexpr uint32_t DUART_BASE = 0xF80000UL;
 static constexpr uint32_t DUART_SIZE = 0x040000UL;
 inline constexpr MemoryRange DUART(0xF80000UL, 0x040000UL);
@@ -305,21 +267,70 @@ static constexpr uint32_t DUART_STOPCC = 0xF8001FUL;  // READ: Stop counter/time
 static constexpr uint32_t DUART_OPR_CLR = 0xF8001FUL;  // WRITE: Output port bit reset (1 bits clear corresponding OP pins)
 
 // ------------------------------------------------------------
-// AUDIO: 8-bit latched audio output
-static constexpr uint32_t AUDIO_BASE = 0xFC0000UL;
+// AUDIO: Stereo FIFO audio output, drained at half the VGA line rate by VIDEO
+static constexpr uint32_t AUDIO_BASE = 0xC00000UL;
 static constexpr uint32_t AUDIO_SIZE = 0x040000UL;
-inline constexpr MemoryRange AUDIO(0xFC0000UL, 0x040000UL);
-static constexpr int AUDIO_DTACK_WS = 1;  // wait states at 14000000 Hz
-static constexpr int AUDIO_DTACK_THRESHOLD = 4;  // ws_cnt threshold for Verilog
-static constexpr int AUDIO_DTACK_PENALTY = 2;  // extra SYSCLK cycles for emulator
-static constexpr uint32_t AUDIO_DAC = 0xFC0001UL;  // WRITE: Write sample to 8-bit R2R DAC output latch
+inline constexpr MemoryRange AUDIO(0xC00000UL, 0x040000UL);
+static constexpr uint32_t AUDIO_IRQ_LEVEL = 2U;
+static constexpr int AUDIO_DTACK_WS = 0;  // wait states at 14000000 Hz
+static constexpr int AUDIO_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
+static constexpr int AUDIO_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
+static constexpr uint32_t AUDIO_FIFO = 0xC00000UL;  // WRITE: Write one stereo sample pair into the audio FIFOs
+
+// ------------------------------------------------------------
+// JOYSTICK: Two Atari-2600-style DE-9 joystick ports read through bus transceivers
+static constexpr uint32_t JOYSTICK_BASE = 0xC40000UL;
+static constexpr uint32_t JOYSTICK_SIZE = 0x040000UL;
+inline constexpr MemoryRange JOYSTICK(0xC40000UL, 0x040000UL);
+static constexpr int JOYSTICK_DTACK_WS = 0;  // wait states at 14000000 Hz
+static constexpr int JOYSTICK_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
+static constexpr int JOYSTICK_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
+static constexpr uint32_t JOYSTICK_STATE = 0xC40000UL;  // READ: Both joystick ports in one word; switch bits are active-low (0 = closed)
+static constexpr uint32_t JOYSTICK_STATE_P1_UP_MASK  = 0x100U;  // bits 8:8
+static constexpr uint32_t JOYSTICK_STATE_P1_UP_SHIFT = 8U;
+static constexpr uint32_t JOYSTICK_STATE_P1_DOWN_MASK  = 0x200U;  // bits 9:9
+static constexpr uint32_t JOYSTICK_STATE_P1_DOWN_SHIFT = 9U;
+static constexpr uint32_t JOYSTICK_STATE_P1_LEFT_MASK  = 0x400U;  // bits 10:10
+static constexpr uint32_t JOYSTICK_STATE_P1_LEFT_SHIFT = 10U;
+static constexpr uint32_t JOYSTICK_STATE_P1_RIGHT_MASK  = 0x800U;  // bits 11:11
+static constexpr uint32_t JOYSTICK_STATE_P1_RIGHT_SHIFT = 11U;
+static constexpr uint32_t JOYSTICK_STATE_P1_FIRE_MASK  = 0x1000U;  // bits 12:12
+static constexpr uint32_t JOYSTICK_STATE_P1_FIRE_SHIFT = 12U;
+static constexpr uint32_t JOYSTICK_STATE_P1_PIN9_MASK  = 0x2000U;  // bits 13:13
+static constexpr uint32_t JOYSTICK_STATE_P1_PIN9_SHIFT = 13U;
+static constexpr uint32_t JOYSTICK_STATE_P1_PIN5_MASK  = 0x4000U;  // bits 14:14
+static constexpr uint32_t JOYSTICK_STATE_P1_PIN5_SHIFT = 14U;
+static constexpr uint32_t JOYSTICK_STATE_P2_UP_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t JOYSTICK_STATE_P2_UP_SHIFT = 0U;
+static constexpr uint32_t JOYSTICK_STATE_P2_DOWN_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t JOYSTICK_STATE_P2_DOWN_SHIFT = 1U;
+static constexpr uint32_t JOYSTICK_STATE_P2_LEFT_MASK  = 0x04U;  // bits 2:2
+static constexpr uint32_t JOYSTICK_STATE_P2_LEFT_SHIFT = 2U;
+static constexpr uint32_t JOYSTICK_STATE_P2_RIGHT_MASK  = 0x08U;  // bits 3:3
+static constexpr uint32_t JOYSTICK_STATE_P2_RIGHT_SHIFT = 3U;
+static constexpr uint32_t JOYSTICK_STATE_P2_FIRE_MASK  = 0x10U;  // bits 4:4
+static constexpr uint32_t JOYSTICK_STATE_P2_FIRE_SHIFT = 4U;
+static constexpr uint32_t JOYSTICK_STATE_P2_PIN9_MASK  = 0x20U;  // bits 5:5
+static constexpr uint32_t JOYSTICK_STATE_P2_PIN9_SHIFT = 5U;
+static constexpr uint32_t JOYSTICK_STATE_P2_PIN5_MASK  = 0x40U;  // bits 6:6
+static constexpr uint32_t JOYSTICK_STATE_P2_PIN5_SHIFT = 6U;
+
+// ------------------------------------------------------------
+// PADDLE: Two 2600-style paddle position counters clocked by the VGA line rate
+static constexpr uint32_t PADDLE_BASE = 0xC80000UL;
+static constexpr uint32_t PADDLE_SIZE = 0x040000UL;
+inline constexpr MemoryRange PADDLE(0xC80000UL, 0x040000UL);
+static constexpr int PADDLE_DTACK_WS = 0;  // wait states at 14000000 Hz
+static constexpr int PADDLE_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
+static constexpr int PADDLE_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
+static constexpr uint32_t PADDLE_COUNTS = 0xC80000UL;  // READ: Both paddle position counts in one word; paddle A (port 1 pin 9) is D15-D8, paddle B (port 1 pin 5) is D7-D0
 
 // RAM region — total of all RAM banks
-static constexpr uint32_t RAM_TOTAL_SIZE = 0x800000UL;
+static constexpr uint32_t RAM_TOTAL_SIZE = 0x400000UL;
 
 // IO region — span of all non-RAM/ROM memory-mapped peripherals
 static constexpr uint32_t IO_BASE = 0xF00000UL;
-static constexpr uint32_t IO_SIZE = 0x100000UL;
+static constexpr uint32_t IO_SIZE = 0x0C0000UL;
 
 // Constants
 static constexpr uint32_t CF_STATUS_BSY = 0x80U;
@@ -333,6 +344,15 @@ static constexpr uint32_t CF_CMD_SET_FEATURES = 0xEFU;
 static constexpr uint32_t CF_CMD_SET_8BIT = 0x01U;
 static constexpr uint32_t CF_DH_LBA = 0xE0U;
 static constexpr uint32_t PS2_RX_QUEUE_SIZE = 0x40U;
+static constexpr uint32_t AUDIO_FIFO_DEPTH = 0x400U;
+static constexpr uint32_t AUDIO_SAMPLES_PER_SECOND = 0x3D76U;
+static constexpr uint32_t DUART_OP_RTC_SCL = 0x04U;
+static constexpr uint32_t DUART_OP_RTC_SDA_DRIVE = 0x08U;
+static constexpr uint32_t DUART_OP_PADDLE_DUMP = 0x10U;
+static constexpr uint32_t DUART_OP_PADDLE_NCLR = 0x20U;
+static constexpr uint32_t DUART_IP_RTC_SDA = 0x04U;
+static constexpr uint32_t DUART_IP_RTC_NINT = 0x08U;
+static constexpr uint32_t RTC_I2C_ADDR = 0x68U;
 static constexpr uint32_t PS2_TX_DATA_PARITY = 0x02U;
 static constexpr uint32_t ENGINE_WORDS_PER_BURST = 0x14U;
 static constexpr uint32_t VIDEO_PIXEL_BYTES_PER_LINE = 0x50U;

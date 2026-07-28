@@ -34,8 +34,8 @@ inline volatile uint8_t &VIDEO_CTRL = *reinterpret_cast<volatile uint8_t *>(0xE0
 inline volatile uint8_t &VIDEO_CTRL_RB = *reinterpret_cast<volatile uint8_t *>(0xE00005UL);  // READ: Video control readback
 inline volatile uint8_t &VIDEO_CLRERR = *reinterpret_cast<volatile uint8_t *>(0xE00009UL);  // WRITE: Write any value to clear FIFO_ERROR sticky bit
 
-// CF: Storage via CF card in True IDE 8-bit PIO mode
-inline volatile uint8_t &CF_DATA = *reinterpret_cast<volatile uint8_t *>(0xF40001UL);  // RW: Data to/from CF card
+// CF: Storage via CF card in True IDE 16-bit PIO mode
+inline volatile uint16_t &CF_DATA = *reinterpret_cast<volatile uint16_t *>(0xF40000UL);  // RW: 16-bit data port to/from the CF card
 inline volatile uint8_t &CF_ERROR = *reinterpret_cast<volatile uint8_t *>(0xF40003UL);  // READ: Error register; valid after a command error
 inline volatile uint8_t &CF_FEATURES = *reinterpret_cast<volatile uint8_t *>(0xF40003UL);  // WRITE: Features register; written before issuing SET_FEATURES command
 inline volatile uint8_t &CF_SECTOR_COUNT = *reinterpret_cast<volatile uint8_t *>(0xF40005UL);  // RW: Number of sectors to transfer
@@ -46,7 +46,7 @@ inline volatile uint8_t &CF_DRIVE_HEAD = *reinterpret_cast<volatile uint8_t *>(0
 inline volatile uint8_t &CF_STATUS = *reinterpret_cast<volatile uint8_t *>(0xF4000FUL);  // READ: Device status; poll BSY clear and DRQ set before data transfer
 inline volatile uint8_t &CF_COMMAND = *reinterpret_cast<volatile uint8_t *>(0xF4000FUL);  // WRITE: Issue command; write after setting all other registers
 
-// DUART: serial IO, maybe some in and out pins
+// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C / paddle dump
 inline volatile uint8_t &DUART_MR1A = *reinterpret_cast<volatile uint8_t *>(0xF80001UL);  // RW: Channel A mode register 1 (after reset or MR pointer reset)
 inline volatile uint8_t &DUART_MR2A = *reinterpret_cast<volatile uint8_t *>(0xF80001UL);  // RW: Channel A mode register 2 (second access after MR pointer reset)
 inline volatile uint8_t &DUART_SRA = *reinterpret_cast<volatile uint8_t *>(0xF80003UL);  // READ: Channel A status register
@@ -77,7 +77,13 @@ inline volatile uint8_t &DUART_OPR_SET = *reinterpret_cast<volatile uint8_t *>(0
 inline volatile uint8_t &DUART_STOPCC = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // READ: Stop counter/timer command (read to stop; data ignored)
 inline volatile uint8_t &DUART_OPR_CLR = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // WRITE: Output port bit reset (1 bits clear corresponding OP pins)
 
-// AUDIO: 8-bit latched audio output
-inline volatile uint8_t &AUDIO_DAC = *reinterpret_cast<volatile uint8_t *>(0xFC0001UL);  // WRITE: Write sample to 8-bit R2R DAC output latch
+// AUDIO: Stereo FIFO audio output, drained at half the VGA line rate by VIDEO
+inline volatile uint16_t &AUDIO_FIFO = *reinterpret_cast<volatile uint16_t *>(0xC00000UL);  // WRITE: Write one stereo sample pair into the audio FIFOs
+
+// JOYSTICK: Two Atari-2600-style DE-9 joystick ports read through bus transceivers
+inline volatile uint16_t &JOYSTICK_STATE = *reinterpret_cast<volatile uint16_t *>(0xC40000UL);  // READ: Both joystick ports in one word; switch bits are active-low (0 = closed)
+
+// PADDLE: Two 2600-style paddle position counters clocked by the VGA line rate
+inline volatile uint16_t &PADDLE_COUNTS = *reinterpret_cast<volatile uint16_t *>(0xC80000UL);  // READ: Both paddle position counts in one word; paddle A (port 1 pin 9) is D15-D8, paddle B (port 1 pin 5) is D7-D0
 
 } // namespace Griffin::reg

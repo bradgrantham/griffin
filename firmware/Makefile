@@ -23,6 +23,9 @@ CFLAGS = --std=c23 $(COMMONFLAGS) $(WARNFLAGS)
 ASFLAGS = -g
 LDFLAGS = $(COMMONFLAGS) -T $(LDSCRIPT)
 
+all: rom.bin
+.PHONY: all
+
 # Third-party C sources we don't control: build with relaxed warning flags
 LENIENT_C_SOURCES = ff.c ffunicode.c diskio.c
 LENIENT_CFLAGS = $(COMMONFLAGS) -Wall

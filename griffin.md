@@ -303,13 +303,18 @@ Clean everything up for Rev 2, get as much tested as possible
   * Image viewer app
   * Movie player app with audio - microham mode
   * BASIC (finish up your basic.cpp)
-* Get Linux NOMMU proof of concept or another OS running, at the very least a toolchain that allows you to run apps from CF card; expect to have 8MB RAM + up to 4MB flash on Rev 2
 
 ## Possible new hardware features (July 24 2026)
 
-Kind of want a joystick port.
+PS/2 mouse port — to look into: doesn't fit GLUE (grouping failure, every fitter lever tried); would live in ENGINE.  Needs the connector + CLK/DATA nets routed to ENGINE pins at layout time even if the bitfile support comes later.
 
-Video through a CLUT RAM?  For 640 pixels wide need a ~15-25ns part, don't have one in my kit
+Generalized ENGINE — to look into:
+
+* Stream into VIDEO, AUDIO, or COPY FIFOs from RAM, ROM, CF
+* Stream out of COPY FIFO to RAM
+* Optional block on HF for VIDEO, AUDIO FIFOs
+* Fixed size?  Or count for COPY ops?
+* Net impact: as bus master ENGINE reaches the audio FIFO / CF through normal GLUE-decoded cycles, so mostly no new nets — the exception is observing the FIFO HF flags it must block on (AUDIO ~HF at minimum); decide with the "more inter-CPLD signals" layout item
 
 ## Strategy
 
@@ -367,6 +372,131 @@ Bodging between ENGINE and VIDEO and piggybacked 7200s a la video-fifo-wiring.md
 
 * **CPU:** 68010 primary (68000 is a drop-in), 14 MHz SYSCLK.
 * **Clocking:** 14 MHz system oscillator + a separate 25.175 MHz pixel oscillator for VGA.  SYSCLK feeds a GCLK on each CPLD.
+* **Reset:** DS1233 supervisor + user reset button, carried from Rev 1.  ~RESET/~HALT must accept external open-drain assertion from the debug header (backup bus-master role) without fighting the supervisor — the DS1233 tolerates being pulled low externally.
+* **RAM:** as Rev 1 — up to 4 MB as 4 banks × 2 of AS6C4008 (512K×8, DIP-32, socketed, bin parts; 256 KB start from 2× KM681000 also works).  GLUE drives nRAM_[1-4]_SEL (banks by A20/A21) and WRITE_LO/WRITE_HI byte write strobes; /OE←nR_W.  Banks populate contiguously from bank 1; ROM's RAM-sizing probe as Rev 1.
+* **ROM:** as Rev 1 — 2× W27C512 (64K×8, DIP-28, socketed, bin parts) = 128 KB on the 16-bit bus, one per byte lane.  Bench-programmed only (no in-circuit write path — firmware iteration is serial/CF load, as Rev 1); nROM_SELECT decode, boot overlay over RAM bank 1 until the CONFIG write; /OE←nR_W.
+* **CF:** 16-bit True IDE PIO; IOWR gated by AS (needs a glue.v change: R/~W + AS → IOWR).
+* **RTC:** DS3231 (TCXO) on I²C via the DUART's spare OP/IP pins — off the bus, zero GLUE logic (no A17, no chip-select/strobes/wait-states), 5 V so no level translation.  SCL = an OP pin (push-pull is fine; DS3231 doesn't clock-stretch); SDA is open-drain via an OP→N-FET pull-down with an IP reading back.  Optional INT#/SQW → a DUART change-detect IP for a 1 Hz/alarm IRQ.  (Chosen over the BQ3285, whose 146818-style multiplexed bus would have cost GLUE A17 + AS/DS strobes + 3 pins.)
+* **GLUE ATF1508:** address decode (nRAM_[1-4]_SEL, nROM_SELECT, VIDEO, CF incl CS0/CS1 + AS-gated IORD/IOWR, DUART), DTACK/wait-state generation, WRITE_LO/WRITE_HI byte write strobes, the boot ROM overlay + CONFIG register, autovector ~VPA, the PS/2 keyboard frame engine (RX one IRQ/byte, TX on the device clock; no mouse port — see possible new features), and a separate DEBUG-LED driver used for boot codes / video-ISR heartbeat / double-fault.  For the 0xC00000 direct-bus region GLUE emits just two timed strobes — ~IO_RD_EN (region & AS & R/~W) and ~IO_WR_EN (region & UDS & LDS & ~R/W) — and a 74155 fans them out by A19:18 into ~AUDIO_W / ~JOY_OE / ~PADDLE_OE, so further direct peripherals cost zero GLUE pins.  No ENGINE select — ENGINE self-decodes its MMIO from the bus it already masters (verify ENGINE fit).
+* **Serial I/O — XR68C681 DUART:** Channel A = console (115200 8N1; boot/panic output, no more bit-bang — pre-DUART failures are LED-blink only), Channel B = 2nd serial brought out to a TTL header (ESP32 / PPP / an RS232 level-shifter module) — deliberately not routed through USB.  C/T = 100 Hz systick (level 5) + a configurable timer ISR.  OP/IP pins host RTS/CTS flow control on both channels, the DS3231 I²C, and the paddle PADDLE_DUMP/~PADDLE_CLR pair (OP4/OP5); allocation table in griffin.yml; spares remain.
+* Console UART header
+* JTAG programming 1×6: TCK/TMS/TDI/TDO + 5 V + GND) 
+* **Debug headers — LA access + "PCB design failed" backup:** two 2×15 0.1" headers laid out to **mirror the LogicAnalyzer level-shifter board's own 2×15 pinout** (24 channels + GND + 3V3 + 5V-reference + 2 external-trigger pins each), so the two on-hand 5 V-tolerant analyzers plug straight on and daisy-chain via their own 3-pin chain connectors into one synchronized 48-channel capture.  Exact channel-to-pin mapping, mating gender, and orientation come from the gusmanb KiCad files at schematic time — the wiki shows it only as a diagram (https://github.com/gusmanb/logicanalyzer/wiki/02---LogicAnalyzer-Hardware).  Channel plan (47 bus/control signals + SYSCLK = 48, an exact fit): **header 1 "what happened"** = D0–D15, ~AS, ~UDS, ~LDS, R/~W, ~DTACK, ~RESET, ~HALT (exactly 23); **header 2 "where"** = A1–A23 + SYSCLK (24).  5V-reference pins fed from the Griffin rail (analyzer's onboard jumper removed → external reference); 3V3 pins NC; trigger pins NC/test pads.  Roles: (1) *Observe:* whole-bus captures as above.  (2) *Backup bus-master:* every signal a master needs is on these same two headers — hold ~RESET+~HALT (68000 tri-states A/D/strobes; GLUE still does its normal decode, so the flash sees ordinary write cycles) - Bus-cycle mechanics for whoever masters: bit-banged/PIO read_word/write_word (honor ~DTACK or run conservatively slow) 
+* **Video — VGA 640×480@60 1bpp** (NTSC/composite dropped) over shared SRAM via a pair of 7200 FIFOs.
+  * VIDEO CPLD: HSYNC/VSYNC/timing, reads bytes from the 7200s, vsync IRQ (level 6), ENABLE *after* ENGINE.  Palette is in-band — the first word of each scanline carries {fg,bg} (R3G3B2 each), latched from the FIFO during hblank; no PALETTE register.  Bitfile stretch if it fits: 2bpp 320×240 with 4 palette entries (no board impact).
+  * ENGINE CPLD: 16-bit DMA master (level 3).  SOURCE_PAGE = A[23:16] of the 64K-aligned framebuffer; streams VIDEO_WORDS_PER_LINE words/scanline in ENGINE_WORDS_PER_BURST bursts paced to HBLANK; ENABLE *before* VIDEO.  Per-line streaming lets the CPU flip SOURCE_PAGE between frames for double-buffering.  Must reset to DMA-disabled on system ~RESET (guaranteed, not power-on-luck) so the bus is quiet under external bus mastering.
+* **Joysticks — 2× DE-9, Atari 2600-style, via 2× 74HCT245N (4 on hand):** one transceiver per byte lane (stick 1 → D[15:8], stick 2 → D[7:0]), DIR tied joystick→bus, both ~OE from ~JOY_OE (74155 read section, gated by GLUE ~IO_RD_EN) — no write logic, zero-wait DTACK, and the '245s are a sacrificial ESD boundary between the connectors and everything else.  One `move.w` reads both sticks; bits active-low (0 = switch closed).  U/D/L/R on DE-9 pins 1–4, fire on pin 6; also wire pins 5/9 (Sega Master System pad button 2 works, pads still manufactured), leaving spare bits per lane.  Pull-ups on every switch line, +5 V on pin 7 via polyfuse, GND pin 8.  Polled at 60 Hz in the vsync ISR — no IRQ, no CPLD state machine; registers defined in griffin.yml so the emulator can map them to keys before the board exists.
+  * **Paddles — one port, 2 paddles, via 2× 74HC590 (on order):** a 2600 paddle is a 1 MΩ pot from +5 V (pin 7) to pin 5/9 with fire on pins 3/4, so the connector wiring above already covers it.  Per paddle: ~10 nF cap to GND + 2N7002 drain FET on the pot line, and one '590 — CCLK/RCLK = the audio line clock (counts scanlines, exactly the 2600's method), /CCKEN = the pot line itself (counts while the RC ramp is below the ~VCC/2 enable threshold, stops at crossing; t ≈ 0.69·RC, size C for ≈240-line full scale), /G = ~PADDLE_OE from the 74155 read section (one '590 per byte lane, `move.w` reads the pair), the FET gates = PADDLE_DUMP (DUART OP4, pin high drains) and the '590 /CCLR = ~PADDLE_CLR (OP5, pin low clears) — opposite active levels, so two OP bits instead of an inverter, pulsed together in the vsync ISR.  Immune to DMA/IRQ jitter; CPU cost is two OPR writes and one read per frame.  Expect software calibration (the '590 enable threshold varies part-to-part, and the pot parallels the pin-5/9 pull-up).  Paddle-vs-stick is a per-port software mode, as on the real 2600.
+* **Audio - FIFO** (replaces the Rev 1 '373 latch): 2× 7202 FIFO + 2× 8-bit R2R DAC, stereo (L = D[15:8], R = D[7:0] straight to the FIFOs).  ~W = ~AUDIO_W from the 74155 write section (GLUE ~IO_WR_EN qualifies deliberate full-word writes — no A17 alias needed), VIDEO generates ~R from line clock, and ~HF → nAUDIO_IRQ (level 2).  CPU fills the FIFO on the HF IRQ; baseline ~15.7 kS/s; no mono packing.
+* **Interrupts (autovector):** VIDEO 6, DUART 5, PS/2 4, ENGINE 3, AUDIO 2.
+* **Address map:** RAM 0x000000–0x3FFFFF; **ROM window 0x800000–0xBFFFFF** (decode = A23 & ~A22, two literals; the 128 KB image mirrors 32×); all peripherals under A23 & A22: **direct-bus region 0xC00000–0xCFFFFF** split /4 by A19:18 — AUDIO 0xC00000, JOYSTICK 0xC40000, PADDLE 0xC80000, 0xCC0000 reserved (ENGINE COPY-FIFO candidate) — strobed by the 74155 from GLUE's timed ~IO_RD_EN/~IO_WR_EN, data never passing through a CPLD; ENGINE 0xD00000 (self-decoded), VIDEO 0xE00000, GLUE 0xF00000, CF 0xF40000, DUART 0xF80000; 0xFC0000 free.  Registers and constants in griffin.yml.
+
+## Board changes
+
+*(KiCad watch-list — footprints, pinouts, nets, placement, SI.  Function lives in Rev 2 components above; link, don't restate.)*
+
+### Footprints & sockets
+- [ ] ROM: 2× W27C512 DIP-28 in sockets (one per byte lane, 128 KB ×16, as Rev 1); /OE←nR_W, /CE←nROM_SELECT; images via the bench programmer
+- [ ] RAM: 8× DIP-32 sockets, 4 banks × 2 of AS6C4008 (populate contiguously from bank 1, as Rev 1); /OE←nR_W, WRITE_LO/WRITE_HI byte strobes + nRAM_[1-4]_SEL from GLUE
+- [ ] Audio: 2× 7202 FIFO + 2× R2R DAC on the board (replaces the Rev 1 '373 + write-only ~AUDIO_LE); ~W from GLUE, ~R from the VIDEO line clock, ~HF → nAUDIO_IRQ
+- [ ] Video FIFOs: 2× 7200 on the board natively (retires the piggyback bodge of video-fifo-wiring.md); termination in SI section below
+- [ ] VGA: DE-15 connector; remove the composite/NTSC jack and any NTSC clock provisions — Rev 2 is VGA-only
+- [ ] DUART: XR68C681 DIP-40 native (retires the DIP-carrier bodge); A1-A4→RS1-RS4, D0-7 + R/~W direct, ~RESET from ~RESET net, ~IACK tied high (autovectors), 3.6864 MHz crystal on X1/X2 (clearance if ZIF)
+- [ ] Console: DUART Ch A TTL header (FTDI-cable pinout); Ch B TTL header (RS232 level-shifter module optional)
+- [ ] RTC: DS3231 + coin-cell holder; SCL=OP2, SDA via OP3→2N7002 (drain on SDA) + IP2 readback
+- [ ] PS/2: fix footprint + pin mapping (single keyboard port)
+- [ ] Peripheral decode: 74155 DIP-16 (bin part, 3 on hand) as dual 2-to-4 for the 0xC00000 direct-bus region — A/B←A19:18; section 1 (1C→+5V, 1G←~IO_RD_EN): 1Y1=~JOY_OE, 1Y2=~PADDLE_OE, 1Y3=~COPY_RD reserved, 1Y0 spare; section 2 (2C→GND, 2G←~IO_WR_EN): 2Y0=~AUDIO_W, 2Y3=~COPY_WR reserved, 2Y1/2Y2 spare.  ~IO_RD_EN/~IO_WR_EN are the only 2 GLUE pins for the whole region; ENGINE self-decodes MMIO (no nENGINE_SELECT net); CF CS1 stays routed from GLUE
+- [ ] Joysticks: 2× DE-9 male PCB-mount + 2× 74HCT245N DIP-20 in sockets (DIR tied, both ~OE←~JOY_OE from the 74155); bussed pull-up networks, polyfuse on pin-7 +5V, optional series R + clamps between connector and '245
+- [ ] Paddles (port 1 only): 2× 74HC590 DIP-16 in sockets (one per byte lane; /G←~PADDLE_OE from the 74155, CCLK/RCLK←audio line clock net, /CCLR←~PADDLE_CLR from DUART OP5), 2× {~10 nF film cap to GND + 2N7002 drain, gate←PADDLE_DUMP from DUART OP4} on DE-9 pins 5/9; all DNP-able — a sticks-only build omits the '590s/caps/FETs
+- [ ] everything THT / socketed where practical — Rev 2 stays bodgeable by intent
+- [ ] Headphone-jack pads / RCA retainer feet — partial holes?
+- [ ] JTAG programming header 1×6 (TCK/TMS/TDI/TDO/5V/GND) — the primary CPLD programming path (external dongle, as Rev 1)
+- [ ] Debug headers: 2× 2×15 THT mirroring the gusmanb level-shifter pinout (pull channel map + gender/orientation from the project KiCad; leave clearance for two analyzers side by side or ribbon out); header 1 = D0–D15 + ~AS/~UDS/~LDS/R/~W/~DTACK + ~RESET/~HALT (23 — spare-channel candidates: audio line clock or paddle DUMP), header 2 = A1–A23 + SYSCLK (via a buffered/series-R tap — do not stub the raw clock net); 5V-ref pins from the rail, 3V3 NC, triggers NC/pads
+
+### Power & decoupling
+- [ ] USB-C power input with inline switch + two 5.1k CC pull-downs, carried over from Rev 1 (draws 0.84 A on a plain 5 V sink — no PD needed)
+- [ ] decoupling cap on every +5V/GND pair, especially the CPLDs
+
+### Pull-ups
+- [ ] 4.7K on HALT; any CPU lines that may float or lead
+- [ ] ~AS, ~UDS, ~LDS, R/~W (and ~DTACK if ever tri-stated) — strobes must idle deasserted while the CPU is tri-stated (~RESET+~HALT bus-master mode via the debug headers), else GLUE sees phantom cycles; also cleans up LA captures
+- [ ] PS/2 CLK & DATA
+- [ ] joystick switch lines (bussed resistor networks to +5 V) — except DE-9 pins 5/9 on the paddle port: weak 1 MΩ discretes there, since the paddle pot parallels the pull-up (still fine for reading SMS button 2, just slow edges)
+- [ ] I²C SCL/SDA to 5 V
+- [ ] JTAG lines
+- [ ] any inter-IC signal that could stall or float
+
+### Signal integrity & analog
+- [ ] SYSCLK into a GCLK on every CPLD (especially GLUE)
+- [ ] source termination (33–100 Ω series at CPLD output) on the FIFO control lines — /RE_EVEN, /RE_ODD, /W, q8_toggle (Rev 1: unterminated bodge wires rang and doubled reads → image creep; 10 pF-to-GND was the stopgap)
+- [ ] 7200s on the bus may need transceivers for capacitance; inline R + cap-to-GND per the jumper-to-solderless experiment (the 2 spare 74HCT245N would serve)
+- [ ] redesign the VGA analog (R-2R ladder + sync) to be robust; place the audio R2R/op-amp near the jack
+
+### Test & debug access
+- [ ] bring every inter-IC signal (GND, +5V, D, A, WRITE_LO/HI, RAM/ROM/IO/VIDEO/ENGINE selects, nVPA) to a 2×N test header with the signal silk-screened per pin
+- [ ] female header sized for Dr. Guzman's analyzer (try two ganged); lots of ground test-point holes
+- [ ] spare GLUE pins to a debug header if any remain
+- [ ] wire all CPLDs (GLUE/VIDEO/ENGINE) into the JTAG chain
+- [x] separate DEBUG LED + NPN driver (2N3904 / SOT-23 MMBT3904; base via 1–10 K to DEBUG_OUT)
+
+### Carryover bug fixes
+- [ ] fold every entry of the Rev 1 bodge record (above) into the schematic natively
+- [ ] CF symbol is junk — redo it (weird pin numbers)
+- [ ] CF IOWR must be gated by AS in GLUE — R/~W alone leaves AS gone at IOWR rise → junk data
+- [ ] CF to 16 bits
+- [ ] CF DMACK to +5; CS0/CS1 are swapped (fixed in Verilog for now)
+- [ ] flip the FTDI (currently 180° / upside-down on the 90° header)
+- [x] A18→GLUE (was A6); GLUE VPA→CPU (was ENGINE_IACK)
+
+### Process & layout
+- [ ] HDL first: bring all CPLD bitfiles (GLUE/VIDEO/ENGINE) to a fit with the fitter free to minimize macrocells, then freeze the pinout before routing
+- [ ] hub-and-spoke: bus across from the CPU, peripherals above/below with vertical taps; connectors to the rear
+- [ ] open: more inter-CPLD signals? (decide during HDL)
+- [ ] BOM output with an "I already have these" filter
+
+## Shrinkwrapped VCFWest package
+
+Couple of completed machines:
+
+* Rev 2 - if ENGINE can do generalized DMA chain, do that
+  * accelerated memmove and scroll and CF card (firmware routines, Linux)
+* 3D printed case
+* VGA monitors, try to get CRTs - Jim?
+
+Posters
+
+* Block architecture
+* Interesting features
+
+Demos
+
+* Linux - can it support a windowing system?
+  * Move to erofs for root and XIP?
+* BASIC
+* Zaxxon? Or other interesting game
+* Movie player with audio
+* Jukebox with album art
+
+# Rev 3
+
+## SW Investigation Plan
+
+???
+
+## Possible new hardware features (July 24 2026)
+
+Video through a CLUT RAM?  For 640 pixels wide need a ~15-25ns part, don't have one in my kit
+
+## Strategy
+
+* Use Rev 2 strategy plus any revelations gathered along the way
+
+## Rev 3 components
+
+*(Parts and their function — the Rev 3 spec.  Footprints, nets, placement, and layout gotchas live in Board changes, not here.)*
+
+* **CPU:** 68010 primary (68000 is a drop-in), 14 MHz SYSCLK.
+* **Clocking:** 14 MHz system oscillator + a separate 25.175 MHz pixel oscillator for VGA.  SYSCLK feeds a GCLK on each CPLD.
 * **RAM:** 16-bit-wide async SRAM, 8 MB.  One AS6C6416 (4M×16 = 8 MB, 55 ns) at 0x000000–0x7FFFFF; GLUE decodes a single chip select (A23==0), byte lanes from UDS/LDS — no SDRAM/PSRAM, no memory controller.  (Was 2 chips / 12 MB; 0x800000–0xBFFFFF is now the flash window — see ROM.)
 * **ROM:** 1–2× M29F160FB (16 Mbit 5 V NOR, 1M×16, 55 ns, TSOP48), soldered — replaces the 2× SST39SF040 plan to make room for a Linux kernel + erofs root in flash.  Still in production (Alliance Memory second source; DigiKey/Mouser/TME stock).  FB (bottom boot) preferred: the 16/8/8 KB boot sectors sit at the vector/bootloader end while the erofs image lives in the uniform 64 KB sectors above (FT differs only in sector order).  ×16 mode: BYTE# tied high, flash A0–A19 ← CPU A1–A20, D0–D15 direct — one chip puts 2 MB on the full 16-bit bus (vs 1 MB from the SST pair); an optional second chip selected by A21 makes 4 MB.  Flash window moves 0xC00000 → 0x800000–0xBFFFFF (cheaper decode).  55 ns may allow zero-wait ROM at 14 MHz.  Initial flash and recovery via the on-board RP2350B bridge's UF2 drive (see below), which bus-masters JEDEC cycles into the flash window with the CPU held off.  (Offline fallback: XGecu T48 + ADP_F48_EX-1 TSOP48 adapter)  The CPU can also self-reflash in-circuit via the GLUE ~ROM_WE strobe gated by CONFIG.FLASH_WE_EN (default write-protected), JEDEC 0x555/0x2AA unlock sequences as plain word-writes, flasher runs from RAM (not read-while-write).  RESET# to the ~RESET net.
 * **CF:** 16-bit True IDE PIO; IOWR gated by AS (needs a glue.v change: R/~W + AS → IOWR).
@@ -384,7 +514,7 @@ Bodging between ENGINE and VIDEO and piggybacked 7200s a la video-fifo-wiring.md
 
 ## Board changes
 
-*(KiCad watch-list — footprints, pinouts, nets, placement, SI.  Function lives in Rev 2 components above; link, don't restate.)*
+*(KiCad watch-list — footprints, pinouts, nets, placement, SI.  Function lives in Rev 3 components above; link, don't restate.)*
 
 ### Footprints & sockets
 - [ ] ROM: 1–2× M29F160FB TSOP48, **soldered** (image-zero via the RP2350B bridge; bench T48 + ADP_F48_EX-1 as fallback); route ~ROM_WE (new net), /OE←nR_W, /CE←nROM_SELECT (2nd chip select by A21), BYTE#→+5V, RESET#→~RESET net
@@ -451,30 +581,7 @@ https://github.com/AcceleratedLinux/accelerated-linux
 
 https://github.com/fifteenhex/m68kjunk
 
-## Shrinkwrapped VCFWest package
-
-Couple of completed machines:
-
-* Rev 2 - if ENGINE can do generalized DMA chain, do that
-  * accelerated memmove and scroll and CF card (firmware routines, Linux)
-* 3D printed case
-* VGA monitors, try to get CRTs - Jim?
-
-Posters
-
-* Block architecture
-* Interesting features
-
-Demos
-
-* Linux - can it support a windowing system?
-  * Move to erofs for root and XIP?
-* BASIC
-* Zaxxon? Or other interesting game
-* Movie player with audio
-* Jukebox with album art
-
-# Rev 3
+# Rev 4
 
 68030 + 68882 + >=64MB DRAM + USB (by RP2350?) + Ethernet + at least 800x600x8? - make a proper Linux workstation
 

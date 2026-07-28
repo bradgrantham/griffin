@@ -1,6 +1,6 @@
 project:
   name: Griffin
-  cpu: MC68000
+  cpu: MC68010    # primary CPU for Rev 2 (68000 is a drop-in); VBR available to firmware
   clock_hz: 14000000
   interrupt_mode: autovector
 
@@ -44,8 +44,6 @@ peripherals:
         bits:
           - { bit: "0", name: ROM_OVERLAY_DISABLE, default: 0,
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
-          - { bit: "1", name: FLASH_WE_EN, default: 0,
-              description: "Write 1 to enable the ~ROM_WE strobe so flash-window writes reach the NOR flash (JEDEC program/erase); 0 write-protects flash" }
       - offset: 0x09
         name: PS2_TX_DATA
         access: write
@@ -123,20 +121,19 @@ peripherals:
         bits:
           - { bit: "7:0", name: DATA, description: "Received scancode byte (LSB-first on the wire)" }
 
-  # Rev 2 flash plan (see griffin.md "Rev 2 components"): 1-2x M29F160FB,
-  # 16Mbit 5V NOR (1Mx16, 55ns, TSOP48) in x16 mode (BYTE# high, flash
-  # A0-A19 <- CPU A1-A20).  One chip = 2MB mirrored through the 4MB window;
-  # optional second chip (selected by A21) = 4MB flat.  Window is
-  # 0x800000-0xBFFFFF (decode A23 & ~A22); this displaces RAM above 8MB.
-  # Writes reach the chip only via GLUE ~ROM_WE, gated by CONFIG.FLASH_WE_EN
-  # (or the ~BOOTSTRAP pin for external bus-master programming); program/erase
-  # uses standard JEDEC x16 command sequences at word addresses 0x555/0x2AA.
+  # Rev 2 ROM (see griffin.md "Rev 2 components"): 2x W27C512 (64Kx8, DIP-28,
+  # socketed bin parts), one per byte lane = 128KB on the 16-bit bus.
+  # Bench-programmed only -- no in-circuit write path; firmware iteration is
+  # serial/CF load.  Decode is just A23 & ~A22 (2 literals): the 128KB image
+  # mirrors 32x through the 4MB window at 0x800000-0xBFFFFF.  At reset the ROM
+  # is also overlaid over RAM bank 1 until GLUE CONFIG bit ROM_OVERLAY_DISABLE
+  # is set.  (All peripherals live in the other upper region, A23 & A22.)
   ROM:
-    part: "1-2x M29F160FB 16Mbit 5V NOR flash (1Mx16, 55ns, TSOP48)"
+    part: "2x W27C512 (64Kx8 DIP-28, socketed; 128KB total)"
     address_range:
       base: 0x800000
-      size: 0x400000    # up to 4MB (2MB per chip; 1-chip build mirrors twice)
-      window: 0x400000  # 4MB decode window at 0x800000-0xBFFFFF
+      size: 0x020000    # 128KB of actual ROM (2x 64KB, one per byte lane)
+      window: 0x400000  # 4MB decode window; the image mirrors 32x within it
       width: 16
     dtack:
       - 12000000: 1
@@ -147,14 +144,14 @@ peripherals:
     linker:
       section: rom
 
-  # Rev 2 (current plan, see griffin.md): 8MB main RAM as ONE AS6C6416
-  # (4M x 16, 55ns), single GLUE chip select = A23==0; /UB and /LB from
-  # /UDS and /LDS; /WE and /OE shared.  (Supersedes the earlier 8x AS6C8016
-  # + 74HCT138 scheme.)  The eight 1MB bank entries below are kept for now
-  # because the resulting 0x000000-0x7FFFFF map is identical; collapse them
-  # to one entry when the rev-2 YAML restructuring happens.
+  # Rev 2 RAM (see griffin.md "Rev 2 components"): 4MB as 4 banks x 1MB,
+  # each bank a pair of AS6C4008 (512Kx8, DIP-32, socketed bin parts), one
+  # chip per byte lane.  GLUE decodes nRAM_[1-4]_SEL from A21:20 (within
+  # A23:22 == 00) and drives the WRITE_LO/WRITE_HI byte write strobes;
+  # /OE from nR_W.  All four banks are always populated -- no partial
+  # population, no RAM-sizing probe.
   RAM_BANK_1:
-    part: "AS6C8016"
+    part: "2x AS6C4008"
     address_range:
       base: 0x000000
       size: 0x100000
@@ -169,7 +166,7 @@ peripherals:
       section: ram
 
   RAM_BANK_2:
-    part: "AS6C8016"
+    part: "2x AS6C4008"
     address_range:
       base: 0x100000
       size: 0x100000
@@ -184,7 +181,7 @@ peripherals:
       section: ram
 
   RAM_BANK_3:
-    part: "AS6C8016"
+    part: "2x AS6C4008"
     address_range:
       base: 0x200000
       size: 0x100000
@@ -199,7 +196,7 @@ peripherals:
       section: ram
 
   RAM_BANK_4:
-    part: "AS6C8016"
+    part: "2x AS6C4008"
     address_range:
       base: 0x300000
       size: 0x100000
@@ -213,66 +210,10 @@ peripherals:
     linker:
       section: ram
 
-  RAM_BANK_5:
-    part: "AS6C8016"
-    address_range:
-      base: 0x400000
-      size: 0x100000
-      width: 16
-    dtack:
-      - 12000000: 0
-      - 14000000: 0
-      - 14318181: 0
-      - 16000000: 0
-      - 20000000: 1
-    linker:
-      section: ram
-
-  RAM_BANK_6:
-    part: "AS6C8016"
-    address_range:
-      base: 0x500000
-      size: 0x100000
-      width: 16
-    dtack:
-      - 12000000: 0
-      - 14000000: 0
-      - 14318181: 0
-      - 16000000: 0
-      - 20000000: 1
-    linker:
-      section: ram
-
-  RAM_BANK_7:
-    part: "AS6C8016"
-    address_range:
-      base: 0x600000
-      size: 0x100000
-      width: 16
-    dtack:
-      - 12000000: 0
-      - 14000000: 0
-      - 14318181: 0
-      - 16000000: 0
-      - 20000000: 1
-    linker:
-      section: ram
-
-  RAM_BANK_8:
-    part: "AS6C8016"
-    address_range:
-      base: 0x700000
-      size: 0x100000
-      width: 16
-    dtack:
-      - 12000000: 0
-      - 14000000: 0
-      - 14318181: 0
-      - 16000000: 0
-      - 20000000: 1
-    linker:
-      section: ram
-
+  # Rev 2: ENGINE self-decodes its MMIO select -- as bus master it already
+  # owns A, D, AS, and R/W pins, so it watches the bus for its own region
+  # instead of receiving nENGINE_SELECT from GLUE (frees one GLUE pin;
+  # verify the added decode fits ENGINE at HDL time).
   ENGINE:
     part: ATF1508AS
     description: "Video framebuffer DMA engine with 7200 FIFO write interface"
@@ -383,13 +324,17 @@ peripherals:
         # and VIDEO latches it from the FIFO during hblank.  The former PALETTE
         # (0x0E) and STATUS/LINE_TOGGLE (0x07) registers are retired.
 
+  # Rev 2: 16-bit True IDE PIO (rev 1 ran 8-bit via SET_FEATURES).  The
+  # 16-bit DATA port is word offset 0x00; task-file registers remain
+  # byte-wide on D7-D0 at the odd offsets.  GLUE gates IOWR with AS
+  # (rev-1 carryover fix: R/~W alone left IOWR rising after AS was gone).
   CF:
     part: "Compact Flash (True IDE)"
-    description: "Storage via CF card in True IDE 8-bit PIO mode"
+    description: "Storage via CF card in True IDE 16-bit PIO mode"
     address_range:
       base: 0xF40000
       size: 0x040000
-      width: 8
+      width: [8, 16]
     dtack:
       - 12000000: 7
       - 14000000: 7
@@ -397,8 +342,8 @@ peripherals:
       - 16000000: 8
       - 20000000: 12
     registers:
-      - { offset: 0x01, name: DATA,         access: rw,    width: 8,
-          description: "Data to/from CF card" }
+      - { offset: 0x00, name: DATA,         access: rw,    width: 16,
+          description: "16-bit data port to/from the CF card" }
       - { offset: 0x03, name: ERROR,        access: read,  width: 8,
           description: "Error register; valid after a command error" }
       - { offset: 0x03, name: FEATURES,     access: write, width: 8,
@@ -420,8 +365,22 @@ peripherals:
 
   DUART:
     part: "XR68C681"
-    description: "serial IO, maybe some in and out pins"
+    description: "Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C / paddle dump"
     clock: 3686400
+    # pin_allocation -- hardware wiring of the general-purpose OP/IP pins.
+    # NOTE the 68681 OP pins drive the COMPLEMENT of their OPR bits: setting
+    # an OPR bit (via OPR_SET) drives the pin LOW.  Comments below describe
+    # PIN levels; see the DUART_OP_*/DUART_IP_* mask constants.
+    #   OP0: ~RTS_A (channel A request-to-send)   IP0: ~CTS_A
+    #   OP1: ~RTS_B                               IP1: ~CTS_B
+    #   OP2: RTC_SCL (DS3231 I2C clock, push-pull; DS3231 never stretches)
+    #   OP3: RTC_SDA_DRIVE (N-FET gate: pin high pulls SDA low)
+    #                                             IP2: RTC_SDA readback
+    #   OP4: PADDLE_DUMP (pin high drains the paddle caps via the 2N7002 gates)
+    #   OP5: ~PADDLE_CLR (pin low clears the '590 counters via /CCLR)
+    #                                             IP3: DS3231 ~INT (optional
+    #                                                  change-detect 1Hz/alarm IRQ)
+    #   OP6, OP7 spare                            IP4, IP5 spare
     address_range:
       base: 0xF80000
       size: 0x040000
@@ -532,22 +491,124 @@ peripherals:
       - { offset: 0x1F, name: OPR_CLR, access: write, width: 8,
           description: "Output port bit reset (1 bits clear corresponding OP pins)" }
 
+  # Direct-bus peripheral region, 0xC00000-0xCFFFFF (see griffin.md "Rev 2
+  # components"): one 1MB region split into four 256KB quadrants by A19:18,
+  # holding "dumb" peripherals whose data pins sit directly on the bus.
+  # GLUE emits two fully-timed region strobes -- ~IO_RD_EN (region & AS &
+  # R/W) and ~IO_WR_EN (region & UDS & LDS & ~R/W, so only deliberate
+  # full-word writes qualify) -- and a 74155 dual 2-to-4 decoder fans them
+  # out by A19:18 (section 1: 1C high, 1G = ~IO_RD_EN -> read strobes;
+  # section 2: 2C low, 2G = ~IO_WR_EN -> write strobes).  GLUE never
+  # touches the data path, and future direct peripherals cost zero GLUE
+  # pins -- one spare read strobe and two spare write strobes remain.
+  #   0xC00000  AUDIO     (7202 FIFO pair, ~AUDIO_W = write Y0)
+  #   0xC40000  JOYSTICK  ('245 pair,      ~JOY_OE = read Y1)
+  #   0xC80000  PADDLE    ('590 pair,      ~PADDLE_OE = read Y2)
+  #   0xCC0000  reserved  (candidate: ENGINE COPY-FIFO read + write ports)
+  # (0xFC0000, the rev-1 74HC373 AUDIO latch slot, is freed.)
   AUDIO:
-    part: "74HC373 + R2R DAC"
-    description: "8-bit latched audio output"
+    part: "2x IDT7202 FIFO + 2x 8-bit R2R DAC"
+    description: "Stereo FIFO audio output, drained at half the VGA line rate by VIDEO"
     address_range:
-      base: 0xFC0000
+      base: 0xC00000
       size: 0x040000
-      width: 8
+      width: 16
     dtack:
-      - 12000000: 1
-      - 14000000: 1
-      - 14318181: 1
-      - 16000000: 1
-      - 20000000: 1
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 0
+    interrupt:
+      level: 2
+      signal: ~AUDIO_IRQ
     registers:
-      - { offset: 0x01, name: DAC, access: write, width: 8,
-          description: "Write sample to 8-bit R2R DAC output latch" }
+      - offset: 0x00
+        name: FIFO
+        access: write
+        width: 16
+        description: |
+          Write one stereo sample pair into the audio FIFOs.
+          Left channel is D15-D8, right channel is D7-D0, each an unsigned
+          8-bit sample landing directly in its 7202.  ~AUDIO_W comes from
+          the 74155 write section gated by GLUE ~IO_WR_EN, which qualifies
+          on UDS & LDS & ~R/W -- only deliberate full-word writes clock
+          the FIFOs (no A17 alias trick needed).  VIDEO drives the FIFO
+          read strobe at half the 31.469 kHz line rate (~15.7 kS/s, see
+          AUDIO_SAMPLES_PER_SECOND).  The FIFO half-full flag drives
+          ~AUDIO_IRQ (autovector level 2); the ISR refills at most
+          AUDIO_FIFO_DEPTH/2 = 512 pairs (~33 ms of headroom) per service.
+
+  JOYSTICK:
+    part: "2x 74HCT245N"
+    description: "Two Atari-2600-style DE-9 joystick ports read through bus transceivers"
+    address_range:
+      base: 0xC40000
+      size: 0x040000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 0
+    registers:
+      - offset: 0x00
+        name: STATE
+        access: read
+        width: 16
+        description: |
+          Both joystick ports in one word; switch bits are active-low (0 = closed).
+          Port 1 rides D15-D8 (the port that also hosts the paddles), port 2
+          rides D7-D0.  PIN9/PIN5 double as SMS-pad button 2 and the raw
+          paddle pot comparator levels; paddle fire buttons appear on
+          LEFT/RIGHT (DE-9 pins 3/4), per the 2600 convention.  Poll from
+          the vsync ISR; there is no interrupt.
+        bits:
+          - { bit: "8",  name: P1_UP,      description: "Port 1 up, DE-9 pin 1 (0 = pressed)" }
+          - { bit: "9",  name: P1_DOWN,    description: "Port 1 down, DE-9 pin 2" }
+          - { bit: "10", name: P1_LEFT,    description: "Port 1 left, DE-9 pin 3 (also paddle B fire)" }
+          - { bit: "11", name: P1_RIGHT,   description: "Port 1 right, DE-9 pin 4 (also paddle A fire)" }
+          - { bit: "12", name: P1_FIRE,    description: "Port 1 fire, DE-9 pin 6" }
+          - { bit: "13", name: P1_PIN9,    description: "Port 1 DE-9 pin 9: SMS button 2 / paddle A pot level" }
+          - { bit: "14", name: P1_PIN5,    description: "Port 1 DE-9 pin 5: paddle B pot level" }
+          - { bit: "0",  name: P2_UP,      description: "Port 2 up, DE-9 pin 1 (0 = pressed)" }
+          - { bit: "1",  name: P2_DOWN,    description: "Port 2 down, DE-9 pin 2" }
+          - { bit: "2",  name: P2_LEFT,    description: "Port 2 left, DE-9 pin 3" }
+          - { bit: "3",  name: P2_RIGHT,   description: "Port 2 right, DE-9 pin 4" }
+          - { bit: "4",  name: P2_FIRE,    description: "Port 2 fire, DE-9 pin 6" }
+          - { bit: "5",  name: P2_PIN9,    description: "Port 2 DE-9 pin 9: SMS button 2" }
+          - { bit: "6",  name: P2_PIN5,    description: "Port 2 DE-9 pin 5 (spare input)" }
+
+  PADDLE:
+    part: "2x 74HC590"
+    description: "Two 2600-style paddle position counters clocked by the VGA line rate"
+    address_range:
+      base: 0xC80000
+      size: 0x040000
+      width: 16
+    dtack:
+      - 12000000: 0
+      - 14000000: 0
+      - 14318181: 0
+      - 16000000: 0
+      - 20000000: 0
+    registers:
+      - offset: 0x00
+        name: COUNTS
+        access: read
+        width: 16
+        description: |
+          Both paddle position counts in one word; paddle A (port 1 pin 9) is D15-D8, paddle B (port 1 pin 5) is D7-D0.
+          Each '590 counts scanlines while its pot's RC ramp is below the
+          counter's clock-enable threshold and freezes when the ramp
+          crosses, so the count is proportional to pot resistance
+          (2600-style; full scale sized for roughly 240 lines).  The vsync
+          ISR reads COUNTS, then pulses PADDLE_DUMP high and ~PADDLE_CLR
+          low (DUART OP4/OP5) to drain the caps and zero the counters for
+          the next frame.  Values need per-unit software calibration: the
+          '590 enable threshold varies part to part, and the pot parallels
+          the 1M pin-5/9 pull-up.
 
 constants:
   CF_STATUS_BSY:   0x80
@@ -558,9 +619,29 @@ constants:
   CF_CMD_WRITE_SECTORS: 0x30
   CF_CMD_IDENTIFY:      0xEC
   CF_CMD_SET_FEATURES:  0xEF
-  CF_CMD_SET_8BIT:      0x01
+  CF_CMD_SET_8BIT:      0x01   # rev-1 8-bit PIO only; unused with rev-2 16-bit DATA port
   CF_DH_LBA:            0xE0
   PS2_RX_QUEUE_SIZE:    64
+
+  # Audio FIFO geometry (2x IDT7202: 1024 x 9 each; one per channel)
+  AUDIO_FIFO_DEPTH:          1024
+  AUDIO_SAMPLES_PER_SECOND:  15734   # half the 31.469 kHz VGA line rate
+
+  # DUART OP/IP masks for the pin_allocation block above.  Reminder: OP pins
+  # drive the COMPLEMENT of their OPR bits (OPR_SET drives the pin low), and
+  # RTC_SDA_DRIVE has a second inversion through the N-FET (pin high = SDA low).
+  # Paddle sequence per vsync ISR (OP4/OP5 pins are always opposite states):
+  #   read PADDLE_COUNTS
+  #   OPR_CLR=DUMP, OPR_SET=NCLR  -> pin4 high, pin5 low: drain caps + clear counters
+  #   OPR_SET=DUMP, OPR_CLR=NCLR  -> pin4 low, pin5 high: release, measurement runs
+  # i.e. OPR bit DUMP set = timer running; OPR bit NCLR set = counters held clear.
+  DUART_OP_RTC_SCL:        0x04   # OP2
+  DUART_OP_RTC_SDA_DRIVE:  0x08   # OP3
+  DUART_OP_PADDLE_DUMP:    0x10   # OP4 (pin high = caps draining)
+  DUART_OP_PADDLE_NCLR:    0x20   # OP5 (pin low = counters clearing)
+  DUART_IP_RTC_SDA:        0x04   # IP2
+  DUART_IP_RTC_NINT:       0x08   # IP3
+  RTC_I2C_ADDR:            0x68   # DS3231 7-bit I2C address
 
   # PS/2 TX parity is carried in address bit 1 of PS2_TX_DATA:
   #   write GLUE_PS2_TX_DATA + (parity ? PS2_TX_DATA_PARITY : 0)

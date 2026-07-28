@@ -110,23 +110,8 @@ bsy_clear:
     return CF_TIMEOUT;
 
 drdy_ok:
-    // Set 8-bit transfer mode
-    CF_FEATURES = Griffin::CF_CMD_SET_8BIT;
-    CF_COMMAND  = Griffin::CF_CMD_SET_FEATURES;
-
-    for (uint32_t i = 0; i < CF_INIT_POLL_LIMIT; i++)
-    {
-        uint8_t s = CF_STATUS;
-        if (s & Griffin::CF_STATUS_ERR)
-        {
-            return CF_ERR;
-        }
-        if (!(s & Griffin::CF_STATUS_BSY))
-        {
-            return CF_OK;
-        }
-    }
-    return CF_TIMEOUT;
+    // 16-bit True IDE PIO is the power-on default; no SET FEATURES step.
+    return CF_OK;
 }
 
 // Read the 512-byte IDENTIFY DEVICE block into caller-provided buffer.
@@ -147,16 +132,19 @@ extern "C" cf_error cf_identify(uint8_t buf[512])
         return err;
     }
 
-    for (int i = 0; i < 512; i++)
+    for (int i = 0; i < 512; i += 2)
     {
-        buf[i] = CF_DATA;
+        uint16_t w = CF_DATA;
+        buf[i]     = static_cast<uint8_t>(w & 0xFF);
+        buf[i + 1] = static_cast<uint8_t>(w >> 8);
     }
     return CF_OK;
 }
 
 // Extract an ATA string from the identify block.
-// ATA strings store first char of each word-pair in the high byte,
-// but 8-bit PIO reads low byte first, so adjacent bytes are swapped.
+// ATA strings store first char of each word-pair in the high byte, but the
+// driver stores each 16-bit data word low byte first, so adjacent bytes are
+// swapped.
 static void cf_extract_string(const uint8_t *buf, int word_start, int word_count, char *out)
 {
     int byte_off = word_start * 2;
@@ -182,7 +170,7 @@ void cf_parse_identify(const uint8_t buf[512], cf_info *info)
     cf_extract_string(buf, 10, 10, info->serial);
     cf_extract_string(buf, 23, 4,  info->firmware_rev);
 
-    // Words 60-61: total LBA sectors (little-endian words, low byte first in 8-bit PIO)
+    // Words 60-61: total LBA sectors (little-endian words, stored low byte first)
     info->lba_sectors = static_cast<uint32_t>(buf[120])
                       | (static_cast<uint32_t>(buf[121]) << 8)
                       | (static_cast<uint32_t>(buf[122]) << 16)
@@ -209,9 +197,11 @@ extern "C" cf_error cf_read_sectors(uint32_t lba, uint8_t count, uint8_t *buf)
         {
             return err;
         }
-        for (int i = 0; i < 512; i++)
+        for (int i = 0; i < 256; i++)
         {
-            *buf++ = CF_DATA;
+            uint16_t w = CF_DATA;
+            *buf++ = static_cast<uint8_t>(w & 0xFF);
+            *buf++ = static_cast<uint8_t>(w >> 8);
         }
     }
     return CF_OK;
@@ -237,9 +227,11 @@ extern "C" cf_error cf_write_sectors(uint32_t lba, uint8_t count, const uint8_t 
         {
             return err;
         }
-        for (int i = 0; i < 512; i++)
+        for (int i = 0; i < 256; i++)
         {
-            CF_DATA = *buf++;
+            uint16_t lo = *buf++;
+            uint16_t hi = *buf++;
+            CF_DATA = static_cast<uint16_t>(lo | (hi << 8));
         }
     }
 

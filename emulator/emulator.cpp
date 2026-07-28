@@ -1940,10 +1940,9 @@ struct ClockGovernor
 
 class GriffinEmulator : public moira::Moira
 {
-    // Fully-populated 8MB RAM (8x AS6C8016, one contiguous region from 0).
+    // Fully-populated 4MB RAM (4 banks of 2x AS6C4008, one contiguous region from 0).
     static_assert(RAM_BANK_1_BASE == 0);
-    static_assert(RAM_BANK_1_SIZE + RAM_BANK_2_SIZE + RAM_BANK_3_SIZE + RAM_BANK_4_SIZE +
-                  RAM_BANK_5_SIZE + RAM_BANK_6_SIZE + RAM_BANK_7_SIZE + RAM_BANK_8_SIZE ==
+    static_assert(RAM_BANK_1_SIZE + RAM_BANK_2_SIZE + RAM_BANK_3_SIZE + RAM_BANK_4_SIZE ==
                   RAM_TOTAL_SIZE);
     mutable std::vector<uint8_t> RAM = std::vector<uint8_t>(RAM_TOTAL_SIZE, 0);
     mutable std::array<uint8_t, ROM_SIZE> ROM{};
@@ -2023,7 +2022,15 @@ class GriffinEmulator : public moira::Moira
     {
         if(is_cf_addr(addr))
         {
-            printf("WARNING: 16-bit read from CF at %06X (firmware should use 8-bit only)\n", addr + IO_BASE);
+            if (addr + IO_BASE == CF_DATA)
+            {
+                // 16-bit True IDE data port: IDE word is low byte first in
+                // the sector byte stream, and rides D7-D0 on the bus.
+                uint16_t lo = cf.read_reg(CF_DATA);
+                uint16_t hi = cf.read_reg(CF_DATA);
+                return static_cast<uint16_t>(lo | (hi << 8));
+            }
+            printf("WARNING: 16-bit read from CF task-file register at %06X (byte registers)\n", addr + IO_BASE);
             return cf.read_reg(addr + IO_BASE);
         }
         if (is_duart_addr(addr))
@@ -2095,7 +2102,13 @@ class GriffinEmulator : public moira::Moira
     {
         if(is_cf_addr(addr))
         {
-            printf("WARNING: 16-bit write 0x%04X to CF at %06X (firmware should use 8-bit only)\n", val, addr + IO_BASE);
+            if (addr + IO_BASE == CF_DATA)
+            {
+                cf.write_reg(CF_DATA, val & 0xFF);
+                cf.write_reg(CF_DATA, static_cast<uint8_t>(val >> 8));
+                return;
+            }
+            printf("WARNING: 16-bit write 0x%04X to CF task-file register at %06X (byte registers)\n", val, addr + IO_BASE);
             cf.write_reg(addr + IO_BASE, val & 0xFF);
             return;
         }

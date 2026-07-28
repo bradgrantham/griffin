@@ -147,7 +147,7 @@ vec_copy:
     /* RAM is fixed at RAM_TOTAL_SIZE (griffin.generated.inc); no probing */
     move.l  #(RAM_TOTAL_SIZE/1024), memory_size
     move.l  #RAM_TOTAL_SIZE, %sp
-    lea     memory_8m, %a1
+    lea     memory_fixed, %a1
     lea     memory_size_done(%pc), %a6
     jmp     duart_puts
 
@@ -1231,8 +1231,8 @@ msg_addr_error:
     .string "*** ADDRESS ERROR ***\n"
 msg_illegal_insn:
     .string "*** ILLEGAL INSN ***\n"
-memory_8m:
-    .string	"Memory: 8MB\n"
+memory_fixed:
+    .string	"Memory: 4MB\n"
     
 .section .monitor_data, "aw", @nobits
     .align	2
