@@ -34,7 +34,7 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "adapter speed 2000" \
     -c init
 
-.PHONY: all glue video engine audio clean
+.PHONY: all glue video engine audio ports glue-rev2-ports clean
 
 all: glue video engine
 
@@ -57,6 +57,24 @@ glue/glue.jed: glue/glue.edif
 
 glue/glue.svf: glue/glue.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/glue/glue.jed $(CURDIR)/glue/glue.svf
+
+# ------------------------------------------------------------
+# GLUE rev-2 delta (ATF1508AS) — FIT EXPERIMENT, not in `all`
+#
+# glue.v plus the rev-2 memory map and PORTS support (ROM at 0x800000,
+# AUDIO_LE dropped, nIO_RD_EN/nIO_WR_EN direct-bus strobes, nPORTS_SELECT on
+# the freed pin 68, nPORTS_IRQ at level 2, PORTS DTACK).  Same fitter flags as
+# the production glue target so the utilisation is comparable.  Stops at .jed;
+# this is a measurement, not something to flash.
+# ------------------------------------------------------------
+
+glue-rev2-ports: glue/glue_rev2_ports.jed
+
+glue/glue_rev2_ports.edif: glue/glue_rev2_ports.v ../griffin.generated.vh
+	cd glue && $(YOSYS) glue_rev2_ports
+
+glue/glue_rev2_ports.jed: glue/glue_rev2_ports.edif
+	cd glue && $(FITTER) glue_rev2_ports -preassign keep -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy debug = on -strategy power_reset on -strategy JTAG = on
 
 flash-glue: glue/glue.svf
 	$(OPENOCD_JTAG) \
@@ -120,6 +138,40 @@ audio/audio.jed: audio/audio.edif
 audio/audio.svf: audio/audio.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1504AS $(CURDIR)/audio/audio.jed $(CURDIR)/audio/audio.svf
 
+# ------------------------------------------------------------
+# PORTS (ATF1508AS / ATF1504AS) — FIT EXPERIMENT, not in `all`
+#
+# Human-interface peripheral CPLD: PS/2 keyboard + mouse frame engines,
+# joystick ports, paddle counters, and (stretch) the audio divider/IRQ.
+# One source (ports/ports.v) gated by `ifdef`s; each ports/ports_<config>.v
+# wrapper `define`s a feature set and includes it, so every configuration
+# leaves its own .fit next to the others.
+#
+# Self-contained (no griffin.generated.vh), no //PIN: lines, fit with
+# -preassign ignore.  Stops at .jed — these are never flashed.
+# Run the whole ladder with `make -k ports`; some configurations are
+# expected to fail fitting, and that failure is the measurement.
+# ------------------------------------------------------------
+
+PORTS_1508_CONFIGS = ports_ps2_pair ports_ps2_pair_joystick ports_full \
+                     ports_full_slow_debounce ports_full_audio \
+                     ports_mouse_joystick_paddle_audio
+PORTS_1504_CONFIGS = ports_joystick_paddle ports_keyboard_joystick \
+                     ports_keyboard_joystick_slow_debounce ports_keyboard_joystick_paddle
+
+ports: $(patsubst %,ports/%.jed,$(PORTS_1508_CONFIGS) $(PORTS_1504_CONFIGS))
+
+ports/%.edif: ports/%.v ports/ports.v
+	cd ports && $(YOSYS) $*
+
+$(patsubst %,ports/%.jed,$(PORTS_1508_CONFIGS)): ports/%.jed: ports/%.edif
+	cd ports && $(FITTER) -d ATF1508AS -p PLCC84 $* -preassign ignore -strategy JTAG = on
+
+$(patsubst %,ports/%.jed,$(PORTS_1504_CONFIGS)): ports/%.jed: ports/%.edif
+	cd ports && $(FITTER) -d ATF1504AS -p PLCC44 $* -preassign ignore -strategy JTAG = on
+
+# ------------------------------------------------------------
+
 flash-video: video/video.svf
 	$(OPENOCD_JTAG) \
 	    -c "svf video/video.svf -tap tap0.tap" \
@@ -173,4 +225,7 @@ clean:
 	rm -f video/video.edif video/video.fit video/video.jed video/video.vo
 	rm -f engine/engine.edif engine/engine.fit engine/engine.jed engine/engine.vo
 	rm -f audio/audio.edif audio/audio.fit audio/audio.jed audio/audio.vo
+	rm -f ports/ports*.edif ports/ports*.fit ports/ports*.jed ports/ports*.vo
+	rm -f ports/ports*.pin ports/ports*.io ports/ports*.tt3 ports/ports*.svf
+	rm -f glue/glue_rev2_ports.edif glue/glue_rev2_ports.fit glue/glue_rev2_ports.jed glue/glue_rev2_ports.vo
 	rm -f glue/glue-verify.svf video/video-verify.svf
