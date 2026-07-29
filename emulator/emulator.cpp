@@ -632,87 +632,9 @@ struct CFState
 };
 
 // ---------------------------------------------------------------------------
-// SoftUART TX synthesizer — generates an 8N1 bitstream on DEBUG_IN from
-// bytes received on the PTY.  The emulator's firmware bit-bang RX routine
-// polls DEBUG_IN, so we need to present a properly-timed serial waveform.
-// ---------------------------------------------------------------------------
-
-struct SoftUARTTX
-{
-    static constexpr int BAUD = 115200;
-    static constexpr int CLOCKS_PER_BIT = SYSCLK_HZ / BAUD;  // 104
-
-    enum State { IDLE, SENDING };
-    State state = IDLE;
-    uint16_t shift_reg = 0;   // 10-bit frame: start(0) + 8 data + stop(1)
-    int bits_remaining = 0;
-    uint64_t next_bit_clock = 0;
-
-    // Queue of bytes waiting to be transmitted
-    static constexpr size_t QUEUE_SIZE = 256;
-    uint8_t queue[QUEUE_SIZE];
-    size_t head = 0;
-    size_t count = 0;
-
-    int current_bit = 1;  // idle = HIGH (mark)
-
-    void enqueue(uint8_t byte)
-    {
-        if (count >= QUEUE_SIZE)
-        {
-            return;  // drop on overflow
-        }
-        queue[(head + count) % QUEUE_SIZE] = byte;
-        count++;
-    }
-
-    // Advance the bitstream to the given clock.  Call before reading current_bit.
-    void advance(uint64_t clock_now)
-    {
-        while (true)
-        {
-            if (state == IDLE)
-            {
-                if (count == 0)
-                {
-                    current_bit = 1;  // idle HIGH
-                    return;
-                }
-                // Start sending next byte
-                uint8_t byte = queue[head % QUEUE_SIZE];
-                head = (head + 1) % QUEUE_SIZE;
-                count--;
-                // Build 10-bit frame: start bit (0), 8 data bits LSB first, stop bit (1)
-                shift_reg = (1 << 9) | (static_cast<uint16_t>(byte) << 1) | 0;
-                bits_remaining = 10;
-                state = SENDING;
-                next_bit_clock = clock_now;
-            }
-
-            if (state == SENDING)
-            {
-                if (clock_now < next_bit_clock)
-                {
-                    return;  // not time for next bit yet
-                }
-                // Shift out current bit
-                current_bit = shift_reg & 1;
-                shift_reg >>= 1;
-                bits_remaining--;
-                next_bit_clock += CLOCKS_PER_BIT;
-                if (bits_remaining == 0)
-                {
-                    state = IDLE;
-                    // Continue loop to check for queued bytes
-                }
-            }
-        }
-    }
-};
-
-// ---------------------------------------------------------------------------
-// Raw stdin console for DEBUG_IN bitstream — bypasses PTY/DUART path.
-// Escape sequence: ~. at line start exits (like ssh).
+// Raw stdin watcher for the interactive exit escape: ~. at line start exits
+// (like ssh).  Other typed bytes are discarded — console I/O is the DUART
+// PTY, not the emulator's own stdin.
 // ---------------------------------------------------------------------------
 
 struct StdinConsole
@@ -1955,7 +1877,6 @@ class GriffinEmulator : public moira::Moira
     mutable VideoState video;
     mutable EngineState engine;
     mutable PS2State ps2;
-    mutable SoftUARTTX debug_in_tx;
     StdinConsole stdin_console;
     mutable uint8_t dac_value = 0x0;
 
@@ -1998,13 +1919,6 @@ class GriffinEmulator : public moira::Moira
                 printf("[DUART read %06X → 0x%02X]\n", abs, val);
             }
             return val;
-        }
-        if (addr == GLUE_DEBUG_IN - IO_BASE)
-        {
-            debug_in_tx.advance(getClock());
-            // PLATFORM_ID (bit 1) reads 0 in the emulator; firmware uses it
-            // to skip Rev 1 bringup hacks (bitbang serial, VIDEO-IRQ systick).
-            return (debug_in_tx.current_bit & GLUE_DEBUG_IN_MASK);
         }
         if (addr + IO_BASE == GLUE_PS2_STATUS
             || addr + IO_BASE == GLUE_PS2_RX_DATA)
@@ -2456,8 +2370,8 @@ public:
         return cf.open(path, read_only);
     }
 
-    // Poll the PTY for incoming data, feed the DEBUG_IN bitstream
-    // synthesizer, advance DUART timer, and update IPL.
+    // Watch stdin for the ~. exit escape, service SDL events, advance the
+    // DUART timer, and update IPL.
     // Call this periodically from the main loop, not on every bus cycle.
     void poll_io()
     {
@@ -2466,7 +2380,7 @@ public:
             int rc;
             while ((rc = stdin_console.poll(&ch)) == 1)
             {
-                debug_in_tx.enqueue(ch);
+                // discard — stdin exists only for the exit escape
             }
             if (rc == -1)
             {
@@ -2964,7 +2878,7 @@ int main(int argc, const char** argv)
         }
     }
 
-    // The DEBUG_IN raw-stdin console would fight --console-stdio over stdin, so
+    // The raw-stdin ~. exit watcher would fight --console-stdio over stdin, so
     // only enable it when the DUART console is not already using stdin.
     if (console_mode != CONSOLE_STDIO)
     {

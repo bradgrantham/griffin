@@ -7,7 +7,7 @@ project:
 peripherals:
   GLUE:
     part: ATF1508AS
-    description: "System glue logic (also hosts PS/2 keyboard input)"
+    description: "System glue logic (also hosts PS/2 keyboard RX/TX)"
     address_range:
       base: 0xF00000
       size: 0x040000
@@ -29,13 +29,6 @@ peripherals:
         description: "Set or clear DEBUG_OUT signal (debug LED and test point output)"
         bits:
           - { bit: "0", name: OUT, description: "DEBUG_OUT drive level" }
-      - offset: 0x01
-        name: DEBUG_IN
-        access: read
-        width: 8
-        description: "Read DEBUG_IN signal state"
-        bits:
-          - { bit: "0", name: IN, description: "DEBUG_IN pin state" }
       - offset: 0x07
         name: CONFIG
         access: write
@@ -245,7 +238,7 @@ peripherals:
         width: 8
         description: "DMA control register."
         bits:
-          - { bit: "0", name: DMA_EN,
+          - { bit: "0", name: DMA_EN, default: 0,
               description: "1 = enable DMA, resets word counter. 0 = stop DMA, release bus." }
       - offset: 0x05
         name: STATUS
@@ -274,6 +267,34 @@ peripherals:
     interrupt:
       level: 6
       signal: ~VIDEO_IRQ
+    # VESA 640x480@60 raster: 640x480 visible in an 800x525 scan, negative
+    # sync polarity on both HSYNC and VSYNC.  Horizontal counts are in pixel
+    # clocks, vertical counts in lines; each interval is active -> front
+    # porch -> sync -> back porch, summing to the total.  These values must
+    # match the H_*/V_* localparams in cpld/video/video.v (verified
+    # 2026-07-28).  Derived rates: line = 25175000 / 800 = 31468.75 Hz (the
+    # HSYNC tap PORTS uses), frame = 31468.75 / 525 ~= 59.94 Hz.
+    # codegen.py currently ignores this block; it is emulator spec and a
+    # cross-check against video.v, not yet an emitted-constants source.
+    video_timing:
+      pixel_clock_hz: 25175000   # dedicated pixel oscillator, not SYSCLK
+      h_active:       640
+      h_front_porch:  16
+      h_sync:         96
+      h_back_porch:   48
+      h_total:        800
+      v_active:       480
+      v_front_porch:  10
+      v_sync:         2
+      v_back_porch:   33
+      v_total:        525
+      hsync_polarity: negative   # asserted low during the sync interval
+      vsync_polarity: negative
+      # The vsync IRQ latch (see CLRINT) is fed by a toggle event in the
+      # pixel-clock domain at the last pixel of the first vsync line
+      # (v == v_active + v_front_porch, h == h_total - 1), crossed into
+      # SYSCLK through a 2-FF synchronizer -- so the CPU-visible latch sets
+      # about one line after the VSYNC pin's falling (asserting) edge.
     registers:
       - offset: 0x03
         name: CLRINT
@@ -324,25 +345,15 @@ peripherals:
         # and VIDEO latches it from the FIFO during hblank.  The former PALETTE
         # (0x0E) and STATUS/LINE_TOGGLE (0x07) registers are retired.
 
-  # Rev 2: PORTS is the fourth ATF1508, added after the fit experiment in
-  # cpld/ports showed a second PS/2 frame engine cannot share GLUE's part with
-  # the first (two channels alone need 140 of 128 nodes; see
-  # pcbv2-ports-design.md).  So the keyboard channel stays in GLUE and PORTS
-  # takes the mouse plus everything the direct-bus '245/'590 pairs used to do.
-  # Measured fit: 111/128 logic cells, 80 FF, 41/64 I/O in PLCC84.
-  #
   # PORTS has no bus-timing logic of its own: GLUE decodes the region and
-  # hands over ~PORTS_SELECT (cycle-qualified, reads and writes, decoded
-  # exactly like ~DUART_SELECT) and answers DTACK for it, as it does for CF.
-  # The line time base is the VGA HSYNC net tapped from VIDEO -- asynchronous
-  # to SYSCLK and synchronized inside PORTS -- so the paddle counters tick at
-  # the full 31.469 kHz line rate and the audio FIFO pop runs at half that
-  # (15.73 kS/s, AUDIO_SAMPLES_PER_SECOND).  No prescaler anywhere.
+  # hands over ~PORTS_SELECT and answers DTACK for it, as it does for CF.
+  # The line time base is the VGA HSYNC net tapped from VIDEO 
+  # the paddle counters tick at the full 31.469 kHz line rate and the
+  # audio FIFO pop runs at half that (15.73 kS/s, AUDIO_SAMPLES_PER_SECOND)
   #
   # The mouse channel deliberately mirrors GLUE's keyboard register layout at
   # the same offsets (TX_DATA 0x09, STATUS/CLEAR 0x11, CTRL 0x13, RX_DATA
-  # 0x15) so firmware's ps2.cpp can become one base-parameterized driver
-  # serving GLUE_PS2_* and PORTS_PS2_MOUSE_* from the same code.
+  # 0x15) 
   PORTS:
     part: ATF1508AS
     description: "PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe"
@@ -860,3 +871,19 @@ bodges:
   - "Reroute A6 pad on U12 to A18"
   - "Route freed GLUE pin 75 to CPU ~VPA"
   - "Pull up CPU HALT with 4.7K to nearby CPU +5V"
+
+issues:
+  - "need to address *what* raises nIRQ on ENGINE; it's reserved and routed but always 1."
+  - "need to finalize micro-HAM; not in the YAML, disagreement between encoder and implementation"
+  - "want a 'video_timing:' constants block; is 640x480(800x525)@60 enough?"
+  - "want to formalize 7200 FIFOs from ENGINE to VIDEO"
+  - "need to specify to BERR in 0x400000-0x7fffff?"
+  - "need to specify to BERR in unassigned IO spaces?"
+  - "what do writes to bank 1 do during overlay?"
+  - "what happens to other RAM areas during overlay? Probably go through except for ROM space.  Then should ROM be limited to 128K too and berr outside that?"
+  - "need to state IO ports repeat within their range"
+  - "who owns DTACK?  For ENGINE it's unstated; probably would need to route back through GLUE so maybe GLUE should continue to own DTACK."
+  - "The YAML has per-peripheral interrupt.level but never states that GLUE encodes IPL2:0 and asserts ~VPA on IACK, nor which IRQ signals are physical nets (VIDEO, ENGINE, DUART, PORTS → GLUE) versus internal (~PS2_IRQ never leaves GLUE — listing it as a signal: alongside real nets will produce a false netlist expectation"
+  - "Reset and clocking aren't in the YAML at all. DS1233, the ~RESET/~HALT nets, the open-drain external-master requirement (griffin.md:396), the two oscillators, and 'SYSCLK into a GCLK on each CPLD' are all MD-only. Even one small clocks:/reset: section (or prose annotations) would make these checkable."
+  - "DUART bus interface. The Rev 2 board bullet (griffin.md:427) lists A1-A4, D0-7, R/~W, ~RESET, ~IACK, crystal — but not the ~CS routing from GLUE nor where DTACKN goes (the YAML's dtack: ~DUART_DTACK handshake at griffin.yml:612, plus berr_timeout: 256). That's the one net set on the DUART that isn't a straight pin-to-bus wire, and it's the one the checklist omits."
+

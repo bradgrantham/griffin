@@ -48,6 +48,12 @@ properties:
     additionalProperties:
       $ref: "#/$defs/peripheral"
 
+  issues:
+    type: array
+    description: Known and not yet resolved issues in the HW spec.
+    items:
+      type: string
+
   constants:
     type: object
     description: >
@@ -138,6 +144,9 @@ $defs:
 
       clock:
         $ref: "#/$defs/clock"
+
+      video_timing:
+        $ref: "#/$defs/video_timing"
 
       linker:
         $ref: "#/$defs/linker_section"
@@ -345,6 +354,71 @@ $defs:
           minimum: 1
         minItems: 2
         description: "Multiple available clock frequencies in Hz"
+
+  # --------------------------------------------------------------------
+  # Video raster timing
+  #
+  # Horizontal counts are in pixel clocks, vertical counts in lines.
+  # Each axis is active -> front porch -> sync -> back porch, and the
+  # four intervals must sum to the total (not expressible in JSON
+  # Schema; checked by eye / downstream tools).
+  # --------------------------------------------------------------------
+
+  video_timing:
+    type: object
+    required: [pixel_clock_hz,
+               h_active, h_front_porch, h_sync, h_back_porch, h_total,
+               v_active, v_front_porch, v_sync, v_back_porch, v_total,
+               hsync_polarity, vsync_polarity]
+    additionalProperties: false
+    properties:
+      pixel_clock_hz:
+        type: integer
+        minimum: 1
+        description: "Pixel clock frequency in Hz"
+      h_active:
+        type: integer
+        minimum: 1
+        description: "Visible pixels per line"
+      h_front_porch:
+        type: integer
+        minimum: 0
+      h_sync:
+        type: integer
+        minimum: 1
+      h_back_porch:
+        type: integer
+        minimum: 0
+      h_total:
+        type: integer
+        minimum: 1
+        description: "Total pixel clocks per line (sum of the four h_ intervals)"
+      v_active:
+        type: integer
+        minimum: 1
+        description: "Visible lines per frame"
+      v_front_porch:
+        type: integer
+        minimum: 0
+      v_sync:
+        type: integer
+        minimum: 1
+      v_back_porch:
+        type: integer
+        minimum: 0
+      v_total:
+        type: integer
+        minimum: 1
+        description: "Total lines per frame (sum of the four v_ intervals)"
+      hsync_polarity:
+        $ref: "#/$defs/sync_polarity"
+      vsync_polarity:
+        $ref: "#/$defs/sync_polarity"
+
+  sync_polarity:
+    type: string
+    enum: [negative, positive]
+    description: "negative = sync pin asserted low during the sync interval"
 
   # --------------------------------------------------------------------
   # Linker section contribution

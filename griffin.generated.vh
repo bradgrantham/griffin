@@ -4,7 +4,7 @@
 // Project: Griffin
 `define SYSCLK_HZ 14000000
 
-// GLUE: System glue logic (also hosts PS/2 keyboard input)
+// GLUE: System glue logic (also hosts PS/2 keyboard RX/TX)
 `define GLUE_BASE 24'hF00000
 `define GLUE_SIZE 24'h040000
 `define GLUE_IRQ_LEVEL 4
@@ -12,9 +12,6 @@
 `define GLUE_DEBUG_OUT 24'hF00001  // WRITE
 `define GLUE_DEBUG_OUT_MASK  1'h01
 `define GLUE_DEBUG_OUT_SHIFT 0
-`define GLUE_DEBUG_IN 24'hF00001  // READ
-`define GLUE_DEBUG_IN_MASK  1'h01
-`define GLUE_DEBUG_IN_SHIFT 0
 `define GLUE_CONFIG 24'hF00007  // WRITE
 `define GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK  1'h01
 `define GLUE_CONFIG_ROM_OVERLAY_DISABLE_SHIFT 0
@@ -86,6 +83,7 @@
 `define ENGINE_CTRL 24'hD00005  // WRITE
 `define ENGINE_CTRL_DMA_EN_MASK  1'h01
 `define ENGINE_CTRL_DMA_EN_SHIFT 0
+`define ENGINE_CTRL_DEFAULT 8'h00
 `define ENGINE_STATUS 24'hD00005  // READ
 `define ENGINE_STATUS_DMA_EN_MASK  1'h01
 `define ENGINE_STATUS_DMA_EN_SHIFT 0

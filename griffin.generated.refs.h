@@ -13,9 +13,8 @@
 
 namespace Griffin::reg {
 
-// GLUE: System glue logic (also hosts PS/2 keyboard input)
+// GLUE: System glue logic (also hosts PS/2 keyboard RX/TX)
 inline volatile uint8_t &GLUE_DEBUG_OUT = *reinterpret_cast<volatile uint8_t *>(0xF00001UL);  // WRITE: Set or clear DEBUG_OUT signal (debug LED and test point output)
-inline volatile uint8_t &GLUE_DEBUG_IN = *reinterpret_cast<volatile uint8_t *>(0xF00001UL);  // READ: Read DEBUG_IN signal state
 inline volatile uint8_t &GLUE_CONFIG = *reinterpret_cast<volatile uint8_t *>(0xF00007UL);  // WRITE: GLUE configuration register
 inline volatile uint8_t &GLUE_PS2_TX_DATA = *reinterpret_cast<volatile uint8_t *>(0xF00009UL);  // WRITE: Byte to transmit host->device; the write itself starts the frame
 inline volatile uint8_t &GLUE_PS2_STATUS = *reinterpret_cast<volatile uint8_t *>(0xF00011UL);  // READ: PS/2 frame-engine status

@@ -20,7 +20,7 @@ namespace Griffin {
 static constexpr uint32_t SYSCLK_HZ = 14000000UL;
 
 // ------------------------------------------------------------
-// GLUE: System glue logic (also hosts PS/2 keyboard input)
+// GLUE: System glue logic (also hosts PS/2 keyboard RX/TX)
 static constexpr uint32_t GLUE_BASE = 0xF00000UL;
 static constexpr uint32_t GLUE_SIZE = 0x040000UL;
 inline constexpr MemoryRange GLUE(0xF00000UL, 0x040000UL);
@@ -31,9 +31,6 @@ static constexpr int GLUE_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulato
 static constexpr uint32_t GLUE_DEBUG_OUT = 0xF00001UL;  // WRITE: Set or clear DEBUG_OUT signal (debug LED and test point output)
 static constexpr uint32_t GLUE_DEBUG_OUT_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t GLUE_DEBUG_OUT_SHIFT = 0U;
-static constexpr uint32_t GLUE_DEBUG_IN = 0xF00001UL;  // READ: Read DEBUG_IN signal state
-static constexpr uint32_t GLUE_DEBUG_IN_MASK  = 0x01U;  // bits 0:0
-static constexpr uint32_t GLUE_DEBUG_IN_SHIFT = 0U;
 static constexpr uint32_t GLUE_CONFIG = 0xF00007UL;  // WRITE: GLUE configuration register
 static constexpr uint32_t GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t GLUE_CONFIG_ROM_OVERLAY_DISABLE_SHIFT = 0U;
@@ -129,6 +126,7 @@ static constexpr uint32_t ENGINE_SOURCE_PAGE = 0xD00003UL;  // WRITE: Framebuffe
 static constexpr uint32_t ENGINE_CTRL = 0xD00005UL;  // WRITE: DMA control register
 static constexpr uint32_t ENGINE_CTRL_DMA_EN_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t ENGINE_CTRL_DMA_EN_SHIFT = 0U;
+static constexpr uint32_t ENGINE_CTRL_DEFAULT = 0x00U;
 static constexpr uint32_t ENGINE_STATUS = 0xD00005UL;  // READ: DMA status readback
 static constexpr uint32_t ENGINE_STATUS_DMA_EN_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t ENGINE_STATUS_DMA_EN_SHIFT = 0U;
