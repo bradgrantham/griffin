@@ -247,6 +247,17 @@ data_copy:  cmp.l   %a2, %a1
     bra     data_copy
 data_done:
 
+    /* Copy .ramtext (hot ISRs) from ROM to RAM.  Must happen before any
+       interrupts are enabled; they are enabled much later. */
+    lea     _ramtext_load, %a0
+    lea     _ramtext_start, %a1
+    lea     _ramtext_end, %a2
+ramtext_copy:   cmp.l   %a2, %a1
+    beq     ramtext_done
+    move.l  (%a0)+, (%a1)+
+    bra     ramtext_copy
+ramtext_done:
+
     /* mark the 512 bytes just below the stack top with 0x55555555.
        dbra runs count+1 times, so 127 paints exactly 128 longs ending at
        _stack_top-4 — must not write at _stack_top (one past RAM). */
@@ -715,6 +726,9 @@ _exc_illegal_insn:
 | ====================================================================
 | _duart_isr: level 5 autovector — 68681 DUART
 |
+| Lives in .ramtext (copied out of ROM at startup) so it runs from RAM
+| without ROM wait states.
+|
 | Drains the RX FIFO of Channel A, enqueuing each byte into
 | uart_rx_queue.  Queue is a power-of-2 ring buffer with single
 | producer (this ISR) and single consumer (duart_getchar).
@@ -722,77 +736,85 @@ _exc_illegal_insn:
 | The 68681 RX FIFO is 3 deep.  Draining all available bytes on
 | each entry avoids re-taking the exception on the next byte.
 |
-| If the queue is full, the byte is stored into the guard slot
-| (at tail) but tail is not advanced, so the byte is discarded
-| on the next enqueue.  uart_rx_overflow is set.
+| Register plan (only these are saved — 7 registers, was 10):
+|   %d0  scratch: SRA snapshot / dequeued byte
+|   %d1  tail (working copy, kept in a register across the whole drain)
+|   %d2  head (read once — the consumer only ever advances it, and a stale
+|        head can only make us report full early, never overrun)
+|   %d3  ISR snapshot (interrupt source bits)
+|   %d4  candidate next tail
+|   %a0  DUART_SRA — other DUART registers via short displacement
+|   %a1  uart_rx_queue base, indexed by %d1.w
+|
+| Only the low words of %d1/%d2/%d4 are manipulated; the values are always
+| < UART_RX_QUEUE_SIZE (256), so the longword loads leave the high words
+| zero and the single "move.l %d1, uart_rx_tail" publish is a valid 32-bit
+| value.  (%a1,%d1.w) sign-extends %d1.w, which is safe below 256.
+|
+| tail is published to memory exactly ONCE, after the drain loop, instead of
+| once per byte.  Safe because this ISR is the sole writer of uart_rx_tail
+| (level 5 masks itself and nothing else touches it).
+|
+| Overflow: if the ring is full the byte is stored into the guard slot (at
+| tail) and tail is NOT advanced, so it is discarded; uart_rx_overflow is set
+| and the loop KEEPS DRAINING.  The previous version returned with bytes
+| still in the FIFO, leaving RXRDY asserted — the CPU re-entered the ISR
+| immediately and livelocked, starving the consumer that would have made
+| room.  Draining-and-discarding clears RXRDY and keeps the system running.
+|
+| RBA is read only after SRA shows RXRDY.  (The previous version did a blind
+| RBA read at entry even for CTR_READY-only interrupts.)
 |
 | The C/T runs in Timer mode at 100 Hz; CTR_READY is acked by reading
 | STOPCC (in Timer mode that clears the IRQ status without stopping the
 | counter).  RXRDYA and CTR_READY share this vector and are distinguished
 | by the ISR snapshot in %d3.
 | ====================================================================
+    .section .ramtext,"ax"
     .global _duart_isr
 _duart_isr:
 
-    movem.l %d0-%d6/%a0/%a5-%a6, -(%sp)
+    movem.l %d0-%d4/%a0-%a1, -(%sp)
 
-    | Snapshot registers before any side-effect reads
-    move.b  DUART_SRA, %d2
-    move.b  DUART_ISR, %d3
-    move.b  DUART_RBA, %d4              | side effect: dequeues byte from FIFO
+    move.b  DUART_ISR, %d3              | snapshot interrupt sources
+
+    lea     DUART_SRA, %a0              | DUART base for short-displacement accesses
+    lea     uart_rx_queue, %a1
+    move.l  uart_rx_tail, %d1
+    move.l  uart_rx_head, %d2
+    bra.s   .disr_check
 
 .disr_drain:
-    | Enqueue the byte we already read (in d4)
-    btst    #DUART_SRA_RXRDY_SHIFT, %d2
-    beq.s   .duart_isr_done
+    move.b  (DUART_RBA - DUART_SRA)(%a0), %d0   | dequeue byte from FIFO
+    move.b  %d0, (%a1,%d1.w)            | store at tail (guard slot when full)
+    move.w  %d1, %d4
+    addq.w  #1, %d4
+    and.w   #(UART_RX_QUEUE_SIZE - 1), %d4
+    cmp.w   %d2, %d4
+    beq.s   .disr_overflow              | ring full: drop byte, keep draining
+    move.w  %d4, %d1                    | commit advanced tail
 
-    move.l  uart_rx_tail, %d1
-    lea     uart_rx_queue, %a0
-    adda.l  %d1, %a0
-    move.b  %d4, (%a0)
-
-    addq.l  #1, %d1
-    andi.l  #(UART_RX_QUEUE_SIZE - 1), %d1
-
-    cmp.l   uart_rx_head, %d1
-    beq.s   .duart_isr_overflow
-
-    move.l  %d1, uart_rx_tail
-
-    | Drain remaining FIFO entries (no debug print for these)
-.duart_rx_drain:
-    move.b  DUART_SRA, %d0
+.disr_check:
+    move.b  (%a0), %d0                  | SRA
     btst    #DUART_SRA_RXRDY_SHIFT, %d0
-    beq.s   .duart_isr_done
+    bne.s   .disr_drain
 
-    move.b  DUART_RBA, %d0
+    move.l  %d1, uart_rx_tail           | publish tail once, after the drain loop
 
-    move.l  uart_rx_tail, %d1
-    lea     uart_rx_queue, %a0
-    adda.l  %d1, %a0
-    move.b  %d0, (%a0)
-
-    addq.l  #1, %d1
-    andi.l  #(UART_RX_QUEUE_SIZE - 1), %d1
-
-    cmp.l   uart_rx_head, %d1
-    beq.s   .duart_isr_overflow
-
-    move.l  %d1, uart_rx_tail
-    bra.s   .duart_rx_drain
-
-.duart_isr_overflow:
-    move.b  #1, uart_rx_overflow
-
-.duart_isr_done:
     btst    #DUART_ISR_CTR_READY_SHIFT, %d3
-    beq.s   .duart_isr_exit
+    beq.s   .disr_exit
     tst.b   DUART_STOPCC                | ack C/T IRQ (Timer mode: counter keeps running)
     addq.l  #1, tick_counter
 
-.duart_isr_exit:
-    movem.l (%sp)+, %d0-%d6/%a0/%a5-%a6
+.disr_exit:
+    movem.l (%sp)+, %d0-%d4/%a0-%a1
     rte
+
+.disr_overflow:
+    move.b  #1, uart_rx_overflow
+    bra.s   .disr_check
+
+    .section .text
 
 _video_isr:
     move.b  #0, VIDEO_CLRINT            | ack VIDEO IRQ

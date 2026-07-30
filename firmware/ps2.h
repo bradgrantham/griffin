@@ -9,7 +9,7 @@ extern "C" {
 
 #include "../griffin.generated.h"
 
-void ps2_isr(void) __attribute__((interrupt_handler));
+void ps2_isr(void) __attribute__((interrupt_handler, section(".ramtext")));
 void ps2_send_byte(uint8_t b);
 bool ps2_received_ready();
 uint8_t ps2_getchar();

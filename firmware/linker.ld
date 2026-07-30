@@ -47,6 +47,17 @@ SECTIONS
     .text    : { *(.text*) } > ROM
     .rodata  : { *(.rodata*) } > ROM
 
+    /* Code copied from ROM into firmware-private RAM at startup so it runs
+       without ROM wait states (hot ISRs).  ALIGN(4) at both ends because the
+       crt0 copy loop moves longwords and stops on an exact-equal compare. */
+    .ramtext : ALIGN(4) {
+        _ramtext_start = .;
+        *(.ramtext*)
+        . = ALIGN(4);
+        _ramtext_end = .;
+    } > RAM AT > ROM
+    _ramtext_load = LOADADDR(.ramtext);
+
     .data : {
         _data_start = .;
         *(.data*)

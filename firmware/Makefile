@@ -21,7 +21,10 @@ COMMONFLAGS = -g -fno-omit-frame-pointer -fanalyzer -O3
 CXXFLAGS = --std=c++23 $(COMMONFLAGS) $(WARNFLAGS) -Wold-style-cast
 CFLAGS = --std=c23 $(COMMONFLAGS) $(WARNFLAGS)
 ASFLAGS = -g
-LDFLAGS = $(COMMONFLAGS) -T $(LDSCRIPT)
+# --no-warn-rwx-segments: .ramtext puts executable code in the same RAM LOAD
+# segment as .data, which ld flags as RWX.  There is no MMU here, so it is
+# exactly what we intend.
+LDFLAGS = $(COMMONFLAGS) -T $(LDSCRIPT) -Wl,--no-warn-rwx-segments
 
 all: rom.bin
 .PHONY: all
