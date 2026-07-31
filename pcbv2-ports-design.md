@@ -1,5 +1,17 @@
 # PORTS peripheral (new CPLD) — rev 2 fit experiment
 
+> **Status 2026-07-30: PORTS is built.**  `cpld/ports/ports.v` is now the
+> single production design — PS/2 mouse + 2 joysticks + 2 paddles + the
+> line-rate audio FIFO pop, decoded from the griffin.yml register map, pinout
+> frozen, in the Makefile's `all`.  Everything below is the *experiment* that
+> chose that feature set, kept because the negative results are the evidence
+> for the architecture.  **The ten `cpld/ports/ports_<config>.v` wrappers and
+> `cpld/glue/glue_rev2_ports.v` no longer exist in the tree**; they were
+> deleted at integration, and the sources that produced every number in this
+> document live in commit `16ad819` ("add PORTS CPLD fit investigation").  To
+> re-run a measurement, check that commit's files out into `cpld/ports/`.
+> Final as-built numbers are in "Frozen `-preassign keep` fits" below.
+
 Standalone fit experiment in `cpld/ports/` (audio.v style: no griffin.yml,
 firmware or emulator wiring, no `//PIN:` lines, `-preassign ignore`).  One
 source, `cpld/ports/ports.v`, gated by `` `ifdef ``s; each
@@ -49,6 +61,32 @@ register cost; the LC/FF/PT columns come from the `.fit` resource summary.
 **Note:** when the fitter fails, its summary block is the wreckage of the last
 failed pass (it reports 0 FF and 0 Pts) — for failures the meaningful numbers
 are *logic cells* and *nodes+FB/MCells*, which is where the overflow shows.
+
+### Frozen `-preassign keep` fits — as built, 2026-07-30
+
+The numbers that matter for the board.  Each pinout was harvested from a
+`-preassign ignore` fit, written into the `//PIN:` block at the bottom of its
+Verilog, and the design re-fit with `-preassign keep` to prove the placement
+is reachable.  Production flags: `-preassign keep -strategy TDI_pullup = on
+-strategy TMS_pullup = on -strategy power_reset on -strategy JTAG = on`, plus
+`-strategy xor_synthesis = on` on GLUE and VIDEO only.
+
+| Design | LC | I/O | Dedicated in | FF | Foldback | Nodes+FB | PT |
+|---|---|---|---|---|---|---|---|
+| GLUE (rev 2) | **109/128 (85 %)** | **63/64 (98 %)** | 3/4 | 57/128 | 15 | 124/128 (96 %) | 326 |
+| VIDEO | 126/128 (98 %) | 53/64 (82 %) | 4/4 | 99/128 | 10 | 132/128 (103 %) | 355 |
+| ENGINE | 91/128 (71 %) | 49/64 (76 %) | 3/4 | 48/128 | 6 | 91/128 (71 %) | 244 |
+| PORTS | **118/128 (92 %)** | **40/64 (62 %)** | 2/4 | 80/128 | 16 | 116/128 (90 %) | 364 |
+
+PORTS costs 118 LC frozen against 111 LC free-placed (Fit 1 below) and 364 PT
+against 311 — that difference *is* the pinout constraint, and it is the reason
+the freeze has to happen before layout rather than after.  It still leaves 10
+logic cells and 24 I/O.
+
+`xor_synthesis` was measured on PORTS and changes nothing — 365 PT either way
+in that head-to-head, same fit result — so PORTS stays on the plain strategy
+set.  On GLUE the same lever is the difference between fitting and not; see
+the GLUE note under Fit 2.
 
 ### ATF1508AS, PLCC84 — the plan's 1508 ladder (`make ports`)
 
@@ -125,7 +163,10 @@ missed is that a PS/2 channel costs far more than its flip-flops on an
 ATF15xx: the second channel pushes the design past the node budget through
 foldback expansion, not through registers.
 
-## Register map (as implemented in ports.v)
+## Register map (as implemented in the experiment ports.v)
+
+*(Experiment offsets, superseded — the built map is under "Register map:
+griffin.yml is authoritative" at the end of this document.)*
 
 Byte peripheral on the LDS lane; registers on odd addresses, word slot =
 A[4:1], A[4] selects the PS/2 channel so the mouse map is the keyboard map
@@ -160,8 +201,11 @@ pot that never trips reads 0xFF instead of wrapping.
 
 ## Signals to route (recommended build: ATF1508AS PLCC84, kbd + joy + paddle)
 
-39 I/O + 1 dedicated input, fitter-placed — final pinout TBD when the `.pin`
-is locked.
+39 I/O + 1 dedicated input, fitter-placed.  **Superseded by the built design:**
+the channel is the *mouse*, not the keyboard, and `LINE_STROBE` / `nFIFO_RE` /
+`nFIFO_HF` are in the list too (40 I/O + 2 dedicated inputs).  Pin numbers come
+from the FROZEN `//PIN:` block at the bottom of `cpld/ports/ports.v`, not from
+here — do not transcribe them into a document that can drift.
 
 - Dedicated input: **SYSCLK**
 - Inputs from GLUE / bus: **nRESET**, **nPORTS_SELECT** (cycle-qualified,
@@ -182,6 +226,11 @@ If the mouse channel is added later on separate silicon it needs the same
 bus fan-out (nPORTS_SELECT or its own select, A[4:1], nLDS, R_nW, D[7:0]).
 
 ## Required GLUE changes
+
+*(Written for the both-channels-in-PORTS variant and mostly superseded by the
+revised architecture below: the keyboard engine stays in GLUE, and `PORTS_TICK`
+was never built because VIDEO's HSYNC tap replaced it.  What GLUE actually got
+is `nPORTS_SELECT`, `nPORTS_IRQ` at level 2 and the PORTS DTACK term.)*
 
 - **Delete the PS/2 frame engine** (glue.v:256-405) and its registers.  That
   returns ~51 flip-flops and frees GLUE pins **39/40** (PS2_CLK/PS2_DATA) for
@@ -214,17 +263,30 @@ bus fan-out (nPORTS_SELECT or its own select, A[4:1], nLDS, R_nW, D[7:0]).
 
 Audio is untouched: it keeps its own ATF1504 per pcbv2-audio-design.md.
 
-## Follow-ups (not done here)
+## Follow-ups — status 2026-07-30
 
-- glue.v changes above; a griffin.yml PORTS block (proposed region 0xFC0000)
-  with codegen'd registers; firmware `GLUE_PS2_*` → `PORTS_PS2_KEYBOARD_*`
-  rename; emulator model.
-- Decide the mouse: a second PS/2 channel needs its own device (a second
-  ATF1504 in PLCC68 running `ports_keyboard_joystick`-class logic, or the
-  earlier "put it in ENGINE" idea), because it demonstrably cannot share a
-  1508 with the first one.
-- Lock a `.pin` file and re-fit with `-preassign keep` before committing to a
-  PCB; all numbers here are with the fitter free to place pins.
+- **Done.**  The glue.v changes above are in `glue.v` itself (there is no
+  rev-2 copy any more), plus `~ROM_WE` for in-circuit flash and the
+  re-enabled `nENGINE_IRQ`.
+- **Done.**  griffin.yml carries the PORTS block at 0xFC0000 with codegen'd
+  registers, and both `ports.v` and the firmware take their offsets from the
+  generated headers.
+- **Done, differently.**  The proposed `GLUE_PS2_*` → `PORTS_PS2_KEYBOARD_*`
+  rename did not happen and is not wanted: the keyboard is still GLUE's, so it
+  keeps the `GLUE_PS2_*` names, and `ps2.cpp` takes a CPLD base address
+  instead — `static_assert`s prove the two register maps are offset-identical.
+  New `ports.cpp` (level-2 vector: mouse + audio half-full) and `mouse.cpp`
+  (packet decode) sit on top.
+- **Done.**  Emulator has a full PORTS model, with `--mouse-in` and
+  `--joystick-in` for scripted input.
+- **Done.**  The mouse decision: its own PS/2 channel in PORTS, not a second
+  ATF1504 and not ENGINE.
+- **Done.**  Both `.pin` placements are locked and re-fit with
+  `-preassign keep`; the `//PIN:` blocks in `glue.v` and `ports.v` are marked
+  FROZEN and the board routes from them.  Numbers under Results.
+- **Still open.**  The JTAG chain order in `cpld/Makefile` still describes the
+  Rev 1 two-TAP chain; the `tapN` index for PORTS is not knowable until the
+  Rev 2 board is routed.
 
 ---
 
@@ -275,6 +337,11 @@ same PLCC44 result (`# ERROR : Design has 36 IOs.`).
 
 ## Fit 2 — GLUE rev-2 delta (keyboard retained + PORTS support)
 
+*(Superseded 2026-07-30 by the built design: `glue.v` **is** the rev-2 GLUE
+now, `glue_rev2_ports.v` was deleted, and the conclusion below about
+`-preassign keep` "failing no matter what" turned out to be wrong — see the
+correction at the end of this section.)*
+
 `cpld/glue/glue_rev2_ports.v` (a copy of glue.v; **glue.v itself untouched**)
 with: ROM window moved to 0x800000-0xBFFFFF (`A23 & ~A22`); `AUDIO_LE` and its
 decode deleted; new `nIO_RD_EN` / `nIO_WR_EN` direct-bus strobes for
@@ -309,6 +376,36 @@ left after this delta.  Anything further wants either a bigger package
 
 No logic was shaved.
 
+### Correction, 2026-07-30 — `xor_synthesis` was never actually tried on GLUE
+
+Rows (a) and (b) above led to the claim that rev-2 GLUE "fails to route no
+matter what."  That was wrong, and the way it was wrong is worth keeping.
+The fitter auto-escalates recovery strategies when a pass fails, so it *looks*
+like every lever has been pulled; what it actually escalated to was
+`Foldback_logic`, and it left `Xor_synthesis = OFF`.  Row (b) therefore only
+re-asked for a strategy the fitter had already chosen — hence "identical
+failure and identical numbers" — while the one lever that had already rescued
+VIDEO (whose micro-HAM decoder only fits with the macrocell XOR gates) was
+never in play.  With `-strategy xor_synthesis = on` the rev-2 GLUE fits under
+`-preassign keep`.
+
+The rest of the negative results in this section stand: dropping
+`-strategy debug` alone changes nothing, `Foldback_logic` alone changes
+nothing, and the rev-1 hand pinout does not route the rev-2 netlist under any
+strategy.  The new pinout was still needed and was still taken from the
+`-preassign ignore` placement.
+
+The production GLUE target now runs `-preassign keep -strategy
+xor_synthesis = on -strategy TDI_pullup = on -strategy TMS_pullup = on
+-strategy power_reset on -strategy JTAG = on` — note `-strategy debug = on` is
+**dropped**, for the same reason VIDEO dropped it: debug combined with
+xor_synthesis has crashed the fitter, and nothing in this project consumes the
+`.vt`/`.tmv` simulation output.
+
+As built (with `~ROM_WE` and the re-enabled `nENGINE_IRQ` on top of this
+delta), GLUE is 109/128 LC, 57 FF, 326 PT, 63/64 I/O + 3/4 dedicated inputs —
+one spare pin.  See the frozen-fit table under Results.
+
 ## Register map: griffin.yml is authoritative
 
 The PORTS register map adopted into griffin.yml on 2026-07-28 **supersedes the
@@ -324,3 +421,25 @@ channels present, mouse = keyboard + 0x10) and were never meant to be the
 contract.  `ports.v` gets realigned to the griffin.yml map at integration
 time; the decode is a handful of localparams and does not change the measured
 utilisation.
+
+**Done 2026-07-30.**  `ports.v` no longer carries offsets of its own: every
+one is a `localparam` initialised from a `` `PORTS_* `` define in
+`griffin.generated.vh`, so griffin.yml is the only place a register address
+exists and a mismatch is a build error rather than a silent decode bug.  The
+final decode, byte registers on odd addresses with the word slot in A[4:1]:
+
+| Offset | Read | Write |
+|---|---|---|
+| 0x01 / 0x03 | JOYSTICK_PORT_1 / JOYSTICK_PORT_2 | — |
+| 0x05 / 0x07 | PADDLE_A_COUNT / PADDLE_B_COUNT | — |
+| 0x09 / 0x0B | — | PS2_MOUSE_TX_DATA (A[1] = firmware's odd parity; the write arms TX) |
+| 0x0F | — | PADDLE_CONTROL (bit0 DUMP) |
+| 0x11 | PS2_MOUSE_STATUS | PS2_MOUSE_CLEAR (W1C) |
+| 0x13 | — | PS2_MOUSE_CTRL (bit0 drive CLK low, bit1 drive DATA low) |
+| 0x15 | PS2_MOUSE_RX_DATA | — |
+| 0x1F | AUDIO_STATUS | AUDIO_CONTROL |
+
+The mouse quintet is at GLUE's keyboard offsets exactly as intended, and
+firmware's `ps2.cpp` is now one base-parameterized driver with `static_assert`s
+that each PORTS mouse offset and status/control bit matches its GLUE keyboard
+counterpart — so the two maps cannot drift apart without failing the build.

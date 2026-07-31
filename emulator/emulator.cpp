@@ -41,6 +41,16 @@ constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
 
+// Direct-bus peripheral region (griffin.yml "Direct-bus peripheral region"):
+// one 1 MB window split into four 256 KB quadrants by A19:18, fanned out by a
+// 74155 from GLUE's ~IO_RD_EN / ~IO_WR_EN strobes.  Quadrant 0 is AUDIO; the
+// other three are reserved.  GLUE answers DTACK for the whole window, so an
+// access to a reserved quadrant must not fault -- it just reads back the
+// floating bus.  Not a griffin.yml peripheral of its own, so no generated
+// constant: derived here from the AUDIO base that anchors it.
+static constexpr uint32_t DIRECT_BUS_BASE = AUDIO_BASE;
+static constexpr uint32_t DIRECT_BUS_SIZE = 0x100000UL;
+
 // PTY-based console for serial emulation.
 // The master fd acts like the UART: write() sends to the terminal,
 // read() receives keystrokes.  Works on macOS and Linux.
@@ -1079,6 +1089,12 @@ struct VideoState
     uint64_t frac_accum = 0;
     int v_cnt = 0;
 
+    // Free-running count of scanlines emitted, i.e. of HSYNC pulses on the net
+    // PORTS taps as LINE_STROBE.  PORTS derives its whole timebase from the
+    // delta of this counter, so its paddle and audio rates cannot drift from
+    // VIDEO the way a private timer would.
+    uint64_t line_count = 0;
+
     bool irq_latched = false;
 
     bool video_enable = false;
@@ -1254,6 +1270,7 @@ struct VideoState
             }
 
             v_cnt++;
+            line_count++;       // one HSYNC pulse == one LINE_STROBE edge
 
             if (v_cnt >= V_TOTAL)
             {
@@ -1474,40 +1491,79 @@ static inline bool ps2_odd_parity_bit(uint8_t x)
     return ((x & 1u) ^ 1u) != 0;
 }
 
+struct PS2State;
+
+// Device side of one PS/2 channel.  The frame engine above/below the hook is
+// identical for both channels; only the attached device's command set and
+// its self-initiated traffic differ.
+struct PS2Device
+{
+    virtual ~PS2Device() = default;
+
+    // Host->device byte (a PS2_TX_DATA write).  Responses are queued back
+    // through the channel's normal RX pacing.
+    virtual void command(uint64_t clock_now, uint8_t byte, PS2State &channel) = 0;
+
+    // Device-initiated traffic, polled from the channel's timer service.  A
+    // keyboard is purely reactive and needs nothing here; a streaming mouse
+    // emits report packets on its own sample-rate cadence.
+    virtual void service(uint64_t clock_now, PS2State &channel)
+    {
+        (void)clock_now;
+        (void)channel;
+    }
+};
+
 // Frame-level PS/2 model, mirroring the GLUE PS/2 frame engine: GLUE
 // assembles whole frames, so we deliver one full byte (RX_READY +
 // PS2_RX_DATA) per ~1 ms and treat a PS2_TX_DATA write as an instant,
 // always-acknowledged host->device transmission (TX_DONE).
 //
-// The device side models a generic PS/2 keyboard's command set: host
-// commands get real responses (0xFA ACK, ident bytes, BAT after reset) so
-// guests that fully initialize the keyboard (Linux atkbd probe, u-boot's
-// enable/LED writes) behave as they will on hardware.  Responses ride the
-// same 1 ms/byte RX pacing as scancodes.
+// The engine is address-agnostic: griffin.yml deliberately gives the PORTS
+// mouse channel the same register offsets as the GLUE keyboard channel, so
+// one instance serves either by taking the channel base address.  The device
+// behaviour hangs off the PS2Device hook.
 struct PS2State
 {
     static constexpr uint64_t byte_period_sysclk = SYSCLK_HZ / 1000; // ~1 ms
-    // Reset -> BAT completion delay.  Real keyboards take 500-750 ms; use
-    // 300 ms so atkbd's reset timeout (guest jiffies) is comfortably met
-    // while bounded test runs stay short.
-    static constexpr uint64_t bat_delay_sysclk = SYSCLK_HZ * 3 / 10;
+
+    // Channel register offsets.  Taken from the GLUE keyboard channel and
+    // asserted equal to the PORTS mouse channel's, so the shared layout that
+    // makes one engine serve both is checked by the compiler, not by comment.
+    static constexpr uint32_t OFFSET_TX_DATA = GLUE_PS2_TX_DATA - GLUE_BASE;
+    static constexpr uint32_t OFFSET_STATUS  = GLUE_PS2_STATUS  - GLUE_BASE;
+    static constexpr uint32_t OFFSET_CLEAR   = GLUE_PS2_CLEAR   - GLUE_BASE;
+    static constexpr uint32_t OFFSET_CTRL    = GLUE_PS2_CTRL    - GLUE_BASE;
+    static constexpr uint32_t OFFSET_RX_DATA = GLUE_PS2_RX_DATA - GLUE_BASE;
+    static_assert(PORTS_PS2_MOUSE_TX_DATA - PORTS_BASE == OFFSET_TX_DATA);
+    static_assert(PORTS_PS2_MOUSE_STATUS  - PORTS_BASE == OFFSET_STATUS);
+    static_assert(PORTS_PS2_MOUSE_CLEAR   - PORTS_BASE == OFFSET_CLEAR);
+    static_assert(PORTS_PS2_MOUSE_CTRL    - PORTS_BASE == OFFSET_CTRL);
+    static_assert(PORTS_PS2_MOUSE_RX_DATA - PORTS_BASE == OFFSET_RX_DATA);
+
+    uint32_t   base = GLUE_BASE;
+    PS2Device *device = nullptr;
 
     std::deque<uint8_t> rx_bytes;
     uint64_t next_deliver_clock = 0;
-    uint64_t bat_due_clock = 0;        // nonzero: BAT (0xAA) pending after reset
     uint8_t  rx_data = 0;
     bool     rx_ready = false;
     bool     tx_done = false;
-    bool     tx_ack_failed = false;    // false = device acknowledged
+    // false = device acknowledged.  Resets true to match the RTL, which comes
+    // up with TX_ACK set (glue.v `tx_ack <= 1'b1`, ports.v
+    // `transmit_acknowledge <= 1'b1`) so an idle channel does not claim an
+    // acknowledgement that never happened.
+    bool     tx_ack_failed = true;
     uint8_t  ctrl = 0;
-    uint8_t  pending_cmd = 0;          // 0xED/0xF3 awaiting their data byte
-    uint8_t  leds = 0;
-    uint8_t  typematic = 0;
-    bool     scanning = true;
 
-    bool init() { return true; }
+    bool init(uint32_t channel_base, PS2Device &attached)
+    {
+        base = channel_base;
+        device = &attached;
+        return true;
+    }
 
-    // Queue a device->host scancode byte for timed delivery.
+    // Queue a device->host byte for timed delivery.
     void enqueue_byte(uint64_t clock_now, uint8_t byte)
     {
         if (rx_bytes.empty())
@@ -1517,12 +1573,16 @@ struct PS2State
         rx_bytes.push_back(byte);
     }
 
+    // Bytes still waiting to be shifted in.  A device that generates its own
+    // traffic uses this to throttle itself instead of growing the queue
+    // without bound when the guest is not draining the channel.
+    size_t backlog() const { return rx_bytes.size(); }
+
     void check_timer(uint64_t clock_now)
     {
-        if (bat_due_clock != 0 && clock_now >= bat_due_clock)
+        if (device)
         {
-            bat_due_clock = 0;
-            enqueue_byte(clock_now, 0xAA);      // BAT passed
+            device->service(clock_now, *this);
         }
         if (!rx_ready && !rx_bytes.empty()
             && clock_now >= next_deliver_clock)
@@ -1537,64 +1597,22 @@ struct PS2State
         }
     }
 
-    // Host->device command byte (a PS2_TX_DATA write): respond like a
-    // standard keyboard.
-    void device_command(uint64_t clock_now, uint8_t byte)
+    // True for any address this channel decodes, including the parity-1 alias
+    // of PS2_TX_DATA (parity rides address bit 1).
+    bool is_addr(uint32_t abs_addr) const
     {
-        if (pending_cmd == 0xED)        // set LEDs: data byte
-        {
-            leds = byte;
-            pending_cmd = 0;
-            enqueue_byte(clock_now, 0xFA);
-            return;
-        }
-        if (pending_cmd == 0xF3)        // set typematic: data byte
-        {
-            typematic = byte;
-            pending_cmd = 0;
-            enqueue_byte(clock_now, 0xFA);
-            return;
-        }
-        switch (byte)
-        {
-            case 0xFF:                  // reset
-                rx_bytes.clear();
-                pending_cmd = 0;
-                leds = 0;
-                scanning = true;
-                enqueue_byte(clock_now, 0xFA);
-                bat_due_clock = clock_now + bat_delay_sysclk;
-                break;
-            case 0xF2:                  // read ID: MF2 keyboard
-                enqueue_byte(clock_now, 0xFA);
-                enqueue_byte(clock_now, 0xAB);
-                enqueue_byte(clock_now, 0x83);
-                break;
-            case 0xED:                  // set LEDs (data byte follows)
-            case 0xF3:                  // set typematic (data byte follows)
-                pending_cmd = byte;
-                enqueue_byte(clock_now, 0xFA);
-                break;
-            case 0xF4:                  // enable scanning
-                scanning = true;
-                enqueue_byte(clock_now, 0xFA);
-                break;
-            case 0xF5:                  // disable scanning
-                scanning = false;
-                enqueue_byte(clock_now, 0xFA);
-                break;
-            case 0xEE:                  // echo
-                enqueue_byte(clock_now, 0xEE);
-                break;
-            default:                    // unrecognized: resend
-                enqueue_byte(clock_now, 0xFE);
-                break;
-        }
+        uint32_t offset = abs_addr - base;
+        return offset == OFFSET_TX_DATA
+            || offset == OFFSET_TX_DATA + PS2_TX_DATA_PARITY
+            || offset == OFFSET_STATUS
+            || offset == OFFSET_CTRL
+            || offset == OFFSET_RX_DATA;
     }
 
     uint8_t read_reg(uint32_t abs_addr) const
     {
-        if (abs_addr == GLUE_PS2_STATUS)
+        uint32_t offset = abs_addr - base;
+        if (offset == OFFSET_STATUS)
         {
             uint8_t v = 0;
             if (rx_ready)      { v |= GLUE_PS2_STATUS_RX_READY_MASK; }
@@ -1609,7 +1627,7 @@ struct PS2State
             v |= GLUE_PS2_STATUS_CLK_LIVE_MASK;
             return v;
         }
-        if (abs_addr == GLUE_PS2_RX_DATA)
+        if (offset == OFFSET_RX_DATA)
         {
             return rx_data;
         }
@@ -1618,27 +1636,581 @@ struct PS2State
 
     void write_reg(uint32_t abs_addr, uint8_t val, uint64_t clock_now)
     {
-        if (abs_addr == GLUE_PS2_CLEAR)
+        uint32_t offset = abs_addr - base;
+        if (offset == OFFSET_CLEAR)
         {
             if (val & GLUE_PS2_CLEAR_RX_READY_MASK) { rx_ready = false; }
             if (val & GLUE_PS2_CLEAR_TX_DONE_MASK)  { tx_done = false; }
         }
-        else if (abs_addr == GLUE_PS2_CTRL)
+        else if (offset == OFFSET_CTRL)
         {
             ctrl = val;
         }
-        else
+        else if (offset == OFFSET_TX_DATA
+                 || offset == OFFSET_TX_DATA + PS2_TX_DATA_PARITY)
         {
             // PS2_TX_DATA (0x09) or its parity-1 alias (0x0B): instant,
-            // always-acked host->device transmission; the keyboard model
+            // always-acked host->device transmission; the attached device
             // then responds to the command.
             tx_ack_failed = false;
             tx_done = true;
-            device_command(clock_now, val);
+            if (device)
+            {
+                device->command(clock_now, val, *this);
+            }
         }
     }
 
     bool irq_pending() const { return rx_ready || tx_done; }
+};
+
+// Generic PS/2 keyboard: host commands get real responses (0xFA ACK, ident
+// bytes, BAT after reset) so guests that fully initialize the keyboard (Linux
+// atkbd probe, u-boot's enable/LED writes) behave as they will on hardware.
+// Responses ride the channel's 1 ms/byte RX pacing along with scancodes.
+struct PS2Keyboard : PS2Device
+{
+    // Reset -> BAT completion delay.  Real keyboards take 500-750 ms; use
+    // 300 ms so atkbd's reset timeout (guest jiffies) is comfortably met
+    // while bounded test runs stay short.
+    static constexpr uint64_t bat_delay_sysclk = SYSCLK_HZ * 3 / 10;
+
+    uint64_t bat_due_clock = 0;        // nonzero: BAT (0xAA) pending after reset
+    uint8_t  pending_cmd = 0;          // 0xED/0xF3 awaiting their data byte
+    uint8_t  leds = 0;
+    uint8_t  typematic = 0;
+    bool     scanning = true;
+
+    void service(uint64_t clock_now, PS2State &channel) override
+    {
+        if (bat_due_clock != 0 && clock_now >= bat_due_clock)
+        {
+            bat_due_clock = 0;
+            channel.enqueue_byte(clock_now, 0xAA);      // BAT passed
+        }
+    }
+
+    void command(uint64_t clock_now, uint8_t byte, PS2State &channel) override
+    {
+        if (pending_cmd == 0xED)        // set LEDs: data byte
+        {
+            leds = byte;
+            pending_cmd = 0;
+            channel.enqueue_byte(clock_now, 0xFA);
+            return;
+        }
+        if (pending_cmd == 0xF3)        // set typematic: data byte
+        {
+            typematic = byte;
+            pending_cmd = 0;
+            channel.enqueue_byte(clock_now, 0xFA);
+            return;
+        }
+        switch (byte)
+        {
+            case 0xFF:                  // reset
+                channel.rx_bytes.clear();
+                pending_cmd = 0;
+                leds = 0;
+                scanning = true;
+                channel.enqueue_byte(clock_now, 0xFA);
+                bat_due_clock = clock_now + bat_delay_sysclk;
+                break;
+            case 0xF2:                  // read ID: MF2 keyboard
+                channel.enqueue_byte(clock_now, 0xFA);
+                channel.enqueue_byte(clock_now, 0xAB);
+                channel.enqueue_byte(clock_now, 0x83);
+                break;
+            case 0xED:                  // set LEDs (data byte follows)
+            case 0xF3:                  // set typematic (data byte follows)
+                pending_cmd = byte;
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xF4:                  // enable scanning
+                scanning = true;
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xF5:                  // disable scanning
+                scanning = false;
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xEE:                  // echo
+                channel.enqueue_byte(clock_now, 0xEE);
+                break;
+            default:                    // unrecognized: resend
+                channel.enqueue_byte(clock_now, 0xFE);
+                break;
+        }
+    }
+};
+
+// Standard PS/2 mouse with the Microsoft IntelliMouse extension.  Unlike the
+// keyboard it is not purely reactive: once data reporting is enabled in
+// stream mode it emits 3- (or 4-, with the wheel) byte movement packets at
+// its programmed sample rate whenever the accumulated state has changed.
+struct PS2Mouse : PS2Device
+{
+    // Reset -> BAT completion delay, same rationale as the keyboard's.
+    static constexpr uint64_t bat_delay_sysclk = SYSCLK_HZ * 3 / 10;
+
+    // Post-reset defaults from the PS/2 mouse spec.
+    static constexpr uint8_t DEFAULT_SAMPLE_RATE = 100;   // reports/second
+    static constexpr uint8_t DEFAULT_RESOLUTION  = 2;     // 4 counts/mm
+
+    // Device IDs: 0x00 = plain 3-button, 0x03 = IntelliMouse with a wheel.
+    static constexpr uint8_t ID_STANDARD    = 0x00;
+    static constexpr uint8_t ID_INTELLIMOUSE = 0x03;
+
+    // Button bits, in PS/2 packet-byte-0 order.
+    static constexpr uint8_t BUTTON_LEFT   = 0x01;
+    static constexpr uint8_t BUTTON_RIGHT  = 0x02;
+    static constexpr uint8_t BUTTON_MIDDLE = 0x04;
+
+    // Movement fields are 9-bit two's complement: 8 bits in the data byte and
+    // the sign in packet byte 0.
+    static constexpr int MOVE_MIN = -256;
+    static constexpr int MOVE_MAX = 255;
+
+    // Don't pile up packets the guest is not draining; the channel delivers
+    // one byte per millisecond, so a slow ISR must be allowed to fall behind
+    // exactly as a real mouse would be inhibited.
+    static constexpr size_t MAX_BACKLOG = PS2_RX_QUEUE_SIZE;
+
+    uint8_t  sample_rate = DEFAULT_SAMPLE_RATE;
+    uint8_t  resolution = DEFAULT_RESOLUTION;
+    bool     scaling_2_1 = false;
+    bool     stream_mode = true;       // false = remote (host polls with 0xEB)
+    bool     reporting = false;        // data reporting enabled (0xF4)
+    uint8_t  device_id = ID_STANDARD;
+    uint8_t  pending_cmd = 0;          // 0xF3/0xE8 awaiting their data byte
+    uint64_t bat_due_clock = 0;
+    uint64_t next_report_clock = 0;
+
+    // IntelliMouse "knock": set-sample-rate 200, 100, 80 in a row switches the
+    // device to ID 3 and 4-byte packets with a wheel.
+    int knock_stage = 0;
+
+    // Host-side state waiting to be turned into packets.
+    int     accum_dx = 0;
+    int     accum_dy = 0;              // PS/2 convention: positive is up
+    int     accum_dz = 0;              // wheel detents
+    uint8_t buttons = 0;
+    bool    state_changed = false;
+
+    uint64_t report_period_sysclk() const
+    {
+        uint8_t rate = sample_rate != 0 ? sample_rate : DEFAULT_SAMPLE_RATE;
+        return SYSCLK_HZ / rate;
+    }
+
+    void set_defaults()
+    {
+        sample_rate = DEFAULT_SAMPLE_RATE;
+        resolution = DEFAULT_RESOLUTION;
+        scaling_2_1 = false;
+        stream_mode = true;
+        reporting = false;
+        knock_stage = 0;
+    }
+
+    // --- host-side input, from SDL or the --mouse-in script ---
+    void move(int dx, int dy, int dz = 0)
+    {
+        accum_dx += dx;
+        accum_dy += dy;
+        accum_dz += dz;
+        state_changed = true;
+    }
+
+    void set_buttons(uint8_t mask)
+    {
+        buttons = mask & (BUTTON_LEFT | BUTTON_RIGHT | BUTTON_MIDDLE);
+        state_changed = true;
+    }
+
+    static int clamp_move(int v)
+    {
+        return v < MOVE_MIN ? MOVE_MIN : (v > MOVE_MAX ? MOVE_MAX : v);
+    }
+
+    void send_packet(uint64_t clock_now, PS2State &channel)
+    {
+        int dx = clamp_move(accum_dx);
+        int dy = clamp_move(accum_dy);
+        uint8_t byte0 = 0x08 | (buttons & 0x07)
+                      | ((dx < 0) ? 0x10 : 0)
+                      | ((dy < 0) ? 0x20 : 0)
+                      | ((accum_dx != dx) ? 0x40 : 0)   // X overflow
+                      | ((accum_dy != dy) ? 0x80 : 0);  // Y overflow
+        accum_dx -= dx;
+        accum_dy -= dy;
+        channel.enqueue_byte(clock_now, byte0);
+        channel.enqueue_byte(clock_now, static_cast<uint8_t>(dx & 0xFF));
+        channel.enqueue_byte(clock_now, static_cast<uint8_t>(dy & 0xFF));
+        if (device_id == ID_INTELLIMOUSE)
+        {
+            int dz = accum_dz < -8 ? -8 : (accum_dz > 7 ? 7 : accum_dz);
+            accum_dz -= dz;
+            channel.enqueue_byte(clock_now, static_cast<uint8_t>(dz & 0x0F));
+        }
+        else
+        {
+            accum_dz = 0;   // no wheel in the packet: discard it
+        }
+        state_changed = (accum_dx != 0) || (accum_dy != 0) || (accum_dz != 0);
+    }
+
+    void service(uint64_t clock_now, PS2State &channel) override
+    {
+        if (bat_due_clock != 0 && clock_now >= bat_due_clock)
+        {
+            bat_due_clock = 0;
+            channel.enqueue_byte(clock_now, 0xAA);          // BAT passed
+            channel.enqueue_byte(clock_now, device_id);     // then the ID
+        }
+        if (!reporting || !stream_mode)
+        {
+            return;
+        }
+        if (clock_now < next_report_clock)
+        {
+            return;
+        }
+        next_report_clock = clock_now + report_period_sysclk();
+        if (!state_changed || channel.backlog() >= MAX_BACKLOG)
+        {
+            return;
+        }
+        send_packet(clock_now, channel);
+    }
+
+    void command(uint64_t clock_now, uint8_t byte, PS2State &channel) override
+    {
+        if (pending_cmd == 0xF3)         // set sample rate: data byte
+        {
+            sample_rate = byte;
+            pending_cmd = 0;
+            // IntelliMouse knock: 200, 100, 80 in that order.
+            if (byte == 200)      { knock_stage = 1; }
+            else if (byte == 100) { knock_stage = (knock_stage == 1) ? 2 : 0; }
+            else if (byte == 80)
+            {
+                if (knock_stage == 2) { device_id = ID_INTELLIMOUSE; }
+                knock_stage = 0;
+            }
+            else                  { knock_stage = 0; }
+            channel.enqueue_byte(clock_now, 0xFA);
+            return;
+        }
+        if (pending_cmd == 0xE8)         // set resolution: data byte
+        {
+            resolution = byte & 0x03;
+            pending_cmd = 0;
+            channel.enqueue_byte(clock_now, 0xFA);
+            return;
+        }
+        switch (byte)
+        {
+            case 0xFF:                   // reset
+                channel.rx_bytes.clear();
+                pending_cmd = 0;
+                set_defaults();
+                device_id = ID_STANDARD;
+                accum_dx = accum_dy = accum_dz = 0;
+                buttons = 0;
+                state_changed = false;
+                channel.enqueue_byte(clock_now, 0xFA);
+                bat_due_clock = clock_now + bat_delay_sysclk;
+                break;
+            case 0xF6:                   // set defaults
+                set_defaults();
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xF5:                   // disable data reporting
+                reporting = false;
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xF4:                   // enable data reporting
+                reporting = true;
+                next_report_clock = clock_now + report_period_sysclk();
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xF3:                   // set sample rate (data byte follows)
+            case 0xE8:                   // set resolution (data byte follows)
+                pending_cmd = byte;
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xF2:                   // get device ID
+                channel.enqueue_byte(clock_now, 0xFA);
+                channel.enqueue_byte(clock_now, device_id);
+                break;
+            case 0xF0:                   // set remote (polled) mode
+                stream_mode = false;
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xEA:                   // set stream mode
+                stream_mode = true;
+                next_report_clock = clock_now + report_period_sysclk();
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xEB:                   // read data (one packet on demand)
+                channel.enqueue_byte(clock_now, 0xFA);
+                send_packet(clock_now, channel);
+                break;
+            case 0xE9:                   // status request
+                channel.enqueue_byte(clock_now, 0xFA);
+                channel.enqueue_byte(clock_now,
+                    static_cast<uint8_t>((reporting ? 0x20 : 0)
+                                         | (stream_mode ? 0 : 0x40)
+                                         | (scaling_2_1 ? 0x10 : 0)
+                                         | (buttons & 0x07)));
+                channel.enqueue_byte(clock_now, resolution);
+                channel.enqueue_byte(clock_now, sample_rate);
+                break;
+            case 0xE7:                   // set scaling 2:1
+                scaling_2_1 = true;
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            case 0xE6:                   // set scaling 1:1
+                scaling_2_1 = false;
+                channel.enqueue_byte(clock_now, 0xFA);
+                break;
+            default:                     // unrecognized: resend
+                channel.enqueue_byte(clock_now, 0xFE);
+                break;
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// PORTS — the fourth ATF1508AS CPLD (cpld/ports/ports.v), at PORTS_BASE.
+//
+// Byte-wide registers, zero wait states (GLUE decodes the region and answers
+// DTACK for it, as it does for CF), and a single wire-ORed level-2 IRQ.  It
+// holds a PS/2 mouse frame engine, two joystick ports, two paddle counters
+// with a shared dump control, and the audio FIFO pop strobe with its
+// half-full IRQ latch.
+//
+// PORTS has NO timebase of its own: everything periodic runs off VIDEO's
+// HSYNC net tapped over as LINE_STROBE.  The paddle counters tick at the
+// full line rate (31.469 kHz) and the audio FIFO pops on every second tick
+// (AUDIO_SAMPLES_PER_SECOND).  Here that means line_ticks() is driven from
+// VideoState's scanline counter, never from a private timer -- a private
+// timer would drift against VIDEO and destroy the design property.  The
+// mouse channel is the exception: it is in the SYSCLK domain and rides the
+// existing per-instruction timer service.
+// ---------------------------------------------------------------------------
+
+// One paddle: an 8-bit upcounter advanced by the line tick while the pot's
+// comparator sense line is still low, saturating at 0xFF and held at zero
+// while PADDLE_CONTROL.DUMP drives the discharge FET.  This models what the
+// RTL does, not RC physics: the host supplies a knob position in the same
+// units as the count, and the sense line goes high once the ramp reaches it,
+// which freezes the counter there.
+struct PaddleCounter
+{
+    uint8_t position = 0;      // host knob position, 0..255 line times of ramp
+    uint8_t count = 0;
+
+    // The comparator output as PORTS sees it: low while the cap is still
+    // charging (dump asserted, or the ramp has not reached the knob yet).
+    bool sense_high(bool dump) const { return !dump && count >= position; }
+
+    void line_tick(bool dump)
+    {
+        if (dump)
+        {
+            count = 0;
+            return;
+        }
+        if (count == 0xFF || sense_high(dump))
+        {
+            return;             // saturated, or frozen at the crossing
+        }
+        count++;
+    }
+};
+
+struct PortsState
+{
+    // --- PS/2 mouse channel (same engine as the GLUE keyboard) ---
+    PS2State mouse;
+    PS2Mouse mouse_device;
+
+    // --- joystick ports: 1 bits = switch closed (registers read active low) ---
+    static constexpr int JOYSTICK_PORTS = 2;
+    uint8_t joystick_pressed[JOYSTICK_PORTS] = {0, 0};
+
+    // --- paddles ---
+    PaddleCounter paddle_a;
+    PaddleCounter paddle_b;
+    bool paddle_dump = false;
+
+    // --- audio FIFO (the 7202 pair) and its pop strobe ---
+    std::deque<uint16_t> audio_fifo;    // one entry per stereo pair, L<<8 | R
+    bool audio_enable = false;
+    bool audio_hf_irq = false;          // latched, W1C via AUDIO_CONTROL
+    bool audio_half_full_prev = false;  // starts empty: no edge at boot
+    bool audio_pop_phase = false;       // /2 of the line tick, as in ports.v
+    uint8_t dac_left = 0;
+    uint8_t dac_right = 0;              // 7202 output registers hold last sample
+
+    bool init()
+    {
+        return mouse.init(PORTS_BASE, mouse_device);
+    }
+
+    // --- audio FIFO ------------------------------------------------------
+
+    bool audio_half_full() const { return audio_fifo.size() >= AUDIO_FIFO_DEPTH / 2; }
+
+    // PORTS latches HF_IRQ on the falling edge of "half full or more" (the
+    // rising edge of the active-low /HF pin), meaning the FIFO just drained
+    // below half and firmware should refill.
+    void update_half_full_edge()
+    {
+        bool half_full = audio_half_full();
+        if (audio_half_full_prev && !half_full)
+        {
+            audio_hf_irq = true;
+        }
+        audio_half_full_prev = half_full;
+    }
+
+    void audio_fifo_push(uint16_t pair)
+    {
+        if (audio_fifo.size() >= AUDIO_FIFO_DEPTH)
+        {
+            return;             // 7202 full: the write is swallowed
+        }
+        audio_fifo.push_back(pair);
+        update_half_full_edge();
+    }
+
+    void audio_fifo_pop()
+    {
+        if (audio_fifo.empty())
+        {
+            return;             // output register holds the last sample
+        }
+        uint16_t pair = audio_fifo.front();
+        audio_fifo.pop_front();
+        dac_left = static_cast<uint8_t>(pair >> 8);
+        dac_right = static_cast<uint8_t>(pair & 0xFF);
+    }
+
+    // --- LINE_STROBE -----------------------------------------------------
+
+    // Advance by `lines` VGA scanlines' worth of LINE_STROBE edges.
+    void line_ticks(uint32_t lines)
+    {
+        if (lines == 0)
+        {
+            return;
+        }
+        // Paddle counters saturate, so more than a full-scale ramp of ticks
+        // can never change them further.
+        uint32_t paddle_steps = std::min<uint32_t>(lines, 256);
+        for (uint32_t i = 0; i < paddle_steps; i++)
+        {
+            paddle_a.line_tick(paddle_dump);
+            paddle_b.line_tick(paddle_dump);
+        }
+
+        // ports.v pops on every second tick: audio_pop_tick = line_tick &
+        // audio_phase, with audio_phase toggling on each tick from 0.
+        uint32_t phased = lines + (audio_pop_phase ? 1u : 0u);
+        uint32_t pops = phased / 2;
+        audio_pop_phase = (phased & 1u) != 0;
+        if (audio_enable)
+        {
+            for (uint32_t i = 0; i < pops; i++)
+            {
+                audio_fifo_pop();
+            }
+            update_half_full_edge();
+        }
+    }
+
+    // --- SYSCLK-domain service (mouse only) ------------------------------
+
+    void check_timer(uint64_t clock_now) { mouse.check_timer(clock_now); }
+
+    // --- registers -------------------------------------------------------
+
+    uint8_t joystick_byte(int port) const
+    {
+        // Bit 7 reads 1; switch bits are active low straight from the DE-9.
+        uint8_t v = static_cast<uint8_t>(0xFF & ~joystick_pressed[port]);
+        if (port == 0)
+        {
+            // Port 1 pins 9 and 5 double as the paddle pot comparator levels:
+            // the paddle pulls the line low while its cap charges, and so does
+            // a button on the same pin, so the bit is the AND of both.
+            if (!paddle_a.sense_high(paddle_dump))
+            {
+                v &= ~PORTS_JOYSTICK_PORT_1_PIN9_MASK;
+            }
+            if (!paddle_b.sense_high(paddle_dump))
+            {
+                v &= ~PORTS_JOYSTICK_PORT_1_PIN5_MASK;
+            }
+        }
+        return v;
+    }
+
+    uint8_t read_reg(uint32_t abs_addr) const
+    {
+        switch (abs_addr)
+        {
+            case PORTS_JOYSTICK_PORT_1: return joystick_byte(0);
+            case PORTS_JOYSTICK_PORT_2: return joystick_byte(1);
+            case PORTS_PADDLE_A_COUNT:  return paddle_a.count;
+            case PORTS_PADDLE_B_COUNT:  return paddle_b.count;
+            case PORTS_AUDIO_STATUS:
+                return static_cast<uint8_t>(
+                      (audio_hf_irq      ? PORTS_AUDIO_STATUS_HF_IRQ_MASK : 0)
+                    | (audio_half_full() ? PORTS_AUDIO_STATUS_HALF_FULL_MASK : 0)
+                    | (audio_enable      ? PORTS_AUDIO_STATUS_ENABLE_MASK : 0));
+            default:
+                break;
+        }
+        if (mouse.is_addr(abs_addr))
+        {
+            return mouse.read_reg(abs_addr);
+        }
+        return 0;
+    }
+
+    void write_reg(uint32_t abs_addr, uint8_t val, uint64_t clock_now)
+    {
+        if (abs_addr == PORTS_PADDLE_CONTROL)
+        {
+            paddle_dump = (val & PORTS_PADDLE_CONTROL_DUMP_MASK) != 0;
+            if (paddle_dump)
+            {
+                paddle_a.count = 0;
+                paddle_b.count = 0;
+            }
+            return;
+        }
+        if (abs_addr == PORTS_AUDIO_CONTROL)
+        {
+            audio_enable = (val & PORTS_AUDIO_CONTROL_ENABLE_MASK) != 0;
+            if (val & PORTS_AUDIO_CONTROL_CLEAR_HF_IRQ_MASK)
+            {
+                audio_hf_irq = false;
+            }
+            return;
+        }
+        if (mouse.is_addr(abs_addr))
+        {
+            mouse.write_reg(abs_addr, val, clock_now);
+        }
+    }
+
+    // PORTS wire-ORs its interrupt sources onto one level-2 pin.
+    bool irq_pending() const { return mouse.irq_pending() || audio_hf_irq; }
 };
 
 // ---------------------------------------------------------------------------
@@ -1826,6 +2398,342 @@ struct PS2Script
 };
 
 // ---------------------------------------------------------------------------
+// Scripted PS/2 mouse input (--mouse-in): the mouse counterpart of PS2Script,
+// driving the PS2Mouse device model so mouse paths can be tested unattended
+// (headless runs get no SDL events).  Directives, one per line:
+//   # comment
+//   delay MS          wait MS emulated milliseconds before the next directive
+//   move DX DY        accumulate movement (PS/2 sign: +Y is up)
+//   button LMR        hold exactly these buttons ("none" releases all)
+//   click L           press, hold CLICK_HOLD_MS, release
+//   raw HH HH ...     inject raw device->host bytes into the mouse channel
+// Movement and button changes only become packets when the guest has enabled
+// data reporting, exactly as on hardware.
+// ---------------------------------------------------------------------------
+
+struct MouseScript
+{
+    static constexpr uint64_t CLICK_HOLD_MS = 50;
+
+    struct Event
+    {
+        uint64_t delay_sysclk = 0;          // nonzero: pause
+        bool     have_move = false;
+        int      dx = 0;
+        int      dy = 0;
+        bool     have_buttons = false;
+        uint8_t  buttons = 0;
+        std::deque<uint8_t> raw;
+    };
+
+    std::deque<Event> events;
+    uint64_t resume_clock = 0;
+
+    // "LMR", "lr", "none" -> a PS/2 button mask.
+    static bool parse_buttons(const char *s, uint8_t &mask)
+    {
+        mask = 0;
+        if (strncmp(s, "none", 4) == 0)
+        {
+            return true;
+        }
+        for (; *s; s++)
+        {
+            switch (*s)
+            {
+                case 'L': case 'l': mask |= PS2Mouse::BUTTON_LEFT; break;
+                case 'M': case 'm': mask |= PS2Mouse::BUTTON_MIDDLE; break;
+                case 'R': case 'r': mask |= PS2Mouse::BUTTON_RIGHT; break;
+                case ' ': case '\t': break;
+                default: return false;
+            }
+        }
+        return true;
+    }
+
+    bool load(const char *path)
+    {
+        FILE *fp = fopen(path, "r");
+        if (!fp)
+        {
+            fprintf(stderr, "mouse script: cannot open %s\n", path);
+            return false;
+        }
+        char line[1024];
+        int lineno = 0;
+        bool ok = true;
+        while (fgets(line, sizeof line, fp))
+        {
+            lineno++;
+            char *p = line;
+            while (*p == ' ' || *p == '\t') { p++; }
+            size_t len = strlen(p);
+            while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r')) { p[--len] = '\0'; }
+            if (*p == '\0' || *p == '#') { continue; }
+
+            if (strncmp(p, "delay ", 6) == 0)
+            {
+                Event ev;
+                ev.delay_sysclk = strtoull(p + 6, nullptr, 0) * (SYSCLK_HZ / 1000);
+                events.push_back(ev);
+            }
+            else if (strncmp(p, "move ", 5) == 0)
+            {
+                Event ev;
+                if (sscanf(p + 5, "%d %d", &ev.dx, &ev.dy) != 2)
+                {
+                    fprintf(stderr, "mouse script:%d: move wants DX DY\n", lineno);
+                    ok = false;
+                    continue;
+                }
+                ev.have_move = true;
+                events.push_back(ev);
+            }
+            else if (strncmp(p, "button ", 7) == 0)
+            {
+                Event ev;
+                if (!parse_buttons(p + 7, ev.buttons))
+                {
+                    fprintf(stderr, "mouse script:%d: button wants L/M/R or none\n", lineno);
+                    ok = false;
+                    continue;
+                }
+                ev.have_buttons = true;
+                events.push_back(ev);
+            }
+            else if (strncmp(p, "click ", 6) == 0)
+            {
+                uint8_t mask;
+                if (!parse_buttons(p + 6, mask) || mask == 0)
+                {
+                    fprintf(stderr, "mouse script:%d: click wants L/M/R\n", lineno);
+                    ok = false;
+                    continue;
+                }
+                Event press;
+                press.have_buttons = true;
+                press.buttons = mask;
+                events.push_back(press);
+                Event hold;
+                hold.delay_sysclk = CLICK_HOLD_MS * (SYSCLK_HZ / 1000);
+                events.push_back(hold);
+                Event release;
+                release.have_buttons = true;
+                release.buttons = 0;
+                events.push_back(release);
+            }
+            else if (strncmp(p, "raw ", 4) == 0)
+            {
+                Event ev;
+                const char *s = p + 4;
+                char *end;
+                while (*s)
+                {
+                    unsigned long v = strtoul(s, &end, 16);
+                    if (end == s) { break; }
+                    ev.raw.push_back(static_cast<uint8_t>(v));
+                    s = end;
+                }
+                events.push_back(ev);
+            }
+            else
+            {
+                fprintf(stderr, "mouse script:%d: unknown directive: %s\n", lineno, p);
+                ok = false;
+            }
+        }
+        fclose(fp);
+        return ok;
+    }
+
+    void service(uint64_t clock_now, PortsState &ports)
+    {
+        while (!events.empty() && clock_now >= resume_clock)
+        {
+            Event &ev = events.front();
+            if (ev.delay_sysclk != 0)
+            {
+                resume_clock = clock_now + ev.delay_sysclk;
+            }
+            else
+            {
+                if (ev.have_move)
+                {
+                    ports.mouse_device.move(ev.dx, ev.dy);
+                }
+                if (ev.have_buttons)
+                {
+                    ports.mouse_device.set_buttons(ev.buttons);
+                }
+                for (uint8_t b : ev.raw)
+                {
+                    ports.mouse.enqueue_byte(clock_now, b);
+                }
+            }
+            events.pop_front();
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Scripted joystick / paddle input (--joystick-in).  Same shape as the PS/2
+// scripts.  Directives, one per line:
+//   # comment
+//   delay MS            wait MS emulated milliseconds
+//   stick1 NAME...      hold exactly these port-1 switches ("none" releases)
+//   stick2 NAME...      same for port 2
+//   paddle-a N          set paddle A knob position, 0..255
+//   paddle-b N          set paddle B knob position
+// Switch names: up down left right fire pin9 pin5 (and "none").
+// ---------------------------------------------------------------------------
+
+struct JoystickScript
+{
+    struct Event
+    {
+        uint64_t delay_sysclk = 0;      // nonzero: pause
+        int      stick = -1;            // 0/1: set that port's pressed mask
+        uint8_t  pressed = 0;
+        int      paddle = -1;           // 0 = A, 1 = B
+        uint8_t  position = 0;
+    };
+
+    std::deque<Event> events;
+    uint64_t resume_clock = 0;
+
+    static bool parse_switches(const char *s, uint8_t &mask)
+    {
+        struct Name { const char *name; uint32_t bit; };
+        static const Name names[] = {
+            { "up",    PORTS_JOYSTICK_PORT_1_UP_MASK },
+            { "down",  PORTS_JOYSTICK_PORT_1_DOWN_MASK },
+            { "left",  PORTS_JOYSTICK_PORT_1_LEFT_MASK },
+            { "right", PORTS_JOYSTICK_PORT_1_RIGHT_MASK },
+            { "fire",  PORTS_JOYSTICK_PORT_1_FIRE_MASK },
+            { "pin9",  PORTS_JOYSTICK_PORT_1_PIN9_MASK },
+            { "pin5",  PORTS_JOYSTICK_PORT_1_PIN5_MASK },
+        };
+        // Port 2 uses the same bit order, so one table serves both.
+        static_assert(PORTS_JOYSTICK_PORT_1_FIRE_MASK == PORTS_JOYSTICK_PORT_2_FIRE_MASK);
+
+        mask = 0;
+        while (*s)
+        {
+            while (*s == ' ' || *s == '\t') { s++; }
+            if (*s == '\0') { break; }
+            size_t len = 0;
+            while (s[len] && s[len] != ' ' && s[len] != '\t') { len++; }
+            bool found = false;
+            if (len == 4 && strncmp(s, "none", 4) == 0)
+            {
+                found = true;
+            }
+            for (const Name &n : names)
+            {
+                if (strlen(n.name) == len && strncmp(s, n.name, len) == 0)
+                {
+                    mask |= static_cast<uint8_t>(n.bit);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                return false;
+            }
+            s += len;
+        }
+        return true;
+    }
+
+    bool load(const char *path)
+    {
+        FILE *fp = fopen(path, "r");
+        if (!fp)
+        {
+            fprintf(stderr, "joystick script: cannot open %s\n", path);
+            return false;
+        }
+        char line[1024];
+        int lineno = 0;
+        bool ok = true;
+        while (fgets(line, sizeof line, fp))
+        {
+            lineno++;
+            char *p = line;
+            while (*p == ' ' || *p == '\t') { p++; }
+            size_t len = strlen(p);
+            while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r')) { p[--len] = '\0'; }
+            if (*p == '\0' || *p == '#') { continue; }
+
+            if (strncmp(p, "delay ", 6) == 0)
+            {
+                Event ev;
+                ev.delay_sysclk = strtoull(p + 6, nullptr, 0) * (SYSCLK_HZ / 1000);
+                events.push_back(ev);
+            }
+            else if (strncmp(p, "stick1 ", 7) == 0 || strncmp(p, "stick2 ", 7) == 0)
+            {
+                Event ev;
+                ev.stick = (p[5] == '1') ? 0 : 1;
+                if (!parse_switches(p + 7, ev.pressed))
+                {
+                    fprintf(stderr, "joystick script:%d: unknown switch name in: %s\n",
+                            lineno, p);
+                    ok = false;
+                    continue;
+                }
+                events.push_back(ev);
+            }
+            else if (strncmp(p, "paddle-a ", 9) == 0 || strncmp(p, "paddle-b ", 9) == 0)
+            {
+                Event ev;
+                ev.paddle = (p[7] == 'a') ? 0 : 1;
+                unsigned long v = strtoul(p + 9, nullptr, 0);
+                if (v > 255)
+                {
+                    fprintf(stderr, "joystick script:%d: paddle position %lu > 255\n",
+                            lineno, v);
+                    ok = false;
+                    continue;
+                }
+                ev.position = static_cast<uint8_t>(v);
+                events.push_back(ev);
+            }
+            else
+            {
+                fprintf(stderr, "joystick script:%d: unknown directive: %s\n", lineno, p);
+                ok = false;
+            }
+        }
+        fclose(fp);
+        return ok;
+    }
+
+    void service(uint64_t clock_now, PortsState &ports)
+    {
+        while (!events.empty() && clock_now >= resume_clock)
+        {
+            Event &ev = events.front();
+            if (ev.delay_sysclk != 0)
+            {
+                resume_clock = clock_now + ev.delay_sysclk;
+            }
+            else if (ev.stick >= 0)
+            {
+                ports.joystick_pressed[ev.stick] = ev.pressed;
+            }
+            else if (ev.paddle >= 0)
+            {
+                PaddleCounter &paddle = (ev.paddle == 0) ? ports.paddle_a : ports.paddle_b;
+                paddle.position = ev.position;
+            }
+            events.pop_front();
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Real-time clock governor
 //
 // Paces emulation to wall-clock speed.  Called every THROTTLE_INTERVAL
@@ -1877,8 +2785,18 @@ class GriffinEmulator : public moira::Moira
     mutable VideoState video;
     mutable EngineState engine;
     mutable PS2State ps2;
+    mutable PS2Keyboard ps2_keyboard;
+    mutable PortsState ports;
     StdinConsole stdin_console;
-    mutable uint8_t dac_value = 0x0;
+
+    // SDL gamepads mapped onto the two joystick ports.  Deliberately NOT the
+    // host keyboard: every key goes to the PS/2 keyboard model, and stealing
+    // keys here would break console input.
+    SDL_Gamepad *gamepads[PortsState::JOYSTICK_PORTS] = {};
+    SDL_JoystickID gamepad_ids[PortsState::JOYSTICK_PORTS] = {};
+
+    // Scanline count already handed to PORTS as LINE_STROBE edges.
+    uint64_t ports_line_count = 0;
 
     static bool is_cf_addr(uint32_t io_offset)
     {
@@ -1890,6 +2808,12 @@ class GriffinEmulator : public moira::Moira
     {
         uint32_t abs = io_offset + IO_BASE;
         return abs >= DUART_BASE && abs < DUART_BASE + DUART_SIZE;
+    }
+
+    static bool is_ports_addr(uint32_t io_offset)
+    {
+        uint32_t abs = io_offset + IO_BASE;
+        return abs >= PORTS_BASE && abs < PORTS_BASE + PORTS_SIZE;
     }
 
     uint8_t IO_read8(uint32_t addr) const
@@ -1925,6 +2849,10 @@ class GriffinEmulator : public moira::Moira
         {
             return ps2.read_reg(addr + IO_BASE);
         }
+        if (is_ports_addr(addr))
+        {
+            return ports.read_reg(addr + IO_BASE);
+        }
         if(debug & DEBUG_IO)
         {
             printf("read of uint8_t at unhandled IO %06X\n", addr + IO_BASE);
@@ -1951,6 +2879,11 @@ class GriffinEmulator : public moira::Moira
         {
             printf("WARNING: 16-bit read from DUART at %06X (firmware should use 8-bit only)\n", addr + IO_BASE);
             return duart.read_reg(addr + IO_BASE, pty_console, pty_console_b);
+        }
+        if (is_ports_addr(addr))
+        {
+            printf("WARNING: 16-bit read from PORTS at %06X (byte registers only)\n", addr + IO_BASE);
+            return ports.read_reg(addr + IO_BASE);
         }
         if(debug & DEBUG_IO)
         {
@@ -1996,8 +2929,9 @@ class GriffinEmulator : public moira::Moira
             // alias to the same TX trigger in the frame model.
             ps2.write_reg(addr + IO_BASE, val, getClock());
             const_cast<GriffinEmulator*>(this)->update_ipl();
-        } else if(addr + IO_BASE >= AUDIO_BASE && addr + IO_BASE < AUDIO_BASE + AUDIO_SIZE) {
-            dac_value = val;
+        } else if(is_ports_addr(addr)) {
+            ports.write_reg(addr + IO_BASE, val, getClock());
+            const_cast<GriffinEmulator*>(this)->update_ipl();
         } else {
             if(debug & DEBUG_IO) {
                 if(isprint(val))
@@ -2032,9 +2966,72 @@ class GriffinEmulator : public moira::Moira
             duart.write_reg(addr + IO_BASE, val & 0xFF, pty_console, pty_console_b);
             return;
         }
+        if (is_ports_addr(addr))
+        {
+            printf("WARNING: 16-bit write 0x%04X to PORTS at %06X (byte registers only)\n", val, addr + IO_BASE);
+            ports.write_reg(addr + IO_BASE, val & 0xFF, getClock());
+            const_cast<GriffinEmulator*>(this)->update_ipl();
+            return;
+        }
         if(debug & DEBUG_IO)
         {
             printf("write of uint16_t %04X at unhandled IO %06X\n", val, addr + IO_BASE);
+        }
+    }
+
+    // --- Direct-bus region (0xC00000-0xCFFFFF) -----------------------------
+    // GLUE decodes the region and emits fully-timed ~IO_RD_EN / ~IO_WR_EN; a
+    // 74155 fans them out by A19:18.  GLUE never touches the data path, so a
+    // read of any quadrant (including AUDIO, which is write-only) sees the
+    // undriven bus.
+
+    uint8_t direct_bus_read8(uint32_t addr) const
+    {
+        if (debug & DEBUG_IO)
+        {
+            printf("read of uint8_t at write-only direct-bus %06X\n", addr);
+        }
+        return 0xFF;
+    }
+
+    uint16_t direct_bus_read16(uint32_t addr) const
+    {
+        if (debug & DEBUG_IO)
+        {
+            printf("read of uint16_t at write-only direct-bus %06X\n", addr);
+        }
+        return 0xFFFF;
+    }
+
+    void direct_bus_write8(uint32_t addr, uint8_t val) const
+    {
+        if (AUDIO.contains(addr))
+        {
+            // ~IO_WR_EN = region & UDS & LDS & ~R/W, so a byte write physically
+            // cannot strobe the 7202s.  Drop it loudly rather than silently
+            // honouring an access the hardware guards against.
+            printf("WARNING: 8-bit write 0x%02X to AUDIO FIFO at %06X dropped"
+                   " (~IO_WR_EN needs UDS and LDS; use a word write)\n",
+                   val, addr);
+            return;
+        }
+        if (debug & DEBUG_IO)
+        {
+            printf("write of uint8_t %02X at unpopulated direct-bus %06X\n", val, addr);
+        }
+    }
+
+    void direct_bus_write16(uint32_t addr, uint16_t val) const
+    {
+        if (AUDIO.contains(addr))
+        {
+            // One stereo pair per full-word write: L = D15-D8, R = D7-D0.
+            ports.audio_fifo_push(val);
+            return;
+        }
+        if (debug & DEBUG_IO)
+        {
+            printf("write of uint16_t %04X at unpopulated direct-bus %06X\n", val, addr);
         }
     }
 
@@ -2049,15 +3046,21 @@ class GriffinEmulator : public moira::Moira
         {
             return ROM_DTACK_PENALTY;
         }
+        // AUDIO is at 0xC00000, BELOW IO_BASE -- its penalty must be tested
+        // outside the IO region, not nested inside it (where it was dead code).
+        if (addr >= AUDIO_BASE && addr < AUDIO_BASE + AUDIO_SIZE)
+        {
+            return AUDIO_DTACK_PENALTY;
+        }
         if (addr >= IO_BASE && addr < IO_BASE + IO_SIZE)
         {
             if (addr >= CF_BASE && addr < CF_BASE + CF_SIZE)
             {
                 return CF_DTACK_PENALTY;
             }
-            if (addr >= AUDIO_BASE && addr < AUDIO_BASE + AUDIO_SIZE)
+            if (addr >= PORTS_BASE && addr < PORTS_BASE + PORTS_SIZE)
             {
-                return AUDIO_DTACK_PENALTY;
+                return PORTS_DTACK_PENALTY;
             }
         }
         return 0;
@@ -2144,15 +3147,27 @@ public:
     }
     ClockGovernor governor;
 
+    // Left-channel R2R DAC level: whatever the 7202 output register last
+    // presented, held between pops.  Feeds the audio.raw capture.
     uint8_t GetAudioDACValue() const
     {
-        return dac_value;
+        return ports.dac_left;
     }
 
     // Scripted keystroke injection (--ps2-in) feeds the PS/2 model directly.
     PS2State &ps2_model() { return ps2; }
 
-    GriffinEmulator() = default;
+    // Scripted mouse (--mouse-in) and joystick/paddle (--joystick-in) input.
+    PortsState &ports_model() { return ports; }
+
+    // Attach each PS/2 frame engine to its channel base and device model here
+    // rather than in an init() the caller could forget: the GLUE channel is a
+    // keyboard, the PORTS channel a mouse, and neither is optional.
+    GriffinEmulator()
+    {
+        ps2.init(GLUE_BASE, ps2_keyboard);
+        ports.init();
+    }
 
     // Full CPU state dump, shared by the unhandled-access abort() paths and
     // the GRIFFIN_DUMP_ON_EXIT env-gated dump at normal exit.
@@ -2216,6 +3231,8 @@ public:
             return RAM[addr];
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return ROM[(addr - ROM_BASE) % ROM_SIZE];
+        } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
+            return direct_bus_read8(addr);
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
             return video.read_reg(addr);
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
@@ -2238,6 +3255,8 @@ public:
             return (RAM[addr] << 8) | RAM[addr + 1];
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return (ROM[(addr - ROM_BASE) % ROM_SIZE] << 8) | ROM[(addr - ROM_BASE + 1) % ROM_SIZE];
+        } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
+            return direct_bus_read16(addr);
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
             return (video.read_reg(addr) << 8) | video.read_reg(addr + 1);
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
@@ -2258,6 +3277,8 @@ public:
             RAM[addr] = val;
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
+        } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
+            direct_bus_write8(addr, val);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write8(addr - IO_BASE, val);
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
@@ -2283,6 +3304,8 @@ public:
             RAM[addr + 1] = low;
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
+        } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
+            direct_bus_write16(addr, val);
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
             // VIDEO has only 8-bit registers now (palette is in-band via the
             // FIFO); route a word write to the low byte like ENGINE.
@@ -2348,9 +3371,27 @@ public:
         return stdin_console.open();
     }
 
-    bool init_ps2()
+    // Interactive joystick input comes from SDL gamepads.  Only meaningful
+    // when SDL is up (i.e. not headless); scripted input needs none of this.
+    bool init_gamepads()
     {
-        return ps2.init();
+        if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
+        {
+            fprintf(stderr, "SDL gamepad init failed: %s\n", SDL_GetError());
+            return false;
+        }
+        return true;
+    }
+
+    ~GriffinEmulator()
+    {
+        for (SDL_Gamepad *pad : gamepads)
+        {
+            if (pad)
+            {
+                SDL_CloseGamepad(pad);
+            }
+        }
     }
 
     bool init_video(bool headless = false, bool want_pixels = true)
@@ -2418,11 +3459,134 @@ public:
                     ps2.enqueue_byte(getClock(), static_cast<uint8_t>(code & 0xFFu));
                 }
             }
+            else
+            {
+                handle_gamepad_event(ev);
+            }
         }
 
         duart.check_timer(getClock());
         ps2.check_timer(getClock());
+        ports.check_timer(getClock());
         update_ipl();
+    }
+
+    // Map an SDL gamepad onto a Griffin DE-9 joystick port.  Gamepad 0 becomes
+    // port 1 and gamepad 1 port 2; the left stick's X axis also drives paddle
+    // A and the right stick's paddle B, so a pad exercises the paddle counters
+    // too.  Host keyboard keys are deliberately not used: they all belong to
+    // the PS/2 keyboard model.
+    int gamepad_port(SDL_JoystickID which) const
+    {
+        for (int i = 0; i < PortsState::JOYSTICK_PORTS; i++)
+        {
+            if (gamepads[i] && gamepad_ids[i] == which)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    void handle_gamepad_event(const SDL_Event &ev)
+    {
+        static constexpr int AXIS_DEADZONE = 12000;
+
+        if (ev.type == SDL_EVENT_GAMEPAD_ADDED)
+        {
+            for (int i = 0; i < PortsState::JOYSTICK_PORTS; i++)
+            {
+                if (!gamepads[i])
+                {
+                    gamepads[i] = SDL_OpenGamepad(ev.gdevice.which);
+                    if (gamepads[i])
+                    {
+                        gamepad_ids[i] = ev.gdevice.which;
+                        fprintf(stderr, "Gamepad on joystick port %d: %s\n",
+                                i + 1, SDL_GetGamepadName(gamepads[i]));
+                    }
+                    return;
+                }
+            }
+            return;
+        }
+        if (ev.type == SDL_EVENT_GAMEPAD_REMOVED)
+        {
+            int port = gamepad_port(ev.gdevice.which);
+            if (port >= 0)
+            {
+                SDL_CloseGamepad(gamepads[port]);
+                gamepads[port] = nullptr;
+                ports.joystick_pressed[port] = 0;
+            }
+            return;
+        }
+        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN
+            || ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP)
+        {
+            int port = gamepad_port(ev.gbutton.which);
+            if (port < 0)
+            {
+                return;
+            }
+            uint8_t bit = 0;
+            switch (ev.gbutton.button)
+            {
+                case SDL_GAMEPAD_BUTTON_DPAD_UP:    bit = PORTS_JOYSTICK_PORT_1_UP_MASK; break;
+                case SDL_GAMEPAD_BUTTON_DPAD_DOWN:  bit = PORTS_JOYSTICK_PORT_1_DOWN_MASK; break;
+                case SDL_GAMEPAD_BUTTON_DPAD_LEFT:  bit = PORTS_JOYSTICK_PORT_1_LEFT_MASK; break;
+                case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: bit = PORTS_JOYSTICK_PORT_1_RIGHT_MASK; break;
+                case SDL_GAMEPAD_BUTTON_SOUTH:      bit = PORTS_JOYSTICK_PORT_1_FIRE_MASK; break;
+                case SDL_GAMEPAD_BUTTON_EAST:       bit = PORTS_JOYSTICK_PORT_1_PIN9_MASK; break;
+                default: return;
+            }
+            if (ev.gbutton.down)
+            {
+                ports.joystick_pressed[port] |= bit;
+            }
+            else
+            {
+                ports.joystick_pressed[port] &= static_cast<uint8_t>(~bit);
+            }
+            return;
+        }
+        if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION)
+        {
+            int port = gamepad_port(ev.gaxis.which);
+            if (port < 0)
+            {
+                return;
+            }
+            // Sticks map to the paddle knobs; the D-pad already covers the
+            // digital directions.
+            if (port == 0 && ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX)
+            {
+                ports.paddle_a.position =
+                    static_cast<uint8_t>((ev.gaxis.value + 32768) >> 8);
+            }
+            else if (port == 0 && ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHTX)
+            {
+                ports.paddle_b.position =
+                    static_cast<uint8_t>((ev.gaxis.value + 32768) >> 8);
+            }
+            else if (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY)
+            {
+                uint8_t up = PORTS_JOYSTICK_PORT_1_UP_MASK;
+                uint8_t down = PORTS_JOYSTICK_PORT_1_DOWN_MASK;
+                ports.joystick_pressed[port] &= static_cast<uint8_t>(~(up | down));
+                if (ev.gaxis.value < -AXIS_DEADZONE) { ports.joystick_pressed[port] |= up; }
+                if (ev.gaxis.value >  AXIS_DEADZONE) { ports.joystick_pressed[port] |= down; }
+            }
+            else if (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX)
+            {
+                // Port 2 has no paddles, so its left stick is digital L/R.
+                uint8_t left = PORTS_JOYSTICK_PORT_1_LEFT_MASK;
+                uint8_t right = PORTS_JOYSTICK_PORT_1_RIGHT_MASK;
+                ports.joystick_pressed[port] &= static_cast<uint8_t>(~(left | right));
+                if (ev.gaxis.value < -AXIS_DEADZONE) { ports.joystick_pressed[port] |= left; }
+                if (ev.gaxis.value >  AXIS_DEADZONE) { ports.joystick_pressed[port] |= right; }
+            }
+        }
     }
 
     // Advance the video scanline timer.  Must be called every CPU step, not
@@ -2511,6 +3675,15 @@ public:
                 }
             }
         }
+
+        // LINE_STROBE: hand PORTS exactly the HSYNC edges VIDEO just emitted.
+        // PORTS has no timer of its own by design, so this is its only clock
+        // for the paddle counters and the /2 audio FIFO pop.
+        if (video.line_count != ports_line_count)
+        {
+            ports.line_ticks(static_cast<uint32_t>(video.line_count - ports_line_count));
+            ports_line_count = video.line_count;
+        }
         update_ipl();
     }
 
@@ -2523,6 +3696,10 @@ public:
             setIPL(DUART_IRQ_LEVEL);
         } else if (ps2.irq_pending()) {
             setIPL(GLUE_IRQ_LEVEL);
+        } else if (ports.irq_pending()) {
+            // Lowest of the four CPLDs: below ENGINE's level 3.
+            static_assert(PORTS_IRQ_LEVEL < ENGINE_IRQ_LEVEL);
+            setIPL(PORTS_IRQ_LEVEL);
         } else {
             setIPL(0);
         }
@@ -2622,6 +3799,13 @@ void usage(const char *progname)
     printf("  --console-out FILE            write DUART console output to FILE\n");
     printf("  --ps2-in FILE                 inject PS/2 keystrokes from a script file\n");
     printf("                                (directives: delay MS | text STRING | raw HH..)\n");
+    printf("  --mouse-in FILE               inject PS/2 mouse input from a script file\n");
+    printf("                                (directives: delay MS | move DX DY |\n");
+    printf("                                 button LMR|none | click L | raw HH..)\n");
+    printf("  --joystick-in FILE            inject joystick/paddle input from a script file\n");
+    printf("                                (directives: delay MS | stick1 NAMES |\n");
+    printf("                                 stick2 NAMES | paddle-a N | paddle-b N;\n");
+    printf("                                 names: up down left right fire pin9 pin5 none)\n");
     printf("  --serialb-pty                 DUART channel B on a fresh host pty (path printed)\n");
     printf("  --serialb-dev PATH            DUART channel B on an existing device (e.g. a\n");
     printf("                                socat pty bridge to a persistent host pppd)\n");
@@ -2646,6 +3830,8 @@ int main(int argc, const char** argv)
     const char *console_in_path = nullptr;
     const char *console_out_path = nullptr;
     const char *ps2_in_path = nullptr;
+    const char *mouse_in_path = nullptr;
+    const char *joystick_in_path = nullptr;
     bool serialb_pty = false;
     const char *serialb_dev_path = nullptr;
     const char *serialb_in_path = nullptr;
@@ -2702,6 +3888,22 @@ int main(int argc, const char** argv)
                 exit(EXIT_FAILURE);
             }
             ps2_in_path = argv[1];
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--mouse-in") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--mouse-in option requires a file path.\n");
+                exit(EXIT_FAILURE);
+            }
+            mouse_in_path = argv[1];
+            argv += 2;
+            argc -= 2;
+        } else if(strcmp(argv[0], "--joystick-in") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--joystick-in option requires a file path.\n");
+                exit(EXIT_FAILURE);
+            }
+            joystick_in_path = argv[1];
             argv += 2;
             argc -= 2;
         } else if(strcmp(argv[0], "--serialb-pty") == 0) {
@@ -2786,6 +3988,18 @@ int main(int argc, const char** argv)
 
     PS2Script ps2_script;
     if (ps2_in_path && !ps2_script.load(ps2_in_path))
+    {
+        exit(EXIT_FAILURE);
+    }
+
+    MouseScript mouse_script;
+    if (mouse_in_path && !mouse_script.load(mouse_in_path))
+    {
+        exit(EXIT_FAILURE);
+    }
+
+    JoystickScript joystick_script;
+    if (joystick_in_path && !joystick_script.load(joystick_in_path))
     {
         exit(EXIT_FAILURE);
     }
@@ -2893,6 +4107,12 @@ int main(int argc, const char** argv)
     {
         fprintf(stderr, "Warning: SDL/Video init failed, display disabled\n");
     }
+    else if (!headless)
+    {
+        // Gamepads are the interactive joystick source; headless runs use
+        // --joystick-in instead and need no SDL at all.
+        emulator.init_gamepads();
+    }
 
     SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
 
@@ -2978,6 +4198,8 @@ int main(int argc, const char** argv)
         if (clock_now - previous_io_poll >= IO_POLL_INTERVAL)
         {
             ps2_script.service(clock_now, emulator.ps2_model());
+            mouse_script.service(clock_now, emulator.ports_model());
+            joystick_script.service(clock_now, emulator.ports_model());
             emulator.poll_io();
             if (emulator.exit_requested)
             {

@@ -37,6 +37,8 @@ peripherals:
         bits:
           - { bit: "0", name: ROM_OVERLAY_DISABLE, default: 0,
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
+          - { bit: "1", name: FLASH_WE_EN, default: 0,
+              description: "Write 1 to enable the ~ROM_WE strobe so ROM-window word writes reach the flash (JEDEC program/erase); 0 write-protects flash" }
       - offset: 0x09
         name: PS2_TX_DATA
         access: write
@@ -80,7 +82,7 @@ peripherals:
           - { bit: "5", name: DATA_LIVE,
               description: "Unlatched synchronized PS2_DATA pin state (debug)" }
           - { bit: "6", name: CLK_LIVE,
-              description: "Unlatched synchronized PS2_CLK pin state (debug)" }
+              description: "Debounced PS2_CLK level the frame engine clocks on, not the raw pin (debug)" }
       - offset: 0x11
         name: PS2_CLEAR
         access: write
@@ -114,19 +116,57 @@ peripherals:
         bits:
           - { bit: "7:0", name: DATA, description: "Received scancode byte (LSB-first on the wire)" }
 
-  # Rev 2 ROM (see griffin.md "Rev 2 components"): 2x W27C512 (64Kx8, DIP-28,
-  # socketed bin parts), one per byte lane = 128KB on the 16-bit bus.
-  # Bench-programmed only -- no in-circuit write path; firmware iteration is
-  # serial/CF load.  Decode is just A23 & ~A22 (2 literals): the 128KB image
-  # mirrors 32x through the 4MB window at 0x800000-0xBFFFFF.  At reset the ROM
+  # Rev 2 ROM (see griffin.md "Rev 2 components"): 2x SST39SF040 (512Kx8,
+  # DIP-32, socketed), one per byte lane = 1MB on the 16-bit bus.  These are
+  # 5V-only NOR flash: 4.5-5.5V for read AND program/erase, Vpp generated
+  # on-chip, so the bench programmer (TL866II+, device "SST39SF040", DIP-32)
+  # needs no adapter and no high-voltage supply.  Decode is unchanged from the
+  # W27C512 build it replaces -- just A23 & ~A22 (2 literals): the 1MB image
+  # mirrors 4x through the 4MB window at 0x800000-0xBFFFFF.  At reset the ROM
   # is also overlaid over RAM bank 1 until GLUE CONFIG bit ROM_OVERLAY_DISABLE
   # is set.  (All peripherals live in the other upper region, A23 & A22.)
+  #
+  # In-circuit reflash: GLUE drives ~ROM_WE to both chips' WE#, asserted only
+  # for (A23 & ~A22) & ~R/W & AS & UDS & LDS & CONFIG.FLASH_WE_EN.  Three
+  # things fall out of that qualification, all deliberate.  Requiring BOTH data
+  # strobes means only word writes make a strobe, so a stray byte write cannot
+  # feed a command to one x8 chip and desync the pair.  Qualifying on the raw
+  # ROM region rather than nROM_SELECT means writes through the boot overlay at
+  # 0x000000 never reach the flash, whatever the overlay bit says.  And
+  # FLASH_WE_EN resets to 0, so firmware must deliberately unlock GLUE before
+  # any write can get through at all.
+  #
+  # The two chips are driven as a pair and each runs its own byte-program on
+  # its own lane, so every JEDEC command byte is duplicated into both halves of
+  # a word: the unlock pair is word 0xAAAA to 0x80AAAA then 0x5555 to 0x805554.
+  # Byte program is unlock + 0xA0A0 to 0x80AAAA + the data word at its address.
+  # Sector erase is unlock + 0x8080 + unlock again + 0x3030 at any address in
+  # the target sector; chip erase is the same but 0x1010 to 0x80AAAA last --
+  # note both erases need the unlock pair twice, six write cycles total.
+  # The parts decode only chip A14:0 for the command sequence, so
+  # the upper address bits are don't-care and the ROM base drops out of the
+  # arithmetic; chip 0x5555/0x2AAA land at CPU 0x80AAAA/0x805554 because chip
+  # A0 is CPU A1.  A single word write then programs both bytes in parallel;
+  # poll DQ7 (Data# polling) or DQ6 (toggle bit) in each lane independently
+  # until both agree.  Sector erase is 4KB per chip = 8KB of CPU address space,
+  # 8KB aligned.  Software Data Protection is permanently enabled on these
+  # parts, so no write can take effect without the full unlock sequence.
+  #
+  # The flasher must run from RAM (linker section .ramtext) with the overlay
+  # already disabled: during an embedded program or erase the flash returns
+  # status rather than instructions, so an instruction or vector fetch out of
+  # the ROM window mid-operation reads garbage.  Interrupts may stay enabled
+  # only because the vector table and the hot ISRs are already in RAM and video
+  # DMA only touches the framebuffer -- no handler may touch the ROM window.
+  # Endurance is 10,000 cycles minimum (100,000 typical), and because the parts
+  # are socketed a bricked image is recovered by pulling them and reprogramming
+  # on the bench -- there is no bus-master bootstrap path in Rev 2.
   ROM:
-    part: "2x W27C512 (64Kx8 DIP-28, socketed; 128KB total)"
+    part: "2x SST39SF040-70 (512Kx8 DIP-32 5V NOR flash, socketed; 1MB total)"
     address_range:
       base: 0x800000
-      size: 0x020000    # 128KB of actual ROM (2x 64KB, one per byte lane)
-      window: 0x400000  # 4MB decode window; the image mirrors 32x within it
+      size: 0x100000    # 1MB of actual ROM (2x 512KB, one per byte lane)
+      window: 0x400000  # 4MB decode window; the image mirrors 4x within it
       width: 16
     dtack:
       - 12000000: 1
@@ -203,10 +243,12 @@ peripherals:
     linker:
       section: ram
 
-  # Rev 2: ENGINE self-decodes its MMIO select -- as bus master it already
-  # owns A, D, AS, and R/W pins, so it watches the bus for its own region
-  # instead of receiving nENGINE_SELECT from GLUE (frees one GLUE pin;
-  # verify the added decode fits ENGINE at HDL time).
+  # ENGINE takes nENGINE_SELECT from GLUE.  Self-decoding was considered for
+  # Rev 2 (as bus master ENGINE already owns A, D, AS and R/W, so it could
+  # watch the bus for its own region and free a GLUE pin) but was never built,
+  # and the 2026-07-30 pinout freeze settled it: GLUE drives nENGINE_SELECT on
+  # its pin 39 and ENGINE consumes it on pin 84, both in frozen //PIN: blocks,
+  # so the net is committed for Rev 2.  Revisiting it is a board respin.
   ENGINE:
     part: ATF1508AS
     description: "Video framebuffer DMA engine with 7200 FIFO write interface"
@@ -489,7 +531,7 @@ peripherals:
           - { bit: "5", name: DATA_LIVE,
               description: "Unlatched synchronized PS2_MOUSE_DATA pin state (debug)" }
           - { bit: "6", name: CLK_LIVE,
-              description: "Unlatched synchronized PS2_MOUSE_CLK pin state (debug)" }
+              description: "Debounced PS2_MOUSE_CLK level the frame engine clocks on, not the raw pin (debug)" }
       - offset: 0x11
         name: PS2_MOUSE_CLEAR
         access: write

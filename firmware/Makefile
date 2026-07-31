@@ -2,7 +2,7 @@ M68K_GCC = ./m68k-gcc
 M68K_GXX = ./m68k-g++
 M68K_OBJCOPY = ./m68k-objcopy
 
-CPP_SOURCES = rom.cpp ps2.cpp keymap.cpp textport.cpp vt102.cpp early_log.cpp splash.cpp \
+CPP_SOURCES = rom.cpp ps2.cpp ports.cpp mouse.cpp keymap.cpp textport.cpp vt102.cpp early_log.cpp splash.cpp \
               syscall_dispatch.cpp loader.cpp \
               font_8x16.cpp font_8x8.cpp font_6x10.cpp
 # splash.cpp

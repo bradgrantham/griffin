@@ -509,8 +509,11 @@ def write_verilog_include(hw: dict, path: Path) -> None:
                 bname  = bf['name']
                 mask   = bit_mask(hi, lo)
                 width  = hi - lo + 1
+                # The mask is register-positioned, so its literal needs hi+1
+                # bits, not the field width -- sizing it as {width} truncates
+                # every field that does not start at bit 0 (1'h02 reads as 0).
                 prefix = f"{pname}_{rname}" if (rname == bname or rname.endswith('_' + bname)) else f"{pname}_{rname}_{bname}"
-                w(f"`define {prefix}_MASK  {width}'h{mask:02X}")
+                w(f"`define {prefix}_MASK  {hi + 1}'h{mask:02X}")
                 w(f"`define {prefix}_SHIFT {lo}")
 
                 for ev in bf.get('values', []):

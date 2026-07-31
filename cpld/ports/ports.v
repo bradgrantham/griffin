@@ -1,49 +1,38 @@
-// ports.v — Griffin PORTS peripheral CPLD — FIT EXPERIMENT
+// ports.v — Griffin PORTS peripheral CPLD (ATF1508AS PLCC84)
 //
-// NOT wired to any manufactured pinout; pins are left for the fitter to
-// place (no //PIN: lines, fit with -preassign ignore) so we can measure the
-// logic-cell / FF / product-term cost of each feature combination on the
-// ATF1508AS (128 macrocells) and the smaller ATF1504AS (64 macrocells).
+// The fourth CPLD of the Rev 2 design, a peer of GLUE / VIDEO / ENGINE at
+// 0xFC0000, autovector level 2.  It collects the human-interface peripherals
+// that have no home elsewhere:
 //
-// PORTS is a proposed peer of GLUE / VIDEO / ENGINE that collects the
-// human-interface peripherals so the PS/2 engine can leave GLUE (it costs
-// ~51 of GLUE's flip-flops, and a second PS/2 port never fit there):
-//
-//   1. Two PS/2 frame engines (keyboard + mouse), each an exact port of the
-//      GLUE engine (glue.v:256-405): half-duplex, debounced-CLK falling-edge
-//      driven, one IRQ per byte, open-drain CLK/DATA.
-//   2. Two Atari-2600-style joystick ports read as bytes (retires the two
-//      74HCT245 transceivers).
+//   1. A PS/2 *mouse* frame engine, a line-by-line port of GLUE's keyboard
+//      engine (see Ps2Channel below): half-duplex, debounced-CLK
+//      falling-edge driven, one IRQ per byte, open-drain CLK/DATA.  The
+//      keyboard channel stays in GLUE — it already fits there, and a second
+//      PS/2 engine demonstrably does not.
+//   2. Two Atari-2600-style joystick ports read as bytes (this retires the
+//      rev-1 74HCT245 transceiver pair).
 //   3. Two paddle position counters: 8-bit saturating upcounters clocked by
-//      a GLUE-sourced tick while the pot comparator sense is still low, with
-//      a CPU-controlled dump bit that drives the discharge FET and holds the
-//      counters at zero (retires the two 74HC590s and the DUART OP4/OP5 use).
-//   4. [PORTS_AUDIO] the audio.v function set — 12-bit sample-rate divider
-//      driving the 7202 FIFO read strobe, plus the latched/clearable /HF IRQ.
-//   5. [PORTS_LINE_STROBE / PORTS_AUDIO_POP] the same FIFO pop and /HF IRQ,
-//      but timed off the VGA line rate tapped from VIDEO instead of a
-//      programmable divider — no divider registers, no counter.
+//      the VGA line tick while the pot comparator sense is still low, plus a
+//      CPU-controlled dump bit that drives the discharge FET and holds the
+//      counters at zero (this retires the two 74HC590s and the rev-1 DUART
+//      OP4/OP5 dump/clear dance).
+//   4. The audio FIFO pop strobe and the latched half-full IRQ.  The pop is
+//      timed off VIDEO's HSYNC tap divided by two, so there is no divider
+//      register and no counter — one enable bit and one IRQ latch.
 //
-// Everything is `ifdef`-gated so one source produces the whole ladder of
-// fit configurations (see cpld/ports/ports_<config>.v wrappers):
+// PORTS does not write the audio FIFOs: ~AUDIO_W comes from the board-level
+// 74155 gated by GLUE's ~IO_WR_EN (griffin.yml AUDIO), so the only audio pins
+// here are the 7202 pair's half-full flag and their shared read strobe.
 //
-//   PORTS_KEYBOARD       PS/2 keyboard channel
-//   PORTS_MOUSE          PS/2 mouse channel
-//   PORTS_JOYSTICK       two joystick port reads
-//   PORTS_PADDLE         two paddle counters + dump control
-//   PORTS_SLOW_DEBOUNCE  PS/2 CLK debounced on a slow GLUE tick (2 samples
-//                        instead of 4 free-running samples; -2 FF/channel)
-//   PORTS_AUDIO          audio.v divider + /HF IRQ (stretch configuration)
-//   PORTS_LINE_STROBE    VGA HSYNC tap: line tick (paddle clock) + /2 audio
-//                        pop phase
-//   PORTS_AUDIO_POP      7202 pop strobe on the /2 line tick + /HF IRQ
-//                        (requires PORTS_LINE_STROBE; mutually exclusive with
-//                        PORTS_AUDIO, which owns the same FIFO pins)
+// No nDTACK here: GLUE decodes the region, hands over the cycle-qualified
+// ~PORTS_SELECT, and answers threshold DTACK for it, exactly as it does for
+// the CF slot.  PORTS has no bus timing of its own.
 //
-// No nDTACK here: GLUE owns threshold DTACK for this region, as it does for
-// the CF slot.  GLUE also supplies the cycle-qualified nPORTS_SELECT and the
-// paddle/debounce ticks (it has room for a free-running prescaler once the
-// PS/2 engine moves out).
+// Register map is griffin.yml's PORTS block, decoded from the generated
+// defines below.  The mouse offsets deliberately match GLUE's keyboard
+// offsets so one base-parameterized firmware driver serves both channels.
+
+`include "../../griffin.generated.vh"
 
 (* top *)
 module ports
@@ -61,46 +50,19 @@ module ports
     input  wire       R_nW,
     inout  wire [7:0] D,
 
-`ifdef PORTS_PADDLE
- `ifndef PORTS_LINE_STROBE
-    // 1-SYSCLK-wide pulse at SYSCLK/512 (~27.3 kHz) from GLUE.  A full-scale
-    // 8-bit paddle ramp is 256 ticks ~= 9.3 ms, inside one frame time.
-    // Not declared when PORTS_LINE_STROBE is on: the paddles then count on
-    // the VGA line tick instead, and GLUE needs no prescaler at all.
-    input  wire       PORTS_TICK,
- `endif
-    output wire       PADDLE_DUMP,       // gate of the paddle discharge FET
-`endif
-
-`ifdef PORTS_LINE_STROBE
     // VGA HSYNC tapped from VIDEO.  Pixel-clock domain, ASYNCHRONOUS to
     // SYSCLK, and it pulses once per scanline (~31.469 kHz) including through
     // blanking, so it is a free constant-rate timebase for both the paddle
     // counters and the audio FIFO pop.  Only the rate matters here; the edge
     // chosen below is the falling edge of the active-low HSYNC pulse.
     input  wire       LINE_STROBE,
-`endif
 
-`ifdef PORTS_SLOW_DEBOUNCE
-    // 1-SYSCLK-wide pulse at ~SYSCLK/8 (~571 ns) from GLUE, used as the PS/2
-    // CLK sample enable.  The ~120 ns line ringing cannot span two samples
-    // that far apart, so a 2-sample window replaces the 4-sample one.
-    input  wire       PORTS_SAMPLE_TICK,
-`endif
-
-`ifdef PORTS_KEYBOARD
-    inout  wire       PS2_KEYBOARD_CLK,  // open-drain, external pull-ups
-    inout  wire       PS2_KEYBOARD_DATA,
-`endif
-
-`ifdef PORTS_MOUSE
-    inout  wire       PS2_MOUSE_CLK,
+    inout  wire       PS2_MOUSE_CLK,     // open-drain, external pull-ups
     inout  wire       PS2_MOUSE_DATA,
-`endif
 
-`ifdef PORTS_JOYSTICK
     // DE-9 switch inputs, active low (0 = closed).  PIN9/PIN5 of port 1 are
-    // also the paddle pot comparator levels when the paddles are fitted.
+    // also the paddle pot comparator levels — the paddles need no pins of
+    // their own.
     input  wire       JOYSTICK_1_UP,
     input  wire       JOYSTICK_1_DOWN,
     input  wire       JOYSTICK_1_LEFT,
@@ -115,35 +77,11 @@ module ports
     input  wire       JOYSTICK_2_FIRE,
     input  wire       JOYSTICK_2_PIN9,
     input  wire       JOYSTICK_2_PIN5,
-`endif
 
-`ifdef PORTS_PADDLE
- `ifndef PORTS_JOYSTICK
-    // Paddle-only build: the pot comparator levels need their own pins.
-    // With PORTS_JOYSTICK they share JOYSTICK_1_PIN9 / JOYSTICK_1_PIN5.
-    input  wire       PADDLE_A_SENSE,
-    input  wire       PADDLE_B_SENSE,
- `endif
-`endif
+    output wire       PADDLE_DUMP,       // gate of the paddle discharge FET
 
-`ifdef PORTS_AUDIO
-    // audio.v function set.  A5 widens the register space (A5=1 selects the
-    // audio registers at 0x21-0x27); A17 splits the region so the high half
-    // is the FIFO write alias that a plain memcpy can stream into.
-    input  wire       A5,
-    input  wire       A17,
-    input  wire       nUDS,
-    input  wire       nFIFO_HF,
-    output wire       nFIFO_W,
-    output wire       nFIFO_RE,
-`else
- `ifdef PORTS_AUDIO_POP
-    // Line-rate FIFO pop: no write strobe and no divider registers, so the
-    // only audio pins are the 7202 half-full flag and the shared read strobe.
-    input  wire       nFIFO_HF,
-    output wire       nFIFO_RE,
- `endif
-`endif
+    input  wire       nFIFO_HF,          // 7202 pair half-full flag
+    output wire       nFIFO_RE,          // 7202 pair read strobe
 
     output wire       nPORTS_IRQ         // push-pull, into GLUE's IPL encoder
 );
@@ -152,104 +90,56 @@ module ports
     wire select = ~nPORTS_SELECT;
 
     // ----------------------------------------------------------------
-    // Register decode.  Byte registers on odd addresses; the word slot is
-    // A[4:1].  A[4] picks the PS/2 channel so the mouse map is the keyboard
-    // map + 0x10.  With PORTS_AUDIO the low half of the region (A17=0) is
-    // registers and A5 picks PORTS (0) vs audio (1) registers.
+    // Register decode (griffin.yml PORTS).  Byte registers on odd addresses;
+    // the word slot is A[4:1].
     //
-    //   0x01/0x03  W  PS2_KEYBOARD_TX_DATA (A[1] = odd parity; write arms TX)
-    //   0x05       R  PS2_KEYBOARD_STATUS  W  PS2_KEYBOARD_CLEAR (W1C)
-    //   0x07       W  PS2_KEYBOARD_CTRL    (bit0 CLK low, bit1 DATA low)
-    //   0x09       R  PS2_KEYBOARD_RX_DATA
-    //   0x0B/0x0D  R  JOYSTICK_PORT_1 / JOYSTICK_PORT_2
-    //   0x0F       W  PADDLE_CONTROL       (bit0 DUMP)
-    //   0x11-0x19     mouse channel, keyboard layout + 0x10
-    //   0x1B/0x1D  R  PADDLE_A_COUNT / PADDLE_B_COUNT
-    //   0x1F       R  AUDIO_STATUS  W  AUDIO_CONTROL   [PORTS_AUDIO_POP]
-    //   0x21-0x27     [PORTS_AUDIO] DIVLO / DIVHI / CTRL+STATUS / CLRINT
+    //   0x01       R  JOYSTICK_PORT_1
+    //   0x03       R  JOYSTICK_PORT_2
+    //   0x05       R  PADDLE_A_COUNT
+    //   0x07       R  PADDLE_B_COUNT
+    //   0x09/0x0B  W  PS2_MOUSE_TX_DATA  (A[1] = odd parity; write arms TX)
+    //   0x0F       W  PADDLE_CONTROL     (bit0 DUMP)
+    //   0x11       R  PS2_MOUSE_STATUS   W  PS2_MOUSE_CLEAR (W1C)
+    //   0x13       W  PS2_MOUSE_CTRL     (bit0 CLK low, bit1 DATA low)
+    //   0x15       R  PS2_MOUSE_RX_DATA
+    //   0x1F       R  AUDIO_STATUS       W  AUDIO_CONTROL
     // ----------------------------------------------------------------
-    localparam [4:1] SLOT_KEYBOARD_STATUS   = 4'd2;    // 0x05
-    localparam [4:1] SLOT_KEYBOARD_CONTROL  = 4'd3;    // 0x07
-    localparam [4:1] SLOT_KEYBOARD_RECEIVE  = 4'd4;    // 0x09
-    localparam [4:1] SLOT_JOYSTICK_1        = 4'd5;    // 0x0B
-    localparam [4:1] SLOT_JOYSTICK_2        = 4'd6;    // 0x0D
-    localparam [4:1] SLOT_PADDLE_CONTROL    = 4'd7;    // 0x0F
-    localparam [4:1] SLOT_MOUSE_STATUS      = 4'd10;   // 0x15
-    localparam [4:1] SLOT_MOUSE_CONTROL     = 4'd11;   // 0x17
-    localparam [4:1] SLOT_MOUSE_RECEIVE     = 4'd12;   // 0x19
-    localparam [4:1] SLOT_PADDLE_A_COUNT    = 4'd13;   // 0x1B
-    localparam [4:1] SLOT_PADDLE_B_COUNT    = 4'd14;   // 0x1D
-    localparam [4:1] SLOT_AUDIO_POP         = 4'd15;   // 0x1F W control/R status
+    localparam [23:0] JOYSTICK_PORT_1_ADDR   = `PORTS_JOYSTICK_PORT_1;
+    localparam [23:0] JOYSTICK_PORT_2_ADDR   = `PORTS_JOYSTICK_PORT_2;
+    localparam [23:0] PADDLE_A_COUNT_ADDR    = `PORTS_PADDLE_A_COUNT;
+    localparam [23:0] PADDLE_B_COUNT_ADDR    = `PORTS_PADDLE_B_COUNT;
+    localparam [23:0] PS2_MOUSE_TX_DATA_ADDR = `PORTS_PS2_MOUSE_TX_DATA;
+    localparam [23:0] PADDLE_CONTROL_ADDR    = `PORTS_PADDLE_CONTROL;
+    // PS2_MOUSE_STATUS and PS2_MOUSE_CLEAR are the R/W sides of one slot,
+    // as are AUDIO_STATUS and AUDIO_CONTROL.
+    localparam [23:0] PS2_MOUSE_STATUS_ADDR  = `PORTS_PS2_MOUSE_STATUS;
+    localparam [23:0] PS2_MOUSE_CTRL_ADDR    = `PORTS_PS2_MOUSE_CTRL;
+    localparam [23:0] PS2_MOUSE_RX_DATA_ADDR = `PORTS_PS2_MOUSE_RX_DATA;
+    localparam [23:0] AUDIO_CONTROL_ADDR     = `PORTS_AUDIO_CONTROL;
 
-    // The TX_DATA slot pair (0x01/0x03 and 0x11/0x13) is decoded on A[4:2];
-    // A[1] carries the firmware-computed odd parity bit into the frame.
-    localparam [4:2] SLOT_GROUP_KEYBOARD_TRANSMIT = 3'd0;
-    localparam [4:2] SLOT_GROUP_MOUSE_TRANSMIT    = 3'd4;
-
-`ifdef PORTS_AUDIO
-    localparam [4:1] SLOT_AUDIO_DIVIDER_LOW  = 4'd0;   // 0x21
-    localparam [4:1] SLOT_AUDIO_DIVIDER_HIGH = 4'd1;   // 0x23
-    localparam [4:1] SLOT_AUDIO_CONTROL      = 4'd2;   // 0x25 W control/R status
-    localparam [4:1] SLOT_AUDIO_CLEAR_IRQ    = 4'd3;   // 0x27
-
-    wire register_access = select & ~A17 & ~nLDS;
-    wire ports_access    = register_access & ~A5;
-    wire audio_access    = register_access &  A5;
-    wire audio_write     = audio_access & ~R_nW;
-    wire audio_read      = audio_access &  R_nW;
-`else
     wire register_access = select & ~nLDS;
-    wire ports_access    = register_access;
-`endif
-
-    wire ports_write = ports_access & ~R_nW;
-    wire ports_read  = ports_access &  R_nW;
+    wire ports_write     = register_access & ~R_nW;
+    wire ports_read      = register_access &  R_nW;
 
     // ----------------------------------------------------------------
-    // PS/2 keyboard channel
+    // PS/2 mouse channel.  Register offsets are GLUE's keyboard offsets, so
+    // firmware's ps2.cpp serves this channel with a different base and
+    // nothing else.
     // ----------------------------------------------------------------
-`ifdef PORTS_KEYBOARD
-    wire keyboard_transmit_write_select = ports_write
-                                          & (A[4:2] == SLOT_GROUP_KEYBOARD_TRANSMIT);
-    wire keyboard_clear_write_select    = ports_write & (A == SLOT_KEYBOARD_STATUS);
-    wire keyboard_control_write_select  = ports_write & (A == SLOT_KEYBOARD_CONTROL);
-    wire keyboard_status_read_select    = ports_read  & (A == SLOT_KEYBOARD_STATUS);
-    wire keyboard_receive_read_select   = ports_read  & (A == SLOT_KEYBOARD_RECEIVE);
-
-    wire [7:0] keyboard_status;
-    wire [7:0] keyboard_receive_byte;
-    wire       keyboard_interrupt_request;
-
-    Ps2Channel keyboardChannel
-    (
-        .SYSCLK                     (SYSCLK),
-        .reset                      (reset),
-`ifdef PORTS_SLOW_DEBOUNCE
-        .sample_tick                (PORTS_SAMPLE_TICK),
-`endif
-        .transmit_data_write_select (keyboard_transmit_write_select),
-        .transmit_parity            (A[1]),
-        .clear_write_select         (keyboard_clear_write_select),
-        .control_write_select       (keyboard_control_write_select),
-        .write_data                 (D),
-        .status                     (keyboard_status),
-        .receive_byte_out           (keyboard_receive_byte),
-        .interrupt_request          (keyboard_interrupt_request),
-        .PS2_CLK                    (PS2_KEYBOARD_CLK),
-        .PS2_DATA                   (PS2_KEYBOARD_DATA)
-    );
-`endif
-
-    // ----------------------------------------------------------------
-    // PS/2 mouse channel — identical engine, register map + 0x10
-    // ----------------------------------------------------------------
-`ifdef PORTS_MOUSE
+    // PS2_MOUSE_TX_DATA spans two word slots (0x09/0x0B): decode on A[4:2]
+    // and let A[1] carry the firmware-computed odd-parity bit.  The write
+    // itself starts the host->device TX frame.
     wire mouse_transmit_write_select = ports_write
-                                       & (A[4:2] == SLOT_GROUP_MOUSE_TRANSMIT);
-    wire mouse_clear_write_select    = ports_write & (A == SLOT_MOUSE_STATUS);
-    wire mouse_control_write_select  = ports_write & (A == SLOT_MOUSE_CONTROL);
-    wire mouse_status_read_select    = ports_read  & (A == SLOT_MOUSE_STATUS);
-    wire mouse_receive_read_select   = ports_read  & (A == SLOT_MOUSE_RECEIVE);
+                                       & (A[4:2] == PS2_MOUSE_TX_DATA_ADDR[4:2]);
+    wire mouse_transmit_parity       = A[1];
+    wire mouse_clear_write_select    = ports_write
+                                       & (A == PS2_MOUSE_STATUS_ADDR[4:1]);
+    wire mouse_control_write_select  = ports_write
+                                       & (A == PS2_MOUSE_CTRL_ADDR[4:1]);
+    wire mouse_status_read_select    = ports_read
+                                       & (A == PS2_MOUSE_STATUS_ADDR[4:1]);
+    wire mouse_receive_read_select   = ports_read
+                                       & (A == PS2_MOUSE_RX_DATA_ADDR[4:1]);
 
     wire [7:0] mouse_status;
     wire [7:0] mouse_receive_byte;
@@ -259,11 +149,8 @@ module ports
     (
         .SYSCLK                     (SYSCLK),
         .reset                      (reset),
-`ifdef PORTS_SLOW_DEBOUNCE
-        .sample_tick                (PORTS_SAMPLE_TICK),
-`endif
         .transmit_data_write_select (mouse_transmit_write_select),
-        .transmit_parity            (A[1]),
+        .transmit_parity            (mouse_transmit_parity),
         .clear_write_select         (mouse_clear_write_select),
         .control_write_select       (mouse_control_write_select),
         .write_data                 (D),
@@ -273,16 +160,14 @@ module ports
         .PS2_CLK                    (PS2_MOUSE_CLK),
         .PS2_DATA                   (PS2_MOUSE_DATA)
     );
-`endif
 
     // ----------------------------------------------------------------
     // Joystick ports.  One byte per port, bit order from griffin.yml
-    // JOYSTICK STATE: bit7 reads 1, then PIN5, PIN9, FIRE, RIGHT, LEFT,
+    // JOYSTICK_PORT_n: bit7 reads 1, then PIN5, PIN9, FIRE, RIGHT, LEFT,
     // DOWN, UP.  Switch bits are active low straight from the DE-9.
     // ----------------------------------------------------------------
-`ifdef PORTS_JOYSTICK
-    wire joystick_1_read_select = ports_read & (A == SLOT_JOYSTICK_1);
-    wire joystick_2_read_select = ports_read & (A == SLOT_JOYSTICK_2);
+    wire joystick_1_read_select = ports_read & (A == JOYSTICK_PORT_1_ADDR[4:1]);
+    wire joystick_2_read_select = ports_read & (A == JOYSTICK_PORT_2_ADDR[4:1]);
 
     wire [7:0] joystick_1_byte = {1'b1,
                                   JOYSTICK_1_PIN5,
@@ -301,7 +186,6 @@ module ports
                                   JOYSTICK_2_LEFT,
                                   JOYSTICK_2_DOWN,
                                   JOYSTICK_2_UP};
-`endif
 
     // ----------------------------------------------------------------
     // Line strobe.  VIDEO's HSYNC is a free constant-rate timebase, so PORTS
@@ -311,12 +195,10 @@ module ports
     // sized) and the audio FIFO pops on every second line (~15.73 kHz, the
     // AUDIO_SAMPLES_PER_SECOND the rev-2 design already assumes).
     //
-    // The strobe is in VIDEO's pixel-clock domain and asynchronous to SYSCLK,
-    // so it goes through a 2-FF synchronizer before the edge detector.  HSYNC
-    // is active low; the falling edge (start of the sync pulse) is the one
-    // counted.  Only the rate matters, so either edge would do.
+    // The strobe is asynchronous to SYSCLK, so it goes through a 2-FF
+    // synchronizer before the edge detector.  HSYNC is active low; the
+    // falling edge (start of the sync pulse) is the one counted.
     // ----------------------------------------------------------------
-`ifdef PORTS_LINE_STROBE
     reg line_strobe_meta;
     reg line_strobe_sync;
     reg line_strobe_sync_delayed;
@@ -348,28 +230,24 @@ module ports
             end
         end
     end
-`endif
 
     // ----------------------------------------------------------------
     // Paddles.  Each pot charges its cap; the comparator sense line stays
     // low until the threshold is reached, so an upcounter enabled by the
-    // paddle tick while sense is low measures the pot position.  Counters
+    // line tick while sense is low measures the pot position.  Counters
     // saturate at 0xFF (all-ones terminal, cheap on the ATF15xx) instead of
     // wrapping.  PADDLE_CONTROL bit 0 turns on the discharge FET and holds
     // both counters at zero, which is how firmware restarts a measurement.
+    //
+    // The sense levels are the port 1 pin 9 / pin 5 inputs — the same pins
+    // the joystick byte reports — so the paddles cost no extra pins.
     // ----------------------------------------------------------------
-`ifdef PORTS_PADDLE
-    wire paddle_control_write_select = ports_write & (A == SLOT_PADDLE_CONTROL);
-    wire paddle_a_read_select        = ports_read  & (A == SLOT_PADDLE_A_COUNT);
-    wire paddle_b_read_select        = ports_read  & (A == SLOT_PADDLE_B_COUNT);
+    wire paddle_control_write_select = ports_write & (A == PADDLE_CONTROL_ADDR[4:1]);
+    wire paddle_a_read_select        = ports_read  & (A == PADDLE_A_COUNT_ADDR[4:1]);
+    wire paddle_b_read_select        = ports_read  & (A == PADDLE_B_COUNT_ADDR[4:1]);
 
-`ifdef PORTS_JOYSTICK
     wire paddle_a_sense_pin = JOYSTICK_1_PIN9;
     wire paddle_b_sense_pin = JOYSTICK_1_PIN5;
-`else
-    wire paddle_a_sense_pin = PADDLE_A_SENSE;
-    wire paddle_b_sense_pin = PADDLE_B_SENSE;
-`endif
 
     reg       paddle_dump;
     reg [1:0] paddle_a_sense_sync;
@@ -377,14 +255,8 @@ module ports
     reg [7:0] paddle_a_count;
     reg [7:0] paddle_b_count;
 
-`ifdef PORTS_LINE_STROBE
-    wire paddle_tick = line_tick;      // full VGA line rate, 31.469 kHz
-`else
-    wire paddle_tick = PORTS_TICK;     // GLUE prescaler, SYSCLK/512
-`endif
-
-    wire paddle_a_counting = paddle_tick & ~paddle_a_sense_sync[1] & ~(&paddle_a_count);
-    wire paddle_b_counting = paddle_tick & ~paddle_b_sense_sync[1] & ~(&paddle_b_count);
+    wire paddle_a_counting = line_tick & ~paddle_a_sense_sync[1] & ~(&paddle_a_count);
+    wire paddle_b_counting = line_tick & ~paddle_b_sense_sync[1] & ~(&paddle_b_count);
 
     always @(posedge SYSCLK)
     begin
@@ -403,7 +275,7 @@ module ports
 
             if (paddle_control_write_select)
             begin
-                paddle_dump <= D[0];
+                paddle_dump <= D[`PORTS_PADDLE_CONTROL_DUMP_SHIFT];
             end
 
             if (paddle_dump)
@@ -427,161 +299,41 @@ module ports
     end
 
     assign PADDLE_DUMP = paddle_dump;
-`endif
 
     // ----------------------------------------------------------------
-    // Line-rate audio FIFO pop.  Everything the audio.v divider did, minus
-    // the divider: the pop strobe is the /2 line tick, so there is no period
-    // register and no 12-bit counter — one enable bit and one IRQ latch.
+    // Line-rate audio FIFO pop.  The pop strobe is the /2 line tick, so
+    // there is no period register and no counter — one enable bit and one
+    // IRQ latch.
     //
     // nFIFO_HF is the 7202 half-full flag, active low while the FIFO holds
     // half or more; it rises when the FIFO drains below half, which is when
     // firmware must refill.  Async, so 2-FF synchronizer + one delayed copy
-    // for the rising-edge detect, the same shape as audio.v.
+    // for the rising-edge detect.
     //
-    //   0x1F write AUDIO_CONTROL : bit0 = enable pops, bit1 = W1C the IRQ
-    //   0x1F read  AUDIO_STATUS  : bit0 = IRQ latched, bit1 = FIFO half-full
-    //                              or more (live), bit2 = enable
+    //   0x1F write AUDIO_CONTROL : bit0 = ENABLE, bit1 = CLEAR_HF_IRQ (W1C)
+    //   0x1F read  AUDIO_STATUS  : bit0 = HF_IRQ latched, bit1 = HALF_FULL
+    //                              (live), bit2 = ENABLE
     // ----------------------------------------------------------------
-`ifdef PORTS_AUDIO_POP
-    wire audio_pop_control_write = ports_write & (A == SLOT_AUDIO_POP);
-    wire audio_pop_status_read   = ports_read  & (A == SLOT_AUDIO_POP);
+    wire audio_control_write_select = ports_write & (A == AUDIO_CONTROL_ADDR[4:1]);
+    wire audio_status_read_select   = ports_read  & (A == AUDIO_CONTROL_ADDR[4:1]);
 
-    reg audio_pop_enable;
-    reg half_full_pop_meta;
-    reg half_full_pop_sync;
-    reg half_full_pop_sync_delayed;
-    reg audio_pop_interrupt_latched;
+    reg audio_enable;
+    reg half_full_meta;
+    reg half_full_sync;
+    reg half_full_sync_delayed;
+    reg audio_interrupt_latched;
 
     // Rising edge of nFIFO_HF = FIFO fell below half full.
-    wire half_full_pop_below_edge = half_full_pop_sync & ~half_full_pop_sync_delayed;
+    wire half_full_below_edge = half_full_sync & ~half_full_sync_delayed;
 
     always @(posedge SYSCLK)
     begin
         if (reset)
         begin
-            audio_pop_enable            <= 1'b0;
-            half_full_pop_meta          <= 1'b1;   // empty FIFO reads as below half
-            half_full_pop_sync          <= 1'b1;
-            half_full_pop_sync_delayed  <= 1'b1;
-            audio_pop_interrupt_latched <= 1'b0;
-        end
-        else
-        begin
-            half_full_pop_meta         <= nFIFO_HF;
-            half_full_pop_sync         <= half_full_pop_meta;
-            half_full_pop_sync_delayed <= half_full_pop_sync;
-
-            if (audio_pop_control_write)
-            begin
-                audio_pop_enable <= D[0];
-            end
-
-            if (half_full_pop_below_edge)
-            begin
-                audio_pop_interrupt_latched <= 1'b1;
-            end
-            else if (audio_pop_control_write & D[1])
-            begin
-                audio_pop_interrupt_latched <= 1'b0;
-            end
-        end
-    end
-
-    // One SYSCLK low per pop; the 7202 output register holds the sample on Q
-    // until the next read, so the R2R DACs are fed with no latch in the CPLD.
-    assign nFIFO_RE = ~(audio_pop_tick & audio_pop_enable);
-`endif
-
-    // ----------------------------------------------------------------
-    // Audio (stretch configuration) — the audio.v function set verbatim in
-    // behaviour: a 12-bit upcounter compared against a CPU-loaded reload
-    // value emits the sample tick that pops both 7202s, and the rising edge
-    // of the half-full flag latches an IRQ the CPU clears at CLRINT.  Kept
-    // on audio.v's asynchronous reset so the measured cost is comparable to
-    // the standalone cpld/audio experiment.
-    // ----------------------------------------------------------------
-`ifdef PORTS_AUDIO
-    wire divider_low_write  = audio_write & (A == SLOT_AUDIO_DIVIDER_LOW);
-    wire divider_high_write = audio_write & (A == SLOT_AUDIO_DIVIDER_HIGH);
-    wire audio_control_write = audio_write & (A == SLOT_AUDIO_CONTROL);
-    wire audio_clear_irq_write = audio_write & (A == SLOT_AUDIO_CLEAR_IRQ);
-    wire audio_status_read_select = audio_read & (A == SLOT_AUDIO_CONTROL);
-
-    // Any full-word write to the high half of the region pushes one stereo
-    // sample; requiring both strobes is what keeps left and right in step.
-    wire fifo_write = select & A17 & ~R_nW & ~nUDS & ~nLDS;
-    assign nFIFO_W = ~fifo_write;
-
-    reg [11:0] divider_reload;
-    reg        audio_enable;
-
-    always @(posedge SYSCLK or posedge reset)
-    begin
-        if (reset)
-        begin
-            divider_reload <= 12'd0;
-            audio_enable   <= 1'b0;
-        end
-        else
-        begin
-            if (divider_low_write)
-            begin
-                divider_reload[7:0] <= D[7:0];
-            end
-            if (divider_high_write)
-            begin
-                divider_reload[11:8] <= D[3:0];
-            end
-            if (audio_control_write)
-            begin
-                audio_enable <= D[0];
-            end
-        end
-    end
-
-    reg [11:0] divider_count;
-    reg        sample_tick;
-    wire       divider_match = (divider_count == divider_reload);
-
-    always @(posedge SYSCLK or posedge reset)
-    begin
-        if (reset)
-        begin
-            divider_count <= 12'd0;
-            sample_tick   <= 1'b0;
-        end
-        else if (~audio_enable)
-        begin
-            divider_count <= 12'd0;
-            sample_tick   <= 1'b0;
-        end
-        else if (divider_match)
-        begin
-            divider_count <= 12'd0;
-            sample_tick   <= 1'b1;
-        end
-        else
-        begin
-            divider_count <= divider_count + 12'd1;
-            sample_tick   <= 1'b0;
-        end
-    end
-
-    assign nFIFO_RE = ~sample_tick;
-
-    reg half_full_meta, half_full_sync, half_full_sync_delayed;
-    reg audio_interrupt_latched;
-
-    wire half_full_below_edge = half_full_sync & ~half_full_sync_delayed;
-
-    always @(posedge SYSCLK or posedge reset)
-    begin
-        if (reset)
-        begin
-            half_full_meta         <= 1'b1;   // empty FIFO reads as below half
-            half_full_sync         <= 1'b1;
-            half_full_sync_delayed <= 1'b1;
+            audio_enable            <= 1'b0;
+            half_full_meta          <= 1'b1;   // empty FIFO reads as below half
+            half_full_sync          <= 1'b1;
+            half_full_sync_delayed  <= 1'b1;
             audio_interrupt_latched <= 1'b0;
         end
         else
@@ -590,60 +342,41 @@ module ports
             half_full_sync         <= half_full_meta;
             half_full_sync_delayed <= half_full_sync;
 
+            if (audio_control_write_select)
+            begin
+                audio_enable <= D[`PORTS_AUDIO_CONTROL_ENABLE_SHIFT];
+            end
+
             if (half_full_below_edge)
             begin
                 audio_interrupt_latched <= 1'b1;
             end
-            else if (audio_clear_irq_write)
+            else if (audio_control_write_select
+                     & D[`PORTS_AUDIO_CONTROL_CLEAR_HF_IRQ_SHIFT])
             begin
                 audio_interrupt_latched <= 1'b0;
             end
         end
     end
-`endif
+
+    // One SYSCLK low per pop; the 7202 output register holds the sample on Q
+    // until the next read, so the R2R DACs are fed with no latch in the CPLD.
+    assign nFIFO_RE = ~(audio_pop_tick & audio_enable);
 
     // ----------------------------------------------------------------
     // Read mux.  One combinational selection; the pins are tri-stated
     // whenever this CPLD is not the addressed reader.
     // ----------------------------------------------------------------
-    wire read_active =
-`ifdef PORTS_KEYBOARD
-        keyboard_status_read_select | keyboard_receive_read_select |
-`endif
-`ifdef PORTS_MOUSE
-        mouse_status_read_select | mouse_receive_read_select |
-`endif
-`ifdef PORTS_JOYSTICK
-        joystick_1_read_select | joystick_2_read_select |
-`endif
-`ifdef PORTS_PADDLE
-        paddle_a_read_select | paddle_b_read_select |
-`endif
-`ifdef PORTS_AUDIO_POP
-        audio_pop_status_read |
-`endif
-`ifdef PORTS_AUDIO
-        audio_status_read_select |
-`endif
-        1'b0;
+    wire read_active = mouse_status_read_select | mouse_receive_read_select
+                     | joystick_1_read_select   | joystick_2_read_select
+                     | paddle_a_read_select     | paddle_b_read_select
+                     | audio_status_read_select;
 
     reg [7:0] read_data;
 
     always @*
     begin
         read_data = 8'h00;
-`ifdef PORTS_KEYBOARD
-        if (keyboard_status_read_select)
-        begin
-            read_data = keyboard_status;
-        end
-        else if (keyboard_receive_read_select)
-        begin
-            read_data = keyboard_receive_byte;
-        end
-        else
-`endif
-`ifdef PORTS_MOUSE
         if (mouse_status_read_select)
         begin
             read_data = mouse_status;
@@ -652,10 +385,7 @@ module ports
         begin
             read_data = mouse_receive_byte;
         end
-        else
-`endif
-`ifdef PORTS_JOYSTICK
-        if (joystick_1_read_select)
+        else if (joystick_1_read_select)
         begin
             read_data = joystick_1_byte;
         end
@@ -663,10 +393,7 @@ module ports
         begin
             read_data = joystick_2_byte;
         end
-        else
-`endif
-`ifdef PORTS_PADDLE
-        if (paddle_a_read_select)
+        else if (paddle_a_read_select)
         begin
             read_data = paddle_a_count;
         end
@@ -674,50 +401,23 @@ module ports
         begin
             read_data = paddle_b_count;
         end
-        else
-`endif
-`ifdef PORTS_AUDIO_POP
-        if (audio_pop_status_read)
+        else if (audio_status_read_select)
         begin
             read_data = {5'b0,
-                         audio_pop_enable,             // bit 2
-                         ~half_full_pop_sync,          // bit 1: half-full or more
-                         audio_pop_interrupt_latched}; // bit 0
-        end
-        else
-`endif
-`ifdef PORTS_AUDIO
-        if (audio_status_read_select)
-        begin
-            read_data = {6'b0, ~half_full_sync, audio_enable};
-        end
-        else
-`endif
-        begin
-            read_data = 8'h00;
+                         audio_enable,             // bit 2: ENABLE
+                         ~half_full_sync,          // bit 1: HALF_FULL (live)
+                         audio_interrupt_latched}; // bit 0: HF_IRQ
         end
     end
 
     assign D = read_active ? read_data : 8'bz;
 
     // ----------------------------------------------------------------
-    // Interrupt.  Each term compiles out with its feature; the result is a
-    // push-pull active-low request into GLUE's priority encoder.
+    // Interrupt.  The mouse engine and the audio half-full latch are
+    // wire-ORed into one push-pull active-low request into GLUE's priority
+    // encoder (autovector level 2).
     // ----------------------------------------------------------------
-    assign nPORTS_IRQ = ~(
-`ifdef PORTS_KEYBOARD
-        keyboard_interrupt_request |
-`endif
-`ifdef PORTS_MOUSE
-        mouse_interrupt_request |
-`endif
-`ifdef PORTS_AUDIO_POP
-        audio_pop_interrupt_latched |
-`endif
-`ifdef PORTS_AUDIO
-        audio_interrupt_latched |
-`endif
-        1'b0);
+    assign nPORTS_IRQ = ~(mouse_interrupt_request | audio_interrupt_latched);
 
 endmodule
 
@@ -725,8 +425,9 @@ endmodule
 // ----------------------------------------------------------------------
 // Ps2Channel — one half-duplex PS/2 port.
 //
-// Ported from the GLUE frame engine (glue.v:256-405) with the semantics
-// preserved bit for bit; only the names are spelled out.
+// Ported from the GLUE frame engine (glue.v:330-478) with the semantics
+// preserved bit for bit; only the names are spelled out.  Kept as its own
+// module so that lineage stays obvious.
 //
 // Half-duplex.  Shared between RX and TX: the CLK/DATA synchronizers, the
 // falling-edge detect, the frame counter, and the open-drain pins.  All
@@ -749,19 +450,13 @@ endmodule
 // ~120 ns (~2 SYSCLK at 14 MHz) on each edge.  The debounced level only
 // changes after the synchronized clock holds a level for CLOCK_DEBOUNCE
 // consecutive samples, comfortably above the ringing and far below the
-// ~30 us PS/2 clock low time.  With PORTS_SLOW_DEBOUNCE the samples are
-// taken on a ~571 ns GLUE tick instead of every SYSCLK, so two samples
-// already outlast the ringing and the window shrinks 4 -> 2 (-2 FF).
-// PS2_DATA keeps a 2-FF sync — it is sampled at the (delayed) clean falling
-// edge, well inside its stable window.
+// ~30 us PS/2 clock low time.  PS2_DATA keeps a 2-FF sync — it is sampled at
+// the (delayed) clean falling edge, well inside its stable window.
 // ----------------------------------------------------------------------
 module Ps2Channel
 (
     input  wire       SYSCLK,
     input  wire       reset,
-`ifdef PORTS_SLOW_DEBOUNCE
-    input  wire       sample_tick,
-`endif
     input  wire       transmit_data_write_select,
     input  wire       transmit_parity,
     input  wire       clear_write_select,
@@ -776,11 +471,7 @@ module Ps2Channel
     inout  wire       PS2_DATA
 );
 
-`ifdef PORTS_SLOW_DEBOUNCE
-    localparam integer CLOCK_DEBOUNCE = 2;   // samples on the slow tick
-`else
     localparam integer CLOCK_DEBOUNCE = 4;   // consecutive SYSCLK samples
-`endif
 
     reg [CLOCK_DEBOUNCE:0] clock_sample_shift_register;  // [0]=raw, rest=window
     reg                    clock_clean;                  // debounced clock level
@@ -837,18 +528,8 @@ module Ps2Channel
         end
         else
         begin
-`ifdef PORTS_SLOW_DEBOUNCE
-            // Only the sampling is slowed; clock_clean and its delayed copy
-            // still move on SYSCLK so clock_falling stays one cycle wide.
-            if (sample_tick)
-            begin
-                clock_sample_shift_register <=
-                    {clock_sample_shift_register[CLOCK_DEBOUNCE-1:0], PS2_CLK};
-            end
-`else
             clock_sample_shift_register <=
                 {clock_sample_shift_register[CLOCK_DEBOUNCE-1:0], PS2_CLK};
-`endif
             data_sync <= {data_sync[0], PS2_DATA};
 
             if (clock_window_high)
@@ -926,7 +607,7 @@ module Ps2Channel
         end
     end
 
-    // STATUS byte layout, identical to the GLUE register.
+    // STATUS byte layout, identical to the GLUE keyboard register.
     assign status = {1'b0,
                      clock_clean,           // bit 6: CLK_LIVE (debounced)
                      data_sync[1],          // bit 5: DATA_LIVE
@@ -949,3 +630,61 @@ module Ps2Channel
     assign PS2_DATA = data_drive_low  ? 1'b0 : 1'bz;
 
 endmodule
+
+// PORTS ATF1508 - Griffin board, Rev 2
+// Pin assignments for atf15xx_yosys / fit1508.exe, PLCC-84 package
+//
+// FROZEN 2026-07-30, harvested from a `-preassign ignore` fit and re-verified
+// with `-preassign keep`.  The Rev 2 PCB is routed from these numbers, so do
+// not renumber them; a netlist change that makes the fitter want a different
+// placement is a board respin, not a re-fit.
+//
+// Format rules (from run_fitter.sh):
+//   grep '// PIN:' ports.v | cut -d' ' -f2-  ->  ports.pin fed to fit1508.exe
+//   (written with a space above so this very line does not match the grep)
+//   - Bus elements use underscore notation: D_0, A_0 (not D[0])
+//   - Nothing after the pin number - the cut includes all trailing text
+//   - JTAG pins (TDI:14, TMS:23, TCK:62, TDO:71) are dedicated; no PIN entry needed
+//
+//PIN: CHIP "ports" ASSIGNED TO AN PLCC84
+//
+//PIN: SYSCLK            : 83
+//PIN: nRESET            : 6
+//PIN: nPORTS_SELECT     : 49
+// atf15xx_yosys renumbers vectors from 0: A_0 = A[1] ... A_3 = A[4]
+//PIN: A_0               : 31
+//PIN: A_1               : 30
+//PIN: A_2               : 21
+//PIN: A_3               : 22
+//PIN: nLDS              : 2
+//PIN: R_nW              : 25
+// atf15xx_yosys renumbers vectors from 0: D_0 = D[0] ... D_7 = D[7]
+//PIN: D_0               : 18
+//PIN: D_1               : 16
+//PIN: D_2               : 15
+//PIN: D_3               : 28
+//PIN: D_4               : 24
+//PIN: D_5               : 27
+//PIN: D_6               : 20
+//PIN: D_7               : 29
+//PIN: LINE_STROBE       : 44
+//PIN: PS2_MOUSE_CLK     : 81
+//PIN: PS2_MOUSE_DATA    : 80
+//PIN: JOYSTICK_1_UP     : 9
+//PIN: JOYSTICK_1_DOWN   : 12
+//PIN: JOYSTICK_1_LEFT   : 51
+//PIN: JOYSTICK_1_RIGHT  : 35
+//PIN: JOYSTICK_1_FIRE   : 40
+//PIN: JOYSTICK_1_PIN9   : 39
+//PIN: JOYSTICK_1_PIN5   : 5
+//PIN: JOYSTICK_2_UP     : 10
+//PIN: JOYSTICK_2_DOWN   : 11
+//PIN: JOYSTICK_2_LEFT   : 50
+//PIN: JOYSTICK_2_RIGHT  : 36
+//PIN: JOYSTICK_2_FIRE   : 4
+//PIN: JOYSTICK_2_PIN9   : 37
+//PIN: JOYSTICK_2_PIN5   : 8
+//PIN: PADDLE_DUMP       : 33
+//PIN: nFIFO_HF          : 34
+//PIN: nFIFO_RE          : 61
+//PIN: nPORTS_IRQ        : 17

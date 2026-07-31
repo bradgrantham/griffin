@@ -1,4 +1,32 @@
 // glue.v — Griffin system GLUE logic (ATF1508AS CPLD)
+//
+// Address decode, wait-state/DTACK generation, bus error timeout, interrupt
+// priority encoding, the boot ROM overlay, the in-circuit flash write strobe,
+// and the PS/2 keyboard frame engine.  The PS/2 engine lives here because it
+// fits here; the mouse, joysticks, paddles and the audio FIFO pop belong to
+// the PORTS CPLD (see pcbv2-ports-design.md), which GLUE only has to select
+// and prioritize.
+//
+// The Rev 2 memory map GLUE implements:
+//
+//   1. ROM is a 4 MB window at 0x800000-0xBFFFFF (A23 & ~A22), leaving
+//      0xC00000-0xCFFFFF free for the direct-bus peripherals.  Word writes
+//      into that window drive ~ROM_WE for in-circuit reflash, but only once
+//      CONFIG.FLASH_WE_EN has been set (see the ~ROM_WE assign below).
+//   2. There is no AUDIO_LE and no 0xFC0000 audio-latch decode; the 74HC373
+//      stereo latch is gone and the audio path is a 7202 FIFO pair in the
+//      direct-bus region.
+//   3. The direct-bus strobes ~IO_RD_EN / ~IO_WR_EN cover 0xC00000-0xCFFFFF
+//      and feed a board-level 74155 (see griffin.yml "Direct-bus peripheral
+//      region"): read = region & AS & R/W, write = region & UDS & LDS & ~R/W
+//      so only deliberate full-word writes qualify.
+//   4. ~PORTS_SELECT decodes the 0xFC0000 slot, like ~DUART_SELECT.
+//   5. ~PORTS_IRQ is autovectored at level 2 (below ENGINE at 3).
+//   6. PORTS and the direct-bus region both DTACK at their generated
+//      thresholds (0 wait states).
+//
+// The PS/2 engine, DUART, CF at 0xF40000, DEBUG, BERR, VPA and HALT are
+// unchanged from Rev 1.
 
 `include "../../griffin.generated.vh"
 
@@ -6,12 +34,16 @@ module glue (
     // System clock, shared by CPLDs and CPU
     input  wire        SYSCLK,
     input  wire        nRESET,
-    input  wire        DEBUG_IN,    // pin 83: UART RX input (GCLK1)
-    input  wire        OE2_pin,
-    input  wire        nVIDEO_IRQ,    // pin 1:  VIDEO CPLD interrupt request (active low)
-    input  wire        nDUART_DTACK,     // pin 16: DUART asserts when ready
-    input  wire        nDUART_IRQ,       // pin 18: DUART interrupt request (active low)
-    input  wire        nENGINE_IRQ,      // pin 20: ENGINE CPLD interrupt request (active low)
+    // Pin numbers are NOT repeated here — the frozen pin-assignment block at
+    // the bottom of this file is the single source of truth for the Rev 2
+    // pinout.  (Do not write the assignment prefix in prose: run_fitter.sh
+    // greps for it and any line carrying it lands in the .pin file.)
+    input  wire        DEBUG_IN,         // UART RX input
+    input  wire        nVIDEO_IRQ,       // VIDEO CPLD interrupt request (active low)
+    input  wire        nDUART_DTACK,     // DUART asserts when ready
+    input  wire        nDUART_IRQ,       // DUART interrupt request (active low)
+    input  wire        nENGINE_IRQ,      // ENGINE CPLD interrupt request (active low)
+    input  wire        nPORTS_IRQ,       // PORTS CPLD interrupt request (active low)
     input  wire        nAS,
     input  wire        [23:18] A_hi,
     input  wire        [5:1]   A_lo,
@@ -22,6 +54,7 @@ module glue (
     input  wire        [2:0] FC,
 
     output wire        nROM_SELECT,
+    output wire        nROM_WE,       // in-circuit flash write strobe (see below)
     output wire        nRAM_1_SEL,
     output wire        nRAM_2_SEL,
     output wire        nRAM_3_SEL,
@@ -31,9 +64,17 @@ module glue (
     output wire        nWRITE_LO,
     output wire        nWRITE_HI,
     output wire        DEBUG_OUT,
-    output wire        AUDIO_LE,
     output wire        nCF_CS0,
     output wire        nCF_CS1,
+
+    // Rev-2 direct-bus peripheral region 0xC00000-0xCFFFFF: two fully-timed
+    // region strobes into a board-level 74155 dual 2-to-4 decoder, which fans
+    // them out by A19:18.  GLUE never touches that data path.
+    output wire        nIO_RD_EN,
+    output wire        nIO_WR_EN,
+
+    // Cycle-qualified select for the PORTS CPLD at 0xFC0000.
+    output wire        nPORTS_SELECT,
 
     inout  wire        nHALT,
     output wire        nDTACK,  // Data Transfer Acknowledge
@@ -52,6 +93,7 @@ module glue (
 );
 
     reg rom_overlay_disable;    // power-on state 0 = overlay active
+    reg flash_we_en;            // power-on state 0 = flash write-protected
 
     wire read = R_nW;
     wire write = ~read;
@@ -90,7 +132,10 @@ module glue (
     wire ram_bank_2_region = (address_high_region == 4'h1);
     wire ram_bank_3_region = (address_high_region == 4'h2);
     wire ram_bank_4_region = (address_high_region == 4'h3);
-    wire rom_region        = (address_high_region == 4'hc);
+    // Rev 2: ROM is a 4 MB window at 0x800000-0xBFFFFF (A23 set, A22 clear),
+    // which frees 0xC00000-0xCFFFFF for the direct-bus peripherals.
+    wire rom_region        = A_hi[23] & ~A_hi[22];
+    wire direct_bus_region = (address_high_region == 4'hc);
     wire engine_region     = (address_high_region == 4'hd);
     wire video_region      = (address_high_region == 4'he);
     wire io_region         = (address_high_region == 4'hf);
@@ -98,7 +143,7 @@ module glue (
     wire glue_segment  = io_region & (address_io_segment == 4'h0);
     wire cf_segment    = io_region & (address_io_segment == 4'h4);
     wire duart_segment = io_region & (address_io_segment == 4'h8);
-    wire audio_segment = io_region & (address_io_segment == 4'hc);
+    wire ports_segment = io_region & (address_io_segment == 4'hc);
 
     wire cf_register_bank0 = (A_lo[4] == 0);
     wire cf_register_bank1 = ~cf_register_bank0;
@@ -113,6 +158,16 @@ module glue (
 
     assign nROM_SELECT = ~((rom_region | ram_1_region_but_rom_overlaid) & bus_cycle);
 
+    // In-circuit flash write strobe.  Two qualifications are deliberate and
+    // neither is obvious: it uses rom_region, not ~nROM_SELECT, so writes
+    // through the boot overlay window at 0x000000 can never reach the flash
+    // whatever the overlay bit says; and it requires BOTH data strobes, so a
+    // byte write produces no strobe at all and cannot feed a JEDEC command to
+    // one x8 chip and desync the pair.  flash_we_en resets to 0, so firmware
+    // must unlock GLUE before any write gets through.
+    assign nROM_WE = ~(rom_region & bus_cycle & write
+                       & hi_byte_selected & lo_byte_selected & flash_we_en);
+
     assign nVIDEO_SELECT = ~(video_region & bus_cycle);
     assign nENGINE_SELECT = ~(engine_region & bus_cycle);
 
@@ -126,29 +181,46 @@ module glue (
     // Interrupt priority encoder (active-low nIPL to 68000)
     //
     // Priority levels (from griffin.yml / griffin.md):
-    //   6: VIDEO    (~VIDEO_IRQ,  pin 1)    — nIPL = 001
-    //   5: DUART    (~DUART_IRQ,  pin 18)   — nIPL = 010
+    //   6: VIDEO    (~VIDEO_IRQ)            — nIPL = 001
+    //   5: DUART    (~DUART_IRQ)            — nIPL = 010
     //   4: PS/2     (~PS2_IRQ,    internal) — nIPL = 011
-    //   3: ENGINE   (~ENGINE_IRQ, pin 20)   — nIPL = 100
+    //   3: ENGINE   (~ENGINE_IRQ)           — nIPL = 100
+    //   2: PORTS    (~PORTS_IRQ)            — nIPL = 101
     //   none:                               — nIPL = 111
     // ----------------------------------------------------------------
 
     wire duart_irq_active     = ~nDUART_IRQ;
-    wire engine_irq_active    = 0; // ~nENGINE_IRQ;
+    // Re-enabled 2026-07-30 (was stubbed to 0 in 610b06d during Rev 1 bringup).
+    // ENGINE currently ties its ~ENGINE_IRQ output high, so this is inert today —
+    // but the input has to be live for the fitter to place it, and the Rev 2
+    // pinout is frozen from that placement.  Stubbed, it is a dead port, gets
+    // dropped, and no ~ENGINE_IRQ net exists to route.
+    wire engine_irq_active    = ~nENGINE_IRQ;
+    wire ports_irq_active     = ~nPORTS_IRQ;
     wire ps2_irq_active;  // driven by PS/2 bit_ready below
 
     assign nIPL = ~nVIDEO_IRQ        ? 3'b001 :  // level 6
                   duart_irq_active   ? 3'b010 :  // level 5
                   ps2_irq_active     ? 3'b011 :  // level 4
                   engine_irq_active  ? 3'b100 :  // level 3
+                  ports_irq_active   ? 3'b101 :  // level 2
                                        3'b111;   // no interrupt
 
     wire glue_select = glue_segment & bus_cycle;
-    // Drive LE high during audio writes so data passes through,
-    // low otherwise so the DAC holds the last written sample.
-    assign AUDIO_LE = audio_segment & bus_cycle;
 
     assign nDUART_SELECT = ~(duart_segment & bus_cycle);
+
+    // PORTS is a byte peripheral on the LDS lane; it decodes A[4:1] itself,
+    // so GLUE only has to hand it a cycle-qualified region select.
+    wire ports_select = ports_segment & bus_cycle;
+    assign nPORTS_SELECT = ~ports_select;
+
+    // Direct-bus region strobes.  The write strobe qualifies on both byte
+    // strobes so only deliberate full-word writes reach the 74155 write
+    // section (this is what keeps the stereo FIFO pair in step).
+    assign nIO_RD_EN = ~(direct_bus_region & bus_cycle & read);
+    assign nIO_WR_EN = ~(direct_bus_region & bus_cycle & write
+                         & hi_byte_selected & lo_byte_selected);
 
     // CF chip selects are active-low on the card (-CE pins).
     // PCB nets are crossed: CPLD nCF_CS0 → CF /CS1, CPLD nCF_CS1 → CF /CS0.
@@ -171,7 +243,8 @@ module glue (
     // 68000 byte addresses, odd bytes active with LDS:
     //   0xF00001  — DEBUG_IN         (read,  bit 0 = DEBUG_IN pin state)
     //   0xF00001  — DEBUG_OUT        (write, bit 0 = OUT)
-    //   0xF00007  — CONFIG           (write, bit 0 = ROM_OVERLAY_DISABLE)
+    //   0xF00007  — CONFIG           (write, bit 0 = ROM_OVERLAY_DISABLE,
+    //                                        bit 1 = FLASH_WE_EN)
     //
     // A_lo[5:1] selects the word address within the segment.
     // ----------------------------------------------------------------
@@ -240,11 +313,13 @@ module glue (
     always @(posedge SYSCLK) begin
         if(RESET) begin
             rom_overlay_disable <= 0;
+            flash_we_en         <= 0;
             debug_out_reg       <= 0;
         end else begin
             if (glue_select & lo_byte_selected & write
                 & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1])) begin
                 rom_overlay_disable <= D[0];
+                flash_we_en         <= D[`GLUE_CONFIG_FLASH_WE_EN_SHIFT];
             end
             if (debug_out_select)
                 debug_out_reg <= D[0];
@@ -436,82 +511,96 @@ module glue (
         (~nENGINE_SELECT    & (ws_cnt >= `ENGINE_DTACK_THRESHOLD)) |  // ENGINE (0 WS)
         (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
         ((~nDUART_SELECT)   & ~nDUART_DTACK) |  // DUART
-        (AUDIO_LE           & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));    // AUDIO
+        (ports_select       & (ws_cnt >= `PORTS_DTACK_THRESHOLD)) |  // PORTS (0 WS)
+        ((direct_bus_region & bus_cycle)
+                            & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));   // direct bus (74155 decodes the quadrant)
 
     assign nDTACK = ~dtack_comb;
 
 
 endmodule
 
-// GLUE ATF1508 (U12) — Griffin board
+// GLUE ATF1508 (U12) - Griffin board, Rev 2
 // Pin assignments for atf15xx_yosys / fit1508.exe, PLCC-84 package
 //
+// FROZEN 2026-07-30.  Derived from a `-preassign ignore` fit (the rev-1 hand
+// pinout could not route the rev-2 design) and re-verified with
+// `-preassign keep`.  The Rev 2 PCB is routed from these numbers, so do not
+// renumber them; a netlist change that makes the fitter want a different
+// placement is a board respin, not a re-fit.
+//
 // Format rules (from run_fitter.sh):
-//   grep '// PIN:' glue.v | cut -d' ' -f2-  →  glue.pin fed to fit1508.exe
-//   - Bus elements use underscore notation: D_0, A_18, FC_0, nIPL_0 (not D[0])
-//   - Nothing after the pin number — the cut includes all trailing text
+//   grep '// PIN:' glue.v | cut -d' ' -f2-  ->  glue.pin fed to fit1508.exe
+//   (written with a space above so this very line does not match the grep)
+//   - Bus elements use underscore notation: D_0, A_hi_0, FC_0, nIPL_0 (not D[0])
+//   - Nothing after the pin number - the cut includes all trailing text
 //   - JTAG pins (TDI:14, TMS:23, TCK:62, TDO:71) are dedicated; no PIN entry needed
 //
 //PIN: CHIP "glue" ASSIGNED TO AN PLCC84
 //
-//PIN: SYSCLK    : 34
-//PIN: nRESET    : 37
-//PIN: nHALT     : 36
-//PIN: DEBUG_IN  : 83
-//PIN: DEBUG_OUT     : 67
-//PIN: OE2_pin   : 2
-//PIN: nVIDEO_IRQ : 1
-//PIN: nROM_SELECT  : 4
-//PIN: nAS        : 60
+//PIN: SYSCLK          : 83
+//PIN: nRESET          : 84
+//PIN: nHALT           : 25
+//PIN: DEBUG_IN        : 64
+//PIN: DEBUG_OUT       : 61
+//PIN: nVIDEO_IRQ      : 65
+//PIN: nROM_SELECT     : 17
+//PIN: nROM_WE         : 41
+//PIN: nAS             : 1
 // atf15xx_yosys seems to flatten out pins starting > 0, so renumber A_hi
-//PIN: A_hi_5     : 31
-//PIN: A_hi_4     : 57
-//PIN: A_hi_3     : 56
-//PIN: A_hi_2     : 33
-//PIN: A_hi_1     : 35
-//PIN: A_hi_0     : 81
+//   A_hi_0 = CPU A18 ... A_hi_5 = CPU A23
+//PIN: A_hi_5          : 46
+//PIN: A_hi_4          : 10
+//PIN: A_hi_3          : 12
+//PIN: A_hi_2          : 11
+//PIN: A_hi_1          : 8
+//PIN: A_hi_0          : 6
 // atf15xx_yosys seems to flatten out pins starting > 0, so renumber A_lo
-//PIN: A_lo_4     : 80
-//PIN: A_lo_3     : 79
-//PIN: A_lo_2     : 54
-//PIN: A_lo_1     : 55
-//PIN: A_lo_0     : 51
-//PIN: D_7        : 25
-//PIN: D_6        : 64
-//PIN: D_5        : 22
-//PIN: D_4        : 65
-//PIN: D_3        : 24
-//PIN: D_2        : 63
-//PIN: D_1        : 27
-//PIN: D_0        : 61
-//PIN: nUDS       : 28
-//PIN: nLDS       : 29
-//PIN: R_nW       : 58
-//PIN: nRAM_1_SEL : 5
-//PIN: nRAM_2_SEL : 6
-//PIN: nRAM_3_SEL : 8
-//PIN: nRAM_4_SEL : 9
-//PIN: nWRITE_LO  : 10
-//PIN: nWRITE_HI  : 11
-//PIN: nDTACK     : 30
-//PIN: nBERR      : 44
-//PIN: nIPL_2     : 46
-//PIN: nIPL_1     : 45
-//PIN: nIPL_0     : 48
-//PIN: nVPA       : 75
-//PIN: AUDIO_LE  : 68
-//PIN: nDUART_SELECT : 12
-//PIN: nVIDEO_SELECT : 74
-//PIN: nCF_CS0     : 76
-//PIN: nCF_CS1     : 77
-//PIN: nR_W       : 73
-//PIN: FC_0       : 52
-//PIN: FC_1       : 49
-//PIN: FC_2       : 50
-//PIN: nDUART_DTACK  : 16
-//PIN: nDUART_IRQ    : 18
-//PIN: nENGINE_IRQ   : 20
-//PIN: nENGINE_SELECT : 15
-//PIN: nDUART_RESET   : 69
-//PIN: PS2_CLK       : 39
-//PIN: PS2_DATA      : 40
+//   A_lo_0 = CPU A1 ... A_lo_4 = CPU A5
+//PIN: A_lo_4          : 29
+//PIN: A_lo_3          : 28
+//PIN: A_lo_2          : 27
+//PIN: A_lo_1          : 45
+//PIN: A_lo_0          : 44
+//PIN: D_7             : 57
+//PIN: D_6             : 51
+//PIN: D_5             : 48
+//PIN: D_4             : 60
+//PIN: D_3             : 49
+//PIN: D_2             : 58
+//PIN: D_1             : 50
+//PIN: D_0             : 52
+//PIN: nUDS            : 9
+//PIN: nLDS            : 31
+//PIN: R_nW            : 30
+//PIN: nRAM_1_SEL      : 20
+//PIN: nRAM_2_SEL      : 34
+//PIN: nRAM_3_SEL      : 33
+//PIN: nRAM_4_SEL      : 22
+//PIN: nWRITE_LO       : 4
+//PIN: nWRITE_HI       : 56
+//PIN: nDTACK          : 15
+//PIN: nBERR           : 16
+//PIN: nIPL_2          : 76
+//PIN: nIPL_1          : 81
+//PIN: nIPL_0          : 79
+//PIN: nVPA            : 37
+//PIN: nPORTS_SELECT   : 21
+//PIN: nIO_RD_EN       : 36
+//PIN: nIO_WR_EN       : 35
+//PIN: nDUART_SELECT   : 18
+//PIN: nVIDEO_SELECT   : 40
+//PIN: nCF_CS0         : 54
+//PIN: nCF_CS1         : 55
+//PIN: nR_W            : 5
+//PIN: FC_0            : 73
+//PIN: FC_1            : 75
+//PIN: FC_2            : 74
+//PIN: nDUART_DTACK    : 70
+//PIN: nDUART_IRQ      : 67
+//PIN: nENGINE_IRQ     : 68
+//PIN: nPORTS_IRQ      : 69
+//PIN: nENGINE_SELECT  : 39
+//PIN: nDUART_RESET    : 24
+//PIN: PS2_CLK         : 80
+//PIN: PS2_DATA        : 77

@@ -32,9 +32,9 @@ vector_table:
 
     .long   _default_handler_24 | 24: Spurious interrupt
     .long   _default_handler_25 | 25: Level 1 autovector
-    .long   _default_handler_26 | 26: Level 2 autovector
+    .long   ports_isr           | 26: Level 2 autovector (PORTS: PS/2 mouse + audio FIFO half-full)
     .long   _default_handler_27 | 27: Level 3 autovector
-    .long   ps2_isr             | 28: Level 4 autovector (PS/2 bit IRQ in GLUE)
+    .long   ps2_isr             | 28: Level 4 autovector (PS/2 keyboard frame IRQ in GLUE)
     .long   _duart_isr          | 29: Level 5 autovector (DUART)
     .long   _video_isr          | 30: Level 6 autovector (VIDEO)
     .long   _default_handler_31 | 31: Level 7 autovector
@@ -272,8 +272,13 @@ mark_stack:
     lea     tick_counter, %a0
     move.l  #0, (%a0)
 
-    /* initialize PS/2 */
+    /* initialize PS/2 (both channels: GLUE keyboard, PORTS mouse) */
     jsr     ps2_init
+
+    /* quiesce the PORTS peripherals (paddles, audio FIFO pop + its
+       latched half-full IRQ) before level 2 is unmasked.  The mouse
+       reset/enable handshake needs interrupts and lives in main(). */
+    jsr     ports_init
 
     /* Call global constructors */
     jsr     __libc_init_array

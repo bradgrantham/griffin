@@ -10,6 +10,7 @@
 // #include "splash.h"
 
 #include "ps2.h"
+#include "mouse.h"
 #include "textport.h"
 #include "vt102.h"
 #include "early_log.h"
@@ -884,6 +885,31 @@ void process_ps2_inputs()
     }
 }
 
+// Mainline mouse drain, the counterpart of process_ps2_inputs().  mouse.cpp
+// only assembles packets; all reporting happens here.  Printing every packet
+// would flood the console (a moving mouse reports ~40-100 times a second), so
+// only button transitions are announced, carrying the current position with
+// them.
+static void process_mouse_input()
+{
+    static uint8_t last_buttons = 0;
+
+    mouse_poll();
+
+    mouse_report_t report;
+    mouse_get_report(&report);
+    if (report.buttons != last_buttons)
+    {
+        last_buttons = report.buttons;
+        printf("mouse: x=%ld y=%ld wheel=%ld buttons=%c%c%c\n",
+               static_cast<long>(report.x), static_cast<long>(report.y),
+               static_cast<long>(report.wheel),
+               (report.buttons & MOUSE_BUTTON_LEFT) ? 'L' : '-',
+               (report.buttons & MOUSE_BUTTON_MIDDLE) ? 'M' : '-',
+               (report.buttons & MOUSE_BUTTON_RIGHT) ? 'R' : '-');
+    }
+}
+
 extern "C" int load_and_run_app(const char *path);   // firmware/loader.cpp
 extern "C" bool console_input_ready(void);           // firmware/syscalls.c
 
@@ -1029,6 +1055,7 @@ static void monitor_cmd_time()
         while (!console_input_ready())
         {
             gtxt::g_textport.cursor_blink_tick();
+            process_mouse_input();
         }
         monitor_read_line(line, sizeof(line));
 
@@ -1118,6 +1145,20 @@ int main()
     // play_audio(_binary_startup_raw_start, audio_len, 11025);
 
     cf_mount_and_list();
+
+    // The PS/2 mouse reset/enable handshake spins on TX_DONE from the PORTS
+    // level-2 ISR, so it has to run here in mainline with interrupts up --
+    // not in crt0.s beside ports_init(), and never from an ISR.
+    if (mouse_init())
+    {
+        mouse_report_t report;
+        mouse_get_report(&report);
+        printf("PS/2 mouse: ready, %d-byte packets\n", report.packet_bytes);
+    }
+    else
+    {
+        printf("PS/2 mouse: not responding\n");
+    }
 
     printf("Monitor ready; 'help' for commands\n");
     monitor();
