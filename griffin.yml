@@ -908,6 +908,18 @@ syscalls:
     - name: STAT
       number: 8
       description: "stat(path in d1, struct stat in d2) for a named file."
+    - name: INPUTREADY
+      number: 9
+      description: "Return 1 if console input is ready so a read from the console would not block."
+    - name: READDIR
+      number: 10
+      description: "readdir(path in d1, index in d2, entry buffer in d3) fills one directory entry and returns 0, or 1 past the end."
+    - name: GETTICKS
+      number: 11
+      description: "Return milliseconds since boot as an unsigned 32-bit count that wraps."
+    - name: GETTIME
+      number: 12
+      description: "Return seconds since the Unix epoch derived from the boot epoch plus milliseconds since boot."
 
 bodges:
   - "Reroute A6 pad on U12 to A18"

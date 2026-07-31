@@ -2,7 +2,9 @@
 //
 // Reads a flat application binary (built by apps/, linked at _app_base) from the
 // filesystem into the app region and runs it.  The app is entered at offset 0
-// and runs on the firmware supervisor stack; when it finishes it issues SYS_EXIT
+// as entry(argc, argv) -- ordinary C calling convention, arguments pushed on
+// the firmware supervisor stack, which the app already runs on; apps/lib/crt0.s
+// forwards them to main().  When it finishes it issues SYS_EXIT
 // (the app's _exit), which the firmware dispatch routes to app_exit() below.
 // app_exit() longjmps back to the setjmp point here, unwinding the app's frames
 // (and the abandoned TRAP #15 frame) so control returns cleanly to the caller.
@@ -18,7 +20,7 @@
 #include <unistd.h>
 
 extern "C" char _app_base[];       // 0x001000  (app load/link base, linker.ld)
-extern "C" char _firmware_ram[];   // 0x780000  (top of the app region)
+extern "C" char _firmware_ram[];   // 0x380000  (top of the app region)
 
 static jmp_buf app_ctx;
 static int     app_exit_code = 0;
@@ -31,7 +33,10 @@ extern "C" void app_exit(int code)
     longjmp(app_ctx, 1);
 }
 
-extern "C" int load_and_run_app(const char *path)
+// argv is the caller's (the monitor's) array of NUL-terminated strings; it and
+// the strings it points at must outlive the app run, since the app reads them
+// in place.
+extern "C" int load_and_run_app(const char *path, int argc, char **argv)
 {
     const uint32_t base     = reinterpret_cast<uint32_t>(_app_base);
     const uint32_t limit    = reinterpret_cast<uint32_t>(_firmware_ram);
@@ -75,8 +80,8 @@ extern "C" int load_and_run_app(const char *path)
 
     if (setjmp(app_ctx) == 0)
     {
-        auto entry = reinterpret_cast<void (*)()>(base);
-        entry();   // runs the app; returns here via app_exit() -> longjmp
+        auto entry = reinterpret_cast<void (*)(int, char **)>(base);
+        entry(argc, argv);   // runs the app; returns here via app_exit() -> longjmp
     }
 
     printf("loader: app exited (code %d)\n", app_exit_code);

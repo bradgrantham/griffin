@@ -415,5 +415,9 @@ static constexpr unsigned SYS_LSEEK = 5U;  // lseek(fd in d1, offset in d2, when
 static constexpr unsigned SYS_FSTAT = 6U;  // fstat(fd in d1, struct stat in d2) for an open file descriptor.
 static constexpr unsigned SYS_ISATTY = 7U;  // isatty(fd in d1) returns nonzero if the descriptor is a terminal.
 static constexpr unsigned SYS_STAT = 8U;  // stat(path in d1, struct stat in d2) for a named file.
+static constexpr unsigned SYS_INPUTREADY = 9U;  // Return 1 if console input is ready so a read from the console would not block.
+static constexpr unsigned SYS_READDIR = 10U;  // readdir(path in d1, index in d2, entry buffer in d3) fills one directory entry and returns 0, or 1 past the end.
+static constexpr unsigned SYS_GETTICKS = 11U;  // Return milliseconds since boot as an unsigned 32-bit count that wraps.
+static constexpr unsigned SYS_GETTIME = 12U;  // Return seconds since the Unix epoch derived from the boot epoch plus milliseconds since boot.
 
 } // namespace Griffin

@@ -325,6 +325,18 @@ extern "C" uint32_t get_milliseconds()
    return tick_counter * 10U;
 }
 
+// Wall clock.  There is no wired RTC yet, so the epoch at power-on defaults to
+// the firmware build time (BUILD_EPOCH, stamped by the Makefile).  It is a
+// variable so a monitor command, a syscall, or a future DS3231 driver can set
+// it once at boot without touching anything that reads the clock.
+extern "C" { uint32_t boot_epoch = BUILD_EPOCH; }
+
+// Seconds since the Unix epoch.
+extern "C" uint32_t get_epoch_seconds()
+{
+    return boot_epoch + get_milliseconds() / 1000U;
+}
+
 extern "C" void delay_milliseconds(uint32_t millis)
 {
     uint32_t then = get_milliseconds();
@@ -910,17 +922,27 @@ static void process_mouse_input()
     }
 }
 
-extern "C" int load_and_run_app(const char *path);   // firmware/loader.cpp
+extern "C" int load_and_run_app(const char *path, int argc, char **argv);  // firmware/loader.cpp
 extern "C" bool console_input_ready(void);           // firmware/syscalls.c
 
 // ---------------------------------------------------------------------------
-// Monitor — the firmware's top-level command loop.
+// Monitor — the firmware's top-level command loop, and a minimal shell.
 //
 // Line editing, echo, and CR->NL live in the console layer (syscalls.c), so
 // this just waits for a completed line, tokenizes it, and dispatches.  While
 // idle it polls console_input_ready() -- which pumps the line editor -- and
 // keeps the textport cursor blinking.
+//
+// Dispatch is shell-like: built-in commands always win, and a first word that
+// matches no built-in is looked up as "<word>.bin" on the CF card.  Either way
+// the tokenized line is handed to the app as argc/argv, so "basic FOO.BAS"
+// runs BASIC.BIN with a real argument vector.
 // ---------------------------------------------------------------------------
+
+// The console line discipline caps a typed line at 128 bytes (CONS_LINE_MAX in
+// syscalls.c), so a line can hold at most that many tokens' worth of text.
+constexpr size_t MONITOR_LINE_MAX = 128;
+constexpr size_t MONITOR_MAX_ARGS = 16;
 
 // Drain one completed line from fd 0.  Only called when console_input_ready()
 // says read() won't block; bytes of a completed line return immediately.
@@ -983,9 +1005,10 @@ static void monitor_help()
     printf("write ADDR VAL       (wr)  write byte VAL at ADDR\n");
     printf("ls [PATH]                  list directory (default /)\n");
     printf("time                       print time since boot\n");
-    printf("run FILE                   load and run FILE from CF\n");
+    printf("run FILE [ARGS...]         load and run FILE from CF\n");
     printf("view IMAGE PALETTE         show image until a key is pressed\n");
     printf("help                 (?)   this text\n");
+    printf("CMD [ARGS...]              run CMD.bin from CF with those args\n");
 }
 
 static void monitor_cmd_read(int argc, char *argv[])
@@ -1042,10 +1065,40 @@ static void monitor_cmd_time()
     printf("%02ld:%02ld:%02ld since boot\n", hh, mm, ss);
 }
 
+// Shell fallback: a command word that is no built-in names a binary on the CF
+// card.  Probe "<word>.bin" in the root (FAT name matching is case-insensitive,
+// so a typed "basic" finds BASIC.BIN) and, if it is there, run it with the line
+// as typed -- argv[0] is the word, not the file name, exactly like a shell.
+// Returns false if there is no such binary, so the caller can report the
+// command as unknown.
+static bool monitor_run_cf_command(int argc, char *argv[])
+{
+    static char binpath[MONITOR_LINE_MAX + 8];
+
+    int n = snprintf(binpath, sizeof(binpath), "%s.bin", argv[0]);
+    if (n < 0 || static_cast<size_t>(n) >= sizeof(binpath))
+    {
+        return false;
+    }
+
+    FILINFO fno;
+    if (f_stat(binpath, &fno) != FR_OK || (fno.fattrib & AM_DIR))
+    {
+        return false;
+    }
+
+    int result = load_and_run_app(binpath, argc, argv);
+    printf("%s: exited with status %d\n", argv[0], result);
+    return true;
+}
+
 [[noreturn]] static void monitor()
 {
-    char line[80];
-    char *argv[4];
+    // Static, not automatic: the app runs on this stack below monitor()'s
+    // frame and reads argv in place, so the strings must live somewhere the
+    // app cannot walk over.
+    static char  line[MONITOR_LINE_MAX];
+    static char *argv[MONITOR_MAX_ARGS];
 
     for (;;)
     {
@@ -1059,7 +1112,7 @@ static void monitor_cmd_time()
         }
         monitor_read_line(line, sizeof(line));
 
-        int argc = split_args(line, argv, 4);
+        int argc = split_args(line, argv, static_cast<int>(MONITOR_MAX_ARGS));
         if (argc == 0)
         {
             continue;
@@ -1086,11 +1139,13 @@ static void monitor_cmd_time()
         {
             if (argc < 2)
             {
-                printf("usage: run FILE\n");
+                printf("usage: run FILE [ARGS...]\n");
             }
             else
             {
-                int result = load_and_run_app(argv[1]);
+                // Drop the "run" word: the app sees argv[0] = the path it was
+                // launched as, then the remaining tokens.
+                int result = load_and_run_app(argv[1], argc - 1, &argv[1]);
                 printf("%s: exited with status %d\n", argv[1], result);
             }
         }
@@ -1109,7 +1164,7 @@ static void monitor_cmd_time()
         {
             monitor_help();
         }
-        else
+        else if (!monitor_run_cf_command(argc, argv))
         {
             printf("%s? try \"help\"\n", cmd);
         }

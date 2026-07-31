@@ -29,6 +29,11 @@ LDFLAGS = $(COMMONFLAGS) -T $(LDSCRIPT) -Wl,--no-warn-rwx-segments
 all: rom.bin
 .PHONY: all
 
+# boot_epoch (rom.cpp) defaults to the moment the firmware was built, so the
+# wall clock is roughly right with no RTC wired.  Note this makes rom.bin
+# differ from build to build even with no source change.
+rom.o: CXXFLAGS += -DBUILD_EPOCH=$(shell date +%s)u
+
 # Third-party C sources we don't control: build with relaxed warning flags
 LENIENT_C_SOURCES = ff.c ffunicode.c diskio.c
 LENIENT_CFLAGS = $(COMMONFLAGS) -Wall

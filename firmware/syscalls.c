@@ -15,6 +15,8 @@
 #define USE_FATFS
 
 
+#include "../griffin_dirent.h"
+
 #ifdef USE_FATFS
 #include "ff.h"
 #endif /* USE_FATFS */
@@ -484,14 +486,16 @@ int open(const char *path, int flags, ...)
         FatFSFlags |= FA_WRITE | FA_READ;
     }
 
+    /* POSIX creation semantics -> FatFs creation mode.  FatFs takes exactly
+     * one creation mode, so these are chosen, never OR'd: O_APPEND's
+     * FA_OPEN_APPEND already implies open-or-create, O_TRUNC must truncate
+     * (creating if needed) and O_CREAT alone must open-or-create. */
     if(flags & O_APPEND) {
         FatFSFlags |= FA_OPEN_APPEND;
-    }
-    if(flags & O_CREAT) {
-        FatFSFlags |= FA_CREATE_NEW;
-    }
-    if(flags & O_TRUNC) {
+    } else if(flags & O_TRUNC) {
         FatFSFlags |= FA_CREATE_ALWAYS;
+    } else if(flags & O_CREAT) {
+        FatFSFlags |= FA_OPEN_ALWAYS;
     }
     errno = 0;
     FRESULT result = f_open (&files[which], path, (BYTE)FatFSFlags);
@@ -506,6 +510,58 @@ int open(const char *path, int flags, ...)
 #else /* not USE_FATFS */
     errno = EIO;
     return -1;
+#endif /* USE_FATFS */
+}
+
+/* One directory entry by index, for SYS_READDIR.  Stateless on purpose: the
+ * directory is reopened and skipped forward on every call, so no handle can
+ * outlive the call (and none leaks if the app dies mid-iteration).  Returns 0
+ * when *out was filled in, 1 when index is past the last entry, -errno on
+ * failure. */
+int sys_readdir(const char *path, int index, GriffinDirEnt *out)
+{
+    if(path == nullptr || out == nullptr || index < 0) {
+        return -EINVAL;
+    }
+
+#ifdef USE_FATFS
+    DIR dir;
+    FILINFO fno;
+    fno.fname[0] = '\0';
+
+    if(f_opendir(&dir, path) != FR_OK) {
+        return -ENOENT;
+    }
+
+    FRESULT result = FR_OK;
+    for(int i = 0; i <= index; i++) {
+        result = f_readdir(&dir, &fno);
+        if(result != FR_OK || fno.fname[0] == '\0') {
+            break;
+        }
+    }
+    f_closedir(&dir);
+
+    if(result != FR_OK) {
+        return -EIO;
+    }
+    if(fno.fname[0] == '\0') {
+        return 1;                       /* index is past the end */
+    }
+
+    int is_dir = (fno.fattrib & AM_DIR) ? 1 : 0;
+    out->size = is_dir ? 0u : (uint32_t)fno.fsize;
+    out->is_dir = (uint32_t)is_dir;
+
+    size_t namelen = strlen(fno.fname);
+    if(namelen > sizeof(out->name) - 1) {
+        namelen = sizeof(out->name) - 1;
+    }
+    memcpy(out->name, fno.fname, namelen);
+    out->name[namelen] = '\0';
+    return 0;
+#else /* not USE_FATFS */
+    return -ENOSYS;
 #endif /* USE_FATFS */
 }
 

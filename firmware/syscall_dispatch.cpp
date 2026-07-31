@@ -8,11 +8,13 @@
 
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <sys/types.h>
 #include <sys/stat.h>
 
 #include "../griffin.generated.h"
+#include "../griffin_dirent.h"
 
 extern "C"
 {
@@ -25,6 +27,12 @@ extern "C"
     int     fstat(int fd, struct stat *st);
     int     isatty(int fd);
     int     stat(const char *path, struct stat *st);
+    bool    console_input_ready(void);
+    int     sys_readdir(const char *path, int index, GriffinDirEnt *out);
+
+    // firmware/rom.cpp
+    uint32_t get_milliseconds(void);
+    uint32_t get_epoch_seconds(void);
 
     void app_exit(int code);
     long sys_dispatch(long num, long a1, long a2, long a3);
@@ -80,6 +88,24 @@ long sys_dispatch(long num, long a1, long a2, long a3)
         case Griffin::SYS_STAT:
             r = stat(reinterpret_cast<const char *>(a1),
                      reinterpret_cast<struct stat *>(a2));
+            break;
+        case Griffin::SYS_INPUTREADY:
+            r = console_input_ready() ? 1 : 0;
+            break;
+        case Griffin::SYS_READDIR:
+            r = sys_readdir(reinterpret_cast<const char *>(a1),
+                            static_cast<int>(a2),
+                            reinterpret_cast<GriffinDirEnt *>(a3));
+            break;
+        // GETTICKS/GETTIME hand back unsigned counts, so bit 31 is data, not a
+        // sign (24.8-day uptime, post-2038 dates).  Their app-side stubs return
+        // d0 raw and skip the negative-means-errno translation; errno stays 0
+        // here, so the tail conversion below leaves the value alone either way.
+        case Griffin::SYS_GETTICKS:
+            r = static_cast<long>(get_milliseconds());
+            break;
+        case Griffin::SYS_GETTIME:
+            r = static_cast<long>(get_epoch_seconds());
             break;
         case Griffin::SYS_EXIT:
             app_exit(static_cast<int>(a1));
