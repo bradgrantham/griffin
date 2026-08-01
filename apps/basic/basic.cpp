@@ -18,6 +18,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <cerrno>
+#include <climits>
+#include <cstdint>
 #include <unistd.h>
 #include <poll.h>
 #include <sys/time.h>
@@ -25,9 +28,12 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <array>
 #include <set>
 #include <algorithm>
+#include <initializer_list>
 #include <optional>
+#include <stdexcept>
 #include <variant>
 #include <unordered_map>
 #include <map>
@@ -333,6 +339,47 @@ std::unordered_map<std::string, TokenType> StringToToken =
     {"STOP", STOP},
 };
 
+// The keywords and operators of StringToToken, bucketed by first character and
+// sorted longest-first within a bucket, so tokenizing probes only the handful of
+// entries that could match at a given position instead of walking the whole map
+// at every character.  Matching semantics are unchanged: case-insensitive,
+// longest match wins, and there is deliberately no word-boundary check (FORM is
+// still FOR followed by the identifier M).
+struct KeywordIndex
+{
+    std::array<std::vector<std::pair<std::string, TokenType>>, 256> by_first_char;
+
+    KeywordIndex()
+    {
+        // Keys are uppercase, so a bucket is found with toupper() of the source
+        // character.
+        for(const auto& [word, token]: StringToToken) {
+            by_first_char[(unsigned char)std::toupper((unsigned char)word[0])].push_back({word, token});
+        }
+        for(auto& bucket: by_first_char) {
+            std::sort(bucket.begin(), bucket.end(),
+                [](const auto& a, const auto& b) { return a.first.size() > b.first.size(); });
+        }
+    }
+};
+
+const KeywordIndex TokenIndex;
+
+// True if the (uppercase) keyword `word` matches line[index...] case-insensitively.
+// A word running off the end of the line does not match.
+bool MatchesAt(const std::string& line, size_t index, const std::string& word)
+{
+    if(index + word.size() > line.size()) {
+        return false;
+    }
+    for(size_t i = 0; i < word.size(); i++) {
+        if(std::toupper((unsigned char)line[index + i]) != (unsigned char)word[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::unordered_map<TokenType, const char *> TokenTypeToStringMap =
 {
     {TEST, "TEST"},
@@ -478,28 +525,48 @@ TokenList Tokenize(const std::string& line)
         pending += c;
     };
 
+    // Classify the pending run of characters as an integer, a float, or an
+    // identifier.  strtol/strtod are used instead of stoi/stod because the
+    // exceptions those threw for every identifier dominated tokenizing time;
+    // the out-of-range exceptions they threw are still thrown here so that
+    // behavior is unchanged.  `pending` never holds leading whitespace or a
+    // leading sign (both are consumed by the loop below), so only a leading
+    // digit or '.' can begin a number -- except that strtod also accepts "INF"
+    // and "NAN", which it always has, so those first letters are offered too.
     auto flush_pending = [&]() {
         while (!pending.empty())
         {
             std::size_t ipos{}, dpos{};
             bool found_integer = false, found_float = false;
-            // Both are read only when the matching found_* flag is set, but the
-            // error path below reports a position derived from i, so it must
-            // start defined.
             int32_t i = 0;
             double d = 0.0;
-            try {
-                i = std::stoi(pending, &ipos);
-                found_integer = true;
-            } catch(std::invalid_argument const& ex) {
-                found_integer = false;
-            }
+            const char *begin = pending.c_str();
+            char first = pending[0];
 
-            try {
-                d = std::stod(pending, &dpos);
-                found_float = true;
-            } catch(std::invalid_argument const& ex) {
-                found_float = false;
+            if(isdigit((unsigned char)first) || first == '.' ||
+               first == 'I' || first == 'i' || first == 'N' || first == 'n') {
+                char *end;
+
+                errno = 0;
+                long l = std::strtol(begin, &end, 10);
+                if(errno == ERANGE || l < INT_MIN || l > INT_MAX) {
+                    throw std::out_of_range("stoi: out of range");
+                }
+                if(end != begin) {
+                    i = static_cast<int32_t>(l);
+                    ipos = end - begin;
+                    found_integer = true;
+                }
+
+                errno = 0;
+                d = std::strtod(begin, &end);
+                if(errno == ERANGE) {
+                    throw std::out_of_range("stod: out of range");
+                }
+                if(end != begin) {
+                    dpos = end - begin;
+                    found_float = true;
+                }
             }
 
             if(found_integer && (!found_float || dpos <= ipos)) {
@@ -511,15 +578,15 @@ TokenList Tokenize(const std::string& line)
                 pending = pending.substr(dpos);
                 pending_started += dpos;
             } else {
-                for(size_t i = 0; i < pending.size() - 1; i++) {
-                    char c = pending[i];
+                for(size_t k = 0; k < pending.size() - 1; k++) {
+                    char c = pending[k];
                     if(!isalnum(c) && c != '_') {
-                        throw TokenizeError(TokenizeError::SYNTAX, pending_started + i);
+                        throw TokenizeError(TokenizeError::SYNTAX, pending_started + k);
                     }
                 }
                 char c = pending[pending.size() - 1];
                 if(!isalnum(c) && c != '_' && c != '$') {
-                    throw TokenizeError(TokenizeError::SYNTAX, pending_started + i);
+                    throw TokenizeError(TokenizeError::SYNTAX, pending_started + pending.size() - 1);
                 }
                 if(pending[pending.size() - 1] == '$') {
                     tokens.push_back(Token(STRING_IDENTIFIER, str_toupper(pending)));
@@ -535,12 +602,15 @@ TokenList Tokenize(const std::string& line)
     for (size_t index = 0; index < line.size();) {
         // REM starts a remark, but only at a word boundary so identifiers that
         // happen to contain "REM" (e.g. FOREMAN) are not mistaken for comments.
-        bool at_word_start = (index == 0) ||
-            (!isalnum((unsigned char)line[index - 1]) && line[index - 1] != '_');
-        if(at_word_start && str_toupper(line.substr(index, 3)) == "REM") {
-            flush_pending();
-            tokens.push_back(Token(REMARK, line.substr(index + 3)));
-            break;
+        // The 'R' test comes first so most characters cost only one compare.
+        if(std::toupper((unsigned char)line[index]) == 'R') {
+            bool at_word_start = (index == 0) ||
+                (!isalnum((unsigned char)line[index - 1]) && line[index - 1] != '_');
+            if(at_word_start && MatchesAt(line, index, "REM")) {
+                flush_pending();
+                tokens.push_back(Token(REMARK, line.substr(index + 3)));
+                break;
+            }
         }
 
         char c = line[index];
@@ -568,21 +638,15 @@ TokenList Tokenize(const std::string& line)
 
         auto result = [&]() -> std::optional<std::pair<size_t, TokenType>>{
             // Choose the longest keyword/operator that matches here so multi-character
-            // operators (<=, >=, <>) and longer keywords (ORDER vs OR) win. StringToToken
-            // is unordered, so we cannot rely on iteration order for longest-match.
-            size_t best_size = 0;
-            TokenType best_token = TOKENTYPE_END;
-            for(const auto& [word, token]: StringToToken) {
-                if(word.size() > best_size &&
-                   str_toupper(line.substr(index, word.size())) == word) {
-                    best_size = word.size();
-                    best_token = token;
+            // operators (<=, >=, <>) and longer keywords (ORDER vs OR) win.  Only the
+            // bucket for this character can match and it is sorted longest-first, so
+            // the first match is the longest.
+            for(const auto& [word, token]: TokenIndex.by_first_char[(unsigned char)std::toupper((unsigned char)c)]) {
+                if(MatchesAt(line, index, word)) {
+                    return std::make_pair(word.size(), token);
                 }
             }
-            if(best_size == 0) {
-                return std::nullopt;
-            }
-            return std::make_pair(best_size, best_token);
+            return std::nullopt;
         }();
 
         if (result) {
@@ -1049,20 +1113,31 @@ struct GosubRecord
 };
 
 // A DEF FN user function: its formal parameters and the expression tokens to
-// evaluate (a small copied slice; everything else is stored as source text).
+// evaluate (a copy of that slice of the defining line, so it survives the line
+// being edited or deleted).
 struct UserFunction
 {
     std::vector<std::string> params;
     TokenList expression;
 };
 
+// A stored program line: the source exactly as entered, for LIST and SAVE, plus
+// the tokens it was tokenized to when it was entered.
+struct ProgramLine
+{
+    std::string source;
+    TokenList tokens;
+};
+
 struct State
 {
     VariableMap variables;
-    // Program lines are stored as raw source text and re-tokenized on demand when
-    // run; this keeps memory low (one representation per line) and makes LIST/SAVE
-    // trivial.  See ExecuteNextLine.
-    std::map<int, std::string> program;
+    // Program lines are tokenized once, when they are entered, and stored as
+    // source plus tokens; running a line never re-tokenizes it, and a line that
+    // does not tokenize is reported and not stored.  Tokenizing is deterministic
+    // and tokens are never mutated, so the token offsets FOR/GOSUB capture stay
+    // valid.  See MaybeStoreProgramLine and ExecuteNextLine.
+    std::map<int, ProgramLine> program;
     std::vector<ForRecord> for_stack;
     std::vector<GosubRecord> gosub_stack;
     std::unordered_map<std::string, UserFunction> functions;
@@ -1244,9 +1319,17 @@ std::optional<Token> ParseOne(const TokenList& tokens, TokenIterator& cur, [[may
     return {};
 }
 
-bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
+// Every caller passes a braced list of a handful of token types.  An
+// initializer_list keeps that list on the stack; a std::set parameter allocated
+// (and freed) a node per element on every call.
+bool IsOneOf(TokenType type, std::initializer_list<TokenType> expect)
 {
-    return expect.count(type) > 0;
+    for(TokenType expected: expect) {
+        if(expected == type) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns optional std::string
@@ -1688,8 +1771,8 @@ void BuildDataList(State& state)
 {
     state.data.clear();
     state.data_index = 0;
-    for(const auto& [line_number, source] : state.program) {
-        TokenList tokens = Tokenize(source);
+    for(const auto& [line_number, stored] : state.program) {
+        const TokenList& tokens = stored.tokens;
         for(size_t i = 0; i < tokens.size(); ) {
             if(tokens[i].type != DATA) {
                 i++;
@@ -2222,7 +2305,7 @@ std::pair<int, int> FindMatchingNext(State& state, int from_line, int from_index
     auto it = state.program.find(from_line);
     bool first = true;
     for(; it != state.program.end(); ++it) {
-        TokenList tokens = Tokenize(it->second);
+        const TokenList& tokens = it->second.tokens;
         size_t i = first ? static_cast<size_t>(from_index) : 0;
         first = false;
         for(; i < tokens.size(); i++) {
@@ -3325,11 +3408,16 @@ void EvaluateTokens(const TokenList& tokens, State& state, int start_index = 0)
 
 void ExecuteNextLine(State& state)
 {
-    // One console poll per program line.  The trap costs far less than the
-    // re-tokenization below, and a line is the finest granularity at which the
-    // interpreter has no partially-executed statement to abandon.
-    if(check_break()) {
-        throw BreakException{};
+    // Poll the console for a BREAK request every 64th line.  A line is the
+    // finest granularity at which the interpreter has no partially-executed
+    // statement to abandon, but now that lines are not re-tokenized they run in
+    // tens of microseconds and the poll's TRAP would be the dominant cost of a
+    // simple statement.  64 lines is still well under 100 ms of latency.
+    static uint8_t break_poll_counter = 0;
+    if((break_poll_counter++ % 64) == 0) {
+        if(check_break()) {
+            throw BreakException{};
+        }
     }
 
     state.goto_line = -1;
@@ -3339,9 +3427,8 @@ void ExecuteNextLine(State& state)
     int start = state.resume_index;
     state.resume_index = 0;
 
-    // Lines are stored as source text; tokenize on demand.  Tokenization is
-    // deterministic, so token offsets captured by FOR/GOSUB stay valid here.
-    TokenList tokens = Tokenize(state.program.at(state.current_line));
+    // Lines were tokenized when they were entered, so this is just a lookup.
+    const TokenList& tokens = state.program.at(state.current_line).tokens;
     EvaluateTokens(tokens, state, start);
 
     if(state.direct) {
@@ -3380,10 +3467,10 @@ void StopExecution(State& state)
     state.direct = true;
 }
 
-// If `raw` begins with a line number, store (or, with an empty body, delete) that
-// program line as source text and return true.  Otherwise return false so the
-// caller treats the input as a direct command.
-bool MaybeStoreProgramLine(const std::string& raw, State& state)
+// If `raw` begins with a line number, split it into that number and the trimmed
+// body that follows and return true.  Otherwise return false so the caller
+// treats the input as a direct command (or, when loading, ignores it).
+bool SplitProgramLine(const std::string& raw, int& line_number, std::string& body)
 {
     size_t i = 0;
     while(i < raw.size() && isspace((unsigned char)raw[i])) { i++; }
@@ -3392,14 +3479,49 @@ bool MaybeStoreProgramLine(const std::string& raw, State& state)
     }
     size_t j = i;
     while(j < raw.size() && isdigit((unsigned char)raw[j])) { j++; }
-    int line_number = std::stoi(raw.substr(i, j - i));
+    line_number = std::stoi(raw.substr(i, j - i));
 
     while(j < raw.size() && isspace((unsigned char)raw[j])) { j++; }
-    std::string body = raw.substr(j);
+    body = raw.substr(j);
+    return true;
+}
+
+// Tokenize `body` and store it as program line `line_number`, replacing any line
+// with that number.  Throws TokenizeError, leaving the program unchanged, if the
+// body does not tokenize; every caller reports that in its own terms.
+void StoreProgramLine(int line_number, const std::string& body, State& state)
+{
+    TokenList tokens = Tokenize(body);
+    tokens.shrink_to_fit();  // programs are kept whole; vector slack is not free
+    ProgramLine& stored = state.program[line_number];
+    stored.source = body;
+    stored.tokens = std::move(tokens);
+}
+
+// If `raw` begins with a line number, store (or, with an empty body, delete) that
+// program line and return true.  A line that does not tokenize is reported here
+// and not stored.  Returns false if `raw` is not a numbered line, so the caller
+// treats the input as a direct command.
+bool MaybeStoreProgramLine(const std::string& raw, State& state)
+{
+    int line_number;
+    std::string body;
+    if(!SplitProgramLine(raw, line_number, body)) {
+        return false;
+    }
+
     if(body.empty()) {
         state.program.erase(line_number);
     } else {
-        state.program[line_number] = body;
+        try {
+            StoreProgramLine(line_number, body, state);
+        } catch (const TokenizeError& e) {
+            switch(e.type) {
+                case TokenizeError::SYNTAX:
+                    printf("syntax error at %d (\"%*s\")\n", e.position, std::min(5, (int)(body.size() - e.position)), body.c_str() + e.position);
+                    break;
+            }
+        }
     }
     return true;
 }
@@ -3431,7 +3553,10 @@ std::string StripQuotes(const std::string& s)
 }
 
 // LOAD: replace the stored program with the numbered lines of a file.  Non-numbered
-// lines (e.g. a trailing RUN) are ignored.  Returns false if the file can't be read.
+// lines (e.g. a trailing RUN) are ignored.  A line that does not tokenize is
+// reported and skipped and the rest of the file still loads; nothing is thrown,
+// because the batch path loads outside the interpreter's error handling.
+// Returns false if the file can't be read.
 bool LoadProgram(const std::string& filename, State& state)
 {
     std::ifstream in(filename);
@@ -3445,7 +3570,20 @@ bool LoadProgram(const std::string& filename, State& state)
         if(!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
-        MaybeStoreProgramLine(line, state);
+        int line_number;
+        std::string body;
+        if(!SplitProgramLine(line, line_number, body)) {
+            continue;
+        }
+        if(body.empty()) {
+            state.program.erase(line_number);
+            continue;
+        }
+        try {
+            StoreProgramLine(line_number, body, state);
+        } catch (const TokenizeError& e) {
+            printf("syntax error in line %d\n", line_number);
+        }
     }
     return true;
 }
@@ -3458,16 +3596,16 @@ bool SaveProgram(const std::string& filename, State& state)
         printf("Could not write \"%s\"\n", filename.c_str());
         return false;
     }
-    for(const auto& [n, src] : state.program) {
-        out << n << " " << src << "\n";
+    for(const auto& [n, stored] : state.program) {
+        out << n << " " << stored.source << "\n";
     }
     return true;
 }
 
 void ListProgram(State& state)
 {
-    for(const auto& [n, src] : state.program) {
-        printf("%d %s\n", n, src.c_str());
+    for(const auto& [n, stored] : state.program) {
+        printf("%d %s\n", n, stored.source.c_str());
     }
 }
 
