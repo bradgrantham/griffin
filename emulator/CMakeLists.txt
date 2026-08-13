@@ -35,7 +35,16 @@ add_custom_command(
 )
 add_custom_target(griffin_generated DEPENDS ${GRIFFIN_ROOT}/griffin.generated.h)
 
-add_executable(emulator emulator.cpp)
+# The super-engine suite is the semantics authority for the display-list
+# pipeline: ENGINE's descriptor walker and the PIXEL/COMPOSITOR models are
+# compiled straight from it rather than re-implemented here, so the emulator
+# and `make -C super-engine check` can never drift.
+add_executable(emulator
+    emulator.cpp
+    ${PROJECT_SOURCE_DIR}/../super-engine/interpret.cpp
+    ${PROJECT_SOURCE_DIR}/../super-engine/render.cpp
+)
+target_include_directories(emulator PRIVATE ${PROJECT_SOURCE_DIR}/../super-engine)
 add_dependencies(emulator griffin_generated)
 target_link_libraries(emulator PRIVATE SDL3::SDL3 Moira)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

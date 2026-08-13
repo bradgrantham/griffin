@@ -12,6 +12,16 @@
 
 #include "../griffin.generated.h"
 
+// The display-list pipeline is not re-implemented here.  super-engine/ is the
+// semantics authority — its EngineWalker is edma3.v's descriptor state machine
+// and its PixelUnit/CompositorUnit are pixel.v and compositor.v, all validated
+// against cpld/compositor/compositor_tb.v by `make -C super-engine check`.  The
+// emulator is one of that suite's two drivers; the suite itself is the other,
+// so a behaviour that only exists here is a bug rather than a convenience.
+#include "descriptor.h"
+#include "interpret.h"
+#include "render.h"
+
 // pty.h / util.h pull in termios.h which #defines EXTB, colliding with
 // a Moira enum member.  Include Moira first, then the PTY header.
 #include "Moira.h"
@@ -1062,15 +1072,16 @@ struct DUARTState
     }
 };
 
-static uint32_t r3g3b2_to_argb(uint8_t c)
+// R4G4B4 to ARGB8888.  Nibble replication (x17) is the DAC's own transfer
+// function, and it is the same rule super-engine's PPM writer uses, so a
+// --screenshot and a suite artifact of the same list are directly comparable.
+// (r3g3b2_to_argb is gone with rev-1 VIDEO: the pipeline is 12-bit end to end.)
+static uint32_t rgb444_to_argb(SuperEngine::Rgb444 c)
 {
-    uint8_t r3 = (c >> 5) & 0x7;
-    uint8_t g3 = (c >> 2) & 0x7;
-    uint8_t b2 = c & 0x3;
-    uint8_t r8 = (r3 << 5) | (r3 << 2) | (r3 >> 1);
-    uint8_t g8 = (g3 << 5) | (g3 << 2) | (g3 >> 1);
-    uint8_t b8 = (b2 << 6) | (b2 << 4) | (b2 << 2) | b2;
-    return 0xFF000000u | (r8 << 16) | (g8 << 8) | b8;
+    const uint8_t r8 = SuperEngine::rgb444_channel_to_8(SuperEngine::rgb444_r(c));
+    const uint8_t g8 = SuperEngine::rgb444_channel_to_8(SuperEngine::rgb444_g(c));
+    const uint8_t b8 = SuperEngine::rgb444_channel_to_8(SuperEngine::rgb444_b(c));
+    return 0xFF000000u | (uint32_t(r8) << 16) | (uint32_t(g8) << 8) | b8;
 }
 
 struct VideoState
@@ -1083,7 +1094,6 @@ struct VideoState
     static constexpr int V_ACTIVE = 480;
     static constexpr int V_SYNC_START = 490;
     static constexpr int H_ACTIVE = 640;
-    static constexpr int BYTES_PER_LINE = 80;
 
     uint64_t clock_next_line = 0;
     uint64_t frac_accum = 0;
@@ -1095,32 +1105,24 @@ struct VideoState
     // VIDEO the way a private timer would.
     uint64_t line_count = 0;
 
-    bool irq_latched = false;
-
-    bool video_enable = false;
-    bool video_irqenb = false;  // CTRL.IRQENB: gates the ~VIDEO_IRQ pin only;
-                                 // irq_latched itself still sets every vsync
-                                 // regardless (matches video.v / DUART's ISR/IMR split)
-    uint8_t palette_fg = 0xFF;
-    uint8_t palette_bg = 0x00;
-    bool fifo_error = false;
+    // TIMING's vsync pulse is latched in GLUE now, not in VIDEO — there is no
+    // VIDEO peripheral any more and PIXEL/COMPOSITOR have no bus at all.  The
+    // latch lives here because this is where vsync is generated; GLUE's
+    // VSYNC_STATUS/VSYNC_CLEAR registers read and W1C it (see IO_read8).
+    bool vsync_pending = false;
 
     SDL_Window *window = nullptr;
     SDL_Renderer *renderer = nullptr;
     SDL_Texture *texture = nullptr;
     bool sdl_ok = false;
     bool headless = false;          // skip SDL window; framebuffer still filled
-    bool want_pixels = true;        // false => nobody views the fb: skip the
-                                     // per-scanline RAM peek + ARGB render
-                                     // (headless with no screenshot).  DMA
-                                     // stall accounting still runs, so guest
-                                     // timing is unchanged.
+    bool want_pixels = true;        // false => nobody views the fb: skip PIXEL,
+                                     // COMPOSITOR and the ARGB conversion
+                                     // (headless with no screenshot).  The
+                                     // descriptor walk, its DMA stall and the
+                                     // audio deposits still run, so guest
+                                     // timing is unchanged — see service_video.
     std::vector<uint32_t> framebuffer;
-
-    // Per-line framebuffer: the header word's two bytes set this line's palette
-    // (read in fetch_active_line), then the 80 pixel bytes follow.
-    uint8_t scanline_bytes[BYTES_PER_LINE] = {};
-    bool scanline_valid = false;
 
     bool init()
     {
@@ -1209,27 +1211,13 @@ struct VideoState
         if (sdl_ok)   { SDL_Quit(); }
     }
 
-    void render_scanline(int line)
+    // COMPOSITOR hands over one line of R4G4B4; this is only the DAC.
+    void store_scanline(int line, const SuperEngine::Rgb444 *src)
     {
         uint32_t *row = &framebuffer[line * H_ACTIVE];
-        if (!video_enable || !scanline_valid)
+        for (int i = 0; i < H_ACTIVE; i++)
         {
-            uint32_t bg = r3g3b2_to_argb(0);
-            for (int i = 0; i < H_ACTIVE; i++)
-            {
-                row[i] = bg;
-            }
-            return;
-        }
-        uint32_t fg_argb = r3g3b2_to_argb(palette_fg);
-        uint32_t bg_argb = r3g3b2_to_argb(palette_bg);
-        for (int b = 0; b < BYTES_PER_LINE; b++)
-        {
-            uint8_t shift = scanline_bytes[b];
-            for (int bit = 7; bit >= 0; bit--)
-            {
-                row[b * 8 + (7 - bit)] = (shift & (1 << bit)) ? fg_argb : bg_argb;
-            }
+            row[i] = rgb444_to_argb(src[i]);
         }
     }
 
@@ -1245,27 +1233,27 @@ struct VideoState
         SDL_RenderPresent(renderer);
     }
 
-    template<typename FetchFn>
-    uint32_t check_timer(uint64_t clock_now, FetchFn&& fetch_active_line)
+    // `service_line(v_cnt, stall)` does everything one scanline needs: advance
+    // the ENGINE walker over that line's HBLANK edge, run PIXEL/COMPOSITOR
+    // through the blanking interval and then the 640 active slots, and store
+    // the result.  It is a callback because all of that needs the emulator's
+    // RAM and PORTS, which VideoState deliberately does not know about.
+    template<typename ServiceFn>
+    uint32_t check_timer(uint64_t clock_now, ServiceFn&& service_line)
     {
         uint32_t stall_cycles = 0;
         while (clock_now >= clock_next_line)
         {
-            if (v_cnt < V_ACTIVE)
-            {
-                scanline_valid = fetch_active_line(v_cnt, scanline_bytes, stall_cycles);
-                if (want_pixels)
-                    render_scanline(v_cnt);
-            }
+            service_line(v_cnt, stall_cycles);
 
             // VSYNC IRQ: hardware latches at (v_cnt==V_SYNC_START && h_last) —
             // the END of line 490.  In this model that is the current iteration,
             // before v_cnt is advanced.  Latching after the increment (i.e. when
             // v_cnt becomes V_SYNC_START) fires one line early and shifts the
-            // per-line palette image up by a scanline.
+            // per-line VIDCMD packet's effect down by a scanline.
             if (v_cnt == V_SYNC_START)
             {
-                irq_latched = true;
+                vsync_pending = true;
                 present_frame();
             }
 
@@ -1285,105 +1273,56 @@ struct VideoState
         return stall_cycles;
     }
 
-    bool irq_pending() const { return irq_latched && video_irqenb; }
-    void clear_irq() { irq_latched = false; }
-
-    uint8_t read_reg(uint32_t addr) const
-    {
-        if (addr == VIDEO_CTRL_RB)
-        {
-            return (fifo_error ? VIDEO_CTRL_RB_FIFO_ERROR_MASK : 0)
-                 | (video_enable ? VIDEO_CTRL_RB_ENABLE_MASK : 0)
-                 | (video_irqenb ? VIDEO_CTRL_RB_IRQENB_MASK : 0);
-        }
-        return 0;
-    }
-
-    void write_reg8(uint32_t addr, uint8_t val)
-    {
-        if (addr == VIDEO_CLRINT)
-        {
-            irq_latched = false;
-        }
-        else if (addr == VIDEO_CTRL)
-        {
-            video_enable = (val & VIDEO_CTRL_ENABLE_MASK) != 0;
-            video_irqenb = (val & VIDEO_CTRL_IRQENB_MASK) != 0;
-        }
-        else if (addr == VIDEO_CLRERR)
-        {
-            fifo_error = false;
-        }
-    }
+    // There is no VIDEO register file any more: rev-1's CTRL/CLRINT/CLRERR
+    // went with the chip.  Everything that used to configure video —
+    // enable, palette, mode — is now in-band as VIDCMD SET instructions, and
+    // the only CPU-visible bit left is the vsync latch, which GLUE owns.
+    bool irq_pending() const { return vsync_pending; }
+    void clear_irq() { vsync_pending = false; }
 };
 
 // ---------------------------------------------------------------------------
-// ENGINE — framebuffer DMA engine (ATF1508AS CPLD).
+// ENGINE — display-list DMA engine (ATF1508AS CPLD, cpld/engine/edma3.v).
 //
-// Real hardware bus-masters and streams 42 16-bit words per scanline
-// (4-byte header + 80 pixel bytes) into a pair of 7200 FIFOs.  The
-// emulator skips the FIFO model: when a scanline is rendered,
-// VideoState's fetch callback pulls the line directly from RAM at
-// {SOURCE_PAGE, line*stride} and we charge the CPU the equivalent
-// burst time so timing-sensitive code sees the same stall as real
-// hardware.
+// Rev-1's ENGINE streamed a fixed 42 words per scanline from {SOURCE_PAGE,
+// line*stride}.  This one walks a descriptor table in RAM's top 64K: the CPU
+// writes the first descriptor's word address to DESC, which arms it, and the
+// engine bus-masters its way through the list, strobing each payload word into
+// one of three FIFOs.  There is no read path — no STATUS, no SOURCE_PAGE — so
+// reads of the region return open bus.
+//
+// The state machine itself is NOT reimplemented here.  SuperEngine::EngineWalker
+// is that machine, shared verbatim with super-engine/, and this struct is only
+// the register decode plus the emulator's per-line driver bookkeeping.
+//
+// KNOWN SIMPLIFICATION, in the same spirit as rev-1's DMA-lump note: the walker
+// is advanced once per scanline boundary and a whole line's deposits land at
+// once, rather than spreading across the bus cycles that carried them.  Lumping
+// is strictly EARLIER than hardware, so it cannot manufacture a FIFO fill that
+// real timing would have missed — it can only hide a late one.  Lists that are
+// marginal on delivery therefore look cleaner here than on the bench; the
+// suite's clock-accurate driver is where that gets checked.  Intra-line tearing
+// is not modelled for the same reason.
 // ---------------------------------------------------------------------------
 
 struct EngineState
 {
-    // SYSCLKS_PER_LINE is the total CPU-stall cost of one scanline's DMA; how
-    // it is *delivered* to the clock (spread across instructions by default,
-    // or as one lump under GRIFFIN_DMA_STALL_LUMP) is decided in
-    // service_video().  Either way this per-line accounting does not simulate
-    // individual bus bursts, so it cannot reproduce the intra-line tearing
-    // those cause on real hardware.  The cost is the full line — 42 words
-    // (4-byte palette/reserved header + 80 pixel bytes) — at ENGINE's 2-cycle
-    // streaming rate (STATE_SETTLE + STATE_STROBE per word; AS held for the
-    // whole burst, DTACK ignored), plus a fixed overhead per bus burst:
-    // STATE_ASSERT + STATE_RELEASE = 2 sysclks of extra BGACK-low time, plus a
-    // little dead time in the BR/BG handshake (most of that overlaps the CPU
-    // finishing its own cycle, so it isn't charged in full).
-    // ARBITRATION_SYSCLKS is an estimate pending measurement on hardware.
-    // Bursts chunk the frame-wide word stream, not lines, so a line actually
-    // straddles WORDS_PER_LINE/burst bursts on average; the ceil() here
-    // overcharges slightly (~1%), which is fine at this modeling fidelity.
-    static constexpr uint32_t WORDS_PER_LINE = Griffin::VIDEO_WORDS_PER_LINE;  // 42
-    static constexpr uint32_t SYSCLKS_PER_WORD = 2;
-    static constexpr uint32_t ARBITRATION_SYSCLKS = 3;
-    static constexpr uint32_t BURSTS_PER_LINE =
-        (WORDS_PER_LINE + Griffin::ENGINE_WORDS_PER_BURST - 1) / Griffin::ENGINE_WORDS_PER_BURST;
-    static constexpr uint32_t SYSCLKS_PER_LINE =
-        WORDS_PER_LINE * SYSCLKS_PER_WORD + BURSTS_PER_LINE * ARBITRATION_SYSCLKS;
+    // Per-descriptor bus cost comes from descriptor.h's model (arbitration +
+    // assert + 4-word fetch + 2 SYSCLK/payload word + release), so the stall
+    // the CPU is charged is derived from the actual list rather than from a
+    // fixed per-line constant the way rev-1's WORDS_PER_LINE was.
+    SuperEngine::EngineWalker walker{SuperEngine::ENGINE_ARBITRATION_CYCLES};
 
-    uint8_t source_page = 0;
-    bool dma_en = false;
-
-    uint32_t fb_line_addr(int line) const
+    // DESC carries a 15-bit WORD address inside the descriptor page; edma3.v
+    // forms {8'h3F, desc_ptr} from it.
+    static uint32_t desc_byte_address(uint16_t val)
     {
-        return (uint32_t(source_page) << 16)
-             | (uint32_t(line) * Griffin::VIDEO_LINE_STRIDE_BYTES);
+        return SuperEngine::DESC_TABLE_BASE |
+               ((static_cast<uint32_t>(val) & ENGINE_DESC_ADDR_MASK) << 1);
     }
 
-    uint8_t read_reg(uint32_t addr) const
-    {
-        if (addr == ENGINE_STATUS)
-        {
-            return dma_en ? ENGINE_STATUS_DMA_EN_MASK : 0;
-        }
-        return 0;
-    }
-
-    void write_reg8(uint32_t addr, uint8_t val)
-    {
-        if (addr == ENGINE_SOURCE_PAGE)
-        {
-            source_page = val;
-        }
-        else if (addr == ENGINE_CTRL)
-        {
-            dma_en = (val & ENGINE_CTRL_DMA_EN_MASK) != 0;
-        }
-    }
+    // No CPU-readable state exists; GLUE answers DTACK and the bus floats.
+    static constexpr uint8_t OPEN_BUS = 0xFF;
 };
 
 // ---------------------------------------------------------------------------
@@ -2774,7 +2713,33 @@ class GriffinEmulator : public moira::Moira
     static_assert(RAM_BANK_1_BASE == 0);
     static_assert(RAM_BANK_1_SIZE + RAM_BANK_2_SIZE + RAM_BANK_3_SIZE + RAM_BANK_4_SIZE ==
                   RAM_TOTAL_SIZE);
-    mutable std::vector<uint8_t> RAM = std::vector<uint8_t>(RAM_TOTAL_SIZE, 0);
+    // RAM is stored as BUS WORDS, not bytes.  The display-list engine reads it
+    // through SuperEngine::Memory, which is a span of 16-bit words indexed by
+    // byte_address/2 — exactly what a 68000 bus master sees — and making that
+    // the storage means there is no second copy to keep in step and no way for
+    // the engine's view of memory to drift from the CPU's.  The byte accessors
+    // below do the big-endian split: byte 2n is the high half of word n.
+    mutable std::vector<uint16_t> RAM = std::vector<uint16_t>(RAM_TOTAL_SIZE / 2, 0);
+
+    uint8_t ram_read8(uint32_t addr) const
+    {
+        const uint16_t w = RAM[addr >> 1];
+        return (addr & 1) ? static_cast<uint8_t>(w & 0xFF) : static_cast<uint8_t>(w >> 8);
+    }
+
+    void ram_write8(uint32_t addr, uint8_t v) const
+    {
+        uint16_t &w = RAM[addr >> 1];
+        w = (addr & 1) ? static_cast<uint16_t>((w & 0xFF00) | v)
+                       : static_cast<uint16_t>((w & 0x00FF) | (static_cast<uint16_t>(v) << 8));
+    }
+
+    // The engine's view.  Const-cast because Moira's bus callbacks are const
+    // and RAM is already mutable for the same reason.
+    SuperEngine::Memory engine_memory() const
+    {
+        return SuperEngine::Memory{std::span<uint16_t>(RAM)};
+    }
     mutable std::array<uint8_t, ROM_SIZE> ROM{};
     mutable int debug_out_latch = 0;
     mutable bool ROMoverlay = true;
@@ -2849,6 +2814,12 @@ class GriffinEmulator : public moira::Moira
         {
             return ps2.read_reg(addr + IO_BASE);
         }
+        if (addr + IO_BASE == GLUE_VSYNC_STATUS)
+        {
+            // TIMING's vsync pulse, latched in GLUE.  This replaces rev-1
+            // VIDEO's CLRINT: the interrupt source moved chips when VIDEO did.
+            return video.vsync_pending ? GLUE_VSYNC_STATUS_VSYNC_PENDING_MASK : 0;
+        }
         if (is_ports_addr(addr))
         {
             return ports.read_reg(addr + IO_BASE);
@@ -2921,6 +2892,15 @@ class GriffinEmulator : public moira::Moira
                 printf("[GLUE CONFIG: 0x%02X overlay=%s]\n", val,
                        (val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK) ? "off" : "on");
             }
+        } else if(addr + IO_BASE == GLUE_VSYNC_CLEAR) {
+            // Write-1-to-clear, and it must re-evaluate the IPL: level 6 is
+            // level-triggered off this latch, so an ack that does not lower IPL
+            // re-enters the ISR immediately.
+            if (val & GLUE_VSYNC_CLEAR_VSYNC_PENDING_MASK)
+            {
+                video.clear_irq();
+            }
+            const_cast<GriffinEmulator*>(this)->update_ipl();
         } else if(addr + IO_BASE == GLUE_PS2_CLEAR
                   || addr + IO_BASE == GLUE_PS2_CTRL
                   || addr + IO_BASE == GLUE_PS2_TX_DATA
@@ -3079,7 +3059,7 @@ class GriffinEmulator : public moira::Moira
     {
         if (addr < RAM_TOTAL_SIZE)
         {
-            return RAM[addr];
+            return ram_read8(addr);
         }
         return 0;
     }
@@ -3089,6 +3069,17 @@ public:
     uint32_t clock_hz = SYSCLK_HZ;
     bool exit_requested = false;
     uint64_t dma_stall_debt = 0;   // smooth DMA-stall model: unpaid stall cycles
+
+    // PIXEL and COMPOSITOR, held across scanlines exactly as the chips are.
+    // Their state is the frame: FIFO contents, held colours, the run in
+    // progress.  Only /RS at vsync clears them.
+    SuperEngine::PixelUnit      pixel_unit;
+    SuperEngine::CompositorUnit compositor_unit;
+
+    // Bus time the engine spent outside a scanline boundary — i.e. the burst a
+    // DESC write kicks off immediately — waiting to be folded into the next
+    // service_video() stall payment.
+    uint64_t engine_stall_pending = 0;
 
     // --- PC-sampling profiler (GRIFFIN_PROFILE=START:END, SYSCLK cycles) ---
     // Deterministic runs make this exact: histogram the PC once per
@@ -3228,15 +3219,17 @@ public:
         if (ROMoverlay && (addr < ROM_SIZE)) {
             return ROM[addr];
         } else if (addr < RAM_TOTAL_SIZE) {
-            return RAM[addr];
+            return ram_read8(addr);
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return ROM[(addr - ROM_BASE) % ROM_SIZE];
         } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
             return direct_bus_read8(addr);
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            return video.read_reg(addr);
+            // Freed region: rev-1 VIDEO is gone and nothing answers here.
+            // GLUE still decodes and DTACKs it, so the bus floats.
+            return EngineState::OPEN_BUS;
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
-            return engine.read_reg(addr);
+            return EngineState::OPEN_BUS;   // write-only: no STATUS, no readback
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read8(addr - IO_BASE);
         } else {
@@ -3252,15 +3245,17 @@ public:
         if (ROMoverlay && (addr < ROM_SIZE)) {
             return (ROM[addr] << 8) | ROM[addr + 1];
         } else if (addr < RAM_TOTAL_SIZE) {
-            return (RAM[addr] << 8) | RAM[addr + 1];
+            // Aligned word reads are the common case and hit one entry.
+            return (addr & 1) ? static_cast<uint16_t>((ram_read8(addr) << 8) | ram_read8(addr + 1))
+                              : RAM[addr >> 1];
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return (ROM[(addr - ROM_BASE) % ROM_SIZE] << 8) | ROM[(addr - ROM_BASE + 1) % ROM_SIZE];
         } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
             return direct_bus_read16(addr);
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            return (video.read_reg(addr) << 8) | video.read_reg(addr + 1);
+            return (EngineState::OPEN_BUS << 8) | EngineState::OPEN_BUS;
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
-            return (engine.read_reg(addr) << 8) | engine.read_reg(addr + 1);
+            return (EngineState::OPEN_BUS << 8) | EngineState::OPEN_BUS;
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read16(addr - IO_BASE);
         } else {
@@ -3274,7 +3269,7 @@ public:
         apply_wait_states(addr);
         if(debug & DEBUG_BUS) { printf("write of uint8_t %02X at %06X\n", val, addr); }
         if (addr < RAM_TOTAL_SIZE) {
-            RAM[addr] = val;
+            ram_write8(addr, val);
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
         } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
@@ -3282,10 +3277,9 @@ public:
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write8(addr - IO_BASE, val);
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            video.write_reg8(addr, val);
-            const_cast<GriffinEmulator*>(this)->update_ipl();
+            return;   // freed region, no chip behind it
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
-            engine.write_reg8(addr, val);
+            const_cast<GriffinEmulator*>(this)->engine_write8(addr, val);
         } else {
             fprintf(stderr, "write of uint8_t %02X to unhandled %06X\n", val, addr);
             dump_cpu_state("unhandled write8"); abort();
@@ -3300,18 +3294,25 @@ public:
         uint8_t low = (val & 0xFF);
 
         if (addr < RAM_TOTAL_SIZE) {
-            RAM[addr] = high;
-            RAM[addr + 1] = low;
+            if (addr & 1) {
+                ram_write8(addr, high);
+                ram_write8(addr + 1, low);
+            } else {
+                RAM[addr >> 1] = val;
+            }
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
         } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
             direct_bus_write16(addr, val);
         } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            // VIDEO has only 8-bit registers now (palette is in-band via the
-            // FIFO); route a word write to the low byte like ENGINE.
-            video.write_reg8(addr + 1, low);
+            return;   // freed region, no chip behind it
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
-            engine.write_reg8(addr + 1, low);
+            // DESC is a TRUE 16-bit register — edma3.v latches D[14:0] on one
+            // word write.  Rev-1 folded every ENGINE word write down to its low
+            // byte because every ENGINE register was 8 bits wide; doing that
+            // here would throw away the top seven bits of the descriptor
+            // pointer and arm the engine at the wrong address.
+            const_cast<GriffinEmulator*>(this)->engine_write16(addr, val);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write16(addr - IO_BASE, val);
         } else {
@@ -3589,65 +3590,275 @@ public:
         }
     }
 
+    // ------------------------------------------------------------------
+    // Display-list pipeline plumbing
+    // ------------------------------------------------------------------
+
+    // Where a deposited word goes.  ENGINE only strobes; the mask decides which
+    // consumer latches D[15:0].  This is the emulator's half of the suite's
+    // DepositSink contract — the other half is the suite's own recording sink,
+    // and both drive the identical EngineWalker.
+    struct EmulatorSink final : SuperEngine::DepositSink
+    {
+        GriffinEmulator *emu = nullptr;
+
+        void deposit(uint64_t, uint8_t signal_mask, uint16_t word) override
+        {
+            // AUDIO is guest-visible through PORTS' half-full status, so it is
+            // fed unconditionally.  PIXELS and VIDCMD reach nothing the guest
+            // can read, so they are skipped when no one is looking at the
+            // framebuffer — see want_pixels below.
+            if ((signal_mask & SuperEngine::SIGNAL_AUDIO_FIFO_W) != 0)
+            {
+                emu->ports.audio_fifo_push(word);
+            }
+            if (!emu->video.want_pixels)
+            {
+                return;
+            }
+            if ((signal_mask & SuperEngine::SIGNAL_PIXELS_FIFO_W) != 0)
+            {
+                emu->pixel_unit.push_word(word);
+            }
+            if ((signal_mask & SuperEngine::SIGNAL_VIDCMD_FIFO_W) != 0)
+            {
+                emu->compositor_unit.push_word(word);
+            }
+        }
+    };
+
+    // Bring-up self-check for the display-list path, with no firmware
+    // involved: build a descriptor list by hand, arm it the way a DESC write
+    // does, and let the raster run.  It exercises the whole chain the ROM will
+    // depend on — arm, one wait_hblank release per scanline, VIDCMD deposits,
+    // eager SETs in blanking, RUN playback against the 640-slot frame, and
+    // stop_after — and it verifies its own output, so it is a test rather than
+    // a screenshot to squint at.
+    //
+    // The picture is left half held_fg (red), right half held_bg (blue), on
+    // every line.  Each line's packet is four words:
+    //     SET cmp_held_fg, SET cmp_held_bg, RUN(held_fg,320), RUN(held_bg,320)
+    // The two SETs are consumed during the preceding HBLANK and cost no slot;
+    // the two RUNs total exactly H_ACTIVE.
+    static constexpr uint32_t SELFTEST_PACKET = 0x100000;
+    static constexpr SuperEngine::Rgb444 SELFTEST_FG = 0x0F00;
+    static constexpr SuperEngine::Rgb444 SELFTEST_BG = 0x000F;
+
+    void selftest_build_list()
+    {
+        using namespace SuperEngine;
+
+        // One shared four-word packet; every line's descriptor points at it.
+        uint16_t *p = &RAM[SELFTEST_PACKET >> 1];
+        p[0] = vidcmd_set(SET_CMP_HELD_FG, SELFTEST_FG);
+        p[1] = vidcmd_set(SET_CMP_HELD_BG, SELFTEST_BG);
+        p[2] = vidcmd_run(RUN_SRC_HELD_FG, H_ACTIVE / 2);
+        p[3] = vidcmd_run(RUN_SRC_HELD_BG, H_ACTIVE / 2);
+
+        uint32_t at = DESC_TABLE_BASE;
+        for (uint32_t line = 0; line < V_ACTIVE; line++)
+        {
+            Descriptor d;
+            d.src         = SELFTEST_PACKET;
+            d.count       = 4;
+            d.signal_mask = SIGNAL_VIDCMD_FIFO_W;
+            d.wait_hblank = true;
+            const DescriptorWords w = encode_descriptor(d);
+            for (uint32_t i = 0; i < DESC_WORDS; i++)
+            {
+                RAM[(at + i * 2) >> 1] = w.w[i];
+            }
+            at += DESC_BYTES;
+        }
+
+        // Trailing wait/stop pacer: pins the IRQ to a fixed point in the frame
+        // instead of letting it drift with the last line's weight.
+        Descriptor stop;
+        stop.src         = SELFTEST_PACKET;
+        stop.count       = 1;
+        stop.signal_mask = SIGNAL_NONE;
+        stop.wait_hblank = true;
+        stop.stop_after  = true;
+        const DescriptorWords sw = encode_descriptor(stop);
+        for (uint32_t i = 0; i < DESC_WORDS; i++)
+        {
+            RAM[(at + i * 2) >> 1] = sw.w[i];
+        }
+
+        // Arm exactly as the CPU would: a true 16-bit write to DESC.
+        engine_write16(ENGINE_DESC, 0);
+    }
+
+    // Stand in for the ENGINE ISR the firmware will have: the list stops itself
+    // at the end of every frame, so something has to ack and re-arm or the
+    // screen goes black after one frame.  Doing it here also exercises the
+    // frame handshake — stop_after, level-3 IRQ, CTRL ack, DESC re-arm.
+    void selftest_rearm_if_idle()
+    {
+        if (!engine.walker.irq_pending())
+        {
+            return;
+        }
+        engine_write8(ENGINE_CTRL, ENGINE_CTRL_ENABLE_MASK);   // ack, stay enabled
+        engine_write16(ENGINE_DESC, 0);
+    }
+
+    // Returns true if the rendered frame is what the list asked for.
+    bool selftest_check() const
+    {
+        uint32_t wrong = 0;
+        for (int y = 0; y < VideoState::V_ACTIVE; y++)
+        {
+            for (int x = 0; x < VideoState::H_ACTIVE; x++)
+            {
+                const uint32_t want =
+                    rgb444_to_argb(x < VideoState::H_ACTIVE / 2 ? SELFTEST_FG : SELFTEST_BG);
+                if (video.framebuffer[y * VideoState::H_ACTIVE + x] != want)
+                {
+                    wrong++;
+                }
+            }
+        }
+        fprintf(stderr, "display-list self-test: %u of %d pixels wrong; "
+                        "engine ran %u descriptors, %u words, %u IRQ\n",
+                wrong, VideoState::V_ACTIVE * VideoState::H_ACTIVE,
+                engine.walker.total_descriptors(), engine.walker.total_words(),
+                engine.walker.irq_count());
+        for (const std::string &v : engine.walker.violations())
+        {
+            fprintf(stderr, "display-list self-test: VIOLATION %s\n", v.c_str());
+        }
+        return wrong == 0 && engine.walker.violations().empty();
+    }
+
+    void engine_write8(uint32_t addr, uint8_t val)
+    {
+        if (addr == ENGINE_CTRL)
+        {
+            // Any write clears a pending ~ENGINE_IRQ; D0 low aborts the list.
+            engine.walker.clear_irq();
+            if ((val & ENGINE_CTRL_ENABLE_MASK) == 0)
+            {
+                engine.walker.reset();
+            }
+            update_ipl();
+        }
+    }
+
+    void engine_write16(uint32_t addr, uint16_t val)
+    {
+        if (addr == ENGINE_DESC)
+        {
+            // Arming runs the list immediately, exactly as the hardware does:
+            // everything up to the first wait_hblank descriptor executes now
+            // (that is where a frame's VBLANK preamble lives), and the rest is
+            // released one HBLANK edge at a time by service_video().
+            EmulatorSink sink;
+            sink.emu = this;
+            const SuperEngine::WalkResult w =
+                engine.walker.arm(engine_memory(), EngineState::desc_byte_address(val),
+                                  getClock(), sink);
+            engine_stall_pending += w.busy_cycles;
+            update_ipl();
+        }
+        else
+        {
+            engine_write8(addr + 1, static_cast<uint8_t>(val & 0xFF));
+        }
+    }
+
     // Advance the video scanline timer.  Must be called every CPU step, not
     // batched at the ~1 ms poll_io() rate: a scanline is only ~445 SYSCLK, so
-    // polling at 1 ms would render ~31 lines per call, collapsing per-line
-    // palette updates into coarse bands.  check_timer() early-returns when no
-    // line boundary has been crossed, and the SDL present fires only once per
-    // frame (at v_cnt == V_SYNC_START), so calling this every step is cheap.
+    // polling at 1 ms would run ~31 lines per call, collapsing per-line VIDCMD
+    // packets into coarse bands.  check_timer() early-returns when no line
+    // boundary has been crossed, and the SDL present fires only once per frame
+    // (at v_cnt == V_SYNC_START), so calling this every step is cheap.
     void service_video()
     {
-        uint32_t dma_stall = video.check_timer(getClock(),
-            [this](int line, uint8_t *dst, uint32_t &stall) -> bool
+        EmulatorSink sink;
+        sink.emu = this;
+
+        uint32_t dma_stall = static_cast<uint32_t>(engine_stall_pending);
+        engine_stall_pending = 0;
+
+        video.check_timer(getClock(),
+            [this, &sink](int line, uint32_t &stall)
             {
-                if (!engine.dma_en)
+                // /RS.  TIMING pulses it during vertical sync: both FIFOs
+                // clear, COMPOSITOR's held colours return to 0xFFF/0x000 and
+                // its source to passthrough, and PIXEL's registers return to
+                // their defaults.  Anything the previous frame left staged is
+                // gone, which is what contains a mis-framed list to one frame.
+                if (line == VideoState::V_SYNC_START)
                 {
-                    return false;
+                    pixel_unit.reset();
+                    compositor_unit.reset();
                 }
-                // Palette-and-pixels: each line begins with a 4-byte header —
-                // word 0 = {fg, bg}, word 1 reserved — followed by the pixels.
-                // Always charge the DMA stall (guest timing), but skip the
-                // pixel/palette reads when nobody will view the framebuffer.
-                stall += EngineState::SYSCLKS_PER_LINE;
+
+                // One HBLANK edge of the descriptor list.  The walker releases
+                // the descriptor parked on wait_hblank, then runs on until the
+                // next one parks or stop_after fires.
+                const SuperEngine::WalkResult w =
+                    engine.walker.advance(engine_memory(), getClock(), sink);
+                stall += static_cast<uint32_t>(w.busy_cycles);
+
                 if (!video.want_pixels)
                 {
-                    return true;
+                    // Nobody will look at the framebuffer.  The walk above
+                    // still ran, so the DMA stall, the audio deposits and the
+                    // stop_after IRQ are all unchanged — only PIXEL and
+                    // COMPOSITOR, which no guest-readable register touches, are
+                    // skipped.  Guest timing is therefore identical either way.
+                    return;
                 }
-                uint32_t base = engine.fb_line_addr(line);
-                video.palette_fg = peek_ram8(base + 0);
-                video.palette_bg = peek_ram8(base + 1);
-                uint32_t px = base + Griffin::VIDEO_LINE_PIXEL_OFFSET;
-                for (int i = 0; i < VideoState::BYTES_PER_LINE; i++)
+
+                // Blanking first, then the active line: a line's eager SETs are
+                // consumed during the HBLANK that precedes it, which is what
+                // makes them cost no active slot.  This is the same sequence of
+                // unit calls as super-engine's render_line_at_a_time driver,
+                // which `make check` holds pixel-identical to its clock-accurate
+                // one.
+                SuperEngine::run_blanking(pixel_unit, compositor_unit);
+                if (line < VideoState::V_ACTIVE)
                 {
-                    dst[i] = peek_ram8(px + i);
+                    SuperEngine::Rgb444 row[SuperEngine::H_ACTIVE];
+                    SuperEngine::render_active_line(pixel_unit, compositor_unit, row);
+                    video.store_scanline(line, row);
                 }
-                return true;
             });
+
         if (!getenv("GRIFFIN_NO_DMA_STALL"))
         {
-            // How the per-line DMA burst is charged to the CPU clock.
+            // How the descriptor list's bus time is charged to the CPU clock.
+            //
+            // The cost is no longer a fixed per-line constant: EngineWalker
+            // returns the SYSCLK it actually spent, derived per descriptor from
+            // descriptor.h's model (arbitration + assert + four descriptor words
+            // + two cycles per payload word + release).  A frame of the console
+            // list and a frame of a per-line-palette list therefore charge
+            // different amounts, as they should.
             //
             // Real ENGINE DMA steals the bus at bus-cycle granularity: it
-            // arbitrates in, streams a burst of words, and releases, stretching
-            // many CPU instructions by a little each.  The CPU's time reference
-            // and its interrupt sampling stay continuous with the instruction
-            // stream.
+            // arbitrates in, streams a descriptor's payload, and releases,
+            // stretching many CPU instructions by a little each.  The CPU's time
+            // reference and its interrupt sampling stay continuous with the
+            // instruction stream.
             //
-            // The SMOOTH model (default) mirrors that: it accrues the line's
-            // stall as a debt and pays it down a few cycles per CPU step, so
-            // getClock() never leaps between two whole instructions.
+            // The SMOOTH model (default) mirrors that: it accrues the stall as a
+            // debt and pays it down a few cycles per CPU step, so getClock()
+            // never leaps between two whole instructions.
             //
-            // The LUMP model (GRIFFIN_DMA_STALL_LUMP) injects the whole
-            // ~SYSCLKS_PER_LINE burst as one sync() in the gap between two
-            // instructions.  That is cheaper but unphysical: it fast-forwards
-            // the shared clock ~a dozen instructions' worth in a single
-            // interrupt-blind gap, at the video-scanline cadence.  On the
-            // nommu/UP kernel that coarse, video-phased discontinuity mis-times
-            // a scheduler wakeup (a freshly-created kthread never gets run) and
-            // wedges the fbcon boot right after "crng init done" -- even though
-            // the *total* stall (and thus the CPU-vs-jiffies slowdown) is
-            // identical to SMOOTH.  Kept only for A/B and intra-line tearing
-            // studies; do not use it to boot the kernel.
+            // The LUMP model (GRIFFIN_DMA_STALL_LUMP) injects a whole line's
+            // burst as one sync() in the gap between two instructions.  That is
+            // cheaper but unphysical: it fast-forwards the shared clock a dozen
+            // instructions' worth in a single interrupt-blind gap, at the video
+            // scanline cadence.  On the nommu/UP Linux kernel that coarse,
+            // video-phased discontinuity mis-times a scheduler wakeup (a freshly
+            // created kthread never gets run) and wedges the fbcon boot right
+            // after "crng init done" — even though the *total* stall, and thus
+            // the CPU-vs-jiffies slowdown, is identical to SMOOTH.  Kept only
+            // for A/B and intra-line tearing studies; do not use it to boot the
+            // kernel.
             if (getenv("GRIFFIN_DMA_STALL_LUMP"))
             {
                 if (dma_stall > 0)
@@ -3660,12 +3871,12 @@ public:
                 dma_stall_debt += dma_stall;
                 if (dma_stall_debt > 0)
                 {
-                    // Pay at most STEP cycles per CPU step.  A scanline is
-                    // ~445 sysclks of guest time and service_video() runs once
-                    // per instruction, so many steps elapse per line and the
-                    // debt drains well within a line at STEP=4 -- keeping the
-                    // clock effectively continuous.  GRIFFIN_DMA_STALL_STEP
-                    // overrides for experiments.
+                    // Pay at most STEP cycles per CPU step.  A scanline is ~445
+                    // sysclks of guest time and service_video() runs once per
+                    // instruction, so many steps elapse per line and the debt
+                    // drains well within a line at STEP=4 — keeping the clock
+                    // effectively continuous.  GRIFFIN_DMA_STALL_STEP overrides
+                    // for experiments.
                     static const char *stepenv = getenv("GRIFFIN_DMA_STALL_STEP");
                     int step = stepenv ? atoi(stepenv) : 4;
                     if (step <= 0) step = 4;
@@ -3690,12 +3901,19 @@ public:
     // Unified IPL management — picks highest active interrupt source
     void update_ipl()
     {
+        // Level 6 is TIMING's vsync, latched in GLUE (VSYNC_STATUS/VSYNC_CLEAR).
         if (video.irq_pending()) {
-            setIPL(VIDEO_IRQ_LEVEL);
+            setIPL(VSYNC_IRQ_LEVEL);
         } else if (duart.irq_pending(pty_console, pty_console_b)) {
             setIPL(DUART_IRQ_LEVEL);
         } else if (ps2.irq_pending()) {
             setIPL(GLUE_IRQ_LEVEL);
+        } else if (engine.walker.irq_pending()) {
+            // stop_after on the last descriptor: the list has finished and
+            // disarmed itself.  Level 3 is LEVEL-triggered, so the ISR must
+            // write ENGINE_CTRL to clear it or it re-enters forever.
+            static_assert(ENGINE_IRQ_LEVEL < GLUE_IRQ_LEVEL);
+            setIPL(ENGINE_IRQ_LEVEL);
         } else if (ports.irq_pending()) {
             // Lowest of the four CPLDs: below ENGINE's level 3.
             static_assert(PORTS_IRQ_LEVEL < ENGINE_IRQ_LEVEL);
@@ -3837,6 +4055,7 @@ int main(int argc, const char** argv)
     const char *serialb_in_path = nullptr;
     const char *serialb_out_path = nullptr;
     const char *screenshot_path = nullptr;
+    bool selftest_displaylist = false;
     bool headless = false;
     bool no_throttle = false;
     uint64_t run_cycles = 0; // 0 = unlimited
@@ -3934,6 +4153,10 @@ int main(int argc, const char** argv)
             serialb_out_path = argv[1];
             argv += 2;
             argc -= 2;
+        } else if(strcmp(argv[0], "--selftest-displaylist") == 0) {
+            selftest_displaylist = true;
+            argv += 1;
+            argc -= 1;
         } else if(strcmp(argv[0], "--headless") == 0) {
             headless = true;
             argv += 1;
@@ -4101,8 +4324,9 @@ int main(int argc, const char** argv)
 
     /* Render the framebuffer only if something will look at it: an SDL
      * window (not headless) or a requested screenshot.  Headless console-
-     * only runs skip all per-scanline pixel work. */
-    bool want_pixels = !headless || (screenshot_path != nullptr);
+     * only runs skip PIXEL/COMPOSITOR entirely; the descriptor walk, its DMA
+     * stall and the audio deposits still run, so guest timing is unaffected. */
+    bool want_pixels = !headless || (screenshot_path != nullptr) || selftest_displaylist;
     if (!emulator.init_video(headless, want_pixels))
     {
         fprintf(stderr, "Warning: SDL/Video init failed, display disabled\n");
@@ -4112,6 +4336,15 @@ int main(int argc, const char** argv)
         // Gamepads are the interactive joystick source; headless runs use
         // --joystick-in instead and need no SDL at all.
         emulator.init_gamepads();
+    }
+
+    // Bring-up self-check: poke a descriptor list into RAM and arm ENGINE
+    // before the guest runs.  Whatever the CPU does afterwards is irrelevant —
+    // the engine bus-masters on its own once armed, which is the point.
+    bool selftest_ok = true;
+    if (selftest_displaylist)
+    {
+        emulator.selftest_build_list();
     }
 
     SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
@@ -4165,6 +4398,11 @@ int main(int argc, const char** argv)
             uint8_t dac_value = emulator.GetAudioDACValue();
             fwrite(&dac_value, 1, 1, audio);
             clock_next_audio += sysclk_per_audio;
+        }
+
+        if (selftest_displaylist)
+        {
+            emulator.selftest_rearm_if_idle();
         }
 
         if (run_cycles != 0 && clock_now >= run_cycles)
@@ -4237,9 +4475,20 @@ int main(int argc, const char** argv)
         fclose(audio);
     }
 
+    if (selftest_displaylist)
+    {
+        selftest_ok = emulator.selftest_check();
+    }
+
     if (screenshot_path)
     {
         emulator.dump_framebuffer(screenshot_path);
+    }
+
+    if (selftest_displaylist && !selftest_ok)
+    {
+        fflush(stdout);
+        return 1;
     }
 
     fflush(stdout);
