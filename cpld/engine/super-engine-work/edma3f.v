@@ -447,80 +447,17 @@ endmodule
 // 9, 40, 41, 46 and 2 — all unconnected on the Rev 1 PCB.  Pin 80 is the
 // last free I/O and is held in reserve.
 //
-//PIN: CHIP "edma3" ASSIGNED TO AN PLCC84
 //
 // System
-//PIN: CPUCLK         : 83
-//PIN: nRESET         : 1
-//PIN: nENGINE_SELECT : 84
-//PIN: nDTACK_BUS     : 81
 //
 // Bus arbitration
-//PIN: nBG            : 76
-//PIN: nBR            : 79
-//PIN: nBGACK         : 77
 //
 // IRQ output to GLUE
-//PIN: nENGINE_IRQ    : 5
 //
 // Bus control
-//PIN: R_nW           : 25
-//PIN: nAS            : 21
-//PIN: nUDS           : 22
-//PIN: nLDS           : 64
-//PIN: FC_2           : 35
-//PIN: FC_1           : 34
-//PIN: FC_0           : 33
 //
 // Address bus — EDIF 0-based: A_N = Verilog A[N+1] = bus signal A(N+1)
-//PIN: A_22           : 61
-//PIN: A_21           : 60
-//PIN: A_20           : 28
-//PIN: A_19           : 58
-//PIN: A_18           : 30
-//PIN: A_17           : 31
-//PIN: A_16           : 57
-//PIN: A_15           : 56
-//PIN: A_14           : 74
-//PIN: A_13           : 75
-//PIN: A_12           : 36
-//PIN: A_11           : 29
-//PIN: A_10           : 37
-//PIN: A_9            : 39
-//PIN: A_8            : 44
-//PIN: A_7            : 45
-//PIN: A_6            : 50
-//PIN: A_5            : 52
-//PIN: A_4            : 55
-//PIN: A_3            : 54
-//PIN: A_2            : 51
-//PIN: A_1            : 49
-//PIN: A_0            : 48
 //
 // Data bus (input only — consumers latch directly from the bus)
-//PIN: D_15           : 27
-//PIN: D_14           : 63
-//PIN: D_13           : 24
-//PIN: D_12           : 65
-//PIN: D_11           : 20
-//PIN: D_10           : 67
-//PIN: D_9            : 69
-//PIN: D_8            : 16
-//PIN: D_7            : 70
-//PIN: D_6            : 73
-//PIN: D_5            : 11
-//PIN: D_4            : 12
-//PIN: D_3            : 15
-//PIN: D_2            : 17
-//PIN: D_1            : 68
-//PIN: D_0            : 18
 //
 // Deposit strobes, active low (bodge wires to breadboard)
-//PIN: nSIGNAL_0      : 10
-//PIN: nSIGNAL_1      : 8
-//PIN: nSIGNAL_2      : 6
-//PIN: nSIGNAL_3      : 9
-//PIN: nSIGNAL_4      : 40
-//PIN: nSIGNAL_5      : 41
-//PIN: nSIGNAL_6      : 46
-//PIN: HBLANK         : 2

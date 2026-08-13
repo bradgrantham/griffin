@@ -1,0 +1,822 @@
+========================================================================
+ATF1508 Fitter Report
+========================================================================
+
+UTILIZATION SUMMARY
+----------------------------------------
+  dedicated input                 2/4 	(50%)
+  I/O pins                        60/64 	(93%)
+  Logic cells                     128/128 	(100%)
+  Flip-Flop                       74/128 	(57%)
+  Foldback logic                  19/128 	(14%)
+  Nodes+FB/MCells                 127/128 	(99%)
+  cascade                         20
+  input pins                      25
+  output pins                     37
+  Pts                             439
+
+PER-LAB PLACEMENT
+------------------------------------------------------------------------
+  LAB A (MC 1-16):  19/16 used  (8 pin, 9 feedback, 2 foldback)  fan-in: 34/40
+    MC  3  pin 12  D_6
+    MC  5  pin 11  D_5
+    MC  6  pin 10  D_1
+    MC  8  pin  9  D_12
+    MC 11  pin  8  D_10
+    MC 13  pin  6  D_13
+    MC 14  pin  5  D_4
+    MC 16  pin  4  D_11
+    MC  1  feedback  src_addr_17
+    MC  2  feedback  src_addr_16
+    MC  4  feedback  src_addr_19
+    MC  6  feedback  src_addr_20
+    MC  8  feedback  src_addr_21
+    MC  9  feedback  src_addr_18
+    MC 11  feedback  src_addr_22
+    MC 13  feedback  src_addr_8
+    MC 16  feedback  src_addr_9
+    MC 15  FOLDBACK  abc:n382  «bus cycle gate»  [from id00133Q]
+    MC 16  FOLDBACK  abc:n384  «bus cycle gate»  [from id00135Q]
+
+  LAB B (MC 17-32):  17/16 used  (8 pin, 7 feedback, 2 foldback)  fan-in: 33/40
+    MC 17  pin 22  D_0
+    MC 19  pin 21  nENGINE_SELECT
+    MC 21  pin 20  D_9
+    MC 24  pin 18  nDEPOSIT
+    MC 25  pin 17  D_8
+    MC 27  pin 16  D_3
+    MC 29  pin 15  nBR
+    MC 32  pin 14  TDI
+    MC 17  feedback  state_4
+    MC 18  feedback  state_1
+    MC 19  feedback  state_0
+    MC 20  feedback  state_2
+    MC 22  feedback  words_left_5
+    MC 26  feedback  phase_payload
+    MC 32  feedback  lds_out
+    MC 25  FOLDBACK  abc:n298  [from id00049Q]
+    MC 31  FOLDBACK  abc:n332 (QN)  [from id00083QN]
+
+  LAB C (MC 33-48):  26/16 used  (6 pin, 15 feedback, 5 foldback)  fan-in: 35/40
+    MC 35  pin 31  D_14
+    MC 37  pin 30  D_7
+    MC 40  pin 28  nBG
+    MC 43  pin 27  HBLANK
+    MC 45  pin 25  D_15
+    MC 48  pin 23  TMS
+    MC 33  feedback  desc_ptr_9
+    MC 34  feedback  desc_ptr_11
+    MC 35  feedback  state_5
+    MC 36  feedback  desc_ptr_13
+    MC 37  feedback  abc:n367  «bus cycle gate»
+    MC 38  feedback  desc_ptr_14
+    MC 39  feedback  desc_ptr_8
+    MC 40  feedback  abc:n396  «bus cycle gate»
+    MC 41  feedback  desc_ptr_10
+    MC 42  feedback  desc_ptr_12
+    MC 43  feedback  wait_hblank
+    MC 44  feedback  abc:n404
+    MC 45  feedback  stop_after
+    MC 46  feedback  desc_ptr_7
+    MC 48  feedback  desc_ptr_6
+    MC 40  FOLDBACK  abc:n351  [from id00102Q]
+    MC 43  FOLDBACK  abc:n349  [from id00100Q]
+    MC 45  FOLDBACK  abc:n347  [from id00098Q]
+    MC 46  FOLDBACK  abc:n345  [from id00096Q]
+    MC 47  FOLDBACK  abc:n279  [from id00030Q]
+
+  LAB D (MC 49-64):  20/16 used  (6 pin, 9 feedback, 5 foldback)  fan-in: 31/40
+    MC 53  pin 39  nBGACK
+    MC 56  pin 37  FC_1
+    MC 57  pin 36  FC_0
+    MC 59  pin 35  A_13
+    MC 61  pin 34  A_1
+    MC 64  pin 33  A_0
+    MC 49  feedback  src_addr_4
+    MC 50  feedback  src_addr_10
+    MC 51  feedback  src_addr_5
+    MC 52  feedback  src_addr_11
+    MC 54  feedback  src_addr_12
+    MC 55  feedback  src_addr_15
+    MC 58  feedback  src_addr_6
+    MC 60  feedback  src_addr_13
+    MC 63  feedback  src_addr_14
+    MC 59  FOLDBACK  abc:n382  «bus cycle gate»  [from id00133Q]
+    MC 61  FOLDBACK  abc:n378  «bus cycle gate»  [from id00129Q]
+    MC 62  FOLDBACK  abc:n377  «bus cycle gate»  [from id00128Q]
+    MC 63  FOLDBACK  abc:n371  «bus cycle gate»  [from id00122Q]
+    MC 64  FOLDBACK  abc:n379  «bus cycle gate»  [from id00130Q]
+
+  LAB E (MC 65-80):  18/16 used  (8 pin, 7 feedback, 3 foldback)  fan-in: 31/40
+    MC 65  pin 44  FC_2
+    MC 67  pin 45  nUDS
+    MC 69  pin 46  nLDS
+    MC 72  pin 48  nAS
+    MC 73  pin 49  nENGINE_IRQ
+    MC 75  pin 50  dest_1
+    MC 77  pin 51  dest_2
+    MC 80  pin 52  dest_0
+    MC 66  feedback  desc_ptr_4
+    MC 68  feedback  desc_ptr_0
+    MC 70  feedback  desc_ptr_1
+    MC 71  feedback  desc_ptr_2
+    MC 74  feedback  desc_ptr_3
+    MC 76  feedback  dma_en
+    MC 79  feedback  desc_ptr_5
+    MC 78  FOLDBACK  abc:n341  [from id00092Q]
+    MC 79  FOLDBACK  abc:n279  [from id00030Q]
+    MC 80  FOLDBACK  abc:n278  [from id00029Q]
+
+  LAB F (MC 81-96):  17/16 used  (8 pin, 7 feedback, 2 foldback)  fan-in: 39/40
+    MC 83  pin 54  D_2
+    MC 85  pin 55  R_nW
+    MC 86  pin 56  A_22
+    MC 88  pin 57  A_3
+    MC 91  pin 58  A_5
+    MC 93  pin 60  A_2
+    MC 94  pin 61  A_4
+    MC 96  pin 62  TCK
+    MC 81  feedback  words_left_1
+    MC 82  feedback  words_left_6
+    MC 84  feedback  words_left_3
+    MC 87  feedback  $abc$2508$nBGACK
+    MC 90  feedback  words_left_4
+    MC 92  feedback  words_left_2
+    MC 96  feedback  src_addr_7
+    MC 94  FOLDBACK  abc:n298  [from id00049Q]
+    MC 95  FOLDBACK  abc:n324  [from id00075Q]
+
+  LAB G (MC 97-112):  17/16 used  (8 pin, 9 feedback, 0 foldback)  fan-in: 39/40
+    MC 97  pin 63  A_9
+    MC 99  pin 64  A_10
+    MC101  pin 65  A_6
+    MC104  pin 67  A_11
+    MC105  pin 68  A_14
+    MC107  pin 69  A_8
+    MC109  pin 70  A_12
+    MC112  pin 71  TDO
+    MC 98  feedback  state_9
+    MC100  feedback  nAS_meta
+    MC102  feedback  state_3
+    MC103  feedback  src_addr_1
+    MC106  feedback  words_left_0
+    MC108  feedback  state_10
+    MC110  feedback  state_6
+    MC111  feedback  src_addr_2
+    MC112  feedback  src_addr_3
+
+  LAB H (MC 113-128):  16/16 used  (8 pin, 8 feedback, 0 foldback)  fan-in: 20/40
+    MC115  pin 73  A_15
+    MC117  pin 74  A_19
+    MC118  pin 75  A_16
+    MC120  pin 76  A_17
+    MC123  pin 77  A_18
+    MC125  pin 79  A_21
+    MC126  pin 80  A_20
+    MC128  pin 81  A_7
+    MC113  feedback  hblank_meta
+    MC114  feedback  hblank_sync
+    MC116  feedback  hblank_sync_d
+    MC119  feedback  state_7
+    MC121  feedback  state_8
+    MC122  feedback  nBG_sync
+    MC124  feedback  nAS_sync
+    MC127  feedback  nBG_meta
+
+FOLDBACK ANALYSIS
+------------------------------------------------------------------------
+  Total foldbacks: 19
+
+  Signals replicated as foldbacks (most replicas first):
+
+    abc:n382  «bus cycle gate»                2 copies  in LABs: A, D
+      consumed by: src_addr_16.D, src_addr_15.D
+
+    abc:n298                                  2 copies  in LABs: B, F
+      consumed by: state_1.D, words_left_6.D, phase_payload.D, lds_out.D
+
+    abc:n279                                  2 copies  in LABs: C, E
+      consumed by: desc_ptr_10.D, desc_ptr_9.D, desc_ptr_11.D, desc_ptr_12.D, desc_ptr_0.D, desc_ptr_1.D, desc_ptr_2.D, desc_ptr_3.D ... +7 more
+
+    abc:n384  «bus cycle gate»                1 copies  in LABs: A
+      consumed by: src_addr_17.D, src_addr_18.D, src_addr_20.D, src_addr_19.D, src_addr_22.D, src_addr_21.D
+
+    abc:n332 (QN)                             1 copies  in LABs: B
+      consumed by: state_0.D, nDEPOSIT.D, lds_out.D
+
+    abc:n351                                  1 copies  in LABs: C
+      consumed by: desc_ptr_13.D, desc_ptr_14.D
+
+    abc:n349                                  1 copies  in LABs: C
+      consumed by: desc_ptr_11.D, desc_ptr_12.D
+
+    abc:n347                                  1 copies  in LABs: C
+      consumed by: desc_ptr_10.D, desc_ptr_9.D
+
+    abc:n345                                  1 copies  in LABs: C
+      consumed by: desc_ptr_7.D, desc_ptr_8.D
+
+    abc:n378  «bus cycle gate»                1 copies  in LABs: D
+      consumed by: src_addr_11.D
+
+    abc:n377  «bus cycle gate»                1 copies  in LABs: D
+      consumed by: src_addr_10.D
+
+    abc:n371  «bus cycle gate»                1 copies  in LABs: D
+      consumed by: src_addr_5.D, src_addr_4.D
+
+    abc:n379  «bus cycle gate»                1 copies  in LABs: D
+      consumed by: src_addr_12.D, src_addr_14.D, src_addr_13.D
+
+    abc:n341                                  1 copies  in LABs: E
+      consumed by: desc_ptr_2.D, desc_ptr_3.D, desc_ptr_4.D, desc_ptr_5.D
+
+    abc:n278                                  1 copies  in LABs: E
+      consumed by: dma_en.D
+
+    abc:n324                                  1 copies  in LABs: F
+
+  Foldback imports per LAB:
+
+    LAB A: 2 foldback(s)
+      - abc:n382  «bus cycle gate»
+      - abc:n384  «bus cycle gate»
+    LAB B: 2 foldback(s)
+      - abc:n298
+      - abc:n332 (QN)
+    LAB C: 5 foldback(s)
+      - abc:n351
+      - abc:n349
+      - abc:n347
+      - abc:n345
+      - abc:n279
+    LAB D: 5 foldback(s)
+      - abc:n382  «bus cycle gate»
+      - abc:n378  «bus cycle gate»
+      - abc:n377  «bus cycle gate»
+      - abc:n371  «bus cycle gate»
+      - abc:n379  «bus cycle gate»
+    LAB E: 3 foldback(s)
+      - abc:n341
+      - abc:n279
+      - abc:n278
+    LAB F: 2 foldback(s)
+      - abc:n298
+      - abc:n324
+
+FAN-IN DETAIL
+------------------------------------------------------------------------
+  LAB A: 34/40 inputs
+    I/O pins (9): D_3, D_5, D_6, D_4, D_0, D_1, D_8, D_9, D_2
+    Internal (25):
+      src_addr_17
+      src_addr_9
+      src_addr_5
+      src_addr_14
+      src_addr_21
+      src_addr_13
+      src_addr_16
+      src_addr_18
+      src_addr_12
+      src_addr_19
+      src_addr_10
+      abc:n396  «bus cycle gate»
+      src_addr_1
+      src_addr_22
+      src_addr_11
+      src_addr_7
+      src_addr_20
+      src_addr_3
+      state_7
+      src_addr_6
+      src_addr_4
+      src_addr_15
+      src_addr_2
+      abc:n367  «bus cycle gate»
+      src_addr_8
+
+  LAB B: 33/40 inputs
+    I/O pins (4): D_9, nDEPOSIT, nBR, nRESET
+    Internal (29):
+      state_1
+      stop_after
+      state_5
+      words_left_3
+      hblank_sync
+      lds_out
+      words_left_5
+      words_left_2
+      desc_ptr_0
+      phase_payload
+      state_4
+      state_10
+      state_0
+      state_2
+      desc_ptr_1
+      state_3
+      state_6
+      state_9
+      nAS_sync
+      words_left_1
+      wait_hblank
+      words_left_6
+      abc:n404
+      hblank_sync_d
+      state_8
+      words_left_0
+      dma_en
+      words_left_4
+      state_7
+
+  LAB C: 35/40 inputs
+    I/O pins (16): A_1, A_0, D_7, D_13, D_10, D_15, D_8, D_12, D_14, D_6, D_9, D_11, R_nW, nAS, nLDS, nENGINE_SELECT
+    Internal (19):
+      desc_ptr_13
+      stop_after
+      desc_ptr_4
+      desc_ptr_7
+      desc_ptr_12
+      desc_ptr_5
+      desc_ptr_2
+      state_8
+      desc_ptr_1
+      desc_ptr_11
+      desc_ptr_0
+      desc_ptr_10
+      desc_ptr_14
+      desc_ptr_6
+      state_7
+      desc_ptr_3
+      wait_hblank
+      desc_ptr_8
+      desc_ptr_9
+
+  LAB D: 31/40 inputs
+    I/O pins (9): D_13, D_5, D_12, D_10, D_4, D_15, D_6, D_11, D_14
+    Internal (22):
+      src_addr_11
+      src_addr_10
+      src_addr_14
+      src_addr_1
+      phase_payload
+      src_addr_12
+      src_addr_3
+      src_addr_2
+      desc_ptr_1
+      src_addr_9
+      abc:n396  «bus cycle gate»
+      desc_ptr_0
+      src_addr_13
+      state_7
+      src_addr_4
+      src_addr_8
+      $abc$2508$nBGACK
+      src_addr_7
+      src_addr_5
+      desc_ptr_13
+      src_addr_15
+      src_addr_6
+
+  LAB E: 31/40 inputs
+    I/O pins (20): A_1, A_0, D_5, D_3, D_13, D_4, D_0, D_1, D_11, D_2, D_12, R_nW, dest_0, dest_2, dest_1, nENGINE_IRQ, nLDS, nENGINE_SELECT, nAS, nRESET
+    Internal (11):
+      desc_ptr_4
+      state_8
+      desc_ptr_0
+      desc_ptr_1
+      $abc$2508$nBGACK
+      state_4
+      desc_ptr_5
+      dma_en
+      lds_out
+      desc_ptr_2
+      desc_ptr_3
+
+  LAB F: 39/40 inputs
+    I/O pins (6): D_10, D_6, D_5, D_7, D_8, nRESET
+    Internal (33):
+      state_1
+      src_addr_2
+      state_2
+      nAS_sync
+      words_left_3
+      abc:n404
+      words_left_5
+      words_left_2
+      desc_ptr_2
+      desc_ptr_5
+      src_addr_4
+      src_addr_5
+      src_addr_7
+      state_0
+      state_8
+      desc_ptr_4
+      words_left_0
+      abc:n396  «bus cycle gate»
+      src_addr_1
+      phase_payload
+      state_9
+      dma_en
+      words_left_1
+      src_addr_3
+      state_7
+      src_addr_6
+      state_6
+      $abc$2508$nBGACK
+      desc_ptr_3
+      words_left_4
+      words_left_6
+      state_10
+      state_3
+
+  LAB G: 39/40 inputs
+    I/O pins (6): D_3, D_4, D_2, D_1, nAS, nRESET
+    Internal (33):
+      state_0
+      desc_ptr_10
+      src_addr_9
+      desc_ptr_11
+      hblank_sync
+      abc:n404
+      src_addr_13
+      $abc$2508$nBGACK
+      desc_ptr_12
+      state_5
+      desc_ptr_9
+      src_addr_10
+      state_6
+      src_addr_11
+      words_left_0
+      src_addr_12
+      nBG_sync
+      src_addr_1
+      desc_ptr_14
+      dma_en
+      state_7
+      desc_ptr_6
+      abc:n396  «bus cycle gate»
+      phase_payload
+      hblank_sync_d
+      state_10
+      state_3
+      src_addr_7
+      desc_ptr_8
+      src_addr_2
+      src_addr_3
+      src_addr_15
+      nAS_sync
+
+  LAB H: 20/40 inputs
+    I/O pins (3): HBLANK, nBG, nRESET
+    Internal (17):
+      src_addr_19
+      state_2
+      hblank_sync
+      nAS_meta
+      src_addr_22
+      $abc$2508$nBGACK
+      nBG_meta
+      src_addr_20
+      src_addr_8
+      src_addr_18
+      src_addr_16
+      hblank_meta
+      phase_payload
+      desc_ptr_7
+      src_addr_17
+      state_1
+      src_addr_21
+
+PRODUCT TERM USAGE (signals using >3 PTs)
+------------------------------------------------------------------------
+  14 PTs  nBR.D
+  13 PTs  lds_out.D
+  11 PTs  src_addr_9.D
+  10 PTs  src_addr_8.D
+   9 PTs  src_addr_7.D
+   9 PTs  desc_ptr_6.D
+   9 PTs  src_addr_22.D
+   9 PTs  phase_payload.D
+   8 PTs  words_left_5.D
+   8 PTs  src_addr_21.D
+   7 PTs  words_left_4.D
+   7 PTs  src_addr_20.D
+   6 PTs  nDEPOSIT.D
+   6 PTs  src_addr_14.D
+   6 PTs  words_left_3.D
+   6 PTs  desc_ptr_5.D
+   6 PTs  src_addr_19.D
+   5 PTs  desc_ptr_10.D
+   5 PTs  src_addr_16.D
+   5 PTs  desc_ptr_12.D
+   5 PTs  src_addr_18.D
+   5 PTs  src_addr_3.D
+   5 PTs  src_addr_13.D
+   5 PTs  words_left_2.D
+   5 PTs  desc_ptr_4.D
+   5 PTs  desc_ptr_8.D
+   5 PTs  desc_ptr_14.D
+   4 PTs  dest_0.D
+   4 PTs  dest_1.D
+   4 PTs  stop_after.D
+   4 PTs  wait_hblank.D
+   4 PTs  dest_2.D
+   4 PTs  src_addr_5.D
+   4 PTs  src_addr_4.D
+   4 PTs  src_addr_12.D
+   4 PTs  desc_ptr_9.D
+   4 PTs  src_addr_17.D
+   4 PTs  desc_ptr_11.D
+   4 PTs  src_addr_2.D
+   4 PTs  src_addr_15.D
+   4 PTs  src_addr_10.D
+   4 PTs  src_addr_11.D
+   4 PTs  words_left_1.D
+   4 PTs  desc_ptr_1.D
+   4 PTs  desc_ptr_2.D
+   4 PTs  desc_ptr_3.D
+   4 PTs  desc_ptr_7.D
+   4 PTs  state_2.D
+   4 PTs  desc_ptr_13.D
+   4 PTs  words_left_6.D
+
+ALL EQUATIONS
+------------------------------------------------------------------------
+  [ 1 PTs]  nBGACK = $abc$2508$nBGACK
+  [ 1 PTs]  state_7.D = state_1
+  [ 1 PTs]  state_8.D = state_2
+  [ 1 PTs]  nAS_sync.D = nAS_meta
+  [ 1 PTs]  nAS_meta.D = nAS.PIN
+  [ 1 PTs]  hblank_sync_d.D = hblank_sync
+  [ 1 PTs]  nBG_sync.D = nBG_meta
+  [ 0 PTs]  FC_1 = 0
+  [ 1 PTs]  nBG_meta.D = nBG
+  [ 0 PTs]  FC_0 = 1
+  [ 1 PTs]  A_21 = (phase_payload & src_addr_22)
+  [ 2 PTs]  A_14 = ((!phase_payload & desc_ptr_14) # (phase_payload & src_addr_15))
+  [ 2 PTs]  A_13 = ((!phase_payload & desc_ptr_13) # (phase_payload & src_addr_14))
+  [ 2 PTs]  A_12 = ((!phase_payload & desc_ptr_12) # (phase_payload & src_addr_13))
+  [ 2 PTs]  A_11 = ((!phase_payload & desc_ptr_11) # (phase_payload & src_addr_12))
+  [ 2 PTs]  A_10 = ((!phase_payload & desc_ptr_10) # (phase_payload & src_addr_11))
+  [ 2 PTs]  A_9 = ((!phase_payload & desc_ptr_9) # (phase_payload & src_addr_10))
+  [ 2 PTs]  A_8 = ((!phase_payload & desc_ptr_8) # (phase_payload & src_addr_9))
+  [ 2 PTs]  A_7 = ((!phase_payload & desc_ptr_7) # (phase_payload & src_addr_8))
+  [ 2 PTs]  A_6 = ((!phase_payload & desc_ptr_6) # (phase_payload & src_addr_7))
+  [ 2 PTs]  A_5 = ((!phase_payload & desc_ptr_5) # (phase_payload & src_addr_6))
+  [ 2 PTs]  A_4 = ((!phase_payload & desc_ptr_4) # (phase_payload & src_addr_5))
+  [ 2 PTs]  A_3 = ((!phase_payload & desc_ptr_3) # (phase_payload & src_addr_4))
+  [ 2 PTs]  A_2 = ((!phase_payload & desc_ptr_2) # (phase_payload & src_addr_3))
+  [ 2 PTs]  A_1 = ((!phase_payload & desc_ptr_1) # (phase_payload & src_addr_2))
+  [ 2 PTs]  A_0 = ((!phase_payload & desc_ptr_0) # (phase_payload & src_addr_1))
+  [ 1 PTs]  hblank_sync.D = hblank_meta
+  [ 1 PTs]  hblank_meta.D = HBLANK
+  [ 1 PTs]  nLDS = lds_out
+  [ 1 PTs]  nUDS = lds_out
+  [ 1 PTs]  nAS = lds_out
+  [ 0 PTs]  FC_2 = 1
+  [ 0 PTs]  R_nW = 1
+  [ 0 PTs]  A_22 = 0
+  [ 1 PTs]  state_9.D = (nAS_sync & state_3 & dma_en)
+  [ 2 PTs]  state_3.D = ((dma_en & !nBG_sync & state_6) # (dma_en & !nAS_sync & state_3))
+  [ 2 PTs]  abc:n367  «bus cycle gate» = ((state_8 & !desc_ptr_1 & desc_ptr_0) # (!state_8 & state_7))
+  [ 2 PTs]  abc:n396  «bus cycle gate» = ((state_8 & !desc_ptr_0 & desc_ptr_1) # (!state_8 & state_7))
+  [ 2 PTs]  abc:n404 = ((state_8 & !desc_ptr_0 & !desc_ptr_1) # (!state_8 & state_7))
+  [ 3 PTs]  state_6.D = ((dma_en & state_0) # (dma_en & nBG_sync & state_6) # (dma_en & hblank_sync & hblank_sync_d & state_10))
+  [ 4 PTs]  dest_0.D = ((state_8 & !desc_ptr_1 & !desc_ptr_0 & D_11) # (dest_0.Q & desc_ptr_0) # (dest_0.Q & desc_ptr_1) # (dest_0.Q & !state_8))
+  [ 4 PTs]  dest_1.D = ((state_8 & !desc_ptr_1 & !desc_ptr_0 & D_12) # (dest_1.Q & desc_ptr_0) # (dest_1.Q & desc_ptr_1) # (dest_1.Q & !state_8))
+  [ 4 PTs]  stop_after.D = ((state_8 & !desc_ptr_1 & !desc_ptr_0 & D_14) # (stop_after & desc_ptr_0) # (stop_after & desc_ptr_1) # (stop_after & !state_8))
+  [ 4 PTs]  wait_hblank.D = ((state_8 & !desc_ptr_1 & !desc_ptr_0 & D_15) # (wait_hblank & desc_ptr_0) # (wait_hblank & desc_ptr_1) # (wait_hblank & !state_8))
+  [ 3 PTs]  state_10.D = ((state_10 & dma_en & !hblank_sync) # (state_10 & dma_en & !hblank_sync_d) # state_5)
+  [ 4 PTs]  dest_2.D = ((state_8 & !desc_ptr_1 & !desc_ptr_0 & D_13) # (dest_2.Q & desc_ptr_0) # (dest_2.Q & desc_ptr_1) # (dest_2.Q & !state_8))
+  [ 1 PTs]  state_5.D = (state_8 & desc_ptr_0 & desc_ptr_1 & wait_hblank)
+  [ 2 PTs]  state_0.D = ((abc:n332 (QN)QN & !dma_en) # (abc:n332 (QN)QN & state_4))
+  [ 4 PTs]  src_addr_5.D = ((abc:n396Q & !src_addr_5 & state_7 & src_addr_4 & src_addr_3 & src_addr_2 & src_addr_1) # (src_addr_5 & state_7 & abc:n371Q) # (abc:n396Q & !state_7 & D_5) # (!abc:n396Q & src_addr_5))
+  [ 3 PTs]  src_addr_1.D = ((!abc:n396Q & src_addr_1) # (abc:n396Q & state_7 & !src_addr_1) # (abc:n396Q & !state_7 & D_1))
+  [ 4 PTs]  src_addr_4.D = ((abc:n396Q & state_7 & abc:n371Q & src_addr_3 & src_addr_2 & src_addr_1) # (src_addr_4 & state_7 & abc:n371Q) # (abc:n396Q & !state_7 & D_4) # (!abc:n396Q & src_addr_4))
+  [ 3 PTs]  words_left_0.D = ((abc:n404Q & !state_7 & !D_4) # (abc:n404Q & !words_left_0 & state_7) # (!abc:n404Q & words_left_0))
+  [14 PTs]  nBR.D = ((nBR.Q & state_3 & !nAS_sync) # (nBR.Q & !dma_en) # (nBR.Q & state_7) # (nBR.Q & state_1) # (nBR.Q & state_8) # (nBR.Q & state_9) # (nBR.Q & state_2) # (nBR.Q & state_5) # (nBR.Q & state_10 & !hblank_sync) # (!state_6 & !state_3 & !state_7 & !state_1 & !state_8 & !state_9 & !state_2 & !state_5 & !state_10 & !state_0) # (!dma_en & !state_7 & !state_1 & !state_8 & !state_9 & !state_2 & !state_5 & !state_10 & !state_0) # (!state_6 & nAS_sync & !state_7 & !state_1 & !state_8 & !state_9 & !state_2 & !state_5 & !state_10 & !state_0) # (nBR.Q & state_10 & !hblank_sync_d) # (nBR.Q & state_6))
+  [ 4 PTs]  src_addr_12.D = ((src_addr_12 & !abc:n396Q) # (!state_7 & abc:n396Q & D_12) # (state_7 & !src_addr_12 & abc:n396Q & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (state_7 & src_addr_12 & abc:n379Q))
+  [ 5 PTs]  desc_ptr_10.D = ((!state_8 & desc_ptr_10 & abc:n279Q) # (state_8 & !desc_ptr_10 & desc_ptr_9 & desc_ptr_6 & desc_ptr_7 & desc_ptr_8 & desc_ptr_0 & desc_ptr_1 & desc_ptr_2 & desc_ptr_3 & desc_ptr_4 & desc_ptr_5) # (state_8 & desc_ptr_10 & !desc_ptr_9) # (state_8 & desc_ptr_10 & abc:n347Q) # (!state_8 & D_10 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN))
+  [ 4 PTs]  desc_ptr_9.D = ((state_8 & desc_ptr_9 & abc:n347Q) # (state_8 & !desc_ptr_9 & desc_ptr_6 & desc_ptr_7 & desc_ptr_8 & desc_ptr_0 & desc_ptr_1 & desc_ptr_2 & desc_ptr_3 & desc_ptr_4 & desc_ptr_5) # (!state_8 & D_9 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (!state_8 & desc_ptr_9 & abc:n279Q))
+  [ 5 PTs]  src_addr_16.D = ((state_7 & !src_addr_16 & src_addr_15 & abc:n367Q & src_addr_12 & src_addr_13 & src_addr_14 & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (src_addr_16 & !abc:n367Q) # (!state_7 & abc:n367Q & D_0) # (state_7 & src_addr_16 & abc:n382Q) # (state_7 & src_addr_16 & !src_addr_15))
+  [ 4 PTs]  src_addr_17.D = ((!abc:n367Q & src_addr_17) # (state_7 & src_addr_17 & abc:n384Q) # (!state_7 & abc:n367Q & D_1) # (state_7 & abc:n367Q & !src_addr_17 & src_addr_15 & src_addr_16 & src_addr_12 & src_addr_13 & src_addr_14 & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6))
+  [ 6 PTs]  nDEPOSIT.D = ((nDEPOSIT.Q & state_8) # (!state_8 & !state_5 & !state_2 & !state_9 & !state_1 & !state_0 & !state_3 & !state_4 & !state_6 & !state_10) # (nDEPOSIT.Q & state_9) # (nDEPOSIT.Q & state_2) # (nDEPOSIT.Q & state_5) # (nDEPOSIT.Q & abc:n332 (QN)QN))
+  [ 4 PTs]  desc_ptr_11.D = ((state_8 & desc_ptr_11 & abc:n349Q) # (state_8 & !desc_ptr_11 & desc_ptr_9 & desc_ptr_10 & desc_ptr_6 & desc_ptr_7 & desc_ptr_8 & desc_ptr_0 & desc_ptr_1 & desc_ptr_2 & desc_ptr_3 & desc_ptr_4 & desc_ptr_5) # (!state_8 & D_11 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (!state_8 & desc_ptr_11 & abc:n279Q))
+  [ 5 PTs]  desc_ptr_12.D = ((state_8 & desc_ptr_12 & !desc_ptr_11) # (state_8 & desc_ptr_12 & abc:n349Q) # (!state_8 & desc_ptr_12 & abc:n279Q) # (!state_8 & D_12 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (state_8 & !desc_ptr_12 & desc_ptr_11 & desc_ptr_9 & desc_ptr_10 & desc_ptr_6 & desc_ptr_7 & desc_ptr_8 & desc_ptr_0 & desc_ptr_1 & desc_ptr_2 & desc_ptr_3 & desc_ptr_4 & desc_ptr_5))
+  [ 5 PTs]  src_addr_18.D = ((state_7 & abc:n367Q & !src_addr_18 & src_addr_17 & src_addr_15 & src_addr_16 & src_addr_12 & src_addr_13 & src_addr_14 & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (!abc:n367Q & src_addr_18) # (state_7 & src_addr_18 & !src_addr_17) # (state_7 & src_addr_18 & abc:n384Q) # (!state_7 & abc:n367Q & D_2))
+  [ 5 PTs]  src_addr_3.D = ((state_7 & src_addr_3 & !src_addr_1) # (src_addr_3 & !abc:n396Q) # (!state_7 & abc:n396Q & D_3) # (state_7 & !src_addr_3 & src_addr_2 & src_addr_1 & abc:n396Q) # (state_7 & src_addr_3 & !src_addr_2))
+  [ 3 PTs]  dma_en.D = ((!state_4 & abc:n278Q & dma_en) # (!state_4 & !A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & A_1.PIN & D_0) # (!state_4 & abc:n278Q & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN))
+  [ 4 PTs]  src_addr_2.D = ((abc:n396Q & state_7 & !src_addr_2 & src_addr_1) # (state_7 & src_addr_2 & !src_addr_1) # (!abc:n396Q & src_addr_2) # (abc:n396Q & !state_7 & D_2))
+  [ 4 PTs]  src_addr_15.D = ((src_addr_15 & !abc:n396Q) # (!state_7 & abc:n396Q & D_15) # (state_7 & !src_addr_15 & abc:n396Q & src_addr_12 & src_addr_13 & src_addr_14 & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (state_7 & src_addr_15 & abc:n382Q))
+  [ 9 PTs]  src_addr_7.D = ((state_7 & src_addr_7 & !src_addr_2) # (state_7 & src_addr_7 & !src_addr_3) # (state_7 & src_addr_7 & !src_addr_4) # (state_7 & src_addr_7 & !src_addr_5) # (state_7 & src_addr_7 & !src_addr_6) # (src_addr_7 & !abc:n396Q) # (!state_7 & abc:n396Q & D_7) # (state_7 & !src_addr_7 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6 & abc:n396Q) # (state_7 & src_addr_7 & !src_addr_1))
+  [ 4 PTs]  src_addr_10.D = ((abc:n396Q & !state_7 & D_10) # (src_addr_10 & state_7 & abc:n377Q) # (src_addr_10 & !abc:n396Q) # (!src_addr_10 & abc:n396Q & state_7 & src_addr_9 & src_addr_8 & src_addr_7 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6))
+  [10 PTs]  src_addr_8.D = ((src_addr_8 & state_7 & !src_addr_7) # (src_addr_8 & state_7 & !src_addr_1) # (src_addr_8 & state_7 & !src_addr_2) # (src_addr_8 & state_7 & !src_addr_3) # (src_addr_8 & state_7 & !src_addr_4) # (src_addr_8 & state_7 & !src_addr_5) # (src_addr_8 & state_7 & !src_addr_6) # (abc:n396Q & !state_7 & D_8) # (abc:n396Q & !src_addr_8 & state_7 & src_addr_7 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (!abc:n396Q & src_addr_8))
+  [11 PTs]  src_addr_9.D = ((src_addr_9 & state_7 & !src_addr_3) # (src_addr_9 & state_7 & !src_addr_4) # (src_addr_9 & state_7 & !src_addr_5) # (src_addr_9 & state_7 & !src_addr_6) # (src_addr_9 & !abc:n396Q) # (src_addr_9 & state_7 & !src_addr_8) # (!state_7 & abc:n396Q & D_9) # (!src_addr_9 & state_7 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6 & abc:n396Q & src_addr_8 & src_addr_1 & src_addr_7) # (src_addr_9 & state_7 & !src_addr_7) # (src_addr_9 & state_7 & !src_addr_1) # (src_addr_9 & state_7 & !src_addr_2))
+  [ 6 PTs]  src_addr_14.D = ((state_7 & !src_addr_14 & src_addr_13 & src_addr_12 & abc:n396Q & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (src_addr_14 & !abc:n396Q) # (!state_7 & abc:n396Q & D_14) # (state_7 & src_addr_14 & !src_addr_12) # (state_7 & src_addr_14 & abc:n379Q) # (state_7 & src_addr_14 & !src_addr_13))
+  [ 4 PTs]  src_addr_11.D = ((src_addr_11 & !abc:n396Q) # (!state_7 & abc:n396Q & D_11) # (state_7 & !src_addr_11 & abc:n396Q & src_addr_9 & src_addr_10 & src_addr_8 & src_addr_7 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (state_7 & src_addr_11 & abc:n378Q))
+  [ 5 PTs]  src_addr_13.D = ((src_addr_13 & !abc:n396Q) # (!state_7 & abc:n396Q & D_13) # (state_7 & !src_addr_13 & abc:n396Q & src_addr_12 & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (state_7 & src_addr_13 & !src_addr_12) # (state_7 & src_addr_13 & abc:n379Q))
+  [ 4 PTs]  words_left_1.D = ((!abc:n404Q & words_left_1) # (state_7 & words_left_1 & !words_left_0) # (!state_7 & abc:n404Q & !D_5) # (state_7 & abc:n404Q & !words_left_1 & words_left_0))
+  [ 3 PTs]  desc_ptr_0.D = ((!state_8 & desc_ptr_0 & abc:n279Q) # (!state_8 & D_0 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (state_8 & !desc_ptr_0))
+  [ 4 PTs]  desc_ptr_1.D = ((state_8 & desc_ptr_1 & !desc_ptr_0) # (!state_8 & desc_ptr_1 & abc:n279Q) # (!state_8 & D_1 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (state_8 & !desc_ptr_1 & desc_ptr_0))
+  [ 5 PTs]  words_left_2.D = ((!abc:n404Q & words_left_2) # (state_7 & words_left_2 & !words_left_0) # (state_7 & words_left_2 & !words_left_1) # (state_7 & abc:n404Q & !words_left_2 & words_left_0 & words_left_1) # (!state_7 & abc:n404Q & !D_6))
+  [ 6 PTs]  words_left_3.D = ((!abc:n404Q & words_left_3) # (state_7 & words_left_3 & !words_left_0) # (state_7 & words_left_3 & !words_left_1) # (state_7 & words_left_3 & !words_left_2) # (state_7 & abc:n404Q & !words_left_3 & words_left_0 & words_left_1 & words_left_2) # (!state_7 & abc:n404Q & !D_7))
+  [ 4 PTs]  desc_ptr_2.D = ((state_8 & abc:n341Q & desc_ptr_0 & desc_ptr_1) # (!state_8 & D_2 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (!state_8 & desc_ptr_2 & abc:n279Q) # (state_8 & desc_ptr_2 & abc:n341Q))
+  [ 4 PTs]  desc_ptr_3.D = ((state_8 & desc_ptr_3 & abc:n341Q) # (state_8 & !desc_ptr_3 & desc_ptr_2 & desc_ptr_0 & desc_ptr_1) # (!state_8 & D_3 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (!state_8 & desc_ptr_3 & abc:n279Q))
+  [ 7 PTs]  words_left_4.D = ((!abc:n404Q & words_left_4) # (state_7 & words_left_4 & !words_left_3) # (state_7 & words_left_4 & !words_left_0) # (state_7 & words_left_4 & !words_left_1) # (state_7 & words_left_4 & !words_left_2) # (state_7 & abc:n404Q & !words_left_4 & words_left_3 & words_left_0 & words_left_1 & words_left_2) # (!state_7 & abc:n404Q & !D_8))
+  [ 5 PTs]  desc_ptr_4.D = ((state_8 & desc_ptr_4 & !desc_ptr_3) # (state_8 & desc_ptr_4 & abc:n341Q) # (state_8 & !desc_ptr_4 & desc_ptr_3 & desc_ptr_2 & desc_ptr_0 & desc_ptr_1) # (!state_8 & D_4 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (!state_8 & desc_ptr_4 & abc:n279Q))
+  [ 6 PTs]  desc_ptr_5.D = ((!state_8 & desc_ptr_5 & abc:n279Q) # (state_8 & !desc_ptr_5 & desc_ptr_3 & desc_ptr_4 & desc_ptr_2 & desc_ptr_0 & desc_ptr_1) # (state_8 & desc_ptr_5 & !desc_ptr_4) # (state_8 & desc_ptr_5 & !desc_ptr_3) # (state_8 & desc_ptr_5 & abc:n341Q) # (!state_8 & D_5 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN))
+  [ 8 PTs]  words_left_5.D = ((!state_7 & !D_9 & abc:n404Q) # (words_left_5 & state_7 & !words_left_0) # (words_left_5 & !abc:n404Q) # (words_left_5 & state_7 & !words_left_1) # (!words_left_5 & state_7 & words_left_3 & abc:n404Q & words_left_0 & words_left_1 & words_left_2 & words_left_4) # (words_left_5 & state_7 & !words_left_4) # (words_left_5 & state_7 & !words_left_2) # (words_left_5 & state_7 & !words_left_3))
+  [ 9 PTs]  desc_ptr_6.D = ((desc_ptr_6 & state_8 & !desc_ptr_4) # (desc_ptr_6 & state_8 & !desc_ptr_5) # (!desc_ptr_6 & state_8 & desc_ptr_3 & desc_ptr_4 & desc_ptr_5 & desc_ptr_2 & desc_ptr_1 & desc_ptr_0) # (!state_8 & D_6 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (desc_ptr_6 & !state_8 & abc:n279Q) # (desc_ptr_6 & state_8 & !desc_ptr_0) # (desc_ptr_6 & state_8 & !desc_ptr_1) # (desc_ptr_6 & state_8 & !desc_ptr_2) # (desc_ptr_6 & state_8 & !desc_ptr_3))
+  [ 4 PTs]  desc_ptr_7.D = ((state_8 & desc_ptr_7 & abc:n345Q) # (state_8 & !desc_ptr_7 & desc_ptr_6 & desc_ptr_0 & desc_ptr_1 & desc_ptr_2 & desc_ptr_3 & desc_ptr_4 & desc_ptr_5) # (!state_8 & D_7 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (!state_8 & desc_ptr_7 & abc:n279Q))
+  [ 5 PTs]  desc_ptr_8.D = ((!state_8 & desc_ptr_8 & abc:n279Q) # (state_8 & desc_ptr_8 & !desc_ptr_7) # (state_8 & desc_ptr_8 & abc:n345Q) # (state_8 & !desc_ptr_8 & desc_ptr_7 & desc_ptr_6 & desc_ptr_0 & desc_ptr_1 & desc_ptr_2 & desc_ptr_3 & desc_ptr_4 & desc_ptr_5) # (!state_8 & D_8 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN))
+  [ 4 PTs]  state_2.D = ((state_7 & !stop_after & words_left_6 & words_left_5 & words_left_4 & words_left_3 & words_left_0 & words_left_1 & words_left_2) # (state_9 & !phase_payload) # (state_8 & !desc_ptr_0) # (state_8 & !desc_ptr_1))
+  [ 4 PTs]  desc_ptr_13.D = ((!state_8 & desc_ptr_13 & abc:n279Q) # (!state_8 & D_13 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (state_8 & desc_ptr_13 & abc:n351Q) # (state_8 & !desc_ptr_13 & desc_ptr_11 & desc_ptr_12 & desc_ptr_9 & desc_ptr_10 & desc_ptr_6 & desc_ptr_7 & desc_ptr_8 & desc_ptr_0 & desc_ptr_1 & desc_ptr_2 & desc_ptr_3 & desc_ptr_4 & desc_ptr_5))
+  [ 3 PTs]  state_1.D = ((phase_payload & state_9) # (state_8 & desc_ptr_0 & desc_ptr_1 & !wait_hblank) # (state_7 & abc:n298Q))
+  [ 7 PTs]  src_addr_20.D = ((!state_7 & abc:n367Q & D_4) # (src_addr_20 & !abc:n367Q) # (!src_addr_20 & state_7 & src_addr_17 & abc:n367Q & src_addr_19 & src_addr_18 & src_addr_15 & src_addr_16 & src_addr_12 & src_addr_13 & src_addr_14 & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (src_addr_20 & state_7 & !src_addr_18) # (src_addr_20 & state_7 & !src_addr_19) # (src_addr_20 & state_7 & abc:n384Q) # (src_addr_20 & state_7 & !src_addr_17))
+  [ 1 PTs]  state_4.D = (state_7 & stop_after & words_left_6 & words_left_5 & words_left_4 & words_left_3 & words_left_0 & words_left_1 & words_left_2)
+  [ 6 PTs]  src_addr_19.D = ((!abc:n367Q & src_addr_19) # (state_7 & src_addr_19 & !src_addr_18) # (state_7 & src_addr_19 & abc:n384Q) # (state_7 & src_addr_19 & !src_addr_17) # (!state_7 & abc:n367Q & D_3) # (state_7 & abc:n367Q & !src_addr_19 & src_addr_17 & src_addr_18 & src_addr_15 & src_addr_16 & src_addr_12 & src_addr_13 & src_addr_14 & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6))
+  [ 9 PTs]  src_addr_22.D = ((src_addr_22 & state_7 & abc:n384Q) # (src_addr_22 & state_7 & !src_addr_17) # (!state_7 & abc:n367Q & D_6) # (!src_addr_22 & state_7 & src_addr_21 & src_addr_17 & abc:n367Q & src_addr_20 & src_addr_19 & src_addr_18 & src_addr_15 & src_addr_16 & src_addr_12 & src_addr_13 & src_addr_14 & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (src_addr_22 & !abc:n367Q) # (src_addr_22 & state_7 & !src_addr_18) # (src_addr_22 & state_7 & !src_addr_19) # (src_addr_22 & state_7 & !src_addr_20) # (src_addr_22 & state_7 & !src_addr_21))
+  [ 8 PTs]  src_addr_21.D = ((!state_7 & abc:n367Q & D_5) # (!src_addr_21 & state_7 & src_addr_17 & abc:n367Q & src_addr_20 & src_addr_19 & src_addr_18 & src_addr_15 & src_addr_16 & src_addr_12 & src_addr_13 & src_addr_14 & src_addr_7 & src_addr_8 & src_addr_9 & src_addr_10 & src_addr_11 & src_addr_1 & src_addr_2 & src_addr_3 & src_addr_4 & src_addr_5 & src_addr_6) # (src_addr_21 & !abc:n367Q) # (src_addr_21 & state_7 & !src_addr_18) # (src_addr_21 & state_7 & !src_addr_19) # (src_addr_21 & state_7 & !src_addr_20) # (src_addr_21 & state_7 & abc:n384Q) # (src_addr_21 & state_7 & !src_addr_17))
+  [ 5 PTs]  desc_ptr_14.D = ((state_8 & desc_ptr_14 & !desc_ptr_13) # (state_8 & desc_ptr_14 & abc:n351Q) # (!state_8 & desc_ptr_14 & abc:n279Q) # (!state_8 & D_14 & A_0.PIN & !nAS.PIN & !nLDS.PIN & !R_nW.PIN & !nENGINE_SELECT & !A_1.PIN) # (state_8 & !desc_ptr_14 & desc_ptr_13 & desc_ptr_11 & desc_ptr_12 & desc_ptr_9 & desc_ptr_10 & desc_ptr_6 & desc_ptr_7 & desc_ptr_8 & desc_ptr_0 & desc_ptr_1 & desc_ptr_2 & desc_ptr_3 & desc_ptr_4 & desc_ptr_5))
+  [ 4 PTs]  words_left_6.D = ((abc:n404Q & state_7 & abc:n298Q & words_left_5 & words_left_4 & words_left_3 & words_left_0 & words_left_1 & words_left_2) # (words_left_6 & state_7 & abc:n298Q) # (abc:n404Q & !state_7 & !D_10) # (!abc:n404Q & words_left_6))
+  [ 9 PTs]  phase_payload.D = ((!state_7 & dma_en & state_8 & desc_ptr_1 & desc_ptr_0) # (dma_en & state_8 & desc_ptr_1 & desc_ptr_0 & !stop_after & words_left_6 & words_left_5 & words_left_4 & words_left_3 & words_left_0 & words_left_1 & words_left_2) # (!state_7 & state_8 & desc_ptr_1 & desc_ptr_0 & !state_0) # (state_8 & desc_ptr_1 & desc_ptr_0 & !stop_after & words_left_6 & words_left_5 & words_left_4 & words_left_3 & words_left_0 & words_left_1 & words_left_2 & !state_0) # (phase_payload & state_8) # (phase_payload & !state_7 & !state_0) # (phase_payload & state_7 & stop_after) # (phase_payload & !dma_en & state_0) # (phase_payload & state_7 & abc:n298Q))
+  [13 PTs]  lds_out.D = ((lds_out & state_8 & !desc_ptr_0) # (lds_out & state_8 & !desc_ptr_1) # (lds_out & state_7 & !stop_after) # (lds_out & state_7 & abc:n298Q) # (lds_out & state_5) # (!state_8 & !state_7 & !state_5 & !state_2 & !state_1 & !state_9 & !state_0 & !state_3 & !state_4 & !state_6 & !state_10) # (!state_8 & stop_after & !state_5 & !state_2 & !state_1 & !state_9 & !state_0 & !state_3 & !state_4 & !state_6 & !state_10 & words_left_6 & words_left_5 & words_left_4 & words_left_3 & words_left_0 & words_left_1 & words_left_2) # (wait_hblank & desc_ptr_0 & desc_ptr_1 & !state_7 & !state_5 & !state_2 & !state_1 & !state_9 & !state_0 & !state_3 & !state_4 & !state_6 & !state_10) # (wait_hblank & desc_ptr_0 & desc_ptr_1 & stop_after & !state_5 & !state_2 & !state_1 & !state_9 & !state_0 & !state_3 & !state_4 & !state_6 & !state_10 & words_left_6 & words_left_5 & words_left_4 & words_left_3 & words_left_0 & words_left_1 & words_left_2) # (lds_out & state_1) # (lds_out & state_2) # (lds_out & abc:n332 (QN)QN) # (lds_out & state_8 & !wait_hblank))
+  [ 1 PTs]  state_7.C = CPUCLK
+  [ 1 PTs]  state_7.AR = !nRESET
+  [ 1 PTs]  state_8.C = CPUCLK
+  [ 1 PTs]  state_8.AR = !nRESET
+  [ 1 PTs]  nAS_sync.C = CPUCLK
+  [ 1 PTs]  nAS_sync.AP = !nRESET
+  [ 1 PTs]  nAS_meta.C = CPUCLK
+  [ 1 PTs]  nAS_meta.AP = !nRESET
+  [ 1 PTs]  hblank_sync_d.C = CPUCLK
+  [ 1 PTs]  hblank_sync_d.AR = !nRESET
+  [ 1 PTs]  nBG_sync.C = CPUCLK
+  [ 1 PTs]  nBG_sync.AP = !nRESET
+  [ 1 PTs]  FC_1.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  nBG_meta.C = CPUCLK
+  [ 1 PTs]  nBG_meta.AP = !nRESET
+  [ 1 PTs]  FC_0.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_21.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_20.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_19.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_18.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_17.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_16.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_15.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_14.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_13.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_12.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_11.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_10.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_9.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_8.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_7.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_6.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_5.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_4.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_3.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_2.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_1.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_0.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  hblank_sync.C = CPUCLK
+  [ 1 PTs]  hblank_sync.AR = !nRESET
+  [ 1 PTs]  hblank_meta.C = CPUCLK
+  [ 1 PTs]  hblank_meta.AR = !nRESET
+  [ 1 PTs]  nLDS.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  nUDS.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  nAS.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  FC_2.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  R_nW.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  A_22.OE = !$abc$2508$nBGACK
+  [ 1 PTs]  state_9.C = CPUCLK
+  [ 1 PTs]  state_9.AR = !nRESET
+  [ 1 PTs]  state_3.C = CPUCLK
+  [ 1 PTs]  state_3.AR = !nRESET
+  [ 1 PTs]  state_6.C = CPUCLK
+  [ 1 PTs]  state_6.AR = !nRESET
+  [ 1 PTs]  dest_0.C = CPUCLK
+  [ 1 PTs]  dest_0.AR = !nRESET
+  [ 1 PTs]  dest_1.C = CPUCLK
+  [ 1 PTs]  dest_1.AR = !nRESET
+  [ 1 PTs]  stop_after.C = CPUCLK
+  [ 1 PTs]  stop_after.AR = !nRESET
+  [ 1 PTs]  wait_hblank.C = CPUCLK
+  [ 1 PTs]  wait_hblank.AR = !nRESET
+  [ 1 PTs]  state_10.C = CPUCLK
+  [ 1 PTs]  state_10.AR = !nRESET
+  [ 1 PTs]  dest_2.C = CPUCLK
+  [ 1 PTs]  dest_2.AR = !nRESET
+  [ 1 PTs]  state_5.C = CPUCLK
+  [ 1 PTs]  state_5.AR = !nRESET
+  [ 1 PTs]  state_0.C = CPUCLK
+  [ 1 PTs]  state_0.AP = !nRESET
+  [ 1 PTs]  src_addr_5.C = CPUCLK
+  [ 1 PTs]  src_addr_5.AR = !nRESET
+  [ 1 PTs]  src_addr_1.C = CPUCLK
+  [ 1 PTs]  src_addr_1.AR = !nRESET
+  [ 1 PTs]  src_addr_4.C = CPUCLK
+  [ 1 PTs]  src_addr_4.AR = !nRESET
+  [ 1 PTs]  words_left_0.C = CPUCLK
+  [ 1 PTs]  words_left_0.AR = !nRESET
+  [ 1 PTs]  nBR.C = CPUCLK
+  [ 1 PTs]  nBR.AP = !nRESET
+  [ 1 PTs]  src_addr_12.C = CPUCLK
+  [ 1 PTs]  src_addr_12.AR = !nRESET
+  [ 1 PTs]  $abc$2508$nBGACK.C = CPUCLK
+  [ 1 PTs]  $abc$2508$nBGACK.AP = !nRESET
+  [ 1 PTs]  desc_ptr_10.C = CPUCLK
+  [ 1 PTs]  desc_ptr_10.AR = !nRESET
+  [ 1 PTs]  desc_ptr_9.C = CPUCLK
+  [ 1 PTs]  desc_ptr_9.AR = !nRESET
+  [ 1 PTs]  src_addr_16.C = CPUCLK
+  [ 1 PTs]  src_addr_16.AR = !nRESET
+  [ 1 PTs]  src_addr_17.C = CPUCLK
+  [ 1 PTs]  src_addr_17.AR = !nRESET
+  [ 1 PTs]  nDEPOSIT.C = CPUCLK
+  [ 1 PTs]  nDEPOSIT.AP = !nRESET
+  [ 1 PTs]  desc_ptr_11.C = CPUCLK
+  [ 1 PTs]  desc_ptr_11.AR = !nRESET
+  [ 1 PTs]  nENGINE_IRQ.C = CPUCLK
+  [ 1 PTs]  nENGINE_IRQ.AP = !nRESET
+  [ 1 PTs]  desc_ptr_12.C = CPUCLK
+  [ 1 PTs]  desc_ptr_12.AR = !nRESET
+  [ 1 PTs]  src_addr_18.C = CPUCLK
+  [ 1 PTs]  src_addr_18.AR = !nRESET
+  [ 1 PTs]  src_addr_3.C = CPUCLK
+  [ 1 PTs]  src_addr_3.AR = !nRESET
+  [ 1 PTs]  dma_en.C = CPUCLK
+  [ 1 PTs]  dma_en.AR = !nRESET
+  [ 1 PTs]  src_addr_2.C = CPUCLK
+  [ 1 PTs]  src_addr_2.AR = !nRESET
+  [ 1 PTs]  src_addr_15.C = CPUCLK
+  [ 1 PTs]  src_addr_15.AR = !nRESET
+  [ 1 PTs]  src_addr_6.C = CPUCLK
+  [ 1 PTs]  src_addr_6.AR = !nRESET
+  [ 1 PTs]  src_addr_7.C = CPUCLK
+  [ 1 PTs]  src_addr_7.AR = !nRESET
+  [ 1 PTs]  src_addr_10.C = CPUCLK
+  [ 1 PTs]  src_addr_10.AR = !nRESET
+  [ 1 PTs]  src_addr_8.C = CPUCLK
+  [ 1 PTs]  src_addr_8.AR = !nRESET
+  [ 1 PTs]  src_addr_9.C = CPUCLK
+  [ 1 PTs]  src_addr_9.AR = !nRESET
+  [ 1 PTs]  src_addr_14.C = CPUCLK
+  [ 1 PTs]  src_addr_14.AR = !nRESET
+  [ 1 PTs]  src_addr_11.C = CPUCLK
+  [ 1 PTs]  src_addr_11.AR = !nRESET
+  [ 1 PTs]  src_addr_13.C = CPUCLK
+  [ 1 PTs]  src_addr_13.AR = !nRESET
+  [ 1 PTs]  words_left_1.C = CPUCLK
+  [ 1 PTs]  words_left_1.AR = !nRESET
+  [ 1 PTs]  desc_ptr_0.C = CPUCLK
+  [ 1 PTs]  desc_ptr_0.AR = !nRESET
+  [ 1 PTs]  desc_ptr_1.C = CPUCLK
+  [ 1 PTs]  desc_ptr_1.AR = !nRESET
+  [ 1 PTs]  words_left_2.C = CPUCLK
+  [ 1 PTs]  words_left_2.AR = !nRESET
+  [ 1 PTs]  words_left_3.C = CPUCLK
+  [ 1 PTs]  words_left_3.AR = !nRESET
+  [ 1 PTs]  desc_ptr_2.C = CPUCLK
+  [ 1 PTs]  desc_ptr_2.AR = !nRESET
+  [ 1 PTs]  desc_ptr_3.C = CPUCLK
+  [ 1 PTs]  desc_ptr_3.AR = !nRESET
+  [ 1 PTs]  words_left_4.C = CPUCLK
+  [ 1 PTs]  words_left_4.AR = !nRESET
+  [ 1 PTs]  desc_ptr_4.C = CPUCLK
+  [ 1 PTs]  desc_ptr_4.AR = !nRESET
+  [ 1 PTs]  desc_ptr_5.C = CPUCLK
+  [ 1 PTs]  desc_ptr_5.AR = !nRESET
+  [ 1 PTs]  words_left_5.C = CPUCLK
+  [ 1 PTs]  words_left_5.AR = !nRESET
+  [ 1 PTs]  desc_ptr_6.C = CPUCLK
+  [ 1 PTs]  desc_ptr_6.AR = !nRESET
+  [ 1 PTs]  desc_ptr_7.C = CPUCLK
+  [ 1 PTs]  desc_ptr_7.AR = !nRESET
+  [ 1 PTs]  desc_ptr_8.C = CPUCLK
+  [ 1 PTs]  desc_ptr_8.AR = !nRESET
+  [ 1 PTs]  state_2.C = CPUCLK
+  [ 1 PTs]  state_2.AR = !nRESET
+  [ 1 PTs]  desc_ptr_13.C = CPUCLK
+  [ 1 PTs]  desc_ptr_13.AR = !nRESET
+  [ 1 PTs]  state_1.C = CPUCLK
+  [ 1 PTs]  state_1.AR = !nRESET
+  [ 1 PTs]  src_addr_20.C = CPUCLK
+  [ 1 PTs]  src_addr_20.AR = !nRESET
+  [ 1 PTs]  state_4.C = CPUCLK
+  [ 1 PTs]  state_4.AR = !nRESET
+  [ 1 PTs]  src_addr_19.C = CPUCLK
+  [ 1 PTs]  src_addr_19.AR = !nRESET
+  [ 1 PTs]  src_addr_22.C = CPUCLK
+  [ 1 PTs]  src_addr_22.AR = !nRESET
+  [ 1 PTs]  src_addr_21.C = CPUCLK
+  [ 1 PTs]  src_addr_21.AR = !nRESET
+  [ 1 PTs]  desc_ptr_14.C = CPUCLK
+  [ 1 PTs]  desc_ptr_14.AR = !nRESET
+  [ 1 PTs]  words_left_6.C = CPUCLK
+  [ 1 PTs]  words_left_6.AR = !nRESET
+  [ 1 PTs]  phase_payload.C = CPUCLK
+  [ 1 PTs]  phase_payload.AR = !nRESET
+  [ 1 PTs]  lds_out.C = CPUCLK
+  [ 1 PTs]  lds_out.AP = !nRESET
+

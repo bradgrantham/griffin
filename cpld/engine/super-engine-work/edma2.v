@@ -1,4 +1,4 @@
-// edma3.v — Griffin display-list DMA engine (ATF1508AS) — DRAFT
+// edma2.v — Griffin display-list DMA engine (ATF1508AS) — DRAFT
 //
 // Fit experiment for the ENGINE successor: a descriptor-array ("display
 // list") DMA engine.  Unlike edma.v (which chained descriptors inline with
@@ -14,9 +14,9 @@
 //
 //   word 0: [15]    wait_hblank  wait for HBLANK rising edge before payload
 //           [14]    stop_after   last entry: assert nENGINE_IRQ and stop
-//           [13:9]  count        payload words, 0-biased (0 = 1, 31 = 32)
-//           [8:7]   reserved
-//           [6:0]   signal mask  one-hot (or multi-cast) destination strobes
+//           [13:11] dest         destination selector, decoded off-chip
+//           [10:4]  count        payload words, 0-biased (0 = 1, 127 = 128)
+//           [3:0]   reserved
 //   word 1: [15:7]  reserved
 //           [6:0]   src[22:16]
 //   word 2: [15:1]  src[15:1]
@@ -26,27 +26,18 @@
 // Operation: the CPU writes the word address of the first descriptor, which
 // arms the engine.  ENGINE bus-masters (BR -> BG -> AS idle -> BGACK), reads
 // the four descriptor words at {8'h3F, desc_ptr} (RAM's top 64K), then reads
-// `count` words from {1'b0, src_addr} pulsing the descriptor's nSIGNAL lines
-// once per word (the selected consumer latches D[15:0] off the bus — nothing
+// `count` words from {1'b0, src_addr} pulsing nDEPOSIT once per word with
+// dest[] valid (the selected consumer latches D[15:0] off the bus — nothing
 // is ever written, so no write cycles and no address decode).  The bus is
 // released and re-requested between descriptors, and a wait_hblank descriptor
 // additionally waits for the synchronized HBLANK rising edge before it
 // re-acquires.
 //
 // Holding the bus across a chain of non-waiting descriptors (the original
-// intent, edma2.v) does not fit the frozen Rev-1 ENGINE pinout: it needs
-// 128/128 logic cells even with free pins and grouping-fails at -preassign
-// keep.  Releasing between every descriptor costs one extra arbitration
-// round-trip per descriptor and fit at 124/128.
-//
-// Measured (ATF1508AS PLCC84, -preassign keep, Rev-1 pinout):
-//   edma2.v, 7-bit count, binary dest[2:0] + nDEPOSIT   124 LC  75 FF  434 PT
-//   + 5-bit count only                                  DOES NOT FIT
-//   + 5-bit count and 7 one-hot strobes (this file)     123 LC  77 FF  414 PT
-// The 5-bit count alone is a wash on logic cells and pushes the fitter off
-// the placement cliff; it only pays off combined with the one-hot strobes,
-// which delete the binary decode and drop the worst equation from 10 PTs to
-// 5 (one macrocell's worth) across the whole design.
+// intent) synthesizes but does not fit the frozen Rev-1 ENGINE pinout: it
+// needs 128/128 logic cells with free pins, and the fitter grouping-fails at
+// -preassign keep.  Releasing between every descriptor drops that to 124/128
+// and fits, at the cost of one extra arbitration round-trip per descriptor.
 //
 // Transfer timing follows production engine.v: AS/UDS/LDS are asserted once
 // and held, the address advances every 2 CPUCLK cycles, and DTACK is ignored
@@ -56,7 +47,7 @@
 // bits, so upcounters with an all-1s terminal beat downcounters and equality
 // comparators.
 
-module Edma3
+module Edma2
 (
     input  wire        CPUCLK,          // pin 83 (GCLK1)  — system clock
     input  wire        nRESET,          // pin 1  (GCLR)   — active-low async reset
@@ -82,11 +73,9 @@ module Edma3
     output reg         nBR,             // pin 79
     output reg         nBGACK,          // pin 77
 
-    // Generalized deposit interface — one active-low strobe per consumer,
-    // driven straight from the descriptor's mask, so no off-chip decoder.
-    // Bit 0 VIDEO_FIFO_W, 1 VIDEO_PALETTE, 2 VIDEO_MODE, 3 OVERLAY_FIFO_W,
-    // 4 AUDIO_FIFO_W, 5 spare, 6 spare.
-    output wire [6:0]  nSIGNAL,
+    // Generalized deposit interface (to external demux / consumers)
+    output reg  [2:0]  dest,            // destination selector, valid with nDEPOSIT
+    output reg         nDEPOSIT,        // active-low: latch D[15:0] into selected dest
 
     // Raster pacing input from VIDEO
     input  wire        HBLANK,
@@ -106,18 +95,11 @@ module Edma3
 
     reg [14:0] desc_ptr;                // A[15:1] of the current descriptor word
     reg [22:1] src_addr;                // A[22:1] of the current payload word
-    reg [4:0]  words_left;              // complemented; all-1s = last word
-    reg [6:0]  signal_mask;             // latched at descriptor word 0
-    reg        deposit;                 // strobe phase, one cycle per word
+    reg [6:0]  words_left;              // complemented; all-1s = last word
     reg        wait_hblank;
     reg        stop_after;
     reg        dma_en;
     reg        phase_payload;           // 0 = fetching descriptor, 1 = payload
-
-    // Combinational fan-out of one strobe-phase flip-flop through the latched
-    // mask: 7 pin cells plus 1 buried flip-flop, rather than 7 output
-    // flip-flops each carrying the full state decode.
-    assign nSIGNAL = ~(signal_mask & {7{deposit}});
 
     // ----------------------------------------------------------------
     // Bus tri-state — drive only when BGACK is asserted (mastering)
@@ -196,8 +178,8 @@ module Edma3
     localparam [3:0] STATE_FETCH_STROBE    = 4'd5;   // latch descriptor word, advance
     localparam [3:0] STATE_HBLANK_RELEASE  = 4'd6;   // give the bus back before waiting
     localparam [3:0] STATE_HBLANK_WAIT     = 4'd7;
-    localparam [3:0] STATE_PAYLOAD_SETTLE  = 4'd8;   // address settling, strobes high
-    localparam [3:0] STATE_PAYLOAD_STROBE  = 4'd9;   // strobe low; on exit advance
+    localparam [3:0] STATE_PAYLOAD_SETTLE  = 4'd8;   // address settling, nDEPOSIT high
+    localparam [3:0] STATE_PAYLOAD_STROBE  = 4'd9;   // nDEPOSIT low; on exit advance
     localparam [3:0] STATE_STOP            = 4'd10;  // release, IRQ, disarm
     localparam [3:0] STATE_RELEASE         = 4'd11;  // release, re-request for next descriptor
 
@@ -210,7 +192,7 @@ module Edma3
             state         <= STATE_IDLE;
             nBR           <= 1'b1;
             nBGACK        <= 1'b1;
-            deposit       <= 1'b0;
+            nDEPOSIT      <= 1'b1;
             nENGINE_IRQ   <= 1'b1;
             as_out        <= 1'b1;
             uds_out       <= 1'b1;
@@ -219,8 +201,8 @@ module Edma3
             phase_payload <= 1'b0;
             desc_ptr      <= 15'd0;
             src_addr      <= 22'd0;
-            words_left    <= 5'd0;
-            signal_mask   <= 7'd0;
+            words_left    <= 7'd0;
+            dest          <= 3'd0;
             wait_hblank   <= 1'b0;
             stop_after    <= 1'b0;
         end
@@ -307,8 +289,8 @@ module Edma3
                         begin
                             wait_hblank <= D[15];
                             stop_after  <= D[14];
-                            words_left  <= ~D[13:9];
-                            signal_mask <= D[6:0];
+                            dest        <= D[13:11];
+                            words_left  <= ~D[10:4];
                         end
 
                         2'b01:
@@ -370,18 +352,18 @@ module Edma3
 
                 STATE_PAYLOAD_SETTLE:
                 begin
-                    deposit <= 1'b1;
-                    state   <= STATE_PAYLOAD_STROBE;
+                    nDEPOSIT <= 1'b0;
+                    state    <= STATE_PAYLOAD_STROBE;
                 end
 
-                // The strobe's rising edge latches D[15:0] into the selected
+                // nDEPOSIT's rising edge latches D[15:0] into the selected
                 // destination; the address advances on the same edge (SRAM
                 // output hold covers the consumer's data hold).
                 STATE_PAYLOAD_STROBE:
                 begin
-                    deposit    <= 1'b0;
+                    nDEPOSIT   <= 1'b1;
                     src_addr   <= src_addr + 22'd1;
-                    words_left <= words_left + 5'd1;
+                    words_left <= words_left + 7'd1;
 
                     if (&words_left)
                     begin
@@ -428,7 +410,7 @@ module Edma3
                     state    <= STATE_IDLE;
                     nBGACK   <= 1'b1;
                     nBR      <= 1'b1;
-                    deposit  <= 1'b0;
+                    nDEPOSIT <= 1'b1;
                     as_out   <= 1'b1;
                     uds_out  <= 1'b1;
                     lds_out  <= 1'b1;
@@ -439,15 +421,15 @@ module Edma3
 
 endmodule
 
-// EDMA3 ATF1508 — Griffin board Rev 1 ENGINE socket
+// EDMA2 ATF1508 — Griffin board Rev 1 ENGINE socket
 // Pin assignments for atf15xx_yosys / fit1508.exe, PLCC-84 package
 //
 // Identical to production engine.v except: nFIFO_W (10), q8_toggle_out (8)
-// and nFIFO_HF (6) are gone, and nSIGNAL[6:0]/HBLANK take those pins plus
-// 9, 40, 41, 46 and 2 — all unconnected on the Rev 1 PCB.  Pin 80 is the
-// last free I/O and is held in reserve.
+// and nFIFO_HF (6) are gone, and dest[2:0]/nDEPOSIT/HBLANK take pins
+// 10/8/6 plus 9 and 2 — both of which are unconnected on the Rev 1 PCB,
+// alongside the 6/8/10 bodge-wire cluster on the same package edge.
 //
-//PIN: CHIP "edma3" ASSIGNED TO AN PLCC84
+//PIN: CHIP "edma2" ASSIGNED TO AN PLCC84
 //
 // System
 //PIN: CPUCLK         : 83
@@ -515,12 +497,9 @@ endmodule
 //PIN: D_1            : 68
 //PIN: D_0            : 18
 //
-// Deposit strobes, active low (bodge wires to breadboard)
-//PIN: nSIGNAL_0      : 10
-//PIN: nSIGNAL_1      : 8
-//PIN: nSIGNAL_2      : 6
-//PIN: nSIGNAL_3      : 9
-//PIN: nSIGNAL_4      : 40
-//PIN: nSIGNAL_5      : 41
-//PIN: nSIGNAL_6      : 46
+// Deposit interface (bodge wires to breadboard)
+//PIN: dest_0         : 10
+//PIN: dest_1         : 8
+//PIN: dest_2         : 6
+//PIN: nDEPOSIT       : 9
 //PIN: HBLANK         : 2

@@ -1,0 +1,1542 @@
+++ dirname /Users/grantham/trees/atf15xx_yosys/run_yosys.sh
++ export ROOT=/Users/grantham/trees/atf15xx_yosys
++ ROOT=/Users/grantham/trees/atf15xx_yosys
++ NAME=edma2
++ shift
+++ yosys --version
+++ cut '-d ' -f2
++ VERSION=0.62+117
++ '[' 0.62+117 '>' 0.30+20 ']'
++ LSBIDX=-lsbidx
++ yosys
+
+ /----------------------------------------------------------------------------\
+ |  yosys -- Yosys Open SYnthesis Suite                                       |
+ |  Copyright (C) 2012 - 2026  Claire Xenia Wolf <claire@yosyshq.com>         |
+ |  Distributed under an ISC-like license, type "license" to see terms        |
+ \----------------------------------------------------------------------------/
+ Yosys 0.62+117 (git sha1 1d3f9b790-dirty, aarch64-apple-darwin23.5-clang++ 18.1.8 -fPIC -O3)
+
+yosys> read_liberty -lib /Users/grantham/trees/atf15xx_yosys/cells.lib
+
+1. Executing Liberty frontend: /Users/grantham/trees/atf15xx_yosys/cells.lib
+Imported 102 cell types from liberty file.
+
+yosys> read_verilog edma2.v
+
+2. Executing Verilog-2005 frontend: edma2.v
+Parsing Verilog input from `edma2.v' to AST representation.
+edma2.v:112: Warning: Yosys has only limited support for tri-state logic at the moment.
+edma2.v:113: Warning: Yosys has only limited support for tri-state logic at the moment.
+edma2.v:114: Warning: Yosys has only limited support for tri-state logic at the moment.
+edma2.v:117: Warning: Yosys has only limited support for tri-state logic at the moment.
+edma2.v:118: Warning: Yosys has only limited support for tri-state logic at the moment.
+edma2.v:119: Warning: Yosys has only limited support for tri-state logic at the moment.
+Generating RTLIL representation for module `\Edma2'.
+Successfully finished Verilog frontend.
+
+yosys> stat
+
+3. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+       99 wires
+      348 wire bits
+       43 public wires
+      150 public wire bits
+       18 ports
+       59 port bits
+        2 processes
+       33 cells
+        3   $add
+        6   $and
+        2   $eq
+        8   $mux
+       12   $not
+        2   $reduce_and
+
+
+yosys> tribuf
+4. Executing TRIBUF pass.
+
+yosys> stat
+
+5. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+       99 wires
+      348 wire bits
+       43 public wires
+      150 public wire bits
+       18 ports
+       59 port bits
+        2 processes
+       33 cells
+        3   $add
+        6   $and
+        2   $eq
+        2   $mux
+       12   $not
+        2   $reduce_and
+        6   $tribuf
+
+
+yosys> synth -flatten -noabc -auto-top
+6. Executing SYNTH pass.
+
+6.1. Executing HIERARCHY pass (managing design hierarchy).
+
+6.1.1. Finding top of design hierarchy..
+root of   0 design levels: Edma2               
+Automatically selected Edma2 as design top module.
+
+6.1.2. Analyzing design hierarchy..
+Top module:  \Edma2
+
+6.1.3. Analyzing design hierarchy..
+Top module:  \Edma2
+Removed 0 unused modules.
+
+6.2. Executing PROC pass (convert processes to netlists).
+
+6.2.1. Executing PROC_CLEAN pass (remove empty switches from decision trees).
+Cleaned up 0 empty switches.
+
+6.2.2. Executing PROC_RMDEAD pass (remove dead branches from decision trees).
+Marked 10 switch rules as full_case in process $proc$edma2.v:188$24 in module Edma2.
+Marked 1 switch rules as full_case in process $proc$edma2.v:131$10 in module Edma2.
+Removed a total of 0 dead cases.
+
+6.2.3. Executing PROC_PRUNE pass (remove redundant assignments in processes).
+Removed 7 redundant assignments.
+Promoted 0 assignments to connections.
+
+6.2.4. Executing PROC_INIT pass (extract init attributes).
+
+6.2.5. Executing PROC_ARST pass (detect async resets in processes).
+Found async reset \RESET in `\Edma2.$proc$edma2.v:188$24'.
+Found async reset \RESET in `\Edma2.$proc$edma2.v:131$10'.
+
+6.2.6. Executing PROC_ROM pass (convert switches to ROMs).
+Converted 0 switches.
+<suppressed ~15 debug messages>
+
+6.2.7. Executing PROC_MUX pass (convert decision trees to multiplexers).
+Creating decoders for process `\Edma2.$proc$edma2.v:188$24'.
+     1/17: $0\src_addr[21:0] [21:15]
+     2/17: $0\src_addr[21:0] [14:0]
+     3/17: $0\lds_out[0:0]
+     4/17: $0\uds_out[0:0]
+     5/17: $0\as_out[0:0]
+     6/17: $0\phase_payload[0:0]
+     7/17: $0\dma_en[0:0]
+     8/17: $0\stop_after[0:0]
+     9/17: $0\wait_hblank[0:0]
+    10/17: $0\words_left[6:0]
+    11/17: $0\state[3:0]
+    12/17: $0\desc_ptr[14:0]
+    13/17: $0\nENGINE_IRQ[0:0]
+    14/17: $0\nDEPOSIT[0:0]
+    15/17: $0\dest[2:0]
+    16/17: $0\nBGACK[0:0]
+    17/17: $0\nBR[0:0]
+Creating decoders for process `\Edma2.$proc$edma2.v:131$10'.
+     1/7: $0\hblank_sync_d[0:0]
+     2/7: $0\hblank_sync[0:0]
+     3/7: $0\hblank_meta[0:0]
+     4/7: $0\nAS_sync[0:0]
+     5/7: $0\nAS_meta[0:0]
+     6/7: $0\nBG_sync[0:0]
+     7/7: $0\nBG_meta[0:0]
+
+6.2.8. Executing PROC_DLATCH pass (convert process syncs to latches).
+
+6.2.9. Executing PROC_DFF pass (convert process syncs to FFs).
+Creating register for signal `\Edma2.\nBR' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$333' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\nBGACK' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$336' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\dest' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$339' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\nDEPOSIT' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$342' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\nENGINE_IRQ' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$345' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\desc_ptr' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$348' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\src_addr' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$351' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\words_left' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$354' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\wait_hblank' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$357' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\stop_after' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$360' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\dma_en' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$363' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\phase_payload' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$366' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\as_out' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$369' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\uds_out' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$372' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\lds_out' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$375' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\state' using process `\Edma2.$proc$edma2.v:188$24'.
+  created $adff cell `$procdff$378' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\nBG_meta' using process `\Edma2.$proc$edma2.v:131$10'.
+  created $adff cell `$procdff$381' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\nBG_sync' using process `\Edma2.$proc$edma2.v:131$10'.
+  created $adff cell `$procdff$384' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\nAS_meta' using process `\Edma2.$proc$edma2.v:131$10'.
+  created $adff cell `$procdff$387' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\nAS_sync' using process `\Edma2.$proc$edma2.v:131$10'.
+  created $adff cell `$procdff$390' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\hblank_meta' using process `\Edma2.$proc$edma2.v:131$10'.
+  created $adff cell `$procdff$393' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\hblank_sync' using process `\Edma2.$proc$edma2.v:131$10'.
+  created $adff cell `$procdff$396' with positive edge clock and positive level reset.
+Creating register for signal `\Edma2.\hblank_sync_d' using process `\Edma2.$proc$edma2.v:131$10'.
+  created $adff cell `$procdff$399' with positive edge clock and positive level reset.
+
+6.2.10. Executing PROC_MEMWR pass (convert process memory writes to cells).
+
+6.2.11. Executing PROC_CLEAN pass (remove empty switches from decision trees).
+Found and cleaned up 15 empty switches in `\Edma2.$proc$edma2.v:188$24'.
+Removing empty process `Edma2.$proc$edma2.v:188$24'.
+Removing empty process `Edma2.$proc$edma2.v:131$10'.
+Cleaned up 15 empty switches.
+
+6.2.12. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+<suppressed ~67 debug messages>
+
+6.3. Executing FLATTEN pass (flatten design).
+
+6.4. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.5. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+Removed 5 unused cells and 101 unused wires.
+<suppressed ~7 debug messages>
+
+6.6. Executing CHECK pass (checking for obvious problems).
+Checking module Edma2...
+Found and reported 0 problems.
+
+6.7. Executing OPT pass (performing simple optimizations).
+
+6.7.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.7.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 213 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Computing hashes of 126 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+<suppressed ~261 debug messages>
+Removed a total of 87 cells.
+
+6.7.3. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Edma2..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~80 debug messages>
+
+6.7.4. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Edma2.
+    New ctrl vector for $pmux cell $procmux$304: { $procmux$330_CMP $procmux$327_CMP $procmux$323_CMP $procmux$313_CMP $auto$opt_reduce.cc:137:opt_pmux$401 $procmux$305_CMP }
+    New ctrl vector for $pmux cell $procmux$142: $auto$opt_reduce.cc:137:opt_pmux$403
+    New ctrl vector for $pmux cell $procmux$287: { $procmux$323_CMP $auto$opt_reduce.cc:137:opt_pmux$405 }
+    New ctrl vector for $pmux cell $procmux$106: { $procmux$317_CMP $procmux$315_CMP $procmux$306_CMP $auto$opt_reduce.cc:137:opt_pmux$407 }
+    New ctrl vector for $pmux cell $procmux$258: { $procmux$307_CMP $auto$opt_reduce.cc:137:opt_pmux$409 }
+    New ctrl vector for $pmux cell $procmux$81: { $procmux$317_CMP $procmux$315_CMP $procmux$306_CMP $auto$opt_reduce.cc:137:opt_pmux$411 }
+    New ctrl vector for $pmux cell $procmux$56: { $procmux$317_CMP $procmux$315_CMP $procmux$306_CMP $auto$opt_reduce.cc:137:opt_pmux$413 }
+  Optimizing cells in module \Edma2.
+Performed a total of 7 changes.
+
+6.7.5. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 133 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Computing hashes of 131 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+<suppressed ~6 debug messages>
+Removed a total of 2 cells.
+
+6.7.6. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.7.7. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+Removed 0 unused cells and 89 unused wires.
+<suppressed ~1 debug messages>
+
+6.7.8. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.7.9. Rerunning OPT passes. (Maybe there is more to do..)
+
+6.7.10. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Edma2..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~80 debug messages>
+
+6.7.11. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Edma2.
+Performed a total of 0 changes.
+
+6.7.12. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 131 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.7.13. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.7.14. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+
+6.7.15. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.7.16. Finished fast OPT passes. (There is nothing left to do.)
+
+6.8. Executing FSM pass (extract and optimize FSM).
+
+6.8.1. Executing FSM_DETECT pass (finding FSMs in design).
+Found FSM state register Edma2.state.
+
+6.8.2. Executing FSM_EXTRACT pass (extracting FSM from design).
+Extracting FSM `\state' from module `\Edma2'.
+  found $adff cell for state register: $procdff$378
+  root of input selection tree: $0\state[3:0]
+  found reset state: 4'0000 (from async reset)
+  found ctrl input: $procmux$108_CMP
+  found ctrl input: $procmux$114_CMP
+  found ctrl input: $procmux$115_CMP
+  found ctrl input: $procmux$116_CMP
+  found ctrl input: $procmux$117_CMP
+  found ctrl input: $procmux$124_CMP
+  found ctrl input: $procmux$100_CMP
+  found ctrl input: $procmux$101_CMP
+  found ctrl input: $procmux$102_CMP
+  found ctrl input: $procmux$103_CMP
+  found ctrl input: $procmux$104_CMP
+  found state code: 4'0001
+  found ctrl input: $procmux$113_CMP
+  found state code: 4'1000
+  found ctrl input: \stop_after
+  found state code: 4'1011
+  found state code: 4'1010
+  found state code: 4'1001
+  found ctrl input: \dma_en
+  found ctrl input: \hblank_edge
+  found state code: 4'0111
+  found ctrl input: $procmux$123_CMP
+  found state code: 4'0100
+  found ctrl input: \wait_hblank
+  found state code: 4'0110
+  found state code: 4'0101
+  found ctrl input: \phase_payload
+  found ctrl input: \nAS_sync
+  found state code: 4'0011
+  found ctrl input: \nBG_sync
+  found state code: 4'0010
+  found ctrl output: $procmux$107_CMP
+  found ctrl output: $procmux$108_CMP
+  found ctrl output: $procmux$114_CMP
+  found ctrl output: $procmux$115_CMP
+  found ctrl output: $procmux$116_CMP
+  found ctrl output: $procmux$117_CMP
+  found ctrl output: $procmux$124_CMP
+  found ctrl output: $procmux$100_CMP
+  found ctrl output: $procmux$101_CMP
+  found ctrl output: $procmux$102_CMP
+  found ctrl output: $procmux$103_CMP
+  found ctrl output: $procmux$104_CMP
+  ctrl inputs: { $procmux$123_CMP $procmux$113_CMP \hblank_edge \nAS_sync \nBG_sync \phase_payload \dma_en \stop_after \wait_hblank }
+  ctrl outputs: { $procmux$124_CMP $procmux$117_CMP $procmux$116_CMP $procmux$115_CMP $procmux$114_CMP $procmux$108_CMP $procmux$107_CMP $procmux$104_CMP $procmux$103_CMP $procmux$102_CMP $procmux$101_CMP $procmux$100_CMP $0\state[3:0] }
+  transition:     4'0000 9'------0-- ->     4'0000 16'0000000100000000
+  transition:     4'0000 9'------1-- ->     4'0001 16'0000000100000001
+  transition:     4'1000 9'--------- ->     4'1001 16'0001000000001001
+  transition:     4'0100 9'--------- ->     4'0101 16'0000000000010101
+  transition:     4'0010 9'------0-- ->     4'0000 16'0000000001000000
+  transition:     4'0010 9'---0--1-- ->     4'0010 16'0000000001000010
+  transition:     4'0010 9'---1--1-- ->     4'0011 16'0000000001000011
+  transition:     4'1010 9'--------- ->     4'0000 16'0000001000000000
+  transition:     4'0110 9'--------- ->     4'0111 16'0100000000000111
+  transition:     4'0001 9'------0-- ->     4'0000 16'0000000010000000
+  transition:     4'0001 9'----0-1-- ->     4'0010 16'0000000010000010
+  transition:     4'0001 9'----1-1-- ->     4'0001 16'0000000010000001
+  transition:     4'1001 9'-0------- ->     4'1000 16'0000100000001000
+  transition:     4'1001 9'-1-----0- ->     4'1011 16'0000100000001011
+  transition:     4'1001 9'-1-----1- ->     4'1010 16'0000100000001010
+  transition:     4'0101 9'0-------- ->     4'0100 16'1000000000000100
+  transition:     4'0101 9'1-------0 ->     4'1000 16'1000000000001000
+  transition:     4'0101 9'1-------1 ->     4'0110 16'1000000000000110
+  transition:     4'0011 9'-----0--- ->     4'0100 16'0000000000100100
+  transition:     4'0011 9'-----1--- ->     4'1000 16'0000000000101000
+  transition:     4'1011 9'--------- ->     4'0001 16'0000010000000001
+  transition:     4'0111 9'------0-- ->     4'0000 16'0010000000000000
+  transition:     4'0111 9'--0---1-- ->     4'0111 16'0010000000000111
+  transition:     4'0111 9'--1---1-- ->     4'0001 16'0010000000000001
+
+6.8.3. Executing FSM_OPT pass (simple optimizations of FSMs).
+Optimizing FSM `$fsm$\state$414' from module `\Edma2'.
+
+6.8.4. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+Removed 26 unused cells and 26 unused wires.
+<suppressed ~27 debug messages>
+
+6.8.5. Executing FSM_OPT pass (simple optimizations of FSMs).
+Optimizing FSM `$fsm$\state$414' from module `\Edma2'.
+  Removing unused output signal $0\state[3:0] [0].
+  Removing unused output signal $0\state[3:0] [1].
+  Removing unused output signal $0\state[3:0] [2].
+  Removing unused output signal $0\state[3:0] [3].
+
+6.8.6. Executing FSM_RECODE pass (re-assigning FSM state encoding).
+Recoding FSM `$fsm$\state$414' from module `\Edma2' using `auto' encoding:
+  mapping auto encoding to `one-hot` for this FSM.
+  0000 -> -----------1
+  1000 -> ----------1-
+  0100 -> ---------1--
+  0010 -> --------1---
+  1010 -> -------1----
+  0110 -> ------1-----
+  0001 -> -----1------
+  1001 -> ----1-------
+  0101 -> ---1--------
+  0011 -> --1---------
+  1011 -> -1----------
+  0111 -> 1-----------
+
+6.8.7. Executing FSM_INFO pass (dumping all available information on FSM cells).
+
+FSM `$fsm$\state$414' from module `Edma2':
+-------------------------------------
+
+  Information on FSM $fsm$\state$414 (\state):
+
+  Number of input signals:    9
+  Number of output signals:  12
+  Number of state bits:      12
+
+  Input signals:
+    0: \wait_hblank
+    1: \stop_after
+    2: \dma_en
+    3: \phase_payload
+    4: \nBG_sync
+    5: \nAS_sync
+    6: \hblank_edge
+    7: $procmux$113_CMP
+    8: $procmux$123_CMP
+
+  Output signals:
+    0: $procmux$100_CMP
+    1: $procmux$101_CMP
+    2: $procmux$102_CMP
+    3: $procmux$103_CMP
+    4: $procmux$104_CMP
+    5: $procmux$107_CMP
+    6: $procmux$108_CMP
+    7: $procmux$114_CMP
+    8: $procmux$115_CMP
+    9: $procmux$116_CMP
+   10: $procmux$117_CMP
+   11: $procmux$124_CMP
+
+  State encoding:
+    0: 12'-----------1  <RESET STATE>
+    1: 12'----------1-
+    2: 12'---------1--
+    3: 12'--------1---
+    4: 12'-------1----
+    5: 12'------1-----
+    6: 12'-----1------
+    7: 12'----1-------
+    8: 12'---1--------
+    9: 12'--1---------
+   10: 12'-1----------
+   11: 12'1-----------
+
+  Transition Table (state_in, ctrl_in, state_out, ctrl_out):
+      0:     0 9'------0--   ->     0 12'000000010000
+      1:     0 9'------1--   ->     6 12'000000010000
+      2:     1 9'---------   ->     7 12'000100000000
+      3:     2 9'---------   ->     8 12'000000000001
+      4:     3 9'------0--   ->     0 12'000000000100
+      5:     3 9'---0--1--   ->     3 12'000000000100
+      6:     3 9'---1--1--   ->     9 12'000000000100
+      7:     4 9'---------   ->     0 12'000000100000
+      8:     5 9'---------   ->    11 12'010000000000
+      9:     6 9'------0--   ->     0 12'000000001000
+     10:     6 9'----0-1--   ->     3 12'000000001000
+     11:     6 9'----1-1--   ->     6 12'000000001000
+     12:     7 9'-0-------   ->     1 12'000010000000
+     13:     7 9'-1-----1-   ->     4 12'000010000000
+     14:     7 9'-1-----0-   ->    10 12'000010000000
+     15:     8 9'1-------0   ->     1 12'100000000000
+     16:     8 9'0--------   ->     2 12'100000000000
+     17:     8 9'1-------1   ->     5 12'100000000000
+     18:     9 9'-----1---   ->     1 12'000000000010
+     19:     9 9'-----0---   ->     2 12'000000000010
+     20:    10 9'---------   ->     6 12'000001000000
+     21:    11 9'------0--   ->     0 12'001000000000
+     22:    11 9'--1---1--   ->     6 12'001000000000
+     23:    11 9'--0---1--   ->    11 12'001000000000
+
+-------------------------------------
+
+6.8.8. Executing FSM_MAP pass (mapping FSMs to basic logic).
+Mapping FSM `$fsm$\state$414' from module `\Edma2'.
+
+6.9. Executing OPT pass (performing simple optimizations).
+
+6.9.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+<suppressed ~6 debug messages>
+
+6.9.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 143 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.9.3. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Edma2..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~66 debug messages>
+
+6.9.4. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Edma2.
+Performed a total of 0 changes.
+
+6.9.5. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 143 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.9.6. Executing OPT_DFF pass (perform DFF optimizations).
+Adding EN signal on $procdff$363 ($adff) from module Edma2 (D = $0\dma_en[0:0], Q = \dma_en).
+Adding EN signal on $procdff$360 ($adff) from module Edma2 (D = \D [14], Q = \stop_after).
+Adding EN signal on $procdff$357 ($adff) from module Edma2 (D = \D [15], Q = \wait_hblank).
+Adding EN signal on $procdff$354 ($adff) from module Edma2 (D = $0\words_left[6:0], Q = \words_left).
+Adding EN signal on $procdff$366 ($adff) from module Edma2 (D = $0\phase_payload[0:0], Q = \phase_payload).
+Adding EN signal on $procdff$333 ($adff) from module Edma2 (D = $0\nBR[0:0], Q = \nBR).
+Adding EN signal on $procdff$336 ($adff) from module Edma2 (D = $0\nBGACK[0:0], Q = \nBGACK).
+Adding EN signal on $procdff$369 ($adff) from module Edma2 (D = $0\as_out[0:0], Q = \as_out).
+Adding EN signal on $procdff$339 ($adff) from module Edma2 (D = \D [13:11], Q = \dest).
+Adding EN signal on $procdff$342 ($adff) from module Edma2 (D = $0\nDEPOSIT[0:0], Q = \nDEPOSIT).
+Adding EN signal on $procdff$372 ($adff) from module Edma2 (D = $0\uds_out[0:0], Q = \uds_out).
+Adding EN signal on $procdff$345 ($adff) from module Edma2 (D = $0\nENGINE_IRQ[0:0], Q = \nENGINE_IRQ).
+Adding EN signal on $procdff$348 ($adff) from module Edma2 (D = $0\desc_ptr[14:0], Q = \desc_ptr).
+Adding EN signal on $procdff$375 ($adff) from module Edma2 (D = $0\lds_out[0:0], Q = \lds_out).
+Adding EN signal on $procdff$351 ($adff) from module Edma2 (D = $0\src_addr[21:0] [14:0], Q = \src_addr [14:0]).
+Adding EN signal on $procdff$351 ($adff) from module Edma2 (D = $0\src_addr[21:0] [21:15], Q = \src_addr [21:15]).
+
+6.9.7. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+Removed 6 unused cells and 23 unused wires.
+<suppressed ~7 debug messages>
+
+6.9.8. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+<suppressed ~14 debug messages>
+
+6.9.9. Rerunning OPT passes. (Maybe there is more to do..)
+
+6.9.10. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Edma2..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~57 debug messages>
+
+6.9.11. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Edma2.
+Performed a total of 0 changes.
+
+6.9.12. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 186 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Computing hashes of 165 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Computing hashes of 161 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Computing hashes of 159 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Computing hashes of 157 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+<suppressed ~87 debug messages>
+Removed a total of 29 cells.
+
+6.9.13. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.9.14. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+Removed 1 unused cells and 28 unused wires.
+<suppressed ~2 debug messages>
+
+6.9.15. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.9.16. Rerunning OPT passes. (Maybe there is more to do..)
+
+6.9.17. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Edma2..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~51 debug messages>
+
+6.9.18. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Edma2.
+Performed a total of 0 changes.
+
+6.9.19. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 156 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.9.20. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.9.21. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+
+6.9.22. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.9.23. Finished fast OPT passes. (There is nothing left to do.)
+
+6.10. Executing WREDUCE pass (reducing word size of cells).
+Removed top 1 bits (of 2) from port B of cell Edma2.$auto$opt_dff.cc:235:make_patterns_logic$613 ($ne).
+Removed top 1 bits (of 2) from port B of cell Edma2.$auto$opt_dff.cc:235:make_patterns_logic$606 ($ne).
+Removed top 1 bits (of 2) from port B of cell Edma2.$auto$opt_dff.cc:235:make_patterns_logic$599 ($ne).
+Removed top 1 bits (of 2) from port B of cell Edma2.$auto$opt_dff.cc:235:make_patterns_logic$597 ($ne).
+Removed top 1 bits (of 2) from port B of cell Edma2.$auto$opt_dff.cc:235:make_patterns_logic$517 ($ne).
+Removed top 1 bits (of 2) from port B of cell Edma2.$auto$fsm_map.cc:77:implement_pattern_cache$500 ($eq).
+Removed top 1 bits (of 2) from port B of cell Edma2.$auto$fsm_map.cc:77:implement_pattern_cache$466 ($eq).
+Removed top 1 bits (of 2) from port B of cell Edma2.$auto$fsm_map.cc:77:implement_pattern_cache$462 ($eq).
+Removed top 1 bits (of 23) from mux cell Edma2.$ternary$edma2.v:110$3 ($mux).
+Removed top 1 bits (of 2) from port B of cell Edma2.$eq$edma2.v:166$20 ($eq).
+Removed top 14 bits (of 15) from port B of cell Edma2.$add$edma2.v:312$30 ($add).
+Removed top 21 bits (of 22) from port B of cell Edma2.$add$edma2.v:365$33 ($add).
+Removed top 6 bits (of 7) from port B of cell Edma2.$add$edma2.v:366$34 ($add).
+Removed top 1 bits (of 2) from port B of cell Edma2.$procmux$144_CMP0 ($eq).
+Removed top 1 bits (of 23) from wire Edma2.dma_addr.
+
+6.11. Executing PEEPOPT pass (run peephole optimizers).
+
+6.12. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+Removed 0 unused cells and 1 unused wires.
+<suppressed ~1 debug messages>
+
+6.13. Executing ALUMACC pass (create $alu and $macc cells).
+Extracting $alu and $macc cells in module Edma2:
+  creating $macc model for $add$edma2.v:366$34 ($add).
+  creating $macc model for $add$edma2.v:365$33 ($add).
+  creating $macc model for $add$edma2.v:312$30 ($add).
+  creating $alu model for $macc $add$edma2.v:312$30.
+  creating $alu model for $macc $add$edma2.v:365$33.
+  creating $alu model for $macc $add$edma2.v:366$34.
+  creating $alu cell for $add$edma2.v:366$34: $auto$alumacc.cc:512:replace_alu$617
+  creating $alu cell for $add$edma2.v:365$33: $auto$alumacc.cc:512:replace_alu$620
+  creating $alu cell for $add$edma2.v:312$30: $auto$alumacc.cc:512:replace_alu$623
+  created 3 $alu and 0 $macc cells.
+
+6.14. Executing SHARE pass (SAT-based resource sharing).
+
+6.15. Executing OPT pass (performing simple optimizations).
+
+6.15.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.15.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 156 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.15.3. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Edma2..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~51 debug messages>
+
+6.15.4. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Edma2.
+Performed a total of 0 changes.
+
+6.15.5. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 156 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.15.6. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.15.7. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+
+6.15.8. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.15.9. Finished fast OPT passes. (There is nothing left to do.)
+
+6.16. Executing MEMORY pass.
+
+6.16.1. Executing OPT_MEM pass (optimize memories).
+Performed a total of 0 transformations.
+
+6.16.2. Executing OPT_MEM_PRIORITY pass (removing unnecessary memory write priority relations).
+Performed a total of 0 transformations.
+
+6.16.3. Executing OPT_MEM_FEEDBACK pass (finding memory read-to-write feedback paths).
+
+6.16.4. Executing MEMORY_BMUX2ROM pass (converting muxes to ROMs).
+
+6.16.5. Executing MEMORY_DFF pass (merging $dff cells to $memrd).
+
+6.16.6. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+
+6.16.7. Executing MEMORY_SHARE pass (consolidating $memrd/$memwr cells).
+
+6.16.8. Executing OPT_MEM_WIDEN pass (optimize memories where all ports are wide).
+Performed a total of 0 transformations.
+
+6.16.9. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+
+6.16.10. Executing MEMORY_COLLECT pass (generating $mem cells).
+
+6.17. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+
+6.18. Executing OPT pass (performing simple optimizations).
+
+6.18.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+<suppressed ~29 debug messages>
+
+6.18.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 136 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.18.3. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.18.4. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+Removed 0 unused cells and 20 unused wires.
+<suppressed ~1 debug messages>
+
+6.18.5. Finished fast OPT passes.
+
+6.19. Executing MEMORY_MAP pass (converting memories to logic and flip-flops).
+
+6.20. Executing OPT pass (performing simple optimizations).
+
+6.20.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+<suppressed ~2 debug messages>
+
+6.20.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 136 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.20.3. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Edma2..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~19 debug messages>
+
+6.20.4. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Edma2.
+    New ctrl vector for $pmux cell $procmux$139: \state [8]
+    New ctrl vector for $pmux cell $procmux$106: \state [9]
+    New ctrl vector for $pmux cell $procmux$304: $auto$opt_reduce.cc:137:opt_pmux$627
+  Optimizing cells in module \Edma2.
+Performed a total of 3 changes.
+
+6.20.5. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 137 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.20.6. Executing OPT_SHARE pass.
+
+6.20.7. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.20.8. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+
+6.20.9. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+<suppressed ~3 debug messages>
+
+6.20.10. Rerunning OPT passes. (Maybe there is more to do..)
+
+6.20.11. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Edma2..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~13 debug messages>
+
+6.20.12. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Edma2.
+Performed a total of 0 changes.
+
+6.20.13. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 136 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.20.14. Executing OPT_SHARE pass.
+
+6.20.15. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.20.16. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+Removed 0 unused cells and 1 unused wires.
+<suppressed ~1 debug messages>
+
+6.20.17. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.20.18. Rerunning OPT passes. (Maybe there is more to do..)
+
+6.20.19. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Edma2..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~13 debug messages>
+
+6.20.20. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Edma2.
+Performed a total of 0 changes.
+
+6.20.21. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 136 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Removed a total of 0 cells.
+
+6.20.22. Executing OPT_SHARE pass.
+
+6.20.23. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.20.24. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+
+6.20.25. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+
+6.20.26. Finished fast OPT passes. (There is nothing left to do.)
+
+6.21. Executing TECHMAP pass (map to technology primitives).
+
+6.21.1. Executing Verilog-2005 frontend: /Users/grantham/trees/oss-cad-suite/libexec/../share/yosys/techmap.v
+Parsing Verilog input from `/Users/grantham/trees/oss-cad-suite/libexec/../share/yosys/techmap.v' to AST representation.
+Generating RTLIL representation for module `\_90_simplemap_bool_ops'.
+Generating RTLIL representation for module `\_90_simplemap_reduce_ops'.
+Generating RTLIL representation for module `\_90_simplemap_logic_ops'.
+Generating RTLIL representation for module `\_90_simplemap_compare_ops'.
+Generating RTLIL representation for module `\_90_simplemap_various'.
+Generating RTLIL representation for module `\_90_simplemap_registers'.
+Generating RTLIL representation for module `\_90_shift_ops_shr_shl_sshl_sshr'.
+Generating RTLIL representation for module `\_90_shift_shiftx'.
+Generating RTLIL representation for module `\_90_fa'.
+Generating RTLIL representation for module `\_90_lcu_brent_kung'.
+Generating RTLIL representation for module `\_90_alu'.
+Generating RTLIL representation for module `\_90_macc'.
+Generating RTLIL representation for module `\_90_alumacc'.
+Generating RTLIL representation for module `$__div_mod_u'.
+Generating RTLIL representation for module `$__div_mod_trunc'.
+Generating RTLIL representation for module `\_90_div'.
+Generating RTLIL representation for module `\_90_mod'.
+Generating RTLIL representation for module `$__div_mod_floor'.
+Generating RTLIL representation for module `\_90_divfloor'.
+Generating RTLIL representation for module `\_90_modfloor'.
+Generating RTLIL representation for module `\_90_pow'.
+Generating RTLIL representation for module `\_90_pmux'.
+Generating RTLIL representation for module `\_90_demux'.
+Generating RTLIL representation for module `\_90_lut'.
+Generating RTLIL representation for module `$connect'.
+Generating RTLIL representation for module `$input_port'.
+Successfully finished Verilog frontend.
+
+6.21.2. Continuing TECHMAP pass.
+Using extmapper simplemap for cells of type $reduce_or.
+Using template $paramod$3b7577489eb4433b1d5620cab7f3794743dee5ea\_90_alu for cells of type $alu.
+Using template $paramod$080e6a70eb8bfa1ccf22d9718e795074645029a4\_90_alu for cells of type $alu.
+Using template $paramod$103b4016182df467cceab67bcf3e18e6361ec0fd\_90_alu for cells of type $alu.
+Using extmapper simplemap for cells of type $reduce_and.
+Using extmapper simplemap for cells of type $ne.
+Using extmapper simplemap for cells of type $adffe.
+Using extmapper simplemap for cells of type $reduce_bool.
+Using extmapper simplemap for cells of type $not.
+Using extmapper simplemap for cells of type $and.
+Using extmapper simplemap for cells of type $eq.
+Using extmapper simplemap for cells of type $adff.
+Using extmapper simplemap for cells of type $mux.
+Using extmapper simplemap for cells of type $tribuf.
+Using extmapper simplemap for cells of type $logic_not.
+Using extmapper simplemap for cells of type $pos.
+Using template $paramod\_90_fa\WIDTH=32'00000000000000000000000000010110 for cells of type $fa.
+Using template $paramod\_90_lcu_brent_kung\WIDTH=32'00000000000000000000000000010110 for cells of type $lcu.
+Using extmapper simplemap for cells of type $xor.
+Using template $paramod\_90_fa\WIDTH=32'00000000000000000000000000001111 for cells of type $fa.
+Using template $paramod\_90_lcu_brent_kung\WIDTH=32'00000000000000000000000000001111 for cells of type $lcu.
+Using template $paramod\_90_fa\WIDTH=32'00000000000000000000000000000111 for cells of type $fa.
+Using template $paramod\_90_lcu_brent_kung\WIDTH=32'00000000000000000000000000000111 for cells of type $lcu.
+Using extmapper simplemap for cells of type $or.
+No more expansions possible.
+<suppressed ~867 debug messages>
+
+6.22. Executing OPT pass (performing simple optimizations).
+
+6.22.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Edma2.
+<suppressed ~426 debug messages>
+
+6.22.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Edma2'.
+Computing hashes of 534 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Computing hashes of 499 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+Computing hashes of 497 cells of `\Edma2'.
+Finding duplicate cells in `\Edma2'.
+<suppressed ~111 debug messages>
+Removed a total of 37 cells.
+
+6.22.3. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.22.4. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Edma2..
+Removed 44 unused cells and 328 unused wires.
+<suppressed ~45 debug messages>
+
+6.22.5. Finished fast OPT passes.
+
+6.23. Executing HIERARCHY pass (managing design hierarchy).
+Attribute `top' found on module `Edma2'. Setting top module to Edma2.
+
+6.23.1. Analyzing design hierarchy..
+Top module:  \Edma2
+
+6.23.2. Analyzing design hierarchy..
+Top module:  \Edma2
+Removed 0 unused modules.
+
+6.24. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      219 wires
+      542 wire bits
+       42 public wires
+      156 public wire bits
+       18 ports
+       59 port bits
+      453 cells
+      104   $_AND_
+       51   $_DFFE_PN0P_
+        1   $_DFFE_PN1N_
+        4   $_DFFE_PN1P_
+       14   $_DFF_PN0_
+        5   $_DFF_PN1_
+       68   $_MUX_
+       57   $_NOT_
+       78   $_OR_
+       30   $_TBUF_
+       41   $_XOR_
+
+6.25. Executing CHECK pass (checking for obvious problems).
+Checking module Edma2...
+Found and reported 0 problems.
+
+yosys> stat
+
+7. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      219 wires
+      542 wire bits
+       42 public wires
+      156 public wire bits
+       18 ports
+       59 port bits
+      453 cells
+      104   $_AND_
+       51   $_DFFE_PN0P_
+        1   $_DFFE_PN1N_
+        4   $_DFFE_PN1P_
+       14   $_DFF_PN0_
+        5   $_DFF_PN1_
+       68   $_MUX_
+       57   $_NOT_
+       78   $_OR_
+       30   $_TBUF_
+       41   $_XOR_
+
+
+yosys> techmap -map /Users/grantham/trees/atf15xx_yosys/techmap.v -D skip_DFFE_XX_
+8. Executing TECHMAP pass (map to technology primitives).
+
+8.1. Executing Verilog-2005 frontend: /Users/grantham/trees/atf15xx_yosys/techmap.v
+Parsing Verilog input from `/Users/grantham/trees/atf15xx_yosys/techmap.v' to AST representation.
+Generating RTLIL representation for module `$_DLATCH_P_'.
+Generating RTLIL representation for module `$_DLATCH_N_'.
+Generating RTLIL representation for module `$_DLATCH_NN0_'.
+Generating RTLIL representation for module `$_DLATCH_NN1_'.
+Generating RTLIL representation for module `$_DLATCH_NP0_'.
+Generating RTLIL representation for module `$_DLATCH_NP1_'.
+Generating RTLIL representation for module `$_DLATCH_PN0_'.
+Generating RTLIL representation for module `$_DLATCH_PN1_'.
+Generating RTLIL representation for module `$_DLATCH_PP0_'.
+Generating RTLIL representation for module `$_DLATCH_PP1_'.
+Generating RTLIL representation for module `$_DLATCHSR_NNN_'.
+Generating RTLIL representation for module `$_DLATCHSR_NNP_'.
+Generating RTLIL representation for module `$_DLATCHSR_NPN_'.
+Generating RTLIL representation for module `$_DLATCHSR_NPP_'.
+Generating RTLIL representation for module `$_DLATCHSR_PNN_'.
+Generating RTLIL representation for module `$_DLATCHSR_PNP_'.
+Generating RTLIL representation for module `$_DLATCHSR_PPN_'.
+Generating RTLIL representation for module `$_DLATCHSR_PPP_'.
+Generating RTLIL representation for module `$_DFFE_NN0P_'.
+Generating RTLIL representation for module `$_DFFE_PP1P_'.
+Generating RTLIL representation for module `$_DFFSRE_PPPP_'.
+Successfully finished Verilog frontend.
+
+8.2. Continuing TECHMAP pass.
+No more expansions possible.
+<suppressed ~23 debug messages>
+
+yosys> stat
+
+9. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      219 wires
+      542 wire bits
+       42 public wires
+      156 public wire bits
+       18 ports
+       59 port bits
+      453 cells
+      104   $_AND_
+       51   $_DFFE_PN0P_
+        1   $_DFFE_PN1N_
+        4   $_DFFE_PN1P_
+       14   $_DFF_PN0_
+        5   $_DFF_PN1_
+       68   $_MUX_
+       57   $_NOT_
+       78   $_OR_
+       30   $_TBUF_
+       41   $_XOR_
+
+
+yosys> simplemap
+10. Executing SIMPLEMAP pass (map simple cells to gate primitives).
+
+yosys> stat
+
+11. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      219 wires
+      542 wire bits
+       42 public wires
+      156 public wire bits
+       18 ports
+       59 port bits
+      453 cells
+      104   $_AND_
+       51   $_DFFE_PN0P_
+        1   $_DFFE_PN1N_
+        4   $_DFFE_PN1P_
+       14   $_DFF_PN0_
+        5   $_DFF_PN1_
+       68   $_MUX_
+       57   $_NOT_
+       78   $_OR_
+       30   $_TBUF_
+       41   $_XOR_
+
+
+yosys> dfflibmap -liberty /Users/grantham/trees/atf15xx_yosys/cells.lib
+12. Executing DFFLIBMAP pass (mapping DFF cells to sequential cells from liberty file).
+  cell DFF (noninv, pins=4, area=600.00) is a direct match for cell type $_DFF_P_.
+  cell DFFAR (noninv, pins=5, area=600.00) is a direct match for cell type $_DFF_PP0_.
+  cell DFFAS (noninv, pins=5, area=600.00) is a direct match for cell type $_DFF_PP1_.
+  cell DFFARS (noninv, pins=6, area=600.00) is a direct match for cell type $_DFFSR_PPP_.
+  final dff cell mappings:
+    unmapped dff cell: $_DFF_N_
+    \DFF _DFF_P_ (.CLK( C), .D( D), .Q( Q), .QN(~Q));
+    unmapped dff cell: $_DFF_NN0_
+    unmapped dff cell: $_DFF_NN1_
+    unmapped dff cell: $_DFF_NP0_
+    unmapped dff cell: $_DFF_NP1_
+    unmapped dff cell: $_DFF_PN0_
+    unmapped dff cell: $_DFF_PN1_
+    \DFFAR _DFF_PP0_ (.AR( R), .CLK( C), .D( D), .Q( Q), .QN(~Q));
+    \DFFAS _DFF_PP1_ (.AS( R), .CLK( C), .D( D), .Q( Q), .QN(~Q));
+    unmapped dff cell: $_DFFE_NN_
+    unmapped dff cell: $_DFFE_NP_
+    unmapped dff cell: $_DFFE_PN_
+    unmapped dff cell: $_DFFE_PP_
+    unmapped dff cell: $_DFFSR_NNN_
+    unmapped dff cell: $_DFFSR_NNP_
+    unmapped dff cell: $_DFFSR_NPN_
+    unmapped dff cell: $_DFFSR_NPP_
+    unmapped dff cell: $_DFFSR_PNN_
+    unmapped dff cell: $_DFFSR_PNP_
+    unmapped dff cell: $_DFFSR_PPN_
+    \DFFARS _DFFSR_PPP_ (.AR( R), .AS( S), .CLK( C), .D( D), .Q( Q), .QN(~Q));
+
+12.1. Executing DFFLEGALIZE pass (convert FFs to types supported by the target).
+Mapping DFF cells in module `\Edma2':
+  mapped 65 $_DFF_PP0_ cells to \DFFAR cells.
+  mapped 10 $_DFF_PP1_ cells to \DFFAS cells.
+
+yosys> stat
+
+13. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      446 wires
+      769 wire bits
+       42 public wires
+      156 public wire bits
+       18 ports
+       59 port bits
+      584 cells
+      104   $_AND_
+      124   $_MUX_
+      132   $_NOT_
+       78   $_OR_
+       30   $_TBUF_
+       41   $_XOR_
+       65   DFFAR
+       10   DFFAS
+
+
+yosys> abc -liberty /Users/grantham/trees/atf15xx_yosys/cells.lib
+14. Executing ABC pass (technology mapping using ABC).
+
+14.1. Extracting gate netlist of module `\Edma2' to `<abc-temp-dir>/input.blif'..
+
+14.1.1. Executed ABC.
+Extracted 479 gates and 596 wires to a netlist network with 115 inputs and 163 outputs.
+Running ABC script: <abc-temp-dir>/abc.script
+ABC: ======== ABC command line "source <abc-temp-dir>/abc.script"
+ABC: + read_blif <abc-temp-dir>/input.blif 
+ABC: + read_lib -w /Users/grantham/trees/atf15xx_yosys/cells.lib 
+ABC: Parsing finished successfully.  Parsing time =     0.00 sec
+ABC: Warning: Templates are not defined.
+ABC: Liberty parser cannot read "time_unit".  Assuming   time_unit : "1ns".
+ABC: Liberty parser cannot read "capacitive_load_unit". Assuming   capacitive_load_unit(1, pf).
+ABC: Scl_LibertyReadGenlib() skipped cell "bibuf" without logic function.
+ABC: Scl_LibertyReadGenlib() skipped cell "TRI" without logic function.
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFEARS".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFF".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFE".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFAR".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFAS".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFARS".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "LATCH".
+ABC: Library "atf15xx" from "/Users/grantham/trees/atf15xx_yosys/cells.lib" has 93 cells (9 skipped: 7 seq; 0 tri-state; 2 no func; 0 dont_use; 0 with 2 outputs; 0 with 3+ outputs).  Time =     0.00 sec
+ABC: Memory =    0.17 MB. Time =     0.00 sec
+ABC: + strash 
+ABC: + &get -n 
+ABC: + &fraig -x 
+ABC: + &put 
+ABC: + scorr 
+ABC: Warning: The network is combinational (run "fraig" or "fraig_sweep").
+ABC: + dc2 
+ABC: + dretime 
+ABC: + strash 
+ABC: + &get -n 
+ABC: + &dch -f 
+ABC: + &nf 
+ABC: + &put 
+ABC: + write_blif <abc-temp-dir>/output.blif 
+
+14.1.2. Re-integrating ABC results.
+ABC RESULTS:              AND2 cells:       56
+ABC RESULTS:            AND2I1 cells:       17
+ABC RESULTS:            AND2I2 cells:        9
+ABC RESULTS:              AND3 cells:        6
+ABC RESULTS:            AND3I1 cells:        2
+ABC RESULTS:            AND3I2 cells:        1
+ABC RESULTS:            AND3I3 cells:        2
+ABC RESULTS:              AND4 cells:        3
+ABC RESULTS:            AND4I1 cells:        1
+ABC RESULTS:            AND4I4 cells:        1
+ABC RESULTS:              AND5 cells:        2
+ABC RESULTS:              AND6 cells:        4
+ABC RESULTS:               INV cells:       75
+ABC RESULTS:              MUX2 cells:        1
+ABC RESULTS:             NAND2 cells:      147
+ABC RESULTS:           NAND2I1 cells:       75
+ABC RESULTS:           NAND2I2 cells:       53
+ABC RESULTS:             NAND3 cells:       30
+ABC RESULTS:           NAND3I1 cells:        2
+ABC RESULTS:           NAND3I3 cells:        2
+ABC RESULTS:             NAND4 cells:        2
+ABC RESULTS:           NAND4I4 cells:        1
+ABC RESULTS:             NAND5 cells:        2
+ABC RESULTS:             NAND6 cells:        1
+ABC RESULTS:            NOR2I1 cells:        1
+ABC RESULTS:            NOR3I1 cells:        2
+ABC RESULTS:            NOR4I2 cells:        1
+ABC RESULTS:             OR2I1 cells:        2
+ABC RESULTS:             XNOR2 cells:       23
+ABC RESULTS:        internal signals:      318
+ABC RESULTS:           input signals:      115
+ABC RESULTS:          output signals:      163
+Removing temp directory.
+Removing global temp directory.
+
+yosys> stat
+
+15. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+     1085 wires
+     1408 wire bits
+       42 public wires
+      156 public wire bits
+       18 ports
+       59 port bits
+      629 cells
+       30   $_TBUF_
+       56   AND2
+       17   AND2I1
+        9   AND2I2
+        6   AND3
+        2   AND3I1
+        1   AND3I2
+        2   AND3I3
+        3   AND4
+        1   AND4I1
+        1   AND4I4
+        2   AND5
+        4   AND6
+       65   DFFAR
+       10   DFFAS
+       75   INV
+        1   MUX2
+      147   NAND2
+       75   NAND2I1
+       53   NAND2I2
+       30   NAND3
+        2   NAND3I1
+        2   NAND3I3
+        2   NAND4
+        1   NAND4I4
+        2   NAND5
+        1   NAND6
+        1   NOR2I1
+        2   NOR3I1
+        1   NOR4I2
+        2   OR2I1
+       23   XNOR2
+
+
+yosys> #hilomap -hicell VCC X -locell GND X
+
+yosys> #stat
+
+yosys> iopadmap -bits -inpad INBUF Q:A -outpad BUF A:Q -toutpad TRI ENA:A:Q -tinoutpad bibuf EN:Q:A:PAD
+16. Executing IOPADMAP pass (mapping inputs/outputs to IO-PAD cells).
+Mapping port Edma2.FC[0] using bibuf.
+Mapping port Edma2.FC[1] using bibuf.
+Mapping port Edma2.FC[2] using bibuf.
+Mapping port Edma2.nLDS[0] using bibuf.
+Mapping port Edma2.nUDS[0] using bibuf.
+Mapping port Edma2.nAS[0] using bibuf.
+Mapping port Edma2.R_nW[0] using bibuf.
+Mapping port Edma2.A[0] using bibuf.
+Mapping port Edma2.A[1] using bibuf.
+Mapping port Edma2.A[2] using bibuf.
+Mapping port Edma2.A[3] using bibuf.
+Mapping port Edma2.A[4] using bibuf.
+Mapping port Edma2.A[5] using bibuf.
+Mapping port Edma2.A[6] using bibuf.
+Mapping port Edma2.A[7] using bibuf.
+Mapping port Edma2.A[8] using bibuf.
+Mapping port Edma2.A[9] using bibuf.
+Mapping port Edma2.A[10] using bibuf.
+Mapping port Edma2.A[11] using bibuf.
+Mapping port Edma2.A[12] using bibuf.
+Mapping port Edma2.A[13] using bibuf.
+Mapping port Edma2.A[14] using bibuf.
+Mapping port Edma2.A[15] using bibuf.
+Mapping port Edma2.A[16] using bibuf.
+Mapping port Edma2.A[17] using bibuf.
+Mapping port Edma2.A[18] using bibuf.
+Mapping port Edma2.A[19] using bibuf.
+Mapping port Edma2.A[20] using bibuf.
+Mapping port Edma2.A[21] using bibuf.
+Mapping port Edma2.A[22] using bibuf.
+Mapping port Edma2.nENGINE_IRQ using BUF.
+Mapping port Edma2.HBLANK using INBUF.
+Mapping port Edma2.nDEPOSIT using BUF.
+Mapping port Edma2.dest using BUF.
+Mapping port Edma2.nBGACK using BUF.
+Mapping port Edma2.nBR using BUF.
+Mapping port Edma2.nBG using INBUF.
+Mapping port Edma2.nENGINE_SELECT using INBUF.
+Mapping port Edma2.nDTACK_BUS using INBUF.
+Mapping port Edma2.D using INBUF.
+Mapping port Edma2.nRESET using INBUF.
+Mapping port Edma2.CPUCLK using INBUF.
+
+yosys> stat
+
+17. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+     1103 wires
+     1467 wire bits
+       42 public wires
+      156 public wire bits
+       18 ports
+       59 port bits
+      658 cells
+       56   AND2
+       17   AND2I1
+        9   AND2I2
+        6   AND3
+        2   AND3I1
+        1   AND3I2
+        2   AND3I3
+        3   AND4
+        1   AND4I1
+        1   AND4I4
+        2   AND5
+        4   AND6
+        7   BUF
+       65   DFFAR
+       10   DFFAS
+       22   INBUF
+       75   INV
+        1   MUX2
+      147   NAND2
+       75   NAND2I1
+       53   NAND2I2
+       30   NAND3
+        2   NAND3I1
+        2   NAND3I3
+        2   NAND4
+        1   NAND4I4
+        2   NAND5
+        1   NAND6
+        1   NOR2I1
+        2   NOR3I1
+        1   NOR4I2
+        2   OR2I1
+       23   XNOR2
+       30   bibuf
+
+
+yosys> clean
+Removed 0 unused cells and 452 unused wires.
+
+yosys> stat
+
+18. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      651 wires
+      830 wire bits
+       38 public wires
+      152 public wire bits
+       18 ports
+       59 port bits
+      658 cells
+       56   AND2
+       17   AND2I1
+        9   AND2I2
+        6   AND3
+        2   AND3I1
+        1   AND3I2
+        2   AND3I3
+        3   AND4
+        1   AND4I1
+        1   AND4I4
+        2   AND5
+        4   AND6
+        7   BUF
+       65   DFFAR
+       10   DFFAS
+       22   INBUF
+       75   INV
+        1   MUX2
+      147   NAND2
+       75   NAND2I1
+       53   NAND2I2
+       30   NAND3
+        2   NAND3I1
+        2   NAND3I3
+        2   NAND4
+        1   NAND4I4
+        2   NAND5
+        1   NAND6
+        1   NOR2I1
+        2   NOR3I1
+        1   NOR4I2
+        2   OR2I1
+       23   XNOR2
+       30   bibuf
+
+
+yosys> hierarchy
+19. Executing HIERARCHY pass (managing design hierarchy).
+Attribute `top' found on module `Edma2'. Setting top module to Edma2.
+
+19.1. Analyzing design hierarchy..
+Top module:  \Edma2
+
+19.2. Analyzing design hierarchy..
+Top module:  \Edma2
+Removed 0 unused modules.
+
+yosys> stat
+
+20. Printing statistics.
+
+=== Edma2 ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      651 wires
+      830 wire bits
+       38 public wires
+      152 public wire bits
+       18 ports
+       59 port bits
+      658 cells
+       56   AND2
+       17   AND2I1
+        9   AND2I2
+        6   AND3
+        2   AND3I1
+        1   AND3I2
+        2   AND3I3
+        3   AND4
+        1   AND4I1
+        1   AND4I4
+        2   AND5
+        4   AND6
+        7   BUF
+       65   DFFAR
+       10   DFFAS
+       22   INBUF
+       75   INV
+        1   MUX2
+      147   NAND2
+       75   NAND2I1
+       53   NAND2I2
+       30   NAND3
+        2   NAND3I1
+        2   NAND3I3
+        2   NAND4
+        1   NAND4I4
+        2   NAND5
+        1   NAND6
+        1   NOR2I1
+        2   NOR3I1
+        1   NOR4I2
+        2   OR2I1
+       23   XNOR2
+       30   bibuf
+
+
+yosys> splitnets -format _
+21. Executing SPLITNETS pass (splitting up multi-bit signals).
+
+yosys> rename -wire -suffix _reg t:*DFF*
+
+yosys> rename -wire -suffix _comb
+
+yosys> #write_edif -attrprop edma2.edif
+
+yosys> delete t:$scopeinfo
+
+yosys> write_edif -lsbidx edma2.edif
+
+22. Executing EDIF backend.
+
+yosys> exit
+
+Warnings: 1 unique messages, 6 total
+End of script. Logfile hash: 21483e1e79, CPU: user 0.15s system 0.01s, MEM: 26.16 MB peak
+Yosys 0.62+117 (git sha1 1d3f9b790-dirty, aarch64-apple-darwin23.5-clang++ 18.1.8 -fPIC -O3)
+Time spent: 61% 1x abc (0 sec), 7% 23x opt_expr (0 sec), ...
++ '[' -lsbidx = '' ']'

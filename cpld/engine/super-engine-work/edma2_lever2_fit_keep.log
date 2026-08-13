@@ -1,0 +1,89 @@
+Name = edma2
+Device = ATF1508AS
+Package = PLCC84
+Speed = 15
+Options = -preassign keep
+0140:err:environ:init_peb starting L"Z:\\Users\\grantham\\trees\\atf15xx_yosys\\vendor\\fit1508.exe" in experimental wow64 mode
+Atmel ATF1508AS Fitter Version 1.8.7.8 (02-05-03)
+Copyright 1999,2000 Atmel Corporation
+---------------------------------------------------------
+ Fitter_Pass 1, Preassign = KEEP, LOGIC_DOUBLING : OFF 
+ ... 
+ ## Warning : Placement fail 
+---------------------------------------------------------
+ Fitter_Pass 2, Preassign = KEEP, CASCADE_LOGIC : (TRY) 
+ ... 
+ Design fits successfully
+ 
+  If you wish to have more pins available for future logic change
+  Atmel recommends using a larger device.
+  If you wish to have more pins available for future logic change
+  Atmel recommends using a larger device.
+                                                                                    
+                                                                                    
+                                  n                                                 
+                                  E                                                 
+                                  N                                                 
+                          n       G                                                 
+                          D       I                                                 
+                       d  E d   d N     H n  C           n                          
+                       e  P e   e E     B R  P           B                          
+                       s  O s   s _     L E  U           G   A                      
+                     D t  S t G t I   V A S  C G     n V A n _                      
+                     _ _  I _ N _ R   C N E  L N     B C C B 1                      
+                     5 0  T 1 D 2 Q   C K T  K D     R C K G 3                      
+                    -------------------------------------------                     
+                   / 11   9   7   5   3   1  83  81  79  77  75 \                  
+                  /    10   8   6   4   2  84  82  80  78  76    \                 
+             D_4 | 12                    (*)                   74 | A_14            
+             VCC | 13                                          73 | D_6             
+             TDI | 14                                          72 | GND             
+             D_3 | 15                                          71 | TDO             
+             D_8 | 16                                          70 | D_7             
+             D_2 | 17                                          69 | D_9             
+             D_0 | 18                                          68 | D_1             
+             GND | 19                                          67 | D_10            
+            D_11 | 20                                          66 | VCC             
+             nAS | 21                                          65 | D_12            
+            nUDS | 22                 ATF1508                  64 | nLDS            
+             TMS | 23               84-Lead PLCC               63 | D_14            
+            D_13 | 24                                          62 | TCK             
+            R_nW | 25                                          61 | A_22            
+             VCC | 26                                          60 | A_21            
+            D_15 | 27                                          59 | GND             
+            A_20 | 28                                          58 | A_19            
+            A_11 | 29                                          57 | A_16            
+            A_18 | 30                                          56 | A_15            
+            A_17 | 31                                          55 | A_4             
+             GND | 32                                          54 | A_3             
+                  \     34  36  38  40  42  44  46  48  50  52   /                 
+                   \  33  35  37  39  41  43  45  47  49  51  53/                  
+              	    --------------------------------------------                     
+                      F F F A A V A     G V A A   G A A A A A V                     
+                      C C C _ _ C _     N C _ _   N _ _ _ _ _ C                     
+                      _ _ _ 1 1 C 9     D C 8 7   D 0 1 6 2 5 C                     
+                      0 1 2 2 0                                                     
+
+Logic Array Block       Macro Cells     I/O Pins        Foldbacks       TotalPT         FanIN           Cascades
+A: LC1	- LC16		16/16(100%)	7/16(43%)	4/16(25%)	59/80(73%)	(37)	0
+B: LC17	- LC32		16/16(100%)	8/16(50%)	2/16(12%)	68/80(85%)	(37)	0
+C: LC33	- LC48		14/16(87%)	8/16(50%)	3/16(18%)	47/80(58%)	(37)	0
+D: LC49	- LC64		16/16(100%)	6/16(37%)	4/16(25%)	60/80(75%)	(32)	0
+E: LC65	- LC80		14/16(87%)	7/16(43%)	3/16(18%)	62/80(77%)	(37)	1
+F: LC81	- LC96		16/16(100%)	8/16(50%)	3/16(18%)	53/80(66%)	(36)	0
+G: LC97	- LC112		16/16(100%)	8/16(50%)	1/16(6%)	55/80(68%)	(37)	0
+H: LC113- LC128		15/16(93%)	6/16(37%)	0/16(0%)	30/80(37%)	(29)	0
+
+Total dedicated input used:	4/4 	(100%)
+Total I/O pins used		58/64 	(90%)
+Total Logic cells used 		124/128 	(96%)
+Total Flip-Flop used 		75/128 	(58%)
+Total Foldback logic used 	20/128 	(15%)
+Total Nodes+FB/MCells 		143/128 	(111%)
+Total cascade used 		1
+Total input pins	25
+Total output pins 		37
+Total Pts		434
+
+$Device PLCC84 fits 
+
