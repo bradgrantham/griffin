@@ -10,6 +10,7 @@
 // #include "splash.h"
 
 #include "ps2.h"
+#include "keymap.h"
 #include "mouse.h"
 #include "textport.h"
 #include "vt102.h"
@@ -953,13 +954,38 @@ static void view_image(const char *image_path, const char *palette_path)
         return;
     }
 
-    // Block until a PS/2 key arrives (interrupts stay enabled), then restore
-    // the console list and let the textport repaint itself.
-    while (!ps2_received_ready())
+    // Block until a fresh key arrives on EITHER console (interrupts stay
+    // enabled), then restore the console list.
+    //
+    // Deliberately keyboard_ready(), not ps2_received_ready(): the raw
+    // scancode queue also carries key RELEASES, and the Enter that launched
+    // this command lands its break code (F0 xx) tens of milliseconds AFTER
+    // this wait begins — waiting on the raw queue exits immediately and the
+    // image flashes for one frame (the original bug).  keyboard_ready()
+    // sits above the make/break decoder, so releases never satisfy it.
+    // The DUART side is accepted too so a serial-only session can dismiss
+    // the image; both queues are drained first so stale type-ahead cannot
+    // end the wait either.
+    while (keyboard_ready())
+    {
+        (void)keyboard_getchar();
+    }
+    while (duart_received_ready())
+    {
+        (void)duart_getchar();
+    }
+    while (!keyboard_ready() && !duart_received_ready())
     {
         // idle; ENGINE refreshes the screen from the list
     }
-    (void)ps2_getchar();
+    if (keyboard_ready())
+    {
+        (void)keyboard_getchar();
+    }
+    else
+    {
+        (void)duart_getchar();
+    }
 
     dl_build_console_list();
     gtxt::g_textport.clear();
