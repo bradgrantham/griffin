@@ -9,39 +9,44 @@
 // per-line bus budget closes, that the FIFOs stay fed, and that the VIDCMD
 // slot arithmetic lands deposits on the pixels the author intended.
 //
-// It does NOT prove FIT.  The COMPOSITOR macrocell budget is the open
-// feasibility question — roughly 140+ flip-flops against 128 macrocells before
-// any levers are pulled, and going from R3G3B2 to R4G4B4 made it worse, not
-// better.  Everything below is written as if the generous version fits.  The
-// assumptions that the fit experiment may force to shrink are listed here in
-// one place so that shrinking one later is a visible, deliberate change to
-// this model rather than an archaeological dig through render.cpp:
+// It does NOT prove FIT.  It is now, however, SYNCHRONISED TO RTL: compositor.v
+// and pixel.v exist, compositor_tb.v runs, and every timing rule below is that
+// testbench's measurement rather than this suite's guess.  Where the two could
+// not be reconciled it is called out in place rather than papered over.
+//
+// The remaining fit-risk register — the things the fitter may still force to
+// shrink, listed here so shrinking one is a visible change to this model rather
+// than an archaeological dig through render.cpp:
 //
 //   FIT-RISKY ASSUMPTION 1: 12-bit playback counters.  RUN carries a 12-bit
-//     complemented count and the playback machine upcounts it.  A 10-bit
-//     counter covers every count a 640-pixel line can use and saves 2 FFs in
-//     the staging copy and 2 in playback; the encoding would keep 12 bits.
-//   FIT-RISKY ASSUMPTION 2: TILE keeps TWO 16-bit mask words (select and
-//     opacity) — 32 FFs staged plus 32 shifting.  Dropping to a single opacity
-//     mask with a colour chosen by a flag bit saves 32 FFs and loses two-colour
-//     tiles.  This is the single biggest lever and the first thing to give up.
-//   FIT-RISKY ASSUMPTION 3: a 12-bit SET staging/commit path.  SET's value
-//     field is 12 bits and this model commits it atomically into whichever
-//     register the 3-bit target names.  If the register file has to be written
-//     in halves the slot semantics below change shape.
-//   FIT-RISKY ASSUMPTION 4: a 3-stage PIXEL shadow/pending/commit pipeline is
-//     assumed to be short enough that SKEW_PIX_TARGET can be zero.  It is a
-//     provisional guess; see the skew constants near the bottom of this file.
-//   FIT-RISKY ASSUMPTION 5 — RUN_COLOR, AND THIS ONE IS EXPLICITLY AT RISK.
-//     RUN_COLOR needs its own 3-bit colour latch in the PLAYBACK registers, not
-//     in staging: staging is clobbered by the next record's prefetch while the
-//     run is still playing, so the ~3 FFs cannot be shared.  It also adds a
-//     fourth input to the 12-bit output mux — roughly one extra product term on
-//     each of the twelve output equations — plus a sliver of decode on the RUN
-//     source field.  The compositor is ALREADY estimated over 128 FFs before
-//     this, so RUN_COLOR is a line item that may not survive the fit.  The
-//     natural thing to trade for it is run-invert, which is what RUN_COLOR
-//     displaced from the src=11 encoding in the first place.
+//     complemented count and the playback machine upcounts it to an all-ones
+//     terminal.  A 10-bit counter covers every count a 640-pixel line can use;
+//     the encoding would keep 12 bits.  compositor.v currently spends the 12.
+//   FIT-RISKY ASSUMPTION 2 (RESOLVED — TILE IS GONE): the two 16-bit mask words
+//     were the biggest single lever and they have been spent.  TILE is dropped
+//     end to end; its `01` prefix now decodes as a one-slot no-op so a stray
+//     word cannot desynchronise the source registers.  Sprites and cursors are
+//     RUN/RUN_COLOR span lists instead, which cost words rather than
+//     flip-flops.  Kept in the register as a reminder of what was traded.
+//   FIT-RISKY ASSUMPTION 3: a 12-bit SET value committed atomically into
+//     whichever register the 3-bit target names.  If the register file has to
+//     be written in halves the slot semantics below change shape.
+//   FIT-RISKY ASSUMPTION 4 — NOW A KNOWN BREAK, NOT AN ASSUMPTION.  The
+//     COMPOSITOR->PIXEL SET forwarding interface does not currently work at one
+//     word per clock: compositor.v raises set_pix_valid/target as levels and
+//     pulses set_pix_commit, and pixel.v captures VIDCMD_Q while valid is high
+//     — but at this cadence Q has moved on by one or two words before the
+//     capture.  compositor.v says so in its own header.  The interface needs a
+//     forwarded value or a re-timed strobe, and until it has one this suite
+//     applies a PIXEL-target SET at its commit slot, exactly like a
+//     COMPOSITOR-target one, with SKEW_PIX_TARGET left as the named knob.
+//     THIS IS THE ONE PLACE THE SUITE CANNOT MATCH A TB MEASUREMENT.
+//   FIT-RISKY ASSUMPTION 5 — RUN_COLOR, still explicitly at risk.  It needs its
+//     own 3-bit colour latch in the PLAYBACK registers (staging is clobbered by
+//     the next record's prefetch mid-run) and a fourth input on the 12-bit
+//     output mux.  compositor.v implements it and fits, but if the fitter needs
+//     the room back this is the line item; the natural trade is run-invert,
+//     which RUN_COLOR displaced from the src=11 encoding.
 //
 // ===========================================================================
 // PIPELINE
@@ -52,8 +57,8 @@
 //
 // Neither PIXEL nor COMPOSITOR has a CPU bus; both live in the 25.175 MHz
 // pixel-clock domain and are configured entirely in band.  COMPOSITOR is the
-// only instruction decoder: it plays RUN/TILE records against the pixel stream
-// and it also issues register writes out of that same stream into PIXEL.
+// only instruction decoder: it plays RUN/RUN_COLOR records against the pixel
+// stream and it also issues register writes out of that same stream into PIXEL.
 //
 // Colour is 12-bit R4G4B4 everywhere — palette entries, the micro-HAM held
 // colour, the compositor's held colours and the DAC.
@@ -346,6 +351,20 @@ inline constexpr uint32_t PIXELS_SKIP_MAX = 15;
 // At the start of every visible line held <- pix_pal_fg.  The codes can only
 // reach the 0x0/0xF extremes of a channel; a full-precision colour arrives via
 // SET(pix_ham_held), which is the whole reason that target exists.
+//
+// PAIR ORDERING, per pixel.v and NOT per the old video.v serial decoder: two
+// bits leave the stream every clock, so the prefix pair (1x) and the chroma
+// pair (g,r / g,b) land in DIFFERENT clocks and the decoder cannot see g until
+// the second one.  The FIRST pixel of a 4-bit code therefore shows the OLD held
+// colour, and the SECOND shows both channels updated together.  video.v
+// staggered the two channels one pixel apart; that is not reproducible here and
+// the renderer matches pixel.v.
+//
+// UNDERRUN TILES.  PIXEL has no empty-flag input and no half-full pacing: /RE
+// keeps firing on schedule and a 7200 ignores a read while empty and holds Q,
+// so the last word pattern simply repeats.  A short PIXELS fill is therefore a
+// bandwidth compressor, not an error — and there is no 9th-bit desync detector
+// any more, so there is nothing to flag either way.
 inline constexpr uint32_t HAM_CODE_PALETTE_BITS = 2;
 inline constexpr uint32_t HAM_CODE_CHROMA_BITS  = 4;
 
@@ -365,31 +384,55 @@ constexpr uint32_t pixels_words_per_line(uint32_t mode, uint32_t pixel_skip)
 // VIDCMD instruction stream
 // ============================================================================
 //
-// 16-bit words, prefix coded on the top bits:
+// EVERY RECORD IS ONE WORD.  16-bit, prefix coded on the top bits:
 //
-//   00 ss ~count[11:0]              RUN    1 word
-//   01 ~skip[9:0] flags[3:0]        TILE   3 words (+ select mask, + opacity mask)
-//   1  ttt value[11:0]              SET    1 word
+//   00 ss ~count[11:0]              RUN        src 00 passthrough
+//                                                  01 held_fg
+//                                                  10 held_bg
+//   00 11 colour[2:0] ~count[8:0]   RUN_COLOR
+//   01 ..........                   reserved   one-slot no-op (ex-TILE)
+//   1  ttt value[11:0]              SET
 //
-// Counts are stored complemented exactly as the compositor wants them: on
-// ATF15xx an up-counter with an all-1s terminal is far cheaper than a
-// down-counter's zero detect, so the encoder stores ~count and the decoder
-// complements it back.
+// Counts are stored complemented exactly as compositor.v wants them: an ATF15xx
+// up-counter with an all-ones terminal is far cheaper than a down-counter's
+// zero detect, so the encoded field loads straight into run_count and one
+// shared incrementer walks it to 12'hFFF.  RUN_COLOR's 9-bit field loads with
+// the top three bits forced to 1 so the same terminal serves both widths.
 //
-// FRAMING IS DURATION ARITHMETIC.  There is no fixed word count per line and
-// no drain-to-N.  A line's records must account for exactly H_ACTIVE active
-// slots, where RUN and TILE contribute their playback durations and every SET
-// consumed *during active video* contributes exactly one slot.  Get the sum
-// wrong and the stream desyncs and stays desynced until vsync's /RS — the
-// error is not contained to its own line the way drain-to-N used to contain
-// it.  render.cpp models that containment; author.cpp reports each line's slot
-// sum so a list can be checked before it is run.
+// THE `01` PREFIX IS A ONE-SLOT NO-OP.  TILE is gone (user decision, and it was
+// the biggest flip-flop lever available).  compositor.v decodes `01` as a
+// record that consumes exactly one slot and changes nothing, so a stray word
+// costs a pixel instead of desynchronising the source registers.  Nothing
+// emits it.  If `01` ever returns as a limited 2-word variant it gets whatever
+// flip-flops are left over.
+//
+// FRAMING IS DURATION ARITHMETIC, WITH HOLD.  Every active pixel clock is one
+// slot.  A RUN contributes its count, a RUN_COLOR its count, a SET one slot,
+// the reserved no-op one slot.  When the count is terminal and nothing is
+// staged the compositor HOLDS — it keeps the current source and keeps trying —
+// and that is first-class line framing, not underrun mercy.  It gives two
+// authoring disciplines off one hardware rule (see author.h's FramingMode):
+//
+//   CUSHION   records are buffered ahead in VBLANK, the FIFO never empties
+//             mid-line, hold never engages, and the per-line slot sums must be
+//             EXACTLY H_ACTIVE.  Overrunning is the hazard: a leftover record
+//             staged at the H_ACTIVE fall plays at the start of the next line
+//             and, while staged, blocks the fetch that would have run that
+//             line's eager SETs.
+//   JIT       a line's records may total FEWER than H_ACTIVE slots; the last
+//             source replicates to the end of the line.  {RUN(passthrough,1)}
+//             alone paints a whole line, and a line that receives no fill at
+//             all keeps holding — so a full passthrough frame costs ONE VIDCMD
+//             word for the whole frame.  The obligation moves from slot
+//             arithmetic to a delivery deadline: a line's packet must land
+//             before that line's pixel 0, or it resumes at the wrong x and
+//             self-heals only at the next empty boundary.
 
 enum class VidcmdType : uint8_t
 {
-    RUN  = 0,
-    TILE = 1,
-    SET  = 2,
+    RUN      = 0,
+    RESERVED = 1,   // ex-TILE `01` prefix: one slot, no effect
+    SET      = 2,
 };
 
 // RUN's 2-bit source select.
@@ -452,11 +495,9 @@ constexpr bool vidcmd_set_targets_pixel(uint32_t target)
     return target >= SET_PIX_PAL_FG && target <= SET_PIX_PIXEL_SKIP;
 }
 
-inline constexpr uint32_t VIDCMD_TILE_WORDS  = 3;
-inline constexpr uint32_t VIDCMD_TILE_PIXELS = 16;
-
-// Held colours at /RS (vsync).  Every frame's VBLANK preamble must re-assert
-// whatever it actually wants.
+// Held colours at /RS (vsync), and the playback state it resets to.  Straight
+// out of compositor.v's reset block: cmp_held_fg 0xFFF, cmp_held_bg 0x000,
+// cur_src passthrough, run_count already terminal.
 inline constexpr Rgb444 VIDCMD_RESET_HELD_FG = RGB444_WHITE;
 inline constexpr Rgb444 VIDCMD_RESET_HELD_BG = RGB444_BLACK;
 
@@ -466,7 +507,7 @@ constexpr VidcmdType vidcmd_type_of(uint16_t w)
     {
         return VidcmdType::SET;
     }
-    return ((w >> 14) & 1) != 0 ? VidcmdType::TILE : VidcmdType::RUN;
+    return ((w >> 14) & 1) != 0 ? VidcmdType::RESERVED : VidcmdType::RUN;
 }
 
 constexpr uint16_t vidcmd_run(uint32_t src, uint32_t count)
@@ -486,13 +527,12 @@ constexpr uint16_t vidcmd_run_color(uint32_t colour, uint32_t count)
 constexpr uint32_t vidcmd_run_color_code(uint16_t w)  { return (w >> 9) & 0x7; }
 constexpr uint32_t vidcmd_run_color_count(uint16_t w) { return static_cast<uint32_t>((~w) & 0x1FF); }
 
-constexpr uint16_t vidcmd_tile(uint32_t skip, uint32_t flags)
+// The one-slot no-op.  Provided so a test can emit it deliberately; nothing in
+// the authoring path does.
+constexpr uint16_t vidcmd_reserved()
 {
-    return static_cast<uint16_t>((1u << 14) | (((~skip) & 0x3FF) << 4) | (flags & 0xF));
+    return static_cast<uint16_t>(1u << 14);
 }
-
-constexpr uint32_t vidcmd_tile_skip(uint16_t w)  { return static_cast<uint32_t>((~(w >> 4)) & 0x3FF); }
-constexpr uint32_t vidcmd_tile_flags(uint16_t w) { return static_cast<uint32_t>(w & 0xF); }
 
 constexpr uint16_t vidcmd_set(uint32_t target, uint32_t value)
 {
@@ -502,14 +542,19 @@ constexpr uint16_t vidcmd_set(uint32_t target, uint32_t value)
 constexpr uint32_t vidcmd_set_target(uint16_t w) { return (w >> 12) & 0x7; }
 constexpr uint32_t vidcmd_set_value(uint16_t w)  { return w & 0xFFF; }
 
-// Words this record occupies in the stream, from its lead word.
-constexpr uint32_t vidcmd_record_words(uint16_t lead)
+// Every record is exactly one word now that TILE is gone.  Kept as a named
+// function because the framing arithmetic reads better with it, and because a
+// future 2-word `01` variant would change it in one place.
+constexpr uint32_t vidcmd_record_words(uint16_t)
 {
-    return vidcmd_type_of(lead) == VidcmdType::TILE ? VIDCMD_TILE_WORDS : 1u;
+    return 1u;
 }
 
-// Active slots this record consumes, from its lead word.  A SET is one slot;
-// TILE is skip plus its 16 masked pixels; RUN is its count.
+// Active slots this record consumes.  A RUN contributes its count exactly —
+// one word per clock means a one-slot record really is one slot (compositor.v
+// loads ~count and adds 1 for the slot the record is consumed in, so the
+// terminal is reached after `count` active slots).  SET and the reserved no-op
+// are one slot each.
 constexpr uint32_t vidcmd_record_slots(uint16_t lead)
 {
     switch (vidcmd_type_of(lead))
@@ -519,29 +564,66 @@ constexpr uint32_t vidcmd_record_slots(uint16_t lead)
         case VidcmdType::RUN:  return (vidcmd_run_src(lead) == RUN_SRC_COLOR)
                                           ? vidcmd_run_color_count(lead)
                                           : vidcmd_run_count(lead);
-        case VidcmdType::TILE: return vidcmd_tile_skip(lead) + VIDCMD_TILE_PIXELS;
         default:               return 1;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Cross-chip skew — PROVISIONAL, and loudly so
+// Measured pipeline constants — from cpld/compositor/compositor_sim.log
 // ---------------------------------------------------------------------------
 //
-// A SET aimed at COMPOSITOR's own held colours commits inside COMPOSITOR; a
-// SET aimed at PIXEL has to cross a chip boundary and land in a register one
-// or two pipeline stages away.  The two therefore take effect at slightly
-// different pixels, and the difference is a property of the RTL, not of the
-// list.
+// These are the testbench's numbers, not this suite's guesses.  Most of them
+// are UNIFORM pipeline latencies: every pixel is delayed by the same amount, so
+// a frame image is unaffected and the sync generator absorbs the shift (see
+// pixel.v's DAC_LEAD discussion).  They live here so the emulator and any
+// future TB comparison have one place to read them from.
 //
-// BOTH VALUES BELOW ARE GUESSES.  They are zero because the model assumes a
-// short enough forwarding path (FIT-RISKY ASSUMPTION 4), and they exist as
-// named constants so that when RTL simulation pins the real numbers, exactly
-// two lines change here and the list builder's compensation follows
-// automatically.  main.cpp deliberately re-runs a case with nonzero skew to
-// prove the compensation is real rather than vacuous.
-inline constexpr uint32_t SKEW_PIX_TARGET = 0;   // PROVISIONAL
-inline constexpr uint32_t SKEW_CMP_TARGET = 0;   // PROVISIONAL
+// The one that is NOT uniform, and therefore the one the renderer actually
+// implements, is the slot rule: a record's effects land on the edge that ENDS
+// its own slot, so a SET is visible in the pixel of the slot it occupies and a
+// RUN emits its first pixel in the slot in which it is consumed.  The TB pins
+// that with NORMATIVE_M0 ("SET lands on pixel 1" for RUN(pt,1) then SET) and
+// with POSITIONAL_EAGER ("SET executes as slot 4" behind a RUN(4)).
+
+// H_ACTIVE rise to the matching RGB_OUT, in PIXEL_CLKs.  Uniform.
+inline constexpr uint32_t COMPOSITOR_OUT_LEAD = 2;
+
+// A SET occupies one slot and is visible in that same slot: offset 0.  The TB
+// prints this as "SET becomes visible at slot 1" for the m0 arrangement, where
+// slot 1 is the SET's own slot.
+inline constexpr uint32_t SET_VISIBLE_SLOT_OFFSET = 0;
+
+// Pop to set_pix_commit while blanking, in PIXEL_CLKs.  Uniform; matters only
+// for the RTL handshake, not for which pixel a value lands on.
+inline constexpr uint32_t SET_PIX_COMMIT_BLANK_CLOCKS = 3;
+
+// set_pix_commit pulses this many clocks before its own slot's RGB_OUT.
+inline constexpr uint32_t SET_PIX_COMMIT_LEAD = 1;
+
+// Sustained fetch: one VIDCMD word per slot (Phase A0's 1-word/clock rework).
+inline constexpr uint32_t VIDCMD_SLOTS_PER_WORD = 1;
+
+// PIXEL's own ham_held -> RGB_OUT register, from pixel.v's lead discussion.
+inline constexpr uint32_t PIXEL_OUT_LEAD = 1;
+
+// ---------------------------------------------------------------------------
+// Cross-chip SET skew — a named knob over a KNOWN-BROKEN interface
+// ---------------------------------------------------------------------------
+//
+// A SET aimed at COMPOSITOR's own held colours commits inside COMPOSITOR.  A
+// SET aimed at PIXEL has to cross a chip boundary, and at one word per clock
+// the current handshake does not carry the value across (FIT-RISKY ASSUMPTION
+// 4 above; compositor.v says so in its own header).  Until that interface is
+// re-timed there is no measurement to match, so the model applies a
+// PIXEL-target SET at its commit slot — the same slot a COMPOSITOR-target SET
+// lands on — and keeps the knob named and at zero.
+//
+// This is deliberately NOT hidden: when RTL pins the real number, exactly one
+// line changes here and the list builder's compensation follows.  main.cpp
+// re-runs a case at a nonzero skew and requires the identical image, so the
+// compensation path stays exercised rather than becoming vacuous.
+inline constexpr uint32_t SKEW_PIX_TARGET = 0;   // PROVISIONAL — interface under redesign
+inline constexpr uint32_t SKEW_CMP_TARGET = 0;   // measured: SET lands in its own slot
 
 constexpr uint32_t vidcmd_set_skew(uint32_t target, uint32_t skew_pix, uint32_t skew_cmp)
 {

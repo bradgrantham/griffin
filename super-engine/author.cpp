@@ -132,11 +132,14 @@ struct BitPacker
 };
 
 // ---------------------------------------------------------------------------
-// VIDCMD tile bitmaps
+// Sprite art
 // ---------------------------------------------------------------------------
-
-// A 16x16 arrow.  MSB of each word is the leftmost pixel, matching both the
-// pixel stream and the tile words.
+//
+// With TILE gone the compositor has no mask shifters, so this is authoring-side
+// art that gets decomposed into RUN spans below rather than a bitmap the
+// hardware walks.
+//
+// A 16x16 arrow.  MSB of each word is the leftmost pixel.
 constexpr std::array<uint16_t, 16> CURSOR_MASK = {
     0x8000, 0xC000, 0xE000, 0xF000,
     0xF800, 0xFC00, 0xFE00, 0xFF00,
@@ -144,17 +147,17 @@ constexpr std::array<uint16_t, 16> CURSOR_MASK = {
     0xCF00, 0x0700, 0x0780, 0x0380,
 };
 
-// The select word says which held colour an opaque pixel takes; eroding the
-// mask by one pixel horizontally leaves a held_bg outline around a held_fg
-// interior, which is the classic always-legible cursor and needs no second
-// bitmap to maintain.
+// Eroding the mask by one pixel horizontally leaves a held_bg outline around a
+// held_fg interior — the classic always-legible cursor, and it now costs a
+// couple of extra runs rather than a second 16-bit mask word.
 constexpr uint16_t erode_horizontal(uint16_t m)
 {
     return static_cast<uint16_t>(m & static_cast<uint16_t>(m << 1) & static_cast<uint16_t>(m >> 1));
 }
 
-// A 16x16 diamond, used for the 4-sprites-per-line worst case.  Computed
-// rather than tabulated so the shape is obviously symmetric.
+// A 16x16 diamond for the 4-sprites-per-line worst case.  Computed rather than
+// tabulated so the shape is obviously symmetric, and contiguous by construction
+// so each sprite row decomposes into exactly one run.
 constexpr uint16_t sprite_mask(uint32_t row)
 {
     const uint32_t half  = (row < 8) ? row : (15 - row);
@@ -165,9 +168,9 @@ constexpr uint16_t sprite_mask(uint32_t row)
 
 // Horizontal fg/bg banding inside the sprite: unmistakable in a PPM, and it
 // exercises both held colours on every sprite line.
-constexpr uint16_t sprite_select(uint32_t row)
+constexpr uint32_t sprite_row_src(uint32_t row)
 {
-    return (row & 1u) ? 0x0000 : 0xFFFF;
+    return (row & 1u) ? RUN_SRC_HELD_BG : RUN_SRC_HELD_FG;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,10 +182,15 @@ constexpr uint16_t sprite_select(uint32_t row)
 // allocates nothing and touches no bitmap — moving an object is re-running
 // this, which is the whole point of the hybrid architecture.
 
+// One painted span on a line.  `src` is a RUN source select, so a span is
+// either a held colour (restylable by a later SET without touching the list) or
+// a RUN_COLOR literal (atomic, one word, immune to held-colour changes).  Every
+// sprite, cursor and game object in the suite is now a list of these.
 struct ColorSpan
 {
     int32_t  x     = 0;
     int32_t  w     = 0;
+    uint32_t src   = RUN_SRC_COLOR;
     uint32_t color = 0;
 };
 
@@ -269,8 +277,8 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
             static_cast<int32_t>(line) < cy + static_cast<int32_t>(TEMPEST_CLAW_ROWS))
         {
             const int32_t row = static_cast<int32_t>(line) - cy;
-            insert_span(out, n, {cx - 11 + row, TEMPEST_CLAW_WIDTH, TEMPEST_CLAW_COLOR});
-            insert_span(out, n, {cx + 8 - row, TEMPEST_CLAW_WIDTH, TEMPEST_CLAW_COLOR});
+            insert_span(out, n, {cx - 11 + row, TEMPEST_CLAW_WIDTH, RUN_SRC_COLOR, TEMPEST_CLAW_COLOR});
+            insert_span(out, n, {cx + 8 - row, TEMPEST_CLAW_WIDTH, RUN_SRC_COLOR, TEMPEST_CLAW_COLOR});
         }
     }
 
@@ -286,7 +294,7 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
             static_cast<int32_t>(line) < oy + static_cast<int32_t>(TEMPEST_FLIPPER_ROWS))
         {
             const int32_t row = static_cast<int32_t>(line) - oy;
-            insert_span(out, n, {ox - 1 + row, TEMPEST_FLIPPER_WIDTH, TEMPEST_FLIPPER_COLOR});
+            insert_span(out, n, {ox - 1 + row, TEMPEST_FLIPPER_WIDTH, RUN_SRC_COLOR, TEMPEST_FLIPPER_COLOR});
         }
     }
 
@@ -301,7 +309,7 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
         if (static_cast<int32_t>(line) >= oy &&
             static_cast<int32_t>(line) < oy + static_cast<int32_t>(TEMPEST_SHOT_ROWS))
         {
-            insert_span(out, n, {ox, TEMPEST_SHOT_WIDTH, TEMPEST_SHOT_COLOR});
+            insert_span(out, n, {ox, TEMPEST_SHOT_WIDTH, RUN_SRC_COLOR, TEMPEST_SHOT_COLOR});
         }
     }
 
@@ -320,7 +328,7 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
         const uint32_t pitch = H_ACTIVE / (want + 1);
         for (uint32_t i = 0; i < want; i++)
         {
-            insert_span(out, n, {static_cast<int32_t>(pitch * (i + 1)), 1, TEMPEST_STRESS_COLOR});
+            insert_span(out, n, {static_cast<int32_t>(pitch * (i + 1)), 1, RUN_SRC_COLOR, TEMPEST_STRESS_COLOR});
         }
     }
 
@@ -461,8 +469,6 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
                               std::span<uint8_t> line_records,
                               std::span<uint16_t> line_slots)
 {
-    // Four sprites at the plan's worst case, spaced so no two tiles touch and
-    // the trailing run is nonzero.
     constexpr std::array<uint32_t, 4> SPRITE_X = {64, 200, 360, 500};
 
     const uint32_t pixel_skip = p.h_scroll_pixels % 16u;
@@ -482,37 +488,49 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
         {
             ram[rec_base + n * 2] = v;
             n++;
-        };
-
-        // Lead words start a record; a tile's two mask words do not.
-        auto put_record = [&](uint16_t v)
-        {
-            put(v);
             records++;
         };
 
+        // Every span this line paints, sorted and disjoint.
+        std::array<ColorSpan, TEMPEST_MAX_SPANS> spans{};
+        uint32_t span_n = 0;
+
         // --- blank-region SETs -----------------------------------------------
-        // Everything emitted before the line's first RUN/TILE is consumed while
-        // the beam is in horizontal blanking, where the fetch machine pops as
-        // fast as the FIFO allows and a SET commits immediately at zero slot
-        // cost.  That is the cheap place to put per-line configuration; only a
-        // SET that has to land on a *particular pixel* belongs in the run of
-        // active records below.
+        // Everything emitted before the line's first RUN is consumed while the
+        // beam is in horizontal blanking, where compositor.v pops as fast as the
+        // FIFO allows and a staged SET executes immediately at zero slot cost.
+        // Only a SET that has to land on a PARTICULAR pixel belongs in the run
+        // of active records below.
+        bool want_records = true;
+
         if (p.slot_regression)
         {
-            put_record(vidcmd_set(SET_PIX_PAL_FG, p.regression_c1));
-            put_record(vidcmd_set(SET_PIX_PAL_BG, RGB444_BLACK));
-            put_record(vidcmd_set(SET_PIX_MODE, PIXEL_MODE_DIRECT_1BPP));
-            put_record(vidcmd_set(SET_PIX_PIXEL_SKIP, 0));
+            put(vidcmd_set(SET_PIX_PAL_FG, p.regression_c1));
+            put(vidcmd_set(SET_PIX_PAL_BG, RGB444_BLACK));
+            put(vidcmd_set(SET_PIX_MODE, PIXEL_MODE_DIRECT_1BPP));
+            put(vidcmd_set(SET_PIX_PIXEL_SKIP, 0));
+        }
+        else if (p.jit_frame_preamble)
+        {
+            // The firmware console's whole VIDCMD budget: three words on line 0,
+            // nothing on the other 479.  compositor.v's hold does the rest —
+            // {RUN(passthrough,1)} paints a line, and a line that receives no
+            // fill keeps holding the source it already had.
+            if (line == 0)
+            {
+                put(vidcmd_set(SET_PIX_PAL_FG, p.held_fg));
+                put(vidcmd_set(SET_PIX_PAL_BG, p.held_bg));
+                put(vidcmd_run(RUN_SRC_PASSTHROUGH, 1));
+                slots += 1;
+            }
+            want_records = false;
         }
         else
         {
-            // Held colours are reset to 0xFFF/0x000 by /RS at vsync, so every
-            // frame has to re-establish them before the first tile.
-            if (p.tiles != TileStyle::NONE && line == 0)
+            if (p.sprites != SpriteStyle::NONE && line == 0)
             {
-                put_record(vidcmd_set(SET_CMP_HELD_FG, p.held_fg));
-                put_record(vidcmd_set(SET_CMP_HELD_BG, p.held_bg));
+                put(vidcmd_set(SET_CMP_HELD_FG, p.held_fg));
+                put(vidcmd_set(SET_CMP_HELD_BG, p.held_bg));
             }
             if (p.per_line_palette)
             {
@@ -520,119 +538,161 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
                                                        : line_palette_fg(line);
                 const Rgb444 bg = p.depth_fade_palette ? tempest_palette_bg(line)
                                                        : line_palette_bg(line);
-                put_record(vidcmd_set(SET_PIX_PAL_FG, fg));
-                put_record(vidcmd_set(SET_PIX_PAL_BG, bg));
+                put(vidcmd_set(SET_PIX_PAL_FG, fg));
+                put(vidcmd_set(SET_PIX_PAL_BG, bg));
             }
             if (p.per_line_mode)
             {
-                put_record(vidcmd_set(SET_PIX_MODE, mode_value));
-                put_record(vidcmd_set(SET_PIX_PIXEL_SKIP, pixel_skip));
+                put(vidcmd_set(SET_PIX_MODE, mode_value));
+                put(vidcmd_set(SET_PIX_PIXEL_SKIP, pixel_skip));
             }
         }
 
-        // --- active-slot records: must total exactly H_ACTIVE -----------------
+        // --- gather this line's painted spans ---------------------------------
+        if (want_records && !p.slot_regression && !p.mid_line_split)
+        {
+            if (p.sprites == SpriteStyle::CURSOR)
+            {
+                if (line >= p.cursor_y && line < p.cursor_y + 16)
+                {
+                    const uint16_t mask     = CURSOR_MASK[line - p.cursor_y];
+                    const uint16_t interior = erode_horizontal(mask);
+                    // Walk the 16 columns and emit maximal runs of equal class.
+                    // Contiguity is what makes a mask cheap as runs: the arrow
+                    // costs 1-3 records per row rather than a 3-word tile.
+                    uint32_t col = 0;
+                    while (col < 16)
+                    {
+                        const bool on = ((mask >> (15 - col)) & 1) != 0;
+                        if (!on)
+                        {
+                            col++;
+                            continue;
+                        }
+                        const bool fg = ((interior >> (15 - col)) & 1) != 0;
+                        uint32_t run = 1;
+                        while (col + run < 16)
+                        {
+                            const bool on2 = ((mask >> (15 - (col + run))) & 1) != 0;
+                            const bool fg2 = ((interior >> (15 - (col + run))) & 1) != 0;
+                            if (!on2 || fg2 != fg)
+                            {
+                                break;
+                            }
+                            run++;
+                        }
+                        insert_span(spans, span_n,
+                                    {static_cast<int32_t>(p.cursor_x + col),
+                                     static_cast<int32_t>(run),
+                                     fg ? RUN_SRC_HELD_FG : RUN_SRC_HELD_BG, 0});
+                        col += run;
+                    }
+                }
+            }
+            else if (p.sprites == SpriteStyle::FOUR_SPRITES)
+            {
+                const uint32_t row  = line % 16u;
+                const uint16_t mask = sprite_mask(row);
+                // The diamond is one contiguous run, so each sprite is exactly
+                // one record: four sprites cost four colour runs plus their
+                // gaps, where a tile cost three words each.
+                uint32_t first = 0;
+                while (first < 16 && ((mask >> (15 - first)) & 1) == 0)
+                {
+                    first++;
+                }
+                uint32_t width = 0;
+                while (first + width < 16 && ((mask >> (15 - (first + width))) & 1) != 0)
+                {
+                    width++;
+                }
+                if (width > 0)
+                {
+                    for (uint32_t s = 0; s < SPRITE_X.size(); s++)
+                    {
+                        insert_span(spans, span_n,
+                                    {static_cast<int32_t>(SPRITE_X[s] + first),
+                                     static_cast<int32_t>(width), sprite_row_src(row), 0});
+                    }
+                }
+            }
+            else if (p.tempest_objects)
+            {
+                span_n = tempest_spans_for_line(p, line, spans);
+            }
+        }
+
+        // --- active-slot records ---------------------------------------------
         if (p.slot_regression)
         {
-            // The normative case, written literally as specified.  Slot 0 is
-            // the RUN, slot 1 is the SET (which commits on the edge that begins
-            // it, so that pixel already shows C2), slots 2..639 are the tail
-            // RUN.  1 + 1 + 638 = 640.
-            put_record(vidcmd_run(RUN_SRC_PASSTHROUGH, 1));
+            // compositor_tb's NORMATIVE_M0, written literally.  Slot 0 is the
+            // RUN, slot 1 is the SET (visible in its own slot), slots 2..639 the
+            // tail RUN.  1 + 1 + 638 = 640.
+            put(vidcmd_run(RUN_SRC_PASSTHROUGH, 1));
             slots += 1;
-            put_record(vidcmd_set(SET_PIX_PAL_FG, p.regression_c2));
+            put(vidcmd_set(SET_PIX_PAL_FG, p.regression_c2));
             slots += 1;
-            put_record(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - 2));
+            put(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - 2));
             slots += H_ACTIVE - 2;
         }
         else if (p.mid_line_split)
         {
-            // Place the SETs `skew_pix` slots early so they *take effect* at
-            // p.split_pixel.  Each SET costs one slot, so a two-register change
-            // is inherently two pixels wide: the background lands at
-            // split_pixel and the foreground one pixel later.
-            const uint32_t skew  = p.skew_pix;
-            const uint32_t lead  = (p.split_pixel > skew) ? (p.split_pixel - skew) : 0u;
+            const uint32_t skew = p.skew_pix;
+            const uint32_t lead = (p.split_pixel > skew) ? (p.split_pixel - skew) : 0u;
             if (lead > 0)
             {
-                put_record(vidcmd_run(RUN_SRC_PASSTHROUGH, lead));
+                put(vidcmd_run(RUN_SRC_PASSTHROUGH, lead));
                 slots += lead;
             }
-            put_record(vidcmd_set(SET_PIX_PAL_BG, p.split_bg));
+            put(vidcmd_set(SET_PIX_PAL_BG, p.split_bg));
             slots += 1;
-            put_record(vidcmd_set(SET_PIX_PAL_FG, p.split_fg));
+            put(vidcmd_set(SET_PIX_PAL_FG, p.split_fg));
             slots += 1;
-            put_record(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - slots));
+            put(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - slots));
             slots = H_ACTIVE;
         }
-        else if (p.tiles == TileStyle::CURSOR)
+        else if (want_records)
         {
-            if (line >= p.cursor_y && line < p.cursor_y + 16)
-            {
-                const uint32_t row = line - p.cursor_y;
-                put_record(vidcmd_tile(p.cursor_x, 0));
-                put(erode_horizontal(CURSOR_MASK[row]));
-                put(CURSOR_MASK[row]);
-                slots += p.cursor_x + VIDCMD_TILE_PIXELS;
-            }
-            if (slots < H_ACTIVE)
-            {
-                put_record(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - slots));
-                slots = H_ACTIVE;
-            }
-        }
-        else if (p.tiles == TileStyle::FOUR_SPRITES)
-        {
-            const uint32_t row = line % 16u;
-            uint32_t x = 0;
-            for (uint32_t s = 0; s < SPRITE_X.size(); s++)
-            {
-                put_record(vidcmd_tile(SPRITE_X[s] - x, 0));
-                put(sprite_select(row));
-                put(sprite_mask(row));
-                slots += (SPRITE_X[s] - x) + VIDCMD_TILE_PIXELS;
-                x = SPRITE_X[s] + VIDCMD_TILE_PIXELS;
-            }
-            if (slots < H_ACTIVE)
-            {
-                put_record(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - slots));
-                slots = H_ACTIVE;
-            }
-        }
-        else if (p.tempest_objects)
-        {
-            // Moving objects as coloured spans over the static wireframe.  Each
-            // span is one RUN_COLOR word; the gaps between them are ordinary
-            // passthrough RUNs, so the wireframe and its depth-faded palette
-            // show through untouched.  Nothing here writes a pixel.
-            std::array<ColorSpan, TEMPEST_MAX_SPANS> spans{};
-            const uint32_t count = tempest_spans_for_line(p, line, spans);
-
             int32_t x = 0;
-            for (uint32_t i = 0; i < count; i++)
+            for (uint32_t i = 0; i < span_n; i++)
             {
                 if (spans[i].x > x)
                 {
-                    put_record(vidcmd_run(RUN_SRC_PASSTHROUGH,
-                                          static_cast<uint32_t>(spans[i].x - x)));
+                    put(vidcmd_run(RUN_SRC_PASSTHROUGH, static_cast<uint32_t>(spans[i].x - x)));
                     slots += static_cast<uint32_t>(spans[i].x - x);
                 }
-                put_record(vidcmd_run_color(spans[i].color, static_cast<uint32_t>(spans[i].w)));
+                if (spans[i].src == RUN_SRC_COLOR)
+                {
+                    put(vidcmd_run_color(spans[i].color, static_cast<uint32_t>(spans[i].w)));
+                }
+                else
+                {
+                    put(vidcmd_run(spans[i].src, static_cast<uint32_t>(spans[i].w)));
+                }
                 slots += static_cast<uint32_t>(spans[i].w);
                 x = spans[i].x + spans[i].w;
             }
-            if (slots < H_ACTIVE)
+
+            if (p.framing == FramingMode::CUSHION)
             {
-                put_record(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - slots));
-                slots = H_ACTIVE;
+                // Exact-640 discipline: the FIFO never empties mid-line, hold
+                // never engages, so the sums have to close.
+                if (slots < H_ACTIVE)
+                {
+                    put(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - slots));
+                    slots = H_ACTIVE;
+                }
             }
-        }
-        else
-        {
-            // The floor: with no drain-to-N and no trailing-run-repeat, even a
-            // line that wants nothing from the compositor must still spend one
-            // word saying so.
-            put_record(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE));
-            slots += H_ACTIVE;
+            else if (slots < H_ACTIVE)
+            {
+                // JIT: hand the line back to passthrough and let hold replicate
+                // it to HBLANK.  One word, however much line is left.
+                if (span_n > 0 || slots == 0)
+                {
+                    put(vidcmd_run(RUN_SRC_PASSTHROUGH, 1));
+                    slots += 1;
+                }
+            }
         }
 
         line_words[line]   = static_cast<uint8_t>(n);

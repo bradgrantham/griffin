@@ -458,8 +458,11 @@ void print_report(const CaseSpec &spec, const CaseResult &res)
            res.vidcmd_words_total);
     printf("  VIDCMD records/line max %3u  mean %.2f\n",
            res.vidcmd_records_max, res.vidcmd_records_mean);
-    printf("  VIDCMD slots/line   %6u..%-6u (must be exactly %u)\n",
-           res.vidcmd_slot_min, res.vidcmd_slot_max, H_ACTIVE);
+    printf("  VIDCMD slots/line   %6u..%-6u framing %s (%s)\n",
+           res.vidcmd_slot_min, res.vidcmd_slot_max,
+           (spec.base.framing == FramingMode::CUSHION) ? "CUSHION" : "JIT    ",
+           (spec.base.framing == FramingMode::CUSHION) ? "must be exactly 640"
+                                                       : "<= 640, hold covers the rest");
     printf("  bus utilization     %6.1f%%         over %llu SYSCLK of the 2-frame run\n",
            util, static_cast<unsigned long long>(span));
     printf("  per-line SYSCLK     max %4u  mean %6.1f   (line = %llu SYSCLK, %.0f%% worst)\n",
@@ -480,15 +483,18 @@ void print_report(const CaseSpec &spec, const CaseResult &res)
                a1.descriptor_count, a1.table_bytes);
     }
 
-    printf("  PIXELS FIFO         high %3u  low %3u  underruns %u  overflows %u  (depth %u)\n",
-           rr.pixels_fifo_high, rr.pixels_fifo_low, rr.pixels_underruns,
-           rr.pixels_overflows, PIXELS_FIFO_WORDS);
+    printf("  PIXELS FIFO         high %3u  low %3u  tiled words %u  overflows %u  (depth %u)\n",
+           rr.stats.pixels_fifo_high, rr.stats.pixels_fifo_low, rr.stats.pixels_tiled_words,
+           rr.stats.pixels_overflows, PIXELS_FIFO_WORDS);
     printf("  PIXELS line-start   banked words min %3u  max %3u\n",
-           rr.pixels_line_start_min, rr.pixels_line_start_max);
-    printf("  VIDCMD FIFO         high %3u  low %3u  underruns %u  overflows %u\n",
-           rr.vidcmd_fifo_high, rr.vidcmd_fifo_low, rr.vidcmd_underruns, rr.vidcmd_overflows);
-    printf("  VIDCMD framing      straddles %u  pacing violations %u  RUN_COLOR records %u\n",
-           rr.vidcmd_straddles, rr.vidcmd_pacing_violations, rr.vidcmd_color_runs);
+           rr.stats.pixels_line_start_min, rr.stats.pixels_line_start_max);
+    printf("  VIDCMD FIFO         high %3u  low %3u  popped %u  overflows %u\n",
+           rr.stats.vidcmd_fifo_high, rr.stats.vidcmd_fifo_low, rr.stats.vidcmd_words_popped,
+           rr.stats.vidcmd_overflows);
+    printf("  VIDCMD framing      hold slots %u  overruns %u  late words %u  RUN_COLOR %u  "
+           "reserved no-ops %u\n",
+           rr.stats.vidcmd_hold_slots, rr.stats.vidcmd_overruns, rr.stats.vidcmd_late_words,
+           rr.stats.vidcmd_color_runs, rr.stats.vidcmd_reserved_ops);
     if (spec.base.audio)
     {
         printf("  AUDIO FIFO          high %4u low %4u underruns %u  overflows %u  (depth %u)\n",
@@ -537,29 +543,57 @@ void check_case(const CaseSpec &spec, const CaseResult &res)
           "%s: worst line costs %u SYSCLK, more than the %llu-SYSCLK line",
           spec.name.c_str(), res.budget.max_busy, static_cast<unsigned long long>(LINE_SYSCLK));
 
-    // The slot sum is the single most important authoring invariant in the new
-    // format: get it wrong and the stream desyncs for the rest of the frame
-    // rather than for one line, because nothing re-frames until vsync.
-    CHECK(res.vidcmd_slot_min == H_ACTIVE && res.vidcmd_slot_max == H_ACTIVE,
-          "%s: VIDCMD slot sums range %u..%u, must be exactly %u on every line",
-          spec.name.c_str(), res.vidcmd_slot_min, res.vidcmd_slot_max, H_ACTIVE);
+    // Framing: the two disciplines make different promises, so the checker
+    // asserts different things.  This is the whole point of FramingMode — the
+    // hardware rule is one rule, and only the list builder knows which contract
+    // it signed up to.
+    if (spec.base.framing == FramingMode::CUSHION)
+    {
+        // Records are buffered ahead in VBLANK, so the sums must close exactly
+        // and hold must never engage.  A hold slot here means the cushion was
+        // not deep enough; an overrun means a leftover record will play at the
+        // start of the next line and block its eager SETs.
+        CHECK(res.vidcmd_slot_min == H_ACTIVE && res.vidcmd_slot_max == H_ACTIVE,
+              "%s: cushion list slot sums range %u..%u, must be exactly %u on every line",
+              spec.name.c_str(), res.vidcmd_slot_min, res.vidcmd_slot_max, H_ACTIVE);
+        CHECK(rr.stats.vidcmd_hold_slots == 0,
+              "%s: cushion list held on an empty FIFO for %u slots — the cushion ran out",
+              spec.name.c_str(), rr.stats.vidcmd_hold_slots);
+        CHECK(rr.stats.vidcmd_overruns == 0,
+              "%s: %u records were still running at the h=%u fall, so a leftover plays at "
+              "slot 0 of the next line", spec.name.c_str(), rr.stats.vidcmd_overruns, H_ACTIVE);
+    }
+    else
+    {
+        // JIT lists deliberately under-fill and let hold replicate the last
+        // source, so hold slots are the mechanism rather than a fault.  What
+        // must hold instead is the DELIVERY DEADLINE: every word of a line's
+        // packet has to be in the FIFO before that line's pixel 0, or the
+        // packet resumes at the wrong x and only self-heals at the next empty
+        // boundary (compositor_tb's LATE_FILL).
+        CHECK(res.vidcmd_slot_max <= H_ACTIVE,
+              "%s: JIT list has a line of %u slots, more than the %u available",
+              spec.name.c_str(), res.vidcmd_slot_max, H_ACTIVE);
+        CHECK(rr.stats.vidcmd_late_words == 0,
+              "%s: %u VIDCMD words arrived after their line had already started — the "
+              "hblank delivery deadline was missed",
+              spec.name.c_str(), rr.stats.vidcmd_late_words);
+    }
 
-    CHECK(rr.pixels_underruns == 0, "%s: PIXELS FIFO underran %u times",
-          spec.name.c_str(), rr.pixels_underruns);
-    CHECK(rr.pixels_overflows == 0, "%s: PIXELS FIFO overflowed %u times",
-          spec.name.c_str(), rr.pixels_overflows);
-    CHECK(rr.vidcmd_underruns == 0, "%s: VIDCMD stream ran dry %u times",
-          spec.name.c_str(), rr.vidcmd_underruns);
-    CHECK(rr.vidcmd_overflows == 0, "%s: VIDCMD FIFO overflowed %u times",
-          spec.name.c_str(), rr.vidcmd_overflows);
-    CHECK(rr.vidcmd_straddles == 0,
-          "%s: %u records straddled the h=%u boundary (slot arithmetic desync)",
-          spec.name.c_str(), rr.vidcmd_straddles, H_ACTIVE);
-    CHECK(rr.vidcmd_pacing_violations == 0,
-          "%s: %u violations of playback(k) >= words(k+1)",
-          spec.name.c_str(), rr.vidcmd_pacing_violations);
-    CHECK(rr.vidcmd_pending_overflow == 0, "%s: skew commit queue overflowed %u times",
-          spec.name.c_str(), rr.vidcmd_pending_overflow);
+    // PIXELS tiling is legal by construction (pixel.v has no empty flag and a
+    // 7200 holds Q), so a short fill is a bandwidth compressor.  None of these
+    // cases wants one, so a nonzero count means the list is wrong, not the
+    // hardware.
+    CHECK(rr.stats.pixels_tiled_words == 0,
+          "%s: PIXEL tiled its last word %u times — the pixel stream came up short",
+          spec.name.c_str(), rr.stats.pixels_tiled_words);
+    CHECK(rr.stats.pixels_overflows == 0, "%s: PIXELS FIFO overflowed %u times",
+          spec.name.c_str(), rr.stats.pixels_overflows);
+    CHECK(rr.stats.vidcmd_overflows == 0, "%s: VIDCMD FIFO overflowed %u times",
+          spec.name.c_str(), rr.stats.vidcmd_overflows);
+    CHECK(rr.stats.vidcmd_reserved_ops == 0,
+          "%s: %u reserved `01` no-ops reached the compositor — nothing should emit them",
+          spec.name.c_str(), rr.stats.vidcmd_reserved_ops);
 
     if (spec.base.audio)
     {
@@ -622,9 +656,10 @@ void check_vertical_scroll(const CaseSpec &spec, const CaseResult &res, uint32_t
           spec.name.c_str(), step, mismatched);
 }
 
-// The tiles must actually be visible: count pixels that differ from the same
-// list rendered with the tile masks forced transparent is overkill, so instead
-// count pixels that are neither of PIXEL's two palette colours.
+// The sprites must actually be visible.  With TILE gone every painted pixel
+// comes from a RUN whose source is a held colour, so counting pixels that equal
+// held_fg or held_bg counts exactly the art — and the total is hand-derivable
+// from the bitmap, which is what makes it a real check rather than a tautology.
 void check_tiles_visible(const CaseSpec &spec, const CaseResult &res, uint32_t expect)
 {
     const FrameImage &f1 = res.rendered.frames[0];
@@ -640,10 +675,45 @@ void check_tiles_visible(const CaseSpec &spec, const CaseResult &res, uint32_t e
             }
         }
     }
-    printf("  tile coverage       %u pixels painted with a held colour (expected %u)\n",
+    printf("  span coverage       %u pixels painted with a held colour (expected %u)\n",
            painted, expect);
-    CHECK(painted == expect, "%s: tiles painted %u pixels, expected exactly %u",
+    CHECK(painted == expect, "%s: spans painted %u pixels, expected exactly %u",
           spec.name.c_str(), painted, expect);
+}
+
+// The emulator will not drive these models the way make check does: it holds a
+// PixelUnit and a CompositorUnit across scanlines and advances them a line at a
+// time, lumping each line's deposits into its HBLANK.  Running that driver here
+// against the same events is what keeps the two paths from diverging — and it
+// is a real check, because the two disagree the moment a list is starved
+// enough for delivery ORDER within a line to matter.
+void check_incremental_api(const CaseSpec &spec, const CaseResult &res)
+{
+    RenderParams rp;
+    rp.first_frame   = RENDER_FIRST_FRAME;
+    rp.frame_count   = RENDER_FRAMES;
+    rp.audio_enabled = spec.base.audio;
+    rp.skew_pix      = spec.base.skew_pix;
+    rp.skew_cmp      = spec.base.skew_cmp;
+
+    const RenderResult inc = render_line_at_a_time(res.interp.events, rp);
+
+    uint32_t differing = 0;
+    for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+    {
+        for (size_t i = 0; i < inc.frames[f].pixels.size(); i++)
+        {
+            if (inc.frames[f].pixels[i] != res.rendered.frames[f].pixels[i])
+            {
+                differing++;
+            }
+        }
+    }
+    printf("  incremental API     line-at-a-time driver vs clock-accurate: %u differing pixels\n",
+           differing);
+    CHECK(differing == 0,
+          "%s: the per-line driver the emulator will use disagrees with the clock-accurate "
+          "one on %u pixels", spec.name.c_str(), differing);
 }
 
 }  // namespace
@@ -727,18 +797,56 @@ int main()
               bad_rest);
     }
 
-    // --- M1: vertical scroll -------------------------------------------------
+    // --- M1: vertical scroll, and the JIT / short-line discipline -------------
     {
         CaseSpec s;
-        s.name  = "m1-vscroll";
-        s.title = "1bpp vertical scroll, VIDCMD floor of one coverage RUN per line";
+        s.name  = "m1-vscroll-jit";
+        s.title = "1bpp vertical scroll with a 3-word-per-FRAME VIDCMD preamble";
         s.base  = common;
+        s.base.framing            = FramingMode::JIT;
+        s.base.jit_frame_preamble = true;
+        // Deliberately NOT the /RS defaults (0xFFF/0x000), so the render proves
+        // the preamble's SETs actually landed rather than passing by accident.
+        s.base.held_fg = rgb444(13, 13, 15);
+        s.base.held_bg = rgb444(0, 0, 2);
         s.v_scroll_step = 16;
         CaseResult r = run_case(s, ram, REARM_LATENCY_CYCLES);
         write_artifacts(s, r);
         print_report(s, r);
         check_case(s, r);
         check_vertical_scroll(s, r, s.v_scroll_step);
+        check_incremental_api(s, r);
+
+        // This is the firmware console's list shape: three VIDCMD words buy the
+        // whole 480-line frame, because compositor.v holds the last source to
+        // the end of a line and a line that gets no fill keeps holding.
+        printf("  JIT framing         %u VIDCMD words for the whole frame (%u..%u per line); "
+               "hold covered %u slots\n",
+               r.vidcmd_words_total, r.vidcmd_words_min, r.vidcmd_words_max,
+               r.rendered.stats.vidcmd_hold_slots);
+        CHECK(r.vidcmd_words_total == 3,
+              "m1-vscroll-jit: expected exactly 3 VIDCMD words per frame, got %u",
+              r.vidcmd_words_total);
+        CHECK(r.rendered.stats.vidcmd_hold_slots > 0,
+              "m1-vscroll-jit: hold never engaged, so the short-line discipline is not "
+              "actually being exercised");
+
+        // Every pixel must be one of the preamble's two colours: hold has to
+        // carry passthrough across 479 lines that were never filled.
+        const FrameImage &f1 = r.rendered.frames[0];
+        uint32_t off_palette = 0;
+        for (Rgb444 c : f1.pixels)
+        {
+            if (c != s.base.held_fg && c != s.base.held_bg)
+            {
+                off_palette++;
+            }
+        }
+        printf("  hold coverage       %u of %u pixels are neither preamble colour\n",
+               off_palette, static_cast<uint32_t>(f1.pixels.size()));
+        CHECK(off_palette == 0,
+              "m1-vscroll-jit: %u pixels are not one of the preamble colours, so hold did "
+              "not carry the frame", off_palette);
     }
 
     // --- M2: per-line colours + horizontal scroll -----------------------------
@@ -770,6 +878,7 @@ int main()
                 matched++;
             }
         }
+        check_incremental_api(s, r);
         printf("  h-scroll check      frame 2 row 250 == frame 1 shifted left 3 px: %u/%u\n",
                matched, H_ACTIVE - 3);
         CHECK(matched == H_ACTIVE - 3, "m2-perline: horizontal scroll of 3 px matched only %u/%u",
@@ -871,11 +980,16 @@ int main()
 
         // Hand-computed expectation on line 100 of frame 1:
         //   pix_pal_fg = rgb444(3,12,15), pix_pal_bg = rgb444(0,0,5)
-        //   x in   0..159 : code 0_1 -> held <- pal_fg
-        //   x in 160..319 : code 0_0 -> held <- pal_bg
-        //   x = 320       : first 4-bit code, kk = 0 + (100>>3) = 12, even ->
-        //                   10_g_r with g = (12>>1)&1 = 0, r = (12>>2)&1 = 1
-        //                   -> green <- 0x0, red <- 0xF, blue keeps pal_bg's 5
+        //   x in   0..159 : code 0_1 -> held <- pal_fg          (1 clock, 1 pixel)
+        //   x in 160..319 : code 0_0 -> held <- pal_bg          (1 clock, 1 pixel)
+        //   x = 320,321   : the first 4-bit code, kk = 0 + (100>>3) = 12, even ->
+        //                   10_g_r with g = (12>>1)&1 = 0, r = (12>>2)&1 = 1.
+        //
+        // PAIR ORDERING (pixel.v, not video.v): the prefix pair and the chroma
+        // pair land in different clocks, so x=320 still shows the OLD held —
+        // which is pal_bg, left over from the 0_0 region — and x=321 shows both
+        // channels updated together: red <- 0xF, green <- 0x0, blue keeps
+        // pal_bg's 5.
         const FrameImage &f1 = r.rendered.frames[0];
         const Rgb444 pal_fg = line_palette_fg(100);
         const Rgb444 pal_bg = line_palette_bg(100);
@@ -884,25 +998,30 @@ int main()
                "x=320 0x%03X x=321 0x%03X\n",
                at(f1, 0, 100), at(f1, 100, 100), at(f1, 200, 100), at(f1, 300, 100),
                at(f1, 320, 100), at(f1, 321, 100));
-        printf("  micro-HAM expected  palette-fg 0x%03X, palette-bg 0x%03X, chroma code 0x%03X\n",
-               pal_fg, pal_bg, chroma);
+        printf("  micro-HAM expected  palette-fg 0x%03X, palette-bg 0x%03X, chroma code 0x%03X "
+               "on the code's SECOND pixel only\n", pal_fg, pal_bg, chroma);
         CHECK(at(f1, 0, 100) == pal_fg && at(f1, 100, 100) == pal_fg,
               "m2-microham: the 0_1 code region is not pix_pal_fg");
         CHECK(at(f1, 200, 100) == pal_bg && at(f1, 300, 100) == pal_bg,
               "m2-microham: the 0_0 code region is not pix_pal_bg");
-        CHECK(at(f1, 320, 100) == chroma && at(f1, 321, 100) == chroma,
-              "m2-microham: the first 4-bit code should paint two pixels of 0x%03X, got "
-              "0x%03X and 0x%03X",
-              chroma, at(f1, 320, 100), at(f1, 321, 100));
+        CHECK(at(f1, 320, 100) == pal_bg,
+              "m2-microham: the first pixel of a 4-bit code must still show the OLD held "
+              "colour 0x%03X (pixel.v pair ordering), got 0x%03X", pal_bg, at(f1, 320, 100));
+        CHECK(at(f1, 321, 100) == chroma,
+              "m2-microham: the second pixel of the first 4-bit code should be 0x%03X with "
+              "both channels committed together, got 0x%03X", chroma, at(f1, 321, 100));
     }
+
+    uint32_t m3_cursor_words = 0;
+    uint32_t m3_sprite_words = 0;
 
     // --- M3: cursor -----------------------------------------------------------
     {
         CaseSpec s;
         s.name  = "m3-cursor";
-        s.title = "1bpp plus a single 16x16 masked tile";
+        s.title = "1bpp plus a 16x16 arrow cursor, decomposed into held-colour spans";
         s.base  = common;
-        s.base.tiles    = TileStyle::CURSOR;
+        s.base.sprites    = SpriteStyle::CURSOR;
         s.base.cursor_x = 300;
         s.base.cursor_y = 200;
         // Neither held colour may equal PIXEL's default palette (0xFFF / 0x000)
@@ -916,15 +1035,16 @@ int main()
         // The arrow mask has 84 opaque pixels and every one of them is painted
         // with a held colour.
         check_tiles_visible(s, r, 84);
+        m3_cursor_words = r.vidcmd_words_max;
     }
 
     // --- M3b: four sprites per line, the worst case ---------------------------
     {
         CaseSpec s;
         s.name  = "m3-sprites";
-        s.title = "worst case: four masked tiles plus a covering run on every line";
+        s.title = "worst case: four sprites per line as spans, plus covering runs";
         s.base  = common;
-        s.base.tiles   = TileStyle::FOUR_SPRITES;
+        s.base.sprites   = SpriteStyle::FOUR_SPRITES;
         s.base.held_fg = rgb444(15, 15, 0);
         s.base.held_bg = rgb444(8, 0, 8);
         CaseResult r = run_case(s, ram, REARM_LATENCY_CYCLES);
@@ -934,6 +1054,7 @@ int main()
         // 4 sprites x 480 lines; the diamond's popcount over a 16-row cycle is
         // 2*(2+4+6+8+10+12+14+16) = 144, i.e. 9 per row on average.
         check_tiles_visible(s, r, 4 * 144 * (V_ACTIVE / 16));
+        m3_sprite_words = r.vidcmd_words_max;
     }
 
     // --- M4: audio woven into the line cadence --------------------------------
@@ -981,8 +1102,8 @@ int main()
         for (uint64_t lat : sweep)
         {
             CaseResult t = run_case(s, ram, lat);
-            const bool ok = t.rendered.pixels_underruns == 0 && t.rendered.pixels_overflows == 0 &&
-                            t.rendered.vidcmd_straddles == 0 && t.interp.violations.empty();
+            const bool ok = t.rendered.stats.pixels_tiled_words == 0 && t.rendered.stats.pixels_overflows == 0 &&
+                            t.rendered.stats.vidcmd_overruns == 0 && t.interp.violations.empty();
             if (ok)
             {
                 last_ok = lat;
@@ -1010,7 +1131,7 @@ int main()
         s.base  = common;
         s.base.per_line_palette = true;
         s.base.per_line_mode    = true;
-        s.base.tiles            = TileStyle::FOUR_SPRITES;
+        s.base.sprites            = SpriteStyle::FOUR_SPRITES;
         s.base.held_fg          = rgb444(15, 15, 0);
         s.base.held_bg          = rgb444(8, 0, 8);
         s.base.audio            = true;
@@ -1040,20 +1161,20 @@ int main()
                 printf("  arbitration %u        VIDCMD %-13s line %3u SYSCLK, "
                        "banked at line start %2u, PIXELS underruns %u, VIDCMD dry %u\n",
                        arb, (defer != 0) ? "after pixels" : "before pixels",
-                       tr.budget.max_busy, tr.rendered.pixels_line_start_min,
-                       tr.rendered.pixels_underruns, tr.rendered.vidcmd_underruns);
+                       tr.budget.max_busy, tr.rendered.stats.pixels_line_start_min,
+                       tr.rendered.stats.pixels_tiled_words, tr.rendered.stats.vidcmd_hold_slots);
                 if (defer == 0)
                 {
-                    CHECK(tr.rendered.pixels_underruns == 0 && tr.rendered.vidcmd_underruns == 0,
+                    CHECK(tr.rendered.stats.pixels_tiled_words == 0 && tr.rendered.stats.vidcmd_hold_slots == 0,
                           "crazy-demo: with VIDCMD ahead of PIXELS, arbitration %u underruns "
                           "(PIXELS %u, VIDCMD %u)",
-                          arb, tr.rendered.pixels_underruns, tr.rendered.vidcmd_underruns);
+                          arb, tr.rendered.stats.pixels_tiled_words, tr.rendered.stats.vidcmd_hold_slots);
                 }
                 else
                 {
                     // Recorded, not asserted clean: this is the measurement
                     // behind the reversal, and it must stay visible.
-                    CHECK(tr.rendered.vidcmd_underruns > 0,
+                    CHECK(tr.rendered.stats.vidcmd_hold_slots > 0,
                           "crazy-demo: deferring VIDCMD was expected to starve COMPOSITOR at "
                           "arbitration %u but did not — finding 6 needs re-deriving", arb);
                 }
@@ -1211,8 +1332,8 @@ int main()
         uint32_t budget_split    = 0;
         for (uint32_t split = 0; split < 2; split++)
         {
-            printf("  density sweep  %-9s spans words/ln recs/ln  SYSCLK  PIXbank  PIXunder  "
-                   "VIDCMDdry  pacing\n",
+            printf("  density sweep  %-9s spans words/ln recs/ln  SYSCLK  PIXbank  PIXtiled  "
+                   "VIDCMDhold  overrun\n",
                    (split != 0) ? "PIXhead20" : "VIDCMD1st");
             for (uint32_t spans : {0u, 8u, 16u, 24u, 32u, 48u, 64u})
             {
@@ -1220,10 +1341,9 @@ int main()
                 t.base.tempest_stress_spans = spans;
                 t.base.pixels_head_words    = (split != 0) ? 20u : 0u;
                 CaseResult tr = run_case(t, ram, REARM_LATENCY_CYCLES);
-                const bool clean = tr.rendered.pixels_underruns == 0 &&
-                                   tr.rendered.vidcmd_underruns == 0 &&
-                                   tr.rendered.vidcmd_pacing_violations == 0 &&
-                                   tr.rendered.vidcmd_straddles == 0 &&
+                const bool clean = tr.rendered.stats.pixels_tiled_words == 0 &&
+                                   tr.rendered.stats.vidcmd_hold_slots == 0 &&
+                                   tr.rendered.stats.vidcmd_overruns == 0 &&
                                    tr.vidcmd_slot_max == H_ACTIVE &&
                                    tr.budget.max_busy < LINE_SYSCLK;
                 if (clean)
@@ -1239,8 +1359,8 @@ int main()
                 }
                 printf("                          %5u %8u %7u  %6u  %7u  %8u  %9u  %6u  %s\n",
                        spans, tr.vidcmd_words_max, tr.vidcmd_records_max, tr.budget.max_busy,
-                       tr.rendered.pixels_line_start_min, tr.rendered.pixels_underruns,
-                       tr.rendered.vidcmd_underruns, tr.rendered.vidcmd_pacing_violations,
+                       tr.rendered.stats.pixels_line_start_min, tr.rendered.stats.pixels_tiled_words,
+                       tr.rendered.stats.vidcmd_hold_slots, tr.rendered.stats.vidcmd_overruns,
                        clean ? "ok" : "OVER BUDGET");
             }
         }
@@ -1302,16 +1422,23 @@ int main()
            "     14-SYSCLK overheads from ahead of the pixel deposits, which is what took\n"
            "     PIXEL's line-start margin from 2 words to 14.  The redesign paid for the\n"
            "     ordering it requires.\n");
-    printf("  7. NEW. The slot sum is the format's sharpest edge.  With no drain-to-N and no\n"
-           "     trailing-run-repeat, a line whose records total 639 or 641 slots does not\n"
-           "     corrupt one line — it slides the whole stream until vsync's /RS.  Authoring\n"
-           "     must compute the sum, so write_vidcmd_records reports it per line and the\n"
-           "     suite asserts it is exactly %u before anything is run.\n", H_ACTIVE);
-    printf("  8. NEW. Every line now costs at least one VIDCMD word even when it wants\n"
-           "     nothing from the compositor, because coverage is mandatory.  That is one\n"
-           "     extra descriptor per line — %u SYSCLK — on top of the pixel stream, which is\n"
-           "     what took the plain vertical-scroll case from 114 to 130 SYSCLK/line.\n",
-           engine_descriptor_cycles(ENGINE_ARBITRATION_CYCLES, 1));
+    printf("  7. REFINED BY THE RTL. The slot sum is still the sharpest edge, but only\n"
+           "     under the CUSHION discipline.  compositor.v holds on an empty FIFO — it\n"
+           "     keeps the current source and keeps trying — and that is first-class framing,\n"
+           "     not underrun mercy.  So there are two contracts off one hardware rule:\n"
+           "     cushion lists promise exactly %u slots per line and may not hold; JIT lists\n"
+           "     promise at most %u and must instead land every word before their line's\n"
+           "     pixel 0.  The checker asserts whichever one the list signed up to, and\n"
+           "     write_vidcmd_records reports the per-line sums either way.\n",
+           H_ACTIVE, H_ACTIVE);
+    printf("  8. OVERTURNED BY HOLD. The previous round measured a floor of one VIDCMD\n"
+           "     word per line even for a line that wanted nothing, and charged the plain\n"
+           "     vertical-scroll case 130 SYSCLK/line for it.  With hold-on-empty modelled\n"
+           "     the floor is not per line at all: m1-vscroll-jit paints a whole 480-line\n"
+           "     frame with THREE VIDCMD words — {SET fg, SET bg, RUN(passthrough,1)} in the\n"
+           "     first hblank — and drops back to 114 SYSCLK/line.  That is the firmware\n"
+           "     console's list shape, and it is why the console does not need a per-line\n"
+           "     VIDCMD descriptor at all.\n");
     printf("  9. NEW. A multi-register mid-line change cannot be atomic: each SET owns one\n"
            "     pixel slot, so changing both palette entries takes two pixels and the frame\n"
            "     shows one pixel of mixed old/new state.  m2-split's checks pin exactly that\n"
@@ -1368,11 +1495,39 @@ int main()
            "     pre-buffered them.  The stress spans are spread evenly for exactly this\n"
            "     reason — packing the same count into 128 pixels fails far earlier, and any\n"
            "     real object list needs its records spread the way its objects are.\n");
-    printf(" 11. OPEN. Both skew constants are still 0 and still guesses.  The compensation\n"
-           "     path is exercised (m2-split re-runs at 3/1 px and must produce the identical\n"
-           "     image), but the real numbers have to come from RTL simulation, and a\n"
-           "     PIXEL-target skew larger than a slot would make back-to-back SETs commit out\n"
-           "     of the order the list wrote them.\n");
+    printf(" 11. OPEN, AND NOW A KNOWN BREAK RATHER THAN A GUESS. The COMPOSITOR->PIXEL SET\n"
+           "     forwarding interface does not work at one word per clock: compositor.v holds\n"
+           "     set_pix_valid/target as levels and pulses set_pix_commit, and pixel.v\n"
+           "     captures VIDCMD_Q while valid is high — but Q has moved on by then.\n"
+           "     compositor.v says so in its own header.  THIS IS THE ONE PLACE THE SUITE\n"
+           "     CANNOT MATCH A TB MEASUREMENT, because there is no correct measurement to\n"
+           "     match yet.  The model applies a PIXEL-target SET at its commit slot, exactly\n"
+           "     like a COMPOSITOR-target one, and SKEW_PIX_TARGET stays a named constant at\n"
+           "     zero.  m2-split still re-runs at 3/1 px and must produce the identical\n"
+           "     image, so the compensation path stays exercised rather than vacuous.\n");
+    printf(" 16. NEW, FROM THE RTL SYNC, AND IT CUTS BOTH WAYS. Dropping TILE bought back the\n"
+           "     two 16-bit mask shifters and cost words instead, but whether that is a good\n"
+           "     trade depends entirely on how many HOLES the art has per row.  Measured\n"
+           "     here: the four-sprite worst case IMPROVED from 13 words/line to %u, because\n"
+           "     a diamond row is one contiguous run and a tile always cost 3 words.  The\n"
+           "     cursor got WORSE, 4 words/line to %u, because an arrow row with an eroded\n"
+           "     outline is up to five alternating fg/bg/transparent segments and each one\n"
+           "     is its own record.  Rule of thumb for the list builder: contiguous art is\n"
+           "     cheaper as runs, and art with more than ~2 holes per row is what TILE was\n"
+           "     actually for.\n",
+           m3_sprite_words, m3_cursor_words);
+    printf(" 17. NEW, FROM THE RTL SYNC. The 1-word/clock rework retired the prefetch\n"
+           "     invariant entirely.  playback(k) >= words(k+1) was the 2-slot era's rule;\n"
+           "     with every record one word and every record at least one slot it is now\n"
+           "     satisfied by construction, and the check has been deleted rather than left\n"
+           "     to pass vacuously.  What replaced it as the real constraint is delivery\n"
+           "     rate (finding 15), which no encoding change can fix.\n");
+    printf(" 18. NEW, FROM THE RTL SYNC. PIXEL underrun is not an error condition.  pixel.v\n"
+           "     has no empty-flag input and a 7200 holds Q while empty, so a short PIXELS\n"
+           "     fill simply re-delivers the last word — a bandwidth compressor, not a\n"
+           "     fault.  The suite counts tiled words and still requires zero on every case,\n"
+           "     because none of these lists intends to be short; but the counter is a\n"
+           "     measurement now, not an assertion about the hardware.\n");
 
     printf("\n=== summary ===\n");
     if (g_failures == 0)

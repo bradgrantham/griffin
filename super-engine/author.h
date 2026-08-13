@@ -133,11 +133,30 @@ enum class PixelMode : uint8_t
     MICRO_HAM   = 1,   // 80 words/line, 2 bits per pixel clock
 };
 
-enum class TileStyle : uint8_t
+enum class SpriteStyle : uint8_t
 {
     NONE         = 0,   // the line's VIDCMD stream is just its coverage RUN
-    CURSOR       = 1,   // one 16x16 tile on 16 lines
-    FOUR_SPRITES = 2,   // worst case: four tiles on every line
+    CURSOR       = 1,   // one 16x16 arrow on 16 lines, as spans
+    FOUR_SPRITES = 2,   // worst case: four sprites on every line, as spans
+};
+
+// How a list frames its lines.  Both come off compositor.v's single hold rule;
+// the difference is entirely in what the list builder promises and therefore in
+// what the checker may assert.
+enum class FramingMode : uint8_t
+{
+    // Records are buffered ahead in VBLANK, the FIFO never empties mid-line,
+    // hold never engages, and every line's slots must total EXACTLY H_ACTIVE.
+    // Overrunning is the hazard: a leftover record staged at the H_ACTIVE fall
+    // plays at the start of the next line and blocks that line's eager SETs.
+    CUSHION = 0,
+
+    // A line's records may total FEWER than H_ACTIVE slots; the last source
+    // replicates to the end of the line, and a line with no records at all
+    // keeps holding.  A whole passthrough frame costs one VIDCMD word.  The
+    // obligation moves from slot arithmetic to a delivery deadline: a line's
+    // packet must land before that line's pixel 0.
+    JIT = 1,
 };
 
 // Bytes reserved per line in the authored VIDCMD region.  160 words is well
@@ -161,7 +180,7 @@ struct FrameParams
     uint32_t  h_scroll_pixels = 0;   // word offset + pixel_skip
 
     // --- VIDCMD content ---
-    // A SET emitted *before* the line's first RUN/TILE is consumed during
+    // A SET emitted *before* the line's first RUN is consumed during
     // blanking, applies immediately and costs no active slot.  A SET emitted
     // between records lands in active video and costs exactly one slot, which
     // is precisely the mechanism the mid-line split uses.
@@ -187,7 +206,13 @@ struct FrameParams
     uint32_t frame_index      = 0;         // animation phase, set per frame by the driver
     uint32_t tempest_stress_spans = 0;     // extra 1-px spans, for the density sweep
 
-    TileStyle tiles           = TileStyle::NONE;
+    SpriteStyle sprites       = SpriteStyle::NONE;
+    FramingMode framing       = FramingMode::CUSHION;
+
+    // JIT only: emit the {SET fg, SET bg, RUN(pt,1)} frame preamble on line 0
+    // and nothing at all on the other 479 lines.  This is exactly what the
+    // firmware console will do — three words per frame for the whole screen.
+    bool     jit_frame_preamble = false;
     uint32_t  cursor_x        = 300;
     uint32_t  cursor_y        = 200;
     Rgb444    held_fg         = rgb444(15, 0, 0);
