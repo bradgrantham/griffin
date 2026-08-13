@@ -109,10 +109,16 @@ void PixelUnit::begin_line()
     ham_pending_ = 0;
     ham_held_    = pal_fg_;   // held reloads from pal_fg at every line start
 
-    if (pixel_skip_ > 0)
+    // Hardware clamp (pixel.v, decided 2026-08-13): skip bit 0 is ignored in
+    // micro-HAM mode, applied at consumption so SET ordering cannot smuggle a
+    // stale odd bit in.  An odd HAM skip would shift every 2-bit code across
+    // its boundary and mis-parse the whole line.
+    const uint32_t effective_skip =
+        (mode_ == PIXEL_MODE_MICRO_HAM ? (pixel_skip_ & ~1u) : pixel_skip_);
+    if (effective_skip > 0)
     {
-        refill(pixel_skip_);
-        (void)take(pixel_skip_);
+        refill(effective_skip);
+        (void)take(effective_skip);
     }
 
     if (counting_ && stats_ != nullptr)

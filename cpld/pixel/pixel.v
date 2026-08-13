@@ -95,8 +95,29 @@
 // pixel_skip[3:0] discards the first 0..15 stream bits of a line (sub-word
 // horizontal scroll; ENGINE's word-aligned source address provides the coarse
 // part).  Bit 3 discards one whole byte during the preload; bits [2:0] are
-// spent as single-bit alignment shifts before pixel 0.  HAM wants even values
-// — that is an author-side rule, not enforced here.
+// spent as single-bit alignment shifts before pixel 0.
+//
+// Two decided limits (2026-08-13):
+//
+// DECLARED FEATURE LIMIT — the scrolled line's tail.  With any nonzero skip
+// the line needs a fraction of one more byte at its far end, and the fetch
+// guard (fetch_due & ~fetch_last below) deliberately refuses to fetch a byte
+// it cannot fully consume — an unconsumed byte would be eaten by the NEXT
+// line and the error would compound down the frame.  So the last 1..7 pixels
+// of a fine-scrolled line re-shift the previous byte's pattern.  Decided:
+// this is the feature's contract, not a bug — borders/overlay spans hide it,
+// and the alternative (a per-line fetched-byte counter plus a padded PIXELS
+// record) buys a correct right edge for ~8 FF if ever wanted.
+//
+// HARDWARE CLAMP — odd skip in micro-HAM.  HAM consumes exactly two stream
+// bits per pixel clock, so an odd alignment shifts every subsequent code
+// across its boundary and the whole line mis-parses (and the fetch cadence
+// double-fires).  skip bit 0 is therefore ignored in HAM mode, clamped at
+// the point of CONSUMPTION (line-start preload), not at the SET write — so
+// a list that sets skip first and mode second cannot smuggle a stale odd
+// bit in.  A buggy list scrolls to the nearest even bit instead of
+// producing an undebuggable garbage line (nothing in this pipeline reads
+// back).
 //
 // ---------------------------------------------------------------------------
 // SET path — two stages, deliberately not the spec's three
@@ -176,6 +197,11 @@ module Pixel
     reg [11:0] pal_fg;
     reg [11:0] pal_bg;
     reg [3:0]  pixel_skip;
+
+    // Fine-alignment skip as consumed at line start: bit 0 is ignored in
+    // micro-HAM mode (see the header's HARDWARE CLAMP note).  Clamping here,
+    // at consumption, makes the result independent of SET ordering.
+    wire [2:0] skip_fine = {pixel_skip[2:1], pixel_skip[0] & ~mode_ham};
     reg [1:0]  mode;                     // [0] 1 = micro-HAM, [1] spare
 
     wire mode_ham = mode[0];
@@ -262,8 +288,8 @@ module Pixel
             fifo_loading    <= 1'b1;
             fifo_select     <= 1'b0;
             extra_byte      <= pixel_skip[3];
-            align_cnt       <= ~pixel_skip[2:0];
-            bit_pos         <= pixel_skip[2:0];
+            align_cnt       <= ~skip_fine;
+            bit_pos         <= skip_fine;
         end
         else if (fifo_loading)
         begin
