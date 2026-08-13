@@ -102,19 +102,28 @@
 // SET path — two stages, deliberately not the spec's three
 // ---------------------------------------------------------------------------
 //
-// COMPOSITOR asserts set_pix_valid and set_pix_target as LEVELS for as long as
-// the SET word is staged, and pulses set_pix_commit for one clock when the SET
-// executes.  So: capture VIDCMD_Q[11:0] into set_capture while valid is high,
-// then apply set_capture to the target selected by the live set_pix_target on
-// the commit pulse.
+// COMPOSITOR drives the payload on a dedicated bus, set_pix_value[11:0],
+// registered in the same pipeline stage as set_pix_valid, set_pix_target and
+// set_pix_commit.  The bus is stable for the whole staging window because it
+// comes from COMPOSITOR's staged_word, not from the FIFO's Q, which moves
+// every cycle at one word per clock.
 //
-// The capture register is REQUIRED.  Applying Q directly at commit races
-// COMPOSITOR's re-pop, which can change Q inside the commit cycle.  What is
-// NOT sufficient here is a third shadow/pending stage: that exists to survive
-// back-to-back eager SETs at a one-word-per-clock fetch cadence, and the
-// as-built COMPOSITOR sustains one word per two slots, so two stages suffice.
-// If the /RE shaping is ever changed to reach one word per clock, this must be
-// revisited (+12 flip-flops).
+// THERE IS NO CAPTURE REGISTER IN THIS VARIANT, AND THERE CANNOT USEFULLY BE
+// ONE.  Because value and commit are registered from the same staged word,
+// they are high in the SAME cycle: at the commit edge the bus already carries
+// exactly the payload being committed.  A shadow captured "while valid" would
+// be written on that very edge, so an apply-old rule would install the
+// PREVIOUS SET's value — off by one — and an apply-new rule is just this.
+// Applying the bus directly at the commit pulse is both correct and twelve
+// flip-flops cheaper than the strobe variant's two-stage path.
+//
+// PIXEL does not touch VIDCMD_Q at all in this variant; the twelve pins that
+// used to tap the shared FIFO data bus now carry this private bus instead, so
+// the pin count is unchanged and the FIFO bus loses twelve loads.
+//
+// Consecutive PIXEL-target SETs need no arbitration at all here: each SET's
+// value rides its own commit cycle, so they simply commit on successive
+// clocks.
 //
 // nVIDCMD_RE is deliberately NOT an input.  A future NAND-shaped /RE would be
 // a half-cycle pulse that rising-edge sampling would miss; valid/commit are
@@ -132,7 +141,7 @@ module Pixel
     output reg         nPIXELS_RE_ODD,
 
     // Register path from COMPOSITOR
-    input  wire [11:0] VIDCMD_Q,
+    input  wire [11:0] set_pix_value,    // payload, stable while valid is high
     input  wire        set_pix_valid,
     input  wire [2:0]  set_pix_target,
     input  wire        set_pix_commit,
@@ -164,7 +173,6 @@ module Pixel
     // SET registers and the two-stage SET path
     // ----------------------------------------------------------------
 
-    reg [11:0] set_capture;
     reg [11:0] pal_fg;
     reg [11:0] pal_bg;
     reg [3:0]  pixel_skip;
@@ -182,7 +190,6 @@ module Pixel
     begin
         if (RESET)
         begin
-            set_capture <= 12'h000;
             pal_fg      <= 12'hFFF;
             pal_bg      <= 12'h000;
             pixel_skip  <= 4'd0;
@@ -190,29 +197,24 @@ module Pixel
         end
         else
         begin
-            if (set_pix_valid)
-            begin
-                set_capture <= VIDCMD_Q;
-            end
-
             if (set_fg)
             begin
-                pal_fg <= set_capture;
+                pal_fg <= set_pix_value;
             end
 
             if (set_bg)
             begin
-                pal_bg <= set_capture;
+                pal_bg <= set_pix_value;
             end
 
             if (set_mode)
             begin
-                mode <= set_capture[1:0];
+                mode <= set_pix_value[1:0];
             end
 
             if (set_skip)
             begin
-                pixel_skip <= set_capture[3:0];
+                pixel_skip <= set_pix_value[3:0];
             end
         end
     end
@@ -337,19 +339,19 @@ module Pixel
                 ham_type <= code_lo;
             end
 
-            ham_held[11:8] <= set_held   ? set_capture[11:8]                :
+            ham_held[11:8] <= set_held   ? set_pix_value[11:8]                :
                               held_init  ? pal_fg[11:8]                     :
                               load_pal   ? (pal_bit ? pal_fg[11:8] : pal_bg[11:8]) :
                               (ham_chroma & ~ham_type) ? {4{code_lo}}       :
                                            ham_held[11:8];
 
-            ham_held[7:4]  <= set_held   ? set_capture[7:4]                 :
+            ham_held[7:4]  <= set_held   ? set_pix_value[7:4]                 :
                               held_init  ? pal_fg[7:4]                      :
                               load_pal   ? (pal_bit ? pal_fg[7:4] : pal_bg[7:4]) :
                               ham_chroma ? {4{code_hi}}                     :
                                            ham_held[7:4];
 
-            ham_held[3:0]  <= set_held   ? set_capture[3:0]                 :
+            ham_held[3:0]  <= set_held   ? set_pix_value[3:0]                 :
                               held_init  ? pal_fg[3:0]                      :
                               load_pal   ? (pal_bit ? pal_fg[3:0] : pal_bg[3:0]) :
                               (ham_chroma & ham_type) ? {4{code_lo}}        :

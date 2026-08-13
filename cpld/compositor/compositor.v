@@ -1,4 +1,8 @@
-// compositor.v — Griffin COMPOSITOR CPLD (ATF1508AS) — VIDCMD display-list player
+// compositor.v — COMPOSITOR, VALUE-BUS VARIANT (ATF1508AS) — EXPERIMENT
+//
+// Side-by-side candidate against compositor.v for the PIXEL SET value path.
+// Same player, same fetch, one difference: the payload is exported on a
+// dedicated 12-bit bus instead of being read off VIDCMD_Q under a strobe.
 //
 // COMPOSITOR sits between PIXEL (the framebuffer unpacker) and the DAC.  It
 // plays a per-line instruction stream — VIDCMD — out of an IDT7200 FIFO that
@@ -99,9 +103,47 @@
 // When consumption stalls (a long RUN) the in-flight word parks in q_pending
 // and fetching idles until the run expires; restart costs no extra slot.
 //
+// PIXEL-TARGET SET VALUE PATH — dedicated value bus (option 1).
+//
+// COMPOSITOR exports the staged word's payload on set_pix_value[11:0], twelve
+// dedicated output pins to PIXEL.  There is NO capture strobe and NO fetch
+// stall: the fetch runs uniformly at one word per clock and a PIXEL-target SET
+// costs exactly one slot, like every other record.  PIXEL does not touch
+// VIDCMD_Q at all in this variant — the FIFO's data bus loses twelve loads and
+// gains a private point-to-point bus in their place.
+//
+// THE BUS IS REGISTERED, AND THAT IS A CORRECTNESS REQUIREMENT, NOT A FITTER
+// PREFERENCE.  set_pix_valid and set_pix_target are registered from the staged
+// word, so they describe the word that was staged during the PREVIOUS cycle.
+// A combinational tap of staged_word[11:0] would therefore be one cycle ahead
+// of its own valid window — during the cycle valid is high for SET S, a live
+// tap already shows S's successor at this cadence.  Registering the payload
+// puts all three signals in the same pipeline stage, which is exactly what
+// makes PIXEL's original "capture while valid is high" premise true again:
+//
+//   cycle X    staged_word == S
+//   edge X+1   set_pix_valid, set_pix_target, set_pix_value all register S
+//   cycle X+1  valid high, bus == S's payload, stable for the whole cycle
+//   edge X+2   PIXEL registers the bus into its shadow
+//   later      set_pix_commit pulses; PIXEL applies shadow -> live register
+//
+// A SET that sits staged behind a long RUN simply holds the bus for as many
+// cycles as it waits, and PIXEL's level-triggered capture re-captures the same
+// value harmlessly.
+//
+// CONSECUTIVE PIXEL-TARGET SETS COINCIDE HERE.  Without the stall, SET N's
+// commit lands on the same edge that captures SET N+1's value, every time.
+// PIXEL's shadow and its live registers therefore MUST live in one clocked
+// block with non-blocking assignments so the commit applies the OLD shadow
+// while the NEW one is captured — apply-old, capture-new.  In the strobe
+// variant that case was unreachable; here it is the common case.
+//
 // ELECTRICAL MARGIN: PENDING THE DATASHEET TABLE named in griffin.yml
 // interfaces:.  The parameters this arrangement rests on are IDT7200L15 tA
-// (access, must be met inside the clock high phase), tRPW (read pulse width),
+// (access — note the stall decision reads Q at the FALLING edge, so tA plus
+// ATF1508AS tSU must now fit the clock HIGH phase, not the whole period, the
+// same class of half-cycle requirement tEFL already carries), tRPW (read pulse
+// width),
 // tRR (read recovery), and tEFL (empty-flag delay from /RE); 74AC00/74F00 tPD
 // for gates A and B; ATF1508AS tCO and tSU.  Values are not asserted here —
 // pinning that table gates schematic capture, not these models.
@@ -160,7 +202,8 @@ module Compositor
     // PIXEL register forwarding (shadow / pending / commit)
     output reg         set_pix_valid,   // the staged word is a PIXEL-target SET
     output reg  [2:0]  set_pix_target,
-    output reg         set_pix_commit   // apply the pending value now
+    output reg         set_pix_commit,  // apply the pending value now
+    output reg  [11:0] set_pix_value    // the staged word's payload, registered
 );
 
     wire RESET = ~nRS;
@@ -286,6 +329,7 @@ module Compositor
             set_pix_valid  <= 1'b0;
             set_pix_target <= 3'd0;
             set_pix_commit <= 1'b0;
+            set_pix_value  <= 12'h000;
         end
         else
         begin
@@ -305,6 +349,7 @@ module Compositor
             set_pix_valid  <= have_staged & w_set_pixel;
             set_pix_target <= w_target;
             set_pix_commit <= apply_set & w_set_pixel;
+            set_pix_value  <= w_value;
 
             if (apply_set)
             begin

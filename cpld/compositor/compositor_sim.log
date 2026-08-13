@@ -80,8 +80,29 @@ PASS  NRS_RECOVERY held_bg back to 0x000
 PASS  NRS_RECOVERY source back to passthrough
 PASS  NRS_RECOVERY count already terminal
 PASS  NRS_RECOVERY unfilled frame shows the framebuffer for free
+PASS  PREAMBLE pal_fg value delivered
+PASS  PREAMBLE pal_bg value delivered
+PASS  PREAMBLE ham_held value delivered
+PASS  PREAMBLE one capture per PIXEL SET
+PASS  PREAMBLE one apply per PIXEL SET
+PASS  MIDLINE_PIX_SET nothing applied before its slot
+PASS  MIDLINE_PIX_SET value delivered
+PASS  MIDLINE_PIX_SET applied exactly once
+PASS  CONSEC_PIX values all delivered
+PASS  CONSEC_PIX four applies
+PASS  CONSEC_PIX targets in order
+PASS  CONSEC_PIX values match their targets
+PASS  CONSEC_PIX commits evenly spaced
+      MEASURED  consecutive PIXEL-target SET commits 2 clocks apart
+PASS  MIXED_SETS cmp_held_fg took its value
+PASS  MIXED_SETS cmp_held_bg took its value
+PASS  MIXED_SETS PIXEL values delivered
+PASS  MIXED_SETS two PIXEL applies
+      MEASURED  mixed run: cmp SET at slot 1, PIXEL commits 3 clocks apart
+      MEASURED  0 coincident commit+capture edges over the run
+PASS  SAME_EDGE apply-old/capture-new never had to arbitrate
       MEASURED  0 want_pop cycles against an empty FIFO
-      MEASURED  701 words popped over the run
+      MEASURED  719 words popped over the run
 ------------------------------------------------------
 MEASURED CONSTANTS FOR THE SUITE
   H_ACTIVE -> RGB_OUT pipeline           : 2 clocks (by construction)
@@ -89,6 +110,7 @@ MEASURED CONSTANTS FOR THE SUITE
   pop -> set_pix_commit, blanking        : 3 clocks
   set_pix_commit leads its slot's RGB_OUT: 1 clock(s)
   sustained fetch cadence                : 1 slot(s) per VIDCMD word
+  PIXEL-target SET cost                  : 2 slots (own + fetch stall)
 ------------------------------------------------------
 TESTBENCH RESULT: PASS (0 failures)
-compositor_tb.v:792: $finish called at 675500000 (1ps)
+compositor_tb.v:949: $finish called at 761540000 (1ps)

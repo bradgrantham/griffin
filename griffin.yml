@@ -958,7 +958,7 @@ bodges:
   - "Pull up CPU HALT with 4.7K to nearby CPU +5V"
 
 issues:
-  - "PIXEL's SET value path broke at the 1-word/clock VIDCMD cadence (2026-08-13, compositor Phase A0): pixel.v captures VIDCMD_Q while set_pix_valid is high, but Q now advances every clock, so the value no longer travels — only the valid/target/commit timing does. Resolve before pixel.v is final: 12 dedicated value pins from COMPOSITOR (takes it pin-full 64/64), or the original 3-stage shadow/pending/commit with PIXEL shadowing Q on a registered want_pop tap, or a re-timed strobe. Recorded as FIT-RISKY ASSUMPTION 4 in super-engine/descriptor.h."
+  - "RESOLVED 2026-08-13 (kept for the record; see the interfaces: entry): PIXEL's SET value path at the 1-word/clock cadence is the dedicated 12-bit value bus. The strobe+stall alternative was fully built and measured (both fit; COMPOSITOR 120 LC vs the bus's 116; PIXEL-target SETs would have cost 2 slots) before the bus won on size, uniform slot arithmetic, and unloading the FIFO Q bus."
   - "Rev-2 FIFO desync telemetry is TBD: the display-list ENGINE no longer drives the 7200s' 9th-bit toggle, so VIDEO's Q8 detector has no signal and PIXEL dropped it. Decide whether rev 2 wants any desync observability (a status the CPU can poll?) or whether frame-bounded /RS recovery is enough."
   - "pixel_skip open decisions from the PIXEL fit: (1) with nonzero skip the line's final partial byte is never fetched, so the last <=7 px tile the previous byte — pad the per-line PIXELS record by a byte (costs a real byte counter, ~8 FF vs 6 spare cells) or declare fine skip costs the tail; (2) odd skip in micro-HAM shifts code phase and mis-parses the line — enforce even in the author or force skip[0]=0 in HAM mode (~1 cell)."
   - "need to address *what* raises nIRQ on ENGINE; it's reserved and routed but always 1."
@@ -1032,6 +1032,24 @@ interfaces:
     schematic capture — see feedback_timing_discipline.  Fallback if margins
     fail: omit the gate, registered /RE, 2 slots/word cadence (1-px VIDCMD
     spans then render 2px wide).
+  - |
+    COMPOSITOR -> PIXEL SET register path (decided 2026-08-13): a dedicated
+    12-bit registered value bus (set_pix_value[11:0]) alongside the
+    valid/target/commit handshake.  PIXEL's twelve former VIDCMD_Q taps
+    repoint to this bus and LEAVE the shared FIFO Q bus (12 fewer loads
+    there); PIXEL applies the value directly at the commit pulse — one
+    stage, no capture register (a captured shadow would be overwritten on
+    the very edge commit reads it, since value/valid/target/commit share a
+    pipeline stage).  The bus is registered from COMPOSITOR's staged word —
+    a combinational tap would be one cycle ahead of its own valid window.
+    Twelve point-to-point traces COMPOSITOR->PIXEL, same 25.175 MHz clock,
+    full-cycle setup — ordinary synchronous routing, not analog matching.
+    Chosen over a capture-strobe + fetch-stall design that measured +21 LC
+    on COMPOSITOR and made PIXEL-target SETs a permanent 2-slot special
+    case; the bus keeps record cost uniform (1 slot per word, everywhere).
+    CONSEQUENCE: COMPOSITOR is pin-closed — 63/64 I/O + 3/4 dedicated
+    inputs, one spare of each kind, accepted because its interface is
+    architecturally complete (video in/out, one FIFO, one handshake).
   - |
     VIDCMD FIFO empty flag -> COMPOSITOR (new pin vs Rev 1).
     /EF from the VIDCMD FIFOs routes to a COMPOSITOR input; synchronized

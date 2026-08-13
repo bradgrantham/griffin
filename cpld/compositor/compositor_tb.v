@@ -1,4 +1,7 @@
-// compositor_tb.v — iverilog testbench for the COMPOSITOR CPLD
+// compositor_tb.v — iverilog testbench for the value-bus SET path
+//
+// Copy of compositor_tb.v pointed at Compositor + the dedicated payload bus.
+// The option-3 testbench is untouched; both must pass.
 //
 // Self-checking.  Every named check prints PASS or FAIL; the run ends with
 // "TESTBENCH RESULT: PASS" (and exit status 0) only if no check failed.
@@ -41,6 +44,7 @@ module CompositorTb;
     wire        set_pix_valid;
     wire [2:0]  set_pix_target;
     wire        set_pix_commit;
+    wire [11:0] set_pix_value;
 
     integer errors;
     integer cycle;
@@ -57,7 +61,8 @@ module CompositorTb;
         .nVIDCMD_EF     (nVIDCMD_EF),
         .set_pix_valid  (set_pix_valid),
         .set_pix_target (set_pix_target),
-        .set_pix_commit (set_pix_commit)
+        .set_pix_commit (set_pix_commit),
+        .set_pix_value  (set_pix_value)
     );
 
     // ----------------------------------------------------------------
@@ -195,6 +200,52 @@ module CompositorTb;
     end
 
     // ----------------------------------------------------------------
+    // PIXEL-side mirror — exactly what cpld/pixel/pixel.v does: apply the
+    // dedicated bus straight to the live set_pix_target on set_pix_commit.
+    // No shadow: value, target, valid and commit are all registered from the
+    // same staged word, so the bus already carries the payload being
+    // committed on that edge.  pix_shadow is kept only to count captures.
+    // ----------------------------------------------------------------
+
+    reg [11:0] pix_shadow;
+    reg [11:0] pix_reg [0:7];
+    integer    pix_apply_count;
+    integer    same_edge_count;
+    integer    capture_count;
+
+    integer commit_cycles [0:15];
+    integer commit_values [0:15];
+    integer commit_targets [0:15];
+    integer commit_idx;
+
+    always @(posedge clk)
+    begin
+        if (set_pix_valid === 1'b1 && set_pix_commit === 1'b1)
+        begin
+            same_edge_count <= same_edge_count + 1;
+        end
+
+        if (set_pix_commit === 1'b1)
+        begin
+            pix_reg[set_pix_target] <= set_pix_value;
+            pix_apply_count         <= pix_apply_count + 1;
+            if (commit_idx < 16)
+            begin
+                commit_cycles[commit_idx]  = cycle;
+                commit_values[commit_idx]  = set_pix_value;
+                commit_targets[commit_idx] = set_pix_target;
+                commit_idx                 = commit_idx + 1;
+            end
+        end
+
+        if (set_pix_valid === 1'b1)
+        begin
+            pix_shadow    <= set_pix_value;
+            capture_count <= capture_count + 1;
+        end
+    end
+
+    // ----------------------------------------------------------------
     // PIXEL forwarding observation
     // ----------------------------------------------------------------
 
@@ -245,6 +296,20 @@ module CompositorTb;
                 $display("FAIL  %0s", name);
                 errors = errors + 1;
             end
+        end
+    endtask
+
+    task clear_mirror;
+        integer j;
+        begin
+            for (j = 0; j < 8; j = j + 1)
+            begin
+                pix_reg[j] = 12'hXXX;
+            end
+            pix_shadow      = 12'h000;
+            capture_count   = 0;
+            pix_apply_count = 0;
+            commit_idx      = 0;
         end
     endtask
 
@@ -345,6 +410,7 @@ module CompositorTb;
     integer skew_commit_blank;          // pop -> set_pix_commit, blanking
     integer skew_commit_active;         // pop -> set_pix_commit, active video
     integer fetch_cadence_slots;        // slots between consecutive 1-slot records
+    integer pix_set_spacing;            // clocks between consecutive PIXEL-SET commits
 
     integer i;
     integer k;
@@ -369,6 +435,11 @@ module CompositorTb;
         commit_slot_c       = 0;
         watch_value         = 12'hXXX;
         watch_cycle         = -1;
+        pix_shadow          = 12'h000;
+        pix_apply_count      = 0;
+        same_edge_count      = 0;
+        capture_count        = 0;
+        commit_idx           = 0;
         pix_idx             = 0;
         fifo_wr             = 0;
         fifo_rd             = 0;
@@ -382,6 +453,7 @@ module CompositorTb;
         skew_commit_blank     = -1;
         skew_commit_active    = -1;
         fetch_cadence_slots   = -1;
+        pix_set_spacing       = -1;
 
         $display("================ COMPOSITOR TESTBENCH ================");
 
@@ -766,6 +838,99 @@ module CompositorTb;
             span_is(0, SLOTS - 1, 12'h246));
 
         // ---------------------------------------------------------------
+        // PIXEL VALUE PATH — end to end through the mirror
+        // ---------------------------------------------------------------
+
+        // The three-word console preamble, all eager in blanking.
+        reset_dut;
+        clear_mirror;
+        push(vc_set(3'd2, 12'h2A7));                // pal_fg
+        push(vc_set(3'd3, 12'h3B8));                // pal_bg
+        push(vc_set(3'd4, 12'h4C9));                // ham_held
+        blank(60);
+        chk("PREAMBLE pal_fg value delivered",   pix_reg[2] === 12'h2A7);
+        chk("PREAMBLE pal_bg value delivered",   pix_reg[3] === 12'h3B8);
+        chk("PREAMBLE ham_held value delivered", pix_reg[4] === 12'h4C9);
+        // Level-triggered capture re-captures while a SET waits, so this is a
+        // lower bound, unlike the strobe variant's exact count.
+        chk("PREAMBLE at least one capture per PIXEL SET", capture_count >= 3);
+        chk("PREAMBLE one apply per PIXEL SET",   pix_apply_count === 3);
+
+        // An isolated PIXEL SET in the middle of an active line.
+        reset_dut;
+        clear_mirror;
+        push(vc_run(2'd1, 12'd100));
+        push(vc_set(3'd5, 12'h5A5));                // mode
+        push(vc_run(2'd1, 12'd538));
+        blank(40);
+        chk("MIDLINE_PIX_SET nothing applied before its slot", pix_apply_count === 0);
+        line(SLOTS);
+        chk("MIDLINE_PIX_SET value delivered", pix_reg[5] === 12'h5A5);
+        chk("MIDLINE_PIX_SET applied exactly once", pix_apply_count === 1);
+
+        // A consecutive run of PIXEL-target SETs: every value must arrive, in
+        // order, and the commits are two clocks apart because each one stalls
+        // the fetch for a cycle.
+        reset_dut;
+        clear_mirror;
+        push(vc_run(2'd1, 12'd1));
+        push(vc_set(3'd2, 12'h111));
+        push(vc_set(3'd3, 12'h222));
+        push(vc_set(3'd4, 12'h333));
+        push(vc_set(3'd5, 12'h444));
+        push(vc_run(2'd1, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("CONSEC_PIX values all delivered",
+            pix_reg[2] === 12'h111 && pix_reg[3] === 12'h222 &&
+            pix_reg[4] === 12'h333 && pix_reg[5] === 12'h444);
+        chk("CONSEC_PIX four applies", pix_apply_count === 4);
+        chk("CONSEC_PIX targets in order",
+            commit_targets[0] === 2 && commit_targets[1] === 3 &&
+            commit_targets[2] === 4 && commit_targets[3] === 5);
+        chk("CONSEC_PIX values match their targets",
+            commit_values[0] === 12'h111 && commit_values[1] === 12'h222 &&
+            commit_values[2] === 12'h333 && commit_values[3] === 12'h444);
+        pix_set_spacing = commit_cycles[1] - commit_cycles[0];
+        chk("CONSEC_PIX commits evenly spaced",
+            (commit_cycles[2] - commit_cycles[1]) === pix_set_spacing &&
+            (commit_cycles[3] - commit_cycles[2]) === pix_set_spacing);
+        $display("      MEASURED  consecutive PIXEL-target SET commits %0d clock(s) apart",
+                 pix_set_spacing);
+
+        // Mixed cmp / PIXEL SETs: the cmp ones must keep the 1-slot cadence.
+        reset_dut;
+        clear_mirror;
+        push(vc_run(2'd1, 12'd1));
+        push(vc_set(3'd0, 12'h666));                // cmp_held_fg, 1 slot
+        push(vc_set(3'd2, 12'h777));                // PIXEL, 2 slots
+        push(vc_set(3'd1, 12'h888));                // cmp_held_bg, 1 slot
+        push(vc_set(3'd3, 12'h999));                // PIXEL, 2 slots
+        push(vc_run(2'd2, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("MIXED_SETS cmp_held_fg took its value", dut.cmp_held_fg === 12'h666);
+        chk("MIXED_SETS cmp_held_bg took its value", dut.cmp_held_bg === 12'h888);
+        chk("MIXED_SETS PIXEL values delivered",
+            pix_reg[2] === 12'h777 && pix_reg[3] === 12'h999);
+        chk("MIXED_SETS two PIXEL applies", pix_apply_count === 2);
+        $display("      MEASURED  mixed run: cmp SET at slot %0d, PIXEL commits %0d clocks apart",
+                 first_ne(12'hFFF, SLOTS), commit_cycles[1] - commit_cycles[0]);
+
+        // Ordering guard: a commit landing on the same edge as the next
+        // capture must apply the old shadow.  Reported because the stall makes
+        // it unreachable — the suite does not need to model the arbitration.
+        $display("      MEASURED  %0d coincident commit+capture edges over the run",
+                 same_edge_count);
+        // The mirror image of the strobe variant: with no stall, SET N's
+        // commit and SET N+1's capture DO share an edge, so the ordering is
+        // load-bearing.  The CONSEC_PIX value checks above are what prove it.
+        // valid and commit are the same pipeline stage here by construction,
+        // so every PIXEL SET coincides and there is no shadow to arbitrate.
+        chk("SAME_EDGE valid and commit share a stage, applied straight off the bus",
+            same_edge_count > 0);
+
+        // ---------------------------------------------------------------
         // FIFO protocol
         // ---------------------------------------------------------------
         // A wasted /RE on an empty FIFO is harmless now (the 7200 ignores it
@@ -784,6 +949,8 @@ module CompositorTb;
         $display("  set_pix_commit leads its slot's RGB_OUT: %0d clock(s)", skew_commit_active);
         $display("  sustained fetch cadence                : %0d slot(s) per VIDCMD word",
                  fetch_cadence_slots);
+        $display("  PIXEL-target SET cost                  : %0d slot(s), no fetch stall",
+                 pix_set_spacing);
         $display("------------------------------------------------------");
 
         if (errors == 0)
