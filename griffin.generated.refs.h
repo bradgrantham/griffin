@@ -24,16 +24,9 @@ inline volatile uint8_t &GLUE_PS2_RX_DATA = *reinterpret_cast<volatile uint8_t *
 inline volatile uint8_t &GLUE_VSYNC_STATUS = *reinterpret_cast<volatile uint8_t *>(0xF00017UL);  // READ: Latched vsync frame interrupt status
 inline volatile uint8_t &GLUE_VSYNC_CLEAR = *reinterpret_cast<volatile uint8_t *>(0xF00017UL);  // WRITE: Write-1-to-clear for VSYNC_PENDING / level-6 IRQ ack
 
-// ENGINE: Video framebuffer DMA engine with 7200 FIFO write interface
-inline volatile uint8_t &ENGINE_SOURCE_PAGE = *reinterpret_cast<volatile uint8_t *>(0xD00003UL);  // WRITE: Framebuffer page: A[23:16] of source base address
-inline volatile uint8_t &ENGINE_CTRL = *reinterpret_cast<volatile uint8_t *>(0xD00005UL);  // WRITE: DMA control register
-inline volatile uint8_t &ENGINE_STATUS = *reinterpret_cast<volatile uint8_t *>(0xD00005UL);  // READ: DMA status readback
-
-// VIDEO: VGA 640x480@60 1bpp video generator with 7200 FIFO read interface
-inline volatile uint8_t &VIDEO_CLRINT = *reinterpret_cast<volatile uint8_t *>(0xE00003UL);  // WRITE: Write any value to clear the latched VIDEO vsync IRQ
-inline volatile uint8_t &VIDEO_CTRL = *reinterpret_cast<volatile uint8_t *>(0xE00005UL);  // WRITE: Video control register
-inline volatile uint8_t &VIDEO_CTRL_RB = *reinterpret_cast<volatile uint8_t *>(0xE00005UL);  // READ: Video control readback
-inline volatile uint8_t &VIDEO_CLRERR = *reinterpret_cast<volatile uint8_t *>(0xE00009UL);  // WRITE: Write any value to clear FIFO_ERROR sticky bit
+// ENGINE: Display-list DMA engine walking 4-word descriptors from the top 64K of RAM
+inline volatile uint16_t &ENGINE_DESC = *reinterpret_cast<volatile uint16_t *>(0xD00002UL);  // WRITE: Descriptor word address within RAM's top 64K; writing arms DMA
+inline volatile uint8_t &ENGINE_CTRL = *reinterpret_cast<volatile uint8_t *>(0xD00005UL);  // WRITE: DMA enable and abort; any write clears a pending ~ENGINE_IRQ
 
 // PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe
 inline volatile uint8_t &PORTS_JOYSTICK_PORT_1 = *reinterpret_cast<volatile uint8_t *>(0xFC0001UL);  // READ: Joystick port 1 switches, active low (0 = closed)

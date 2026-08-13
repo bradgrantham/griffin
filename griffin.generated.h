@@ -122,7 +122,7 @@ static constexpr int RAM_BANK_4_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Ve
 static constexpr int RAM_BANK_4_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
 
 // ------------------------------------------------------------
-// ENGINE: Video framebuffer DMA engine with 7200 FIFO write interface
+// ENGINE: Display-list DMA engine walking 4-word descriptors from the top 64K of RAM
 static constexpr uint32_t ENGINE_BASE = 0xD00000UL;
 static constexpr uint32_t ENGINE_SIZE = 0x100000UL;
 inline constexpr MemoryRange ENGINE(0xD00000UL, 0x100000UL);
@@ -130,41 +130,22 @@ static constexpr uint32_t ENGINE_IRQ_LEVEL = 3U;
 static constexpr int ENGINE_DTACK_WS = 0;  // wait states at 14000000 Hz
 static constexpr int ENGINE_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
 static constexpr int ENGINE_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
-static constexpr uint32_t ENGINE_SOURCE_PAGE = 0xD00003UL;  // WRITE: Framebuffer page: A[23:16] of source base address
-static constexpr uint32_t ENGINE_CTRL = 0xD00005UL;  // WRITE: DMA control register
-static constexpr uint32_t ENGINE_CTRL_DMA_EN_MASK  = 0x01U;  // bits 0:0
-static constexpr uint32_t ENGINE_CTRL_DMA_EN_SHIFT = 0U;
+static constexpr uint32_t ENGINE_DESC = 0xD00002UL;  // WRITE: Descriptor word address within RAM's top 64K; writing arms DMA
+static constexpr uint32_t ENGINE_DESC_ADDR_MASK  = 0x7FFFU;  // bits 14:0
+static constexpr uint32_t ENGINE_DESC_ADDR_SHIFT = 0U;
+static constexpr uint32_t ENGINE_CTRL = 0xD00005UL;  // WRITE: DMA enable and abort; any write clears a pending ~ENGINE_IRQ
+static constexpr uint32_t ENGINE_CTRL_ENABLE_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t ENGINE_CTRL_ENABLE_SHIFT = 0U;
 static constexpr uint32_t ENGINE_CTRL_DEFAULT = 0x00U;
-static constexpr uint32_t ENGINE_STATUS = 0xD00005UL;  // READ: DMA status readback
-static constexpr uint32_t ENGINE_STATUS_DMA_EN_MASK  = 0x01U;  // bits 0:0
-static constexpr uint32_t ENGINE_STATUS_DMA_EN_SHIFT = 0U;
-static constexpr uint32_t ENGINE_STATUS_FIFO_HF_MASK  = 0x02U;  // bits 1:1
-static constexpr uint32_t ENGINE_STATUS_FIFO_HF_SHIFT = 1U;
 
 // ------------------------------------------------------------
-// VIDEO: VGA 640x480@60 1bpp video generator with 7200 FIFO read interface
+// VIDEO: Freed region; rev-1 VIDEO retired in favor of TIMING+PIXEL+COMPOSITOR
 static constexpr uint32_t VIDEO_BASE = 0xE00000UL;
 static constexpr uint32_t VIDEO_SIZE = 0x100000UL;
 inline constexpr MemoryRange VIDEO(0xE00000UL, 0x100000UL);
-static constexpr uint32_t VIDEO_IRQ_LEVEL = 6U;
 static constexpr int VIDEO_DTACK_WS = 0;  // wait states at 14000000 Hz
 static constexpr int VIDEO_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
 static constexpr int VIDEO_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
-static constexpr uint32_t VIDEO_CLRINT = 0xE00003UL;  // WRITE: Write any value to clear the latched VIDEO vsync IRQ
-static constexpr uint32_t VIDEO_CTRL = 0xE00005UL;  // WRITE: Video control register
-static constexpr uint32_t VIDEO_CTRL_ENABLE_MASK  = 0x01U;  // bits 0:0
-static constexpr uint32_t VIDEO_CTRL_ENABLE_SHIFT = 0U;
-static constexpr uint32_t VIDEO_CTRL_IRQENB_MASK  = 0x02U;  // bits 1:1
-static constexpr uint32_t VIDEO_CTRL_IRQENB_SHIFT = 1U;
-static constexpr uint32_t VIDEO_CTRL_DEFAULT = 0x00U;
-static constexpr uint32_t VIDEO_CTRL_RB = 0xE00005UL;  // READ: Video control readback
-static constexpr uint32_t VIDEO_CTRL_RB_ENABLE_MASK  = 0x01U;  // bits 0:0
-static constexpr uint32_t VIDEO_CTRL_RB_ENABLE_SHIFT = 0U;
-static constexpr uint32_t VIDEO_CTRL_RB_FIFO_ERROR_MASK  = 0x02U;  // bits 1:1
-static constexpr uint32_t VIDEO_CTRL_RB_FIFO_ERROR_SHIFT = 1U;
-static constexpr uint32_t VIDEO_CTRL_RB_IRQENB_MASK  = 0x04U;  // bits 2:2
-static constexpr uint32_t VIDEO_CTRL_RB_IRQENB_SHIFT = 2U;
-static constexpr uint32_t VIDEO_CLRERR = 0xE00009UL;  // WRITE: Write any value to clear FIFO_ERROR sticky bit
 
 // ------------------------------------------------------------
 // PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe
@@ -407,8 +388,7 @@ static constexpr uint32_t ENGINE_WORDS_PER_BURST = 0x14U;
 static constexpr uint32_t VIDEO_PIXEL_BYTES_PER_LINE = 0x50U;
 static constexpr uint32_t VIDEO_LINE_PIXEL_OFFSET = 0x04U;
 static constexpr uint32_t VIDEO_LINE_STRIDE_BYTES = 0x54U;
-static constexpr uint32_t VIDEO_WORDS_PER_LINE = 0x2AU;
-static constexpr uint32_t ENGINE_WORDS_PER_FRAME = 0x4EC0U;
+static constexpr uint32_t VSYNC_IRQ_LEVEL = 0x06U;
 static constexpr uint32_t ENGINE_SIGNAL_PIXELS_FIFO_W = 0x01U;
 static constexpr uint32_t ENGINE_SIGNAL_VIDCMD_FIFO_W = 0x02U;
 static constexpr uint32_t ENGINE_SIGNAL_AUDIO_FIFO_W = 0x04U;
