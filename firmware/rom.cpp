@@ -613,42 +613,272 @@ static uint32_t parse_hex(const char *s, const char **end)
 }
 
 // ---------------------------------------------------------------------------
-// Video framebuffer — palette-and-pixels layout, start ENGINE DMA, enable scanout
+// Video framebuffer and the ENGINE display list
 //
-// Each scanline in memory is a 4-byte header (word 0 = {fg, bg} R3G3B2
-// palette, word 1 reserved) followed by 80 pixel bytes.  ENGINE streams the
-// header through the FIFO so VIDEO latches the per-line palette in-band — no
-// CPU palette register, no per-line timing.  The stride is a multiple of 4 so
-// the textport's long-word framebuffer movers stay valid.
+// Rev-1 streamed a fixed 42 words per scanline and carried the palette in band
+// as a 4-byte header.  Rev 2 has no VIDEO chip: ENGINE walks a descriptor list
+// in RAM, PIXEL unpacks a headerless 1bpp plane, and everything that used to be
+// a video register — palette, mode, pixel_skip — arrives as VIDCMD SET
+// instructions in the same list.  So the framebuffer is now plain: 480 lines of
+// 80 bytes, word aligned, no header, no stride padding, no page alignment.
+//
+// The encoders come from super-engine/descriptor.h, which is the same header
+// the emulator's ENGINE/PIXEL/COMPOSITOR models and the validation suite use.
+// It is bare-metal by construction (only <cstdint>/<cstddef>/<span> and the
+// generated header) and this is its first build for the target.
 // ---------------------------------------------------------------------------
 
-// The framebuffer is a 64K-page-aligned allocation from the firmware heap,
-// made once at video init by fb_alloc().  ENGINE_SOURCE_PAGE is page-granular
-// (A[23:16]) and the engine DMAs exactly FB_BYTES from page<<16, so the base
-// must be 64K-aligned and the whole frame (FB_BYTES < 64K) lives in that page.
-// FB_ADDR/FB_PAGE are filled in at runtime — there is no fixed framebuffer
-// address anywhere.
-static uint32_t FB_ADDR                   = 0;
-static uint8_t  FB_PAGE                   = 0;
-static constexpr unsigned FB_LINES        = 480;
-static constexpr unsigned FB_PIXEL_BYTES  = Griffin::VIDEO_PIXEL_BYTES_PER_LINE; // 80
-static constexpr unsigned FB_PIXEL_OFFSET = Griffin::VIDEO_LINE_PIXEL_OFFSET;    // 4
-static constexpr unsigned FB_STRIDE       = Griffin::VIDEO_LINE_STRIDE_BYTES;    // 84
-static constexpr unsigned FB_BYTES        = FB_LINES * FB_STRIDE;                // 40320, < 64K
-static constexpr uint16_t FB_DEFAULT_PALETTE = 0xFF00;  // fg=white, bg=black
+#include "../super-engine/descriptor.h"
+
+namespace se   = SuperEngine;
+namespace gtxt = griffin::textport;
+
+static uint32_t FB_ADDR                  = 0;
+static constexpr unsigned FB_LINES       = 480;
+static constexpr unsigned FB_WORDS_PER_LINE = se::PIXELS_WORDS_1BPP;      // 40
+static constexpr unsigned FB_STRIDE      = FB_WORDS_PER_LINE * 2;         // 80
+static constexpr unsigned FB_BYTES       = FB_LINES * FB_STRIDE;          // 38400
+
+// Console colours, as R4G4B4 VIDCMD SET values.  There is no FB_DEFAULT_PALETTE
+// any more — nothing is stamped into the framebuffer, the two SETs in the
+// frame preamble are the palette.
+static constexpr se::Rgb444 CONSOLE_FG = 0x0FFF;   // white
+static constexpr se::Rgb444 CONSOLE_BG = 0x0000;   // black
+
+// ---------------------------------------------------------------------------
+// Display-list window
+//
+// edma3.v's descriptor pointer is 15 bits of WORD address inside a hard-wired
+// page, so every descriptor has to live in 0x3F0000..0x3FFFFF and be 8-byte
+// aligned.  linker.ld reserves the top 32 KB for it and drops _stack_top below
+// the window, because the stack used to start at 0x400000 and would have grown
+// straight down through the table.
+//
+// Descriptors occupy the low 28 KB; the top 4 KB holds the VIDCMD payload
+// words, which are frame-owned data the descriptors point at (the console
+// needs three of them, the viewer 1440).
+// ---------------------------------------------------------------------------
+extern "C" char _displaylist_start[];
+
+static constexpr uint32_t DL_SIZE          = 0x8000;
+static constexpr uint32_t DL_VIDCMD_BYTES  = 0x1000;
+static constexpr uint32_t DL_TABLE_BYTES   = DL_SIZE - DL_VIDCMD_BYTES;
+static constexpr uint32_t DL_MAX_DESC      = DL_TABLE_BYTES / se::DESC_BYTES;   // 3584
+
+static uint32_t dl_table_base = 0;    // 0x3F8000
+static uint32_t dl_vidcmd_base = 0;   // 0x3FF000
+static uint32_t dl_desc_count = 0;    // descriptors emitted into the current list
+static uint32_t dl_vidcmd_used = 0;   // VIDCMD payload words emitted
+static bool     dl_overflow = false;
+
+// The vsync ISR re-arms from this every frame (crt0.s).  It is the word
+// address of the list's first descriptor within the descriptor page.
+extern "C" uint16_t engine_desc_word_addr;
+extern "C" volatile uint32_t video_frame_counter;
+extern "C" volatile uint32_t engine_frame_counter;
+
+static void dl_reset()
+{
+    dl_desc_count  = 0;
+    dl_vidcmd_used = 0;
+    dl_overflow    = false;
+}
+
+static void dl_emit(const se::Descriptor &d)
+{
+    if (dl_desc_count >= DL_MAX_DESC)
+    {
+        dl_overflow = true;
+        return;
+    }
+    const se::DescriptorWords w = se::encode_descriptor(d);
+    uint16_t *p = reinterpret_cast<uint16_t *>(dl_table_base + dl_desc_count * se::DESC_BYTES);
+    for (unsigned i = 0; i < se::DESC_WORDS; i++)
+    {
+        p[i] = w.w[i];
+    }
+    dl_desc_count++;
+}
+
+// A wait_hblank descriptor with no strobe and one payload word consumes
+// exactly one HBLANK edge and deposits nothing: the cheapest possible way to
+// spend a scanline.  edma3.v has no wait-VBLANK, so a run of these is how a
+// list armed mid-vblank walks to the top of the frame, and one more with
+// stop_after pins the end-of-frame IRQ to a fixed scanline.
+static void dl_emit_pacer(bool stop_after)
+{
+    se::Descriptor d;
+    d.src         = FB_ADDR;          // any readable word; nothing latches it
+    d.count       = 1;
+    d.signal_mask = se::SIGNAL_NONE;
+    d.wait_hblank = true;
+    d.stop_after  = stop_after;
+    dl_emit(d);
+}
+
+// Append VIDCMD words to the payload area and return their byte address.
+static uint32_t dl_put_vidcmd(const uint16_t *words, unsigned n)
+{
+    const uint32_t at = dl_vidcmd_base + dl_vidcmd_used * 2;
+    if ((dl_vidcmd_used + n) * 2 > DL_VIDCMD_BYTES)
+    {
+        dl_overflow = true;
+        return at;
+    }
+    uint16_t *p = reinterpret_cast<uint16_t *>(at);
+    for (unsigned i = 0; i < n; i++)
+    {
+        p[i] = words[i];
+    }
+    dl_vidcmd_used += n;
+    return at;
+}
+
+// One scanline of 1bpp pixels: two 20-word PIXELS descriptors, the first
+// waiting for the HBLANK edge that opens the line.  20 words is
+// ENGINE_WORDS_PER_BURST and splits the 40-word line evenly.
+static void dl_emit_pixel_line(unsigned line, bool wait_first)
+{
+    const uint32_t src = FB_ADDR + line * FB_STRIDE;
+    for (unsigned half = 0; half < 2; half++)
+    {
+        se::Descriptor d;
+        d.src         = src + half * (FB_WORDS_PER_LINE / 2) * 2;
+        d.count       = FB_WORDS_PER_LINE / 2;
+        d.signal_mask = se::SIGNAL_PIXELS_FIFO_W;
+        d.wait_hblank = wait_first && (half == 0);
+        dl_emit(d);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Walking from the vsync ISR to the top of the frame
+//
+// The list is armed inside line V_SYNC_START (490): TIMING latches vsync at the
+// start of that line and the ISR runs a few hundred cycles later.  Every
+// wait_hblank descriptor after that consumes one scanline boundary, so the list
+// needs one pacer for each of lines 491..524 before its first visible-line
+// group lands on line 0.
+//
+// This count is the one number in the list that depends on interrupt latency
+// rather than on arithmetic.  There is a full scanline (~445 SYSCLK, 32 us) of
+// slack, so it is not tight, but if the ISR ever slipped past a boundary the
+// whole image would shift by one line — cosmetic on a text console, and
+// visible immediately.
+// ---------------------------------------------------------------------------
+static constexpr unsigned VBLANK_WALK_LINES = 34;   // lines 491..524
+
+// The console's entire VIDCMD budget: three words, once per frame.
+// {SET pix_pal_fg, SET pix_pal_bg, RUN(passthrough,1)}.  COMPOSITOR holds the
+// last source to the end of a line and a line that receives no records at all
+// keeps holding, so one 1-slot passthrough RUN paints all 480 lines.  The two
+// SETs are consumed during blanking and cost no slot at all.
+static void dl_build_console_list()
+{
+    dl_reset();
+
+    const uint16_t preamble[3] = {
+        se::vidcmd_set(se::SET_PIX_PAL_FG, CONSOLE_FG),
+        se::vidcmd_set(se::SET_PIX_PAL_BG, CONSOLE_BG),
+        se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1),
+    };
+    const uint32_t pre_addr = dl_put_vidcmd(preamble, 3);
+
+    // Not wait_hblank: this runs the instant DESC is written, which is inside
+    // vertical blanking, which is exactly where a frame preamble belongs.
+    se::Descriptor pre;
+    pre.src         = pre_addr;
+    pre.count       = 3;
+    pre.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+    dl_emit(pre);
+
+    for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
+    {
+        dl_emit_pacer(false);
+    }
+    for (unsigned line = 0; line < FB_LINES; line++)
+    {
+        dl_emit_pixel_line(line, true);
+    }
+    dl_emit_pacer(true);
+}
 
 // ---------------------------------------------------------------------------
 // Per-line-palette image viewer
 //
-// Loads a 640x480 1bpp image and its companion 480-word per-line palette set,
-// interleaving them into the palette-and-pixels framebuffer: each scanline's
-// palette word lands in the header (bytes 0..1) and the 80 pixel bytes follow
-// at FB_PIXEL_OFFSET.  ENGINE + VIDEO then display it with per-line palettes
-// automatically (no CPU palette timing), so this just lays out the framebuffer
-// and returns once a PS/2 key is pressed.
+// The on-CF format is unchanged and needed no migration: image-tools writes a
+// plain 640x480 1bpp plane (480 x 80 bytes, no headers) plus a companion file
+// of 480 per-line palette words, D[15:8] fg / D[7:0] bg, each byte R3G3B2.
+// Rev-1 had to INTERLEAVE those two files into an 84-byte-stride framebuffer
+// so ENGINE could stream the palette in band; rev 2 does not, because the
+// palette has its own path now.  The pixel plane loads straight into the
+// framebuffer and the palette words become one VIDCMD packet per line.
+//
+// The list gains one VIDCMD descriptor per line — {SET pal_fg, SET pal_bg,
+// RUN(passthrough,1)} — which is the JIT discipline: three words land during
+// the line's HBLANK, the two SETs commit before pixel 0 at zero slot cost, and
+// the 1-slot RUN plus COMPOSITOR's hold covers the rest of the line.
 // ---------------------------------------------------------------------------
+
+// On-CF image geometry.  Not hardware; just the file layout, and it happens to
+// match the framebuffer exactly now that neither has a header.
+static constexpr unsigned IMG_PIXEL_BYTES = Griffin::VIDEO_PIXEL_BYTES_PER_LINE;  // 80
+
+// R3G3B2 (the image file's palette encoding) widened to R4G4B4 by field
+// replication — the same rule the DAC uses to widen 4 bits to 8, and the same
+// rule RUN_COLOR and the micro-HAM chroma codes use, one step earlier in the
+// chain.  3 bits into 4 borrows the top bit; 2 bits into 4 is the pair twice.
+static constexpr se::Rgb444 r3g3b2_to_rgb444(uint8_t c)
+{
+    const unsigned r3 = (c >> 5) & 0x7;
+    const unsigned g3 = (c >> 2) & 0x7;
+    const unsigned b2 = c & 0x3;
+    return se::rgb444((r3 << 1) | (r3 >> 2), (g3 << 1) | (g3 >> 2),
+                      (b2 << 2) | b2);
+}
+
+static void dl_build_viewer_list(const uint16_t *palettes)
+{
+    dl_reset();
+
+    for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
+    {
+        dl_emit_pacer(false);
+    }
+
+    for (unsigned line = 0; line < FB_LINES; line++)
+    {
+        const uint16_t pal = palettes[line];
+        const uint16_t packet[3] = {
+            se::vidcmd_set(se::SET_PIX_PAL_FG, r3g3b2_to_rgb444(static_cast<uint8_t>(pal >> 8))),
+            se::vidcmd_set(se::SET_PIX_PAL_BG, r3g3b2_to_rgb444(static_cast<uint8_t>(pal & 0xFF))),
+            se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1),
+        };
+        const uint32_t at = dl_put_vidcmd(packet, 3);
+
+        // VIDCMD ahead of the pixels: COMPOSITOR must have this line's SETs
+        // before pixel 0, and it is only three words against the pixel
+        // stream's forty.
+        se::Descriptor d;
+        d.src         = at;
+        d.count       = 3;
+        d.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+        d.wait_hblank = true;
+        dl_emit(d);
+
+        dl_emit_pixel_line(line, false);
+    }
+    dl_emit_pacer(true);
+}
+
 static void view_image(const char *image_path, const char *palette_path)
 {
+    if (FB_ADDR == 0)
+    {
+        printf("view_image: no framebuffer\n");
+        return;
+    }
+
     // Per-line palette set: 480 words, D[15:8]=fg, D[7:0]=bg, each byte R3G3B2.
     // malloc, not new[]: the throwing array-new drags in libstdc++ exception
     // machinery and overflows ROM; newlib malloc/free keeps the image lean.
@@ -685,42 +915,60 @@ static void view_image(const char *image_path, const char *palette_path)
         return;
     }
 
-    // Interleave into the strided framebuffer one scanline at a time: palette
-    // word into the header, then the line's 80 pixel bytes after the header.
+    // The file's stride and the framebuffer's are both 80 now, so this is a
+    // straight read — rev-1's per-line interleave is gone.
+    static_assert(IMG_PIXEL_BYTES == FB_STRIDE,
+                  "image file stride must match the framebuffer stride");
     bool ok = true;
     for (unsigned line = 0; line < FB_LINES; line++)
     {
         uint8_t *lp = reinterpret_cast<uint8_t *>(FB_ADDR + line * FB_STRIDE);
-        *reinterpret_cast<uint16_t *>(lp) = palettes[line];
-        size_t got = fread(lp + FB_PIXEL_OFFSET, 1, FB_PIXEL_BYTES, img);
-        if (got != FB_PIXEL_BYTES)
+        if (fread(lp, 1, IMG_PIXEL_BYTES, img) != IMG_PIXEL_BYTES)
         {
             ok = false;
             break;
         }
     }
     fclose(img);
-    free(palettes);
     if (!ok)
     {
         printf("view_image: %s short read\n", image_path);
+        free(palettes);
         return;
     }
 
-    // The image now scans out with its per-line palettes in-band — no CPU work.
-    // Block until a PS/2 key arrives (interrupts stay enabled), then return.
+    // Swap the display list under the running raster.  The vsync ISR re-arms
+    // from engine_desc_word_addr every frame, and both lists start at the same
+    // table base, so rebuilding in place and letting the next vsync pick it up
+    // is the whole handshake.  Single-buffered: there is a one-frame window
+    // where the engine may be mid-list while this rewrites it, which can tear
+    // one frame.  Acceptable for a still-image viewer; a double-buffered
+    // version would need a second 12 KB table and a pointer swap.
+    dl_build_viewer_list(palettes);
+    free(palettes);
+    if (dl_overflow)
+    {
+        printf("view_image: display list overflowed the reserved window\n");
+        dl_build_console_list();
+        return;
+    }
+
+    // Block until a PS/2 key arrives (interrupts stay enabled), then restore
+    // the console list and let the textport repaint itself.
     while (!ps2_received_ready())
     {
-        // idle; ENGINE/VIDEO refresh the screen from the framebuffer
+        // idle; ENGINE refreshes the screen from the list
     }
     (void)ps2_getchar();
+
+    dl_build_console_list();
+    gtxt::g_textport.clear();
 }
 
 // ---------------------------------------------------------------------------
 // Textport demo: drive an 80x30 VT102-compatible textport on the framebuffer
 // ---------------------------------------------------------------------------
 
-namespace gtxt = griffin::textport;
 namespace griffin::textport {
     extern const FontRenderer font_8x16_renderer;
     extern const FontRenderer font_8x8_renderer;
@@ -748,10 +996,10 @@ namespace griffin::textport {
 
     gtxt::g_textport.configure(
         reinterpret_cast<uint8_t*>(FB_ADDR),
-        FB_STRIDE,                        // per-line stride (header + 80 px)
+        FB_STRIDE,                        // headerless 80-byte pixel plane
         &gtxt::font_8x16_renderer,
         80U, 24U,
-        FB_PIXEL_OFFSET, FB_DEFAULT_PALETTE);
+        0);
     gtxt::g_vt102.reset();
 
     for (int rep = 0; rep < 10; ++rep)
@@ -789,18 +1037,22 @@ static void textport_console_enable()
     const unsigned font_h = fr.font->height;
 
     gtxt::g_vt102.set_responder(&textport_uart_responder);
+    // Headerless plane: pixel_offset 0, stride 80.  The palette is not in the
+    // framebuffer any more — it is the two SETs in the list's frame preamble —
+    // so there is no palette word to stamp and nothing to restamp after a
+    // clear or a scroll.
     gtxt::g_textport.configure(
         reinterpret_cast<uint8_t*>(FB_ADDR),
         FB_STRIDE,
         &fr,
         CONSOLE_COLS, CONSOLE_ROWS,
-        FB_PIXEL_OFFSET, FB_DEFAULT_PALETTE);
+        0);
     gtxt::g_vt102.reset();
 
     // Splash sits at the top of the FB; the Textport's char buffer for
     // those rows is still ' ', so the cursor avoids them until scrolling
-    // evicts them.  Blit into the pixel region (past the per-line header).
-    splash_blit_topleft(reinterpret_cast<uint8_t*>(FB_ADDR + FB_PIXEL_OFFSET), FB_STRIDE);
+    // evicts them.
+    splash_blit_topleft(reinterpret_cast<uint8_t*>(FB_ADDR), FB_STRIDE);
     const unsigned splash_rows = splash_rows_for_font_height(font_h);
     gtxt::g_textport.move_to(0, static_cast<int>(splash_rows));
 
@@ -821,9 +1073,10 @@ static void textport_console_enable()
     printf("Memory: %ld KB\n", memory_size);
 }
 
-// Allocate the framebuffer from the firmware heap, rounded up to a 64K page
-// boundary so its base is a clean ENGINE source page (A[23:16]).  malloc +
-// round-up avoids an aligned_alloc/memalign dependency; it is never freed.
+// The framebuffer is an ordinary heap allocation now: ENGINE descriptors carry
+// a full 22-bit source address, so the 64K page alignment rev-1's SOURCE_PAGE
+// forced is gone.  Only word alignment matters (the engine reads 16-bit words,
+// and the textport's long movers want 4).
 static void *fb_raw = nullptr;   // retained base of the framebuffer allocation (never freed)
 
 static void fb_alloc()
@@ -832,35 +1085,56 @@ static void fb_alloc()
     {
         return;
     }
-    fb_raw = malloc(FB_BYTES + 0xFFFFu);
+    fb_raw = malloc(FB_BYTES + 4);
     if (fb_raw == nullptr)
     {
         printf("FB: alloc of %u bytes FAILED -- video disabled\n", FB_BYTES);
         return;
     }
-    FB_ADDR = (reinterpret_cast<uint32_t>(fb_raw) + 0xFFFFu) & ~0xFFFFu;
-    FB_PAGE = static_cast<uint8_t>(FB_ADDR >> 16);
+    FB_ADDR = (reinterpret_cast<uint32_t>(fb_raw) + 3u) & ~3u;
 }
 
 static void video_framebuffer_init()
 {
     fb_alloc();
+    if (FB_ADDR == 0)
+    {
+        return;
+    }
 
-    debug_printf("VIDEO: palette-and-pixels framebuffer at 0x%06lX (%u-byte stride)\n",
+    dl_table_base  = reinterpret_cast<uint32_t>(_displaylist_start);
+    dl_vidcmd_base = dl_table_base + DL_TABLE_BYTES;
+
+    debug_printf("VIDEO: framebuffer at 0x%06lX (%u lines x %u bytes, headerless)\n",
                  static_cast<unsigned long>(FB_ADDR),
-                 static_cast<unsigned>(FB_STRIDE));
+                 static_cast<unsigned>(FB_LINES), static_cast<unsigned>(FB_STRIDE));
 
-    // The framebuffer is laid out (palette headers + pixels) by whoever draws
-    // into it next — textport_console_enable() clears it immediately after.
-    ENGINE_SOURCE_PAGE = FB_PAGE;
-    ENGINE_CTRL = Griffin::ENGINE_CTRL_DMA_EN_MASK;
-    printf("ENGINE: DMA enabled, page=0x%02X\n", FB_PAGE);
+    dl_build_console_list();
+    if (dl_overflow)
+    {
+        printf("ENGINE: display list does not fit the %lu-byte window -- video disabled\n",
+               static_cast<unsigned long>(DL_SIZE));
+        return;
+    }
 
-    VIDEO_CLRERR = 0;           // clear any stale FIFO_ERROR
-    VIDEO_CTRL = Griffin::VIDEO_CTRL_ENABLE_MASK;
+    // What the vsync ISR writes to DESC every frame: the word address of the
+    // first descriptor inside the descriptor page.
+    engine_desc_word_addr =
+        static_cast<uint16_t>((dl_table_base - se::DESC_TABLE_BASE) >> 1);
 
-    printf("VIDEO: enabled (CTRL_RB=0x%02X)\n",
-                 static_cast<unsigned>(VIDEO_CTRL_RB));
+    printf("ENGINE: list at 0x%06lX, %lu descriptors (%lu bytes), %lu VIDCMD words\n",
+           static_cast<unsigned long>(dl_table_base),
+           static_cast<unsigned long>(dl_desc_count),
+           static_cast<unsigned long>(dl_desc_count * se::DESC_BYTES),
+           static_cast<unsigned long>(dl_vidcmd_used));
+
+    // Arm it once by hand; from here the vsync ISR re-arms every frame.  There
+    // is no readback to confirm with — ENGINE is write-only, the region reads
+    // back as open bus — so the descriptor address is what gets printed.
+    ENGINE_CTRL = Griffin::ENGINE_CTRL_ENABLE_MASK;
+    ENGINE_DESC = engine_desc_word_addr;
+    printf("ENGINE: armed at DESC=0x%04X\n",
+           static_cast<unsigned>(engine_desc_word_addr));
 }
 
 void process_ps2_inputs()

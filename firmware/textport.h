@@ -34,15 +34,15 @@ public:
     // screen.  Caller owns the framebuffer (must be aligned per ENGINE).
     //
     // fb is the LINE base (start of each scanline).  pixel_offset is the byte
-    // offset of pixel data within each line — nonzero when the framebuffer
-    // carries a per-line header ahead of the pixels (Griffin palette-and-pixels
-    // uses a 4-byte header).  palette_word (fg<<8 | bg) is stamped into bytes
-    // [0..1] of every scanline; the fast pixel clears would otherwise zero it.
-    // pixel_offset==0 selects the legacy headerless layout.
+    // offset of pixel data within each line, retained for framebuffers that
+    // carry a per-line header ahead of the pixels.  Griffin no longer has one:
+    // the palette left the framebuffer for VIDCMD SET instructions when rev-1
+    // VIDEO was retired, so the console configures pixel_offset = 0 and there
+    // is nothing to stamp into a header or restamp after a clear.
     void configure(uint8_t* fb, unsigned pitch_bytes,
                    const FontRenderer* fr,
                    unsigned cols, unsigned rows,
-                   unsigned pixel_offset = 0, uint16_t palette_word = 0);
+                   unsigned pixel_offset = 0);
 
     // --- VT102 sink interface ----------------------------------------------
     // Each of these is intended to be called by Vt102Parser.  Cursor is
@@ -111,7 +111,6 @@ private:
     uint8_t* pix_ = nullptr;         // pixel base = fb_ + pixel_offset_
     unsigned pitch_ = 0;
     unsigned pixel_offset_ = 0;      // bytes of per-line header before pixels
-    uint16_t palette_word_ = 0;      // in-band per-line palette (fg<<8 | bg)
     const FontRenderer* fr_ = nullptr;
 
     uint8_t cols_ = 0;

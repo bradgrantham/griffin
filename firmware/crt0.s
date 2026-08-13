@@ -33,10 +33,10 @@ vector_table:
     .long   _default_handler_24 | 24: Spurious interrupt
     .long   _default_handler_25 | 25: Level 1 autovector
     .long   ports_isr           | 26: Level 2 autovector (PORTS: PS/2 mouse + audio FIFO half-full)
-    .long   _default_handler_27 | 27: Level 3 autovector
+    .long   _engine_isr         | 27: Level 3 autovector (ENGINE display list stop+IRQ)
     .long   ps2_isr             | 28: Level 4 autovector (PS/2 keyboard frame IRQ in GLUE)
     .long   _duart_isr          | 29: Level 5 autovector (DUART)
-    .long   _video_isr          | 30: Level 6 autovector (VIDEO)
+    .long   _vsync_isr          | 30: Level 6 autovector (TIMING vsync, latched in GLUE)
     .long   _default_handler_31 | 31: Level 7 autovector
 
     .long   _default_handler_32 | 32-47: TRAP #0-15
@@ -821,9 +821,35 @@ _duart_isr:
 
     .section .text
 
-_video_isr:
-    move.b  #0, VIDEO_CLRINT            | ack VIDEO IRQ
+| _vsync_isr: level 6, TIMING's vsync latched in GLUE.
+|
+| MANDATORY, and level-TRIGGERED: GLUE holds ~IRQ6 asserted until VSYNC_CLEAR
+| is written, so an unacked vsync re-enters this handler forever.  (The rev-1
+| VIDEO CTRL.IRQENB gate that used to make this optional went with the chip.)
+|
+| It also re-arms the display list.  ENGINE stops itself at the end of every
+| frame (the list's trailing stop_after pacer), so something has to write DESC
+| again or the screen goes black after one frame.  Doing it from vsync is what
+| locks the list to the raster: the leading wait_hblank pacers in the list walk
+| from here to the top of the frame.
+|
+| DESC is a TRUE 16-bit register holding a WORD address inside the descriptor
+| page — it must be move.w, and a move.b does nothing at all.
+_vsync_isr:
+    move.b  #1, GLUE_VSYNC_CLEAR        | W1C the latch; anything else livelocks
     addq.l  #1, video_frame_counter
+    move.w  engine_desc_word_addr, ENGINE_DESC   | re-arm for the next frame
+    rte
+
+| _engine_isr: level 3, the display list's trailing stop_after descriptor.
+|
+| Also mandatory and also level-triggered.  The list has already disarmed
+| itself; this only drops the IRQ line.  Write ENABLE=1 (not 0): any write
+| clears the pending IRQ, but D0=0 would additionally abort, discarding a
+| descriptor the next arm is about to want.
+_engine_isr:
+    move.b  #1, ENGINE_CTRL             | ack, stay enabled (list already stopped)
+    addq.l  #1, engine_frame_counter
     rte
 
 | ====================================================================
@@ -1312,3 +1338,15 @@ tick_counter:
     .global video_frame_counter
 video_frame_counter:
     .skip 4
+
+    .global engine_frame_counter
+engine_frame_counter:
+    .skip 4
+
+    | Word address of the display list's first descriptor, within the 0x3F0000
+    | descriptor page.  The vsync ISR moves this straight to ENGINE_DESC, so
+    | switching lists (console <-> image viewer) is one word store from C.
+    .global engine_desc_word_addr
+engine_desc_word_addr:
+    .skip 2
+    .align 2

@@ -50,9 +50,10 @@ void ports_isr(void)
     uint8_t audio_status = PORTS_AUDIO_STATUS;
     if (audio_status & Griffin::PORTS_AUDIO_STATUS_HF_IRQ_MASK)
     {
-        /* STUB: refill the 7202 FIFOs here once audio playback exists.
-         * Roughly 512 stereo sample pairs of headroom per service; write
-         * them to AUDIO_FIFO.  Until then the DACs simply run dry. */
+        /* STUB: refill the audio FIFOs here once playback exists.  They are
+         * 7200s (256 pairs deep), so half-full leaves roughly 128 stereo
+         * sample pairs of headroom per service; write them to AUDIO_FIFO.
+         * Until then the DACs simply run dry. */
 
         /* Ack.  AUDIO_CONTROL is a plain write register, not write-1-clear:
          * only CLEAR_HF_IRQ is self-clearing, so ENABLE has to be written

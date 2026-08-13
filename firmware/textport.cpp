@@ -15,8 +15,8 @@ Textport g_textport;
 
 // --- Fast 32-bit framebuffer movers ---------------------------------------
 //
-// 1bpp framebuffer is at a long-aligned base (0x0F0000) with a long-aligned
-// pitch (80 bytes for 640 px wide).  Scroll counts vary with font height,
+// The 1bpp framebuffer is a long-aligned heap allocation with a long-aligned
+// pitch (80 bytes for 640 px wide, headerless).  Scroll counts vary with font height,
 // so we use Duff's device unroll-by-8 to handle an arbitrary long count
 // without a tail loop.  Each `*dst++ = *src++` compiles to a single
 // `move.l (a1)+,(a0)+` on m68k — the fastest copy primitive available.
@@ -93,11 +93,10 @@ static constexpr uint32_t CURSOR_REVEAL_TICKS = 5;
 void Textport::configure(uint8_t* fb, unsigned pitch_bytes,
                          const FontRenderer* fr,
                          unsigned cols, unsigned rows,
-                         unsigned pixel_offset, uint16_t palette_word)
+                         unsigned pixel_offset)
 {
     fb_            = fb;
     pixel_offset_  = pixel_offset;
-    palette_word_  = palette_word;
     pix_           = fb + pixel_offset;
     pitch_ = pitch_bytes;
     fr_    = fr;
@@ -145,25 +144,13 @@ void Textport::clear()
     show_cursor_();
 }
 
-// Clear n_scanlines worth of pixels at line base `base`, then restamp each
-// scanline's in-band palette header — the fast long-clear above zeros the
-// header (fg=bg=0 -> invisible text), so we rewrite palette_word_ into bytes
-// [0..1] of every cleared scanline.  No-op header stamp for the legacy
-// headerless layout (pixel_offset_ == 0).
+// Clear n_scanlines worth of pixels at line base `base`.  There is no per-line
+// header to preserve any more — the palette moved out of the framebuffer and
+// into the display list's VIDCMD SETs — so this is just the fast long-clear.
 void Textport::clear_scanlines_(uint8_t* base, unsigned n_scanlines)
 {
     fb_clear_longs(reinterpret_cast<uint32_t*>(base),
                    (n_scanlines * pitch_) >> 2);
-    if (pixel_offset_ == 0)
-    {
-        return;
-    }
-    uint8_t* p = base;
-    for (unsigned s = 0; s < n_scanlines; ++s)
-    {
-        *reinterpret_cast<uint16_t*>(p) = palette_word_;
-        p += pitch_;
-    }
 }
 
 void Textport::bell()

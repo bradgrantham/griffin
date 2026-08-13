@@ -1,6 +1,6 @@
 ENTRY(_start)
 
-_min_heap = 0x40000;      /* heap holds the 64K-aligned framebuffer + allocations */
+_min_heap = 0x40000;      /* heap holds the framebuffer + allocations */
 _min_stack = 0x2000;      /* required amount of stack */
 
 INCLUDE ../griffin.generated.ld
@@ -8,8 +8,22 @@ INCLUDE ../griffin.generated.ld
 /* ---- Firmware RAM map ------------------------------------------------------
    Low RAM (from _app_base) is the application region; firmware keeps its
    private data, heap and stack up high so the app load/link base never moves
-   as firmware grows.  The framebuffer is a 64K-aligned heap allocation
-   (fb_alloc), so no fixed framebuffer address is reserved here. */
+   as firmware grows.  The framebuffer is an ordinary word-aligned heap
+   allocation (fb_alloc) — ENGINE descriptors carry full 22-bit source
+   addresses, so it no longer needs 64K page alignment and no fixed
+   framebuffer address is reserved here.
+
+   The DISPLAY LIST is different and does need a fixed home.  ENGINE's
+   descriptor pointer is 15 bits of WORD address inside one hard-wired 64K
+   page (edma3.v forms {8'h3F, desc_ptr}), so every descriptor must live in
+   0x3F0000..0x3FFFFF, 8-byte aligned, and must not straddle the top of RAM.
+   32 KB at the very top is reserved for it below, which also means THE STACK
+   CANNOT START AT THE TOP OF RAM ANY MORE: it used to be
+   ORIGIN(RAM)+LENGTH(RAM) = 0x400000 and would have grown straight down
+   through the table.  _stack_top now sits just under the window. */
+_displaylist_size  = 0x8000;    /* 32 KB: viewer list is the big one, ~11.5 KB */
+_displaylist_start = RAM_ORIGIN + RAM_TOTAL_SIZE - _displaylist_size;   /* 0x3F8000 */
+_displaylist_end   = RAM_ORIGIN + RAM_TOTAL_SIZE;                       /* 0x400000 */
 _app_base     = 0x001000;   /* loaded apps link and run here (just above vectors) */
 /* firmware .data / .bss / heap base: 512K reserved at the top of RAM, tracking
    RAM_TOTAL_SIZE from griffin.generated.ld (0x780000 with 8MB of RAM) */
@@ -86,7 +100,9 @@ SECTIONS
         . = ALIGN(8);
     } >RAM
 
-    _stack_top = ORIGIN(RAM) + LENGTH(RAM);
+    /* Just below the display-list window, NOT at the top of RAM: the engine
+       owns 0x3F8000..0x3FFFFF and the stack must not grow into it. */
+    _stack_top = _displaylist_start;
 
     /* newlib's __libc_init_array iterates between __init_array_start and
        __init_array_end (double underscore — weak refs).  Same for
