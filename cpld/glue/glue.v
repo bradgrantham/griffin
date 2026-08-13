@@ -39,7 +39,10 @@ module glue (
     // pinout.  (Do not write the assignment prefix in prose: run_fitter.sh
     // greps for it and any line carrying it lands in the .pin file.)
     input  wire        DEBUG_IN,         // UART RX input
-    input  wire        nVIDEO_IRQ,       // VIDEO CPLD interrupt request (active low)
+    input  wire        nVSYNC,           // TIMING's VSYNC, tee'd from the VGA net
+                                         // before the 74AC541 buffer (was rev-1
+                                         // ~VIDEO_IRQ on the same pin); latched
+                                         // below into the level-6 frame IRQ
     input  wire        nDUART_DTACK,     // DUART asserts when ready
     input  wire        nDUART_IRQ,       // DUART interrupt request (active low)
     input  wire        nENGINE_IRQ,      // ENGINE CPLD interrupt request (active low)
@@ -181,12 +184,19 @@ module glue (
     // Interrupt priority encoder (active-low nIPL to 68000)
     //
     // Priority levels (from griffin.yml / griffin.md):
-    //   6: VIDEO    (~VIDEO_IRQ)            — nIPL = 001
+    //   6: VSYNC    (latched from TIMING's nVSYNC; W1C via VSYNC_CLEAR)
+    //                                        — nIPL = 001
     //   5: DUART    (~DUART_IRQ)            — nIPL = 010
     //   4: PS/2     (~PS2_IRQ,    internal) — nIPL = 011
     //   3: ENGINE   (~ENGINE_IRQ)           — nIPL = 100
     //   2: PORTS    (~PORTS_IRQ)            — nIPL = 101
     //   none:                               — nIPL = 111
+    //
+    // TIMING has no CPU bus, so the frame IRQ's latch and acknowledge live
+    // here: 2-FF synchronize nVSYNC (25.175 MHz domain) into SYSCLK, detect
+    // its assertion (falling) edge, hold vsync_pending until the ISR writes
+    // VSYNC_CLEAR bit 0.  A raw level would double-fire (sync pulse is two
+    // lines, ~63 us, longer than the ISR) or be missed if shortened.
     // ----------------------------------------------------------------
 
     wire duart_irq_active     = ~nDUART_IRQ;
@@ -199,7 +209,28 @@ module glue (
     wire ports_irq_active     = ~nPORTS_IRQ;
     wire ps2_irq_active;  // driven by PS/2 bit_ready below
 
-    assign nIPL = ~nVIDEO_IRQ        ? 3'b001 :  // level 6
+    reg [1:0] vsync_sync;
+    reg       vsync_last;
+    reg       vsync_pending;
+
+    always @(posedge SYSCLK) begin
+        if (RESET) begin
+            vsync_sync    <= 2'b11;
+            vsync_last    <= 1'b1;
+            vsync_pending <= 1'b0;
+        end else begin
+            vsync_sync <= {vsync_sync[0], nVSYNC};
+            vsync_last <= vsync_sync[1];
+            // Set wins over a simultaneous clear so a frame edge can never
+            // be lost to an unluckily timed ISR ack.
+            if (vsync_last & ~vsync_sync[1])
+                vsync_pending <= 1'b1;
+            else if (vsync_clear_write_select & D[0])
+                vsync_pending <= 1'b0;
+        end
+    end
+
+    assign nIPL = vsync_pending      ? 3'b001 :  // level 6
                   duart_irq_active   ? 3'b010 :  // level 5
                   ps2_irq_active     ? 3'b011 :  // level 4
                   engine_irq_active  ? 3'b100 :  // level 3
@@ -256,6 +287,8 @@ module glue (
     localparam [23:0] GLUE_PS2_STATUS_ADDR   = `GLUE_PS2_STATUS;
     localparam [23:0] GLUE_PS2_CTRL_ADDR     = `GLUE_PS2_CTRL;
     localparam [23:0] GLUE_PS2_RX_DATA_ADDR  = `GLUE_PS2_RX_DATA;
+    // VSYNC_STATUS and VSYNC_CLEAR share 0xF00017 (R/W sides of the same slot).
+    localparam [23:0] GLUE_VSYNC_STATUS_ADDR = `GLUE_VSYNC_STATUS;
 
     wire debug_out_select      = glue_select & lo_byte_selected & write
                                  & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
@@ -275,6 +308,10 @@ module glue (
                                    & (A_lo[5:1] == GLUE_PS2_CTRL_ADDR[5:1]);
     wire ps2_rx_data_read_select = glue_select & lo_byte_selected & read
                                    & (A_lo[5:1] == GLUE_PS2_RX_DATA_ADDR[5:1]);
+    wire vsync_status_read_select = glue_select & lo_byte_selected & read
+                                    & (A_lo[5:1] == GLUE_VSYNC_STATUS_ADDR[5:1]);
+    wire vsync_clear_write_select = glue_select & lo_byte_selected & write
+                                    & (A_lo[5:1] == GLUE_VSYNC_STATUS_ADDR[5:1]);
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -283,7 +320,7 @@ module glue (
     // etc. can drive the bus.
     // ----------------------------------------------------------------
     wire glue_read_active = debug_in_select | ps2_status_read_select
-                          | ps2_rx_data_read_select;
+                          | ps2_rx_data_read_select | vsync_status_read_select;
 
     reg [7:0] glue_read_data;
     always @(*) begin
@@ -301,6 +338,8 @@ module glue (
                               rx_ready};         // bit 0: RX_READY
         else if (ps2_rx_data_read_select)
             glue_read_data = rx_byte;
+        else if (vsync_status_read_select)
+            glue_read_data = {7'd0, vsync_pending};
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;
@@ -543,7 +582,7 @@ endmodule
 //PIN: nHALT           : 25
 //PIN: DEBUG_IN        : 64
 //PIN: DEBUG_OUT       : 61
-//PIN: nVIDEO_IRQ      : 65
+//PIN: nVSYNC          : 65
 //PIN: nROM_SELECT     : 17
 //PIN: nROM_WE         : 41
 //PIN: nAS             : 1

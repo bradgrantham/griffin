@@ -21,6 +21,8 @@ inline volatile uint8_t &GLUE_PS2_STATUS = *reinterpret_cast<volatile uint8_t *>
 inline volatile uint8_t &GLUE_PS2_CLEAR = *reinterpret_cast<volatile uint8_t *>(0xF00011UL);  // WRITE: Write-1-to-clear for PS2_STATUS latched flags / IRQ ack
 inline volatile uint8_t &GLUE_PS2_CTRL = *reinterpret_cast<volatile uint8_t *>(0xF00013UL);  // WRITE: Open-drain drive control for PS2_CLK and PS2_DATA for the TX inhibit handshake
 inline volatile uint8_t &GLUE_PS2_RX_DATA = *reinterpret_cast<volatile uint8_t *>(0xF00015UL);  // READ: Assembled PS/2 data byte; valid while RX_READY is set
+inline volatile uint8_t &GLUE_VSYNC_STATUS = *reinterpret_cast<volatile uint8_t *>(0xF00017UL);  // READ: Latched vsync frame interrupt status
+inline volatile uint8_t &GLUE_VSYNC_CLEAR = *reinterpret_cast<volatile uint8_t *>(0xF00017UL);  // WRITE: Write-1-to-clear for VSYNC_PENDING / level-6 IRQ ack
 
 // ENGINE: Video framebuffer DMA engine with 7200 FIFO write interface
 inline volatile uint8_t &ENGINE_SOURCE_PAGE = *reinterpret_cast<volatile uint8_t *>(0xD00003UL);  // WRITE: Framebuffer page: A[23:16] of source base address

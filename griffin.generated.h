@@ -68,6 +68,12 @@ static constexpr uint32_t GLUE_PS2_CTRL_DATA_SHIFT = 1U;
 static constexpr uint32_t GLUE_PS2_RX_DATA = 0xF00015UL;  // READ: Assembled PS/2 data byte; valid while RX_READY is set
 static constexpr uint32_t GLUE_PS2_RX_DATA_MASK  = 0xFFU;  // bits 7:0
 static constexpr uint32_t GLUE_PS2_RX_DATA_SHIFT = 0U;
+static constexpr uint32_t GLUE_VSYNC_STATUS = 0xF00017UL;  // READ: Latched vsync frame interrupt status
+static constexpr uint32_t GLUE_VSYNC_STATUS_VSYNC_PENDING_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t GLUE_VSYNC_STATUS_VSYNC_PENDING_SHIFT = 0U;
+static constexpr uint32_t GLUE_VSYNC_CLEAR = 0xF00017UL;  // WRITE: Write-1-to-clear for VSYNC_PENDING / level-6 IRQ ack
+static constexpr uint32_t GLUE_VSYNC_CLEAR_VSYNC_PENDING_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t GLUE_VSYNC_CLEAR_VSYNC_PENDING_SHIFT = 0U;
 
 // ------------------------------------------------------------
 // ROM: 2x SST39SF040-70 (512Kx8 DIP-32 5V NOR flash, socketed; 1MB total)
@@ -389,7 +395,7 @@ static constexpr uint32_t CF_CMD_SET_FEATURES = 0xEFU;
 static constexpr uint32_t CF_CMD_SET_8BIT = 0x01U;
 static constexpr uint32_t CF_DH_LBA = 0xE0U;
 static constexpr uint32_t PS2_RX_QUEUE_SIZE = 0x40U;
-static constexpr uint32_t AUDIO_FIFO_DEPTH = 0x400U;
+static constexpr uint32_t AUDIO_FIFO_DEPTH = 0x100U;
 static constexpr uint32_t AUDIO_SAMPLES_PER_SECOND = 0x3D76U;
 static constexpr uint32_t DUART_OP_RTC_SCL = 0x04U;
 static constexpr uint32_t DUART_OP_RTC_SDA_DRIVE = 0x08U;

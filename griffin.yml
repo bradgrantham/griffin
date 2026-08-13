@@ -115,6 +115,29 @@ peripherals:
         description: "Assembled PS/2 data byte; valid while RX_READY is set."
         bits:
           - { bit: "7:0", name: DATA, description: "Received scancode byte (LSB-first on the wire)" }
+      - offset: 0x17
+        name: VSYNC_STATUS
+        access: read
+        width: 8
+        description: |
+          Latched vsync frame interrupt status.
+          TIMING has no CPU bus, so it cannot host an interrupt-acknowledge
+          register; GLUE therefore latches the assertion edge of TIMING's
+          VSYNC output (the same net that feeds the VGA connector, tapped
+          before the 74AC541 buffer, 2-FF synchronized into the SYSCLK
+          domain) and asserts the level-6 IRQ until the CPU clears it via
+          VSYNC_CLEAR.  Replaces rev 1's ~VIDEO_IRQ from the retired VIDEO
+          CPLD on the same GLUE pin.
+        bits:
+          - { bit: "0", name: VSYNC_PENDING,
+              description: "1 = a vsync edge has been latched; asserts the level-6 IRQ; W1C via VSYNC_CLEAR" }
+      - offset: 0x17
+        name: VSYNC_CLEAR
+        access: write
+        width: 8
+        description: "Write-1-to-clear for VSYNC_PENDING / level-6 IRQ ack."
+        bits:
+          - { bit: "0", name: VSYNC_PENDING, description: "Write 1 to clear VSYNC_PENDING (vsync ISR ack)" }
 
   # Rev 2 ROM (see griffin.md "Rev 2 components"): 2x SST39SF040 (512Kx8,
   # DIP-32, socketed), one per byte lane = 1MB on the 16-bit bus.  These are
@@ -571,7 +594,7 @@ peripherals:
         width: 8
         description: |
           Audio FIFO pop control.  ENABLE gates the read strobe PORTS sends
-          to both 7202s on every second VGA line, so clearing it freezes the
+          to both 7200s on every second VGA line, so clearing it freezes the
           DACs on their last sample without disturbing FIFO contents.
           CLEAR_HF_IRQ is the write-1-to-clear ack for the half-full
           interrupt reported in AUDIO_STATUS.
@@ -585,7 +608,7 @@ peripherals:
         access: read
         width: 8
         description: |
-          Audio FIFO pop status.  HF_IRQ latches when the 7202 half-full
+          Audio FIFO pop status.  HF_IRQ latches when the 7200 half-full
           flag rises, meaning the FIFO drained below half and firmware
           should refill; it asserts the shared level-2 IRQ until cleared
           with AUDIO_CONTROL.CLEAR_HF_IRQ.  HALF_FULL is the live
@@ -594,7 +617,7 @@ peripherals:
           - { bit: "0", name: HF_IRQ,
               description: "1 = FIFO dropped below half full since the last ack; asserts level-2 IRQ" }
           - { bit: "1", name: HALF_FULL,
-              description: "Live synchronized 7202 flag: 1 = half full or more" }
+              description: "Live synchronized 7200 flag: 1 = half full or more" }
           - { bit: "2", name: ENABLE,
               description: "Current AUDIO_CONTROL ENABLE state" }
 
@@ -775,13 +798,13 @@ peripherals:
   # section 2: 2C low, 2G = ~IO_WR_EN -> write strobes).  GLUE never
   # touches the data path, and future direct peripherals cost zero GLUE
   # pins -- one spare read strobe and two spare write strobes remain.
-  #   0xC00000  AUDIO     (7202 FIFO pair, ~AUDIO_W = write Y0)
+  #   0xC00000  AUDIO     (7200 FIFO pair, ~AUDIO_W = write Y0)
   #   0xC40000  reserved  (was JOYSTICK '245 pair; joysticks are PORTS registers now)
   #   0xC80000  reserved  (was PADDLE '590 pair; paddle counters are in PORTS now)
   #   0xCC0000  reserved  (candidate: ENGINE COPY-FIFO read + write ports)
   # (0xFC0000, the rev-1 74HC373 AUDIO latch slot, is the PORTS CPLD.)
   AUDIO:
-    part: "2x IDT7202 FIFO + 2x 8-bit R2R DAC"
+    part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC"
     description: "Stereo FIFO audio output, drained at half the VGA line rate by PORTS"
     address_range:
       base: 0xC00000
@@ -793,7 +816,7 @@ peripherals:
       - 14318181: 0
       - 16000000: 0
       - 20000000: 0
-    # No interrupt entry: the 7202 half-full flag is wired to the PORTS CPLD,
+    # No interrupt entry: the 7200 half-full flag is wired to the PORTS CPLD,
     # which latches it and reports it through ~PORTS_IRQ at level 2 (see
     # PORTS AUDIO_STATUS.HF_IRQ).  There is no separate ~AUDIO_IRQ line.
     registers:
@@ -804,7 +827,7 @@ peripherals:
         description: |
           Write one stereo sample pair into the audio FIFOs.
           Left channel is D15-D8, right channel is D7-D0, each an unsigned
-          8-bit sample landing directly in its 7202.  ~AUDIO_W comes from
+          8-bit sample landing directly in its 7200.  ~AUDIO_W comes from
           the 74155 write section gated by GLUE ~IO_WR_EN, which qualifies
           on UDS & LDS & ~R/W -- only deliberate full-word writes clock
           the FIFOs (no A17 alias trick needed).  PORTS drives the FIFO
@@ -812,7 +835,7 @@ peripherals:
           AUDIO_SAMPLES_PER_SECOND) by dividing the HSYNC tap by two -- not
           VIDEO, and not a programmable divider.  The FIFO half-full flag
           goes to PORTS, which latches it into ~PORTS_IRQ (autovector level
-          2); the ISR refills at most AUDIO_FIFO_DEPTH/2 = 512 pairs (~33 ms
+          2); the ISR refills at most AUDIO_FIFO_DEPTH/2 = 128 pairs (~8 ms
           of headroom) per service and acks with PORTS AUDIO_CONTROL.
 
 
@@ -829,8 +852,13 @@ constants:
   CF_DH_LBA:            0xE0
   PS2_RX_QUEUE_SIZE:    64
 
-  # Audio FIFO geometry (2x IDT7202: 1024 x 9 each; one per channel)
-  AUDIO_FIFO_DEPTH:          1024
+  # Audio FIFO geometry (2x IDT7200: 256 x 9 each; one per channel).
+  # Was 2x IDT7202 (1024 deep); 7202s are hard to source (2026-08-13), and
+  # the 7200 depth is sufficient: half-full = 128 pairs = 8.1 ms of runway,
+  # refill IRQ ~123 Hz, and the display-list AUDIO_FIFO_W path held 49..93
+  # pairs of occupancy in the validated use cases.  If depth is ever needed,
+  # the 7200 family cascades via XI/XO.
+  AUDIO_FIFO_DEPTH:          256
   AUDIO_SAMPLES_PER_SECOND:  15734   # half the 31.469 kHz VGA line rate
 
   # DUART OP/IP masks for the pin_allocation block above.  Reminder: OP pins
@@ -1057,11 +1085,29 @@ interfaces:
     setup (~25ns typ on L15 vs 39.7ns — verify at worst case, and re-verify
     if the 1-word/clock /RE shaping is adopted, which halves the budget).
   - |
+    Stream FIFO part unification (2026-08-13): all three streams use 2x
+    IDT7200 (256x9) — PIXELS byte-interleaved shared-Q pair, VIDCMD ganged
+    16-bit, AUDIO one per channel.  The 7202s originally specified for
+    AUDIO are hard to source; 256 pairs = 16.3 ms of buffer with half-full
+    at 128 pairs (~8 ms of refill runway, ~123 Hz IRQ) covers the measured
+    use cases (display-list fill held 49..93 pairs).  The 7200 family
+    cascades via XI/XO if depth is ever needed — an unpopulated-footprint
+    option, not a redesign.
+  - |
     FIFO control strobes: series source termination on every /RE and /W
-    line at the driver end (all 7200/7202 FIFOs — PIXELS, VIDCMD, AUDIO).
+    line at the driver end (all 7200 FIFOs — PIXELS, VIDCMD, AUDIO).
     Promotes the Rev 1 fix to design: the Rev 1 7200 /RE bodge wires rang
     and needed 10pF band-aid caps at the FIFO pins; Rev 2 terminates
     properly at the source instead.
+  - |
+    TIMING VSYNC -> GLUE level-6 frame IRQ (decided 2026-08-13).
+    Net: TIMING's VSYNC output tee'd to GLUE's pin 65 (the rev-1 ~VIDEO_IRQ
+    input, renamed nVSYNC), tapped BEFORE the 74AC541 sync buffer so GLUE
+    sees the raw 5V CPLD output.  Zero new pins on either chip.  The latch
+    and the W1C acknowledge live in GLUE (VSYNC_STATUS/VSYNC_CLEAR at
+    offset 0x17) because TIMING has no CPU bus to host an ack register —
+    a raw level would double-fire or be missed, so GLUE edge-detects the
+    synchronized assertion and holds the IRQ until the ISR clears it.
   - |
     TIMING -> COMPOSITOR contract: H_ACTIVE (and the /RS vsync pulse) must
     LEAD the visible window by 2 pixel clocks — COMPOSITOR's consume-edge
