@@ -1,0 +1,777 @@
+========================================================================
+ATF1508 Fitter Report
+========================================================================
+
+UTILIZATION SUMMARY
+----------------------------------------
+  dedicated input                 2/4 	(50%)
+  I/O pins                        46/64 	(71%)
+  Logic cells                     122/128 	(95%)
+  Flip-Flop                       87/128 	(67%)
+  Foldback logic                  6/128 	(4%)
+  Nodes+FB/MCells                 127/128 	(99%)
+  cascade                         1
+  input pins                      34
+  output pins                     14
+  Pts                             409
+
+PER-LAB PLACEMENT
+------------------------------------------------------------------------
+  LAB A (MC 1-16):  26/16 used  (8 pin, 16 feedback, 2 foldback)  fan-in: 31/40
+    MC  3  pin 12  set_pix_valid
+    MC  5  pin 11  PIX_LAST
+    MC  6  pin 10  PIXELS_Q_7
+    MC  8  pin  9  PIXELS_Q_4
+    MC 11  pin  8  PIXELS_Q_6
+    MC 13  pin  6  PIXELS_Q_5
+    MC 14  pin  5  PIXELS_Q_2
+    MC 16  pin  4  PIXELS_Q_0
+    MC  1  feedback  ham_type
+    MC  2  feedback  mode_ham
+    MC  3  feedback  abc:n414
+    MC  4  feedback  XXL_934
+    MC  5  feedback  abc:n387
+    MC  6  feedback  XXL_933
+    MC  7  feedback  pal_bg_7
+    MC  8  feedback  XXL_932
+    MC  9  feedback  XXL_950
+    MC 10  feedback  XXL_951
+    MC 11  feedback  XXL_931
+    MC 12  feedback  XXL_949
+    MC 13  feedback  pal_bg_6
+    MC 14  feedback  pal_bg_5
+    MC 15  feedback  XXL_945
+    MC 16  feedback  pal_bg_4
+    MC  3  FOLDBACK  abc:n352  [from id00103Q]
+    MC  5  FOLDBACK  abc:n348 (QN)  [from id00100QN]
+
+  LAB B (MC 17-32):  25/16 used  (8 pin, 16 feedback, 1 foldback)  fan-in: 31/40
+    MC 17  pin 22  PIXELS_Q_3
+    MC 19  pin 21  PIXELS_Q_1
+    MC 21  pin 20  VIDCMD_Q_7
+    MC 24  pin 18  VIDCMD_Q_4
+    MC 25  pin 17  VIDCMD_Q_8
+    MC 27  pin 16  VIDCMD_Q_10
+    MC 29  pin 15  VIDCMD_Q_6
+    MC 32  pin 14  TDI
+    MC 17  feedback  pix_consume_d
+    MC 18  feedback  pal_bg_3
+    MC 19  feedback  XXL_939
+    MC 20  feedback  pal_bg_11
+    MC 21  feedback  XXL_940
+    MC 22  feedback  XXL_938
+    MC 23  feedback  pal_bg_0
+    MC 24  feedback  XXL_930
+    MC 25  feedback  XXL_929
+    MC 26  feedback  XXL_942
+    MC 27  feedback  pal_bg_2
+    MC 28  feedback  XXL_952
+    MC 29  feedback  pal_bg_1
+    MC 30  feedback  XXL_944
+    MC 31  feedback  XXL_943
+    MC 32  feedback  XXL_941
+    MC 17  FOLDBACK  abc:n348 (QN)  [from id00100QN]
+
+  LAB C (MC 33-48):  23/16 used  (8 pin, 14 feedback, 1 foldback)  fan-in: 31/40
+    MC 35  pin 31  PIX_CONSUME
+    MC 37  pin 30  set_pix_target_2
+    MC 38  pin 29  VIDCMD_Q_0
+    MC 40  pin 28  VIDCMD_Q_11
+    MC 43  pin 27  VIDCMD_Q_1
+    MC 45  pin 25  VIDCMD_Q_5
+    MC 46  pin 24  VIDCMD_Q_9
+    MC 48  pin 23  TMS
+    MC 33  feedback  pixel_skip_2
+    MC 34  feedback  pixel_skip_3
+    MC 36  feedback  pixel_skip_0
+    MC 38  feedback  abc:n362
+    MC 39  feedback  XXL_937
+    MC 40  feedback  pal_bg_9
+    MC 41  feedback  pixel_skip_1
+    MC 42  feedback  pal_bg_10
+    MC 43  feedback  XXL_935
+    MC 44  feedback  XXL_947
+    MC 45  feedback  XXL_936
+    MC 46  feedback  pal_bg_8
+    MC 47  feedback  XXL_946
+    MC 48  feedback  XXL_948
+    MC 38  FOLDBACK  abc:n348 (QN)  [from id00100QN]
+
+  LAB D (MC 49-64):  18/16 used  (3 pin, 14 feedback, 1 foldback)  fan-in: 31/40
+    MC 49  pin 41  set_pix_target_1
+    MC 51  pin 40  VIDCMD_Q_3
+    MC 53  pin 39  VIDCMD_Q_2
+    MC 50  feedback  code_lo
+    MC 51  feedback  abc:n358 (QN)
+    MC 52  feedback  shift_reg_4
+    MC 53  feedback  abc:n303
+    MC 54  feedback  code_hi
+    MC 55  feedback  bit_pos_0
+    MC 56  feedback  abc:n338
+    MC 57  feedback  shift_reg_0
+    MC 58  feedback  fifo_loading
+    MC 59  feedback  shift_reg_2
+    MC 60  feedback  bit_pos_1
+    MC 61  feedback  shift_reg_5
+    MC 62  feedback  abc:n325
+    MC 64  feedback  bit_pos_2
+    MC 61  FOLDBACK  abc:n339  [from id00091Q]
+
+  LAB E (MC 65-80):  17/16 used  (4 pin, 12 feedback, 1 foldback)  fan-in: 31/40
+    MC 65  pin 44  set_pix_target_0
+    MC 67  pin 45  set_pix_commit
+    MC 77  pin 51  nPIXELS_RE_ODD
+    MC 80  pin 52  nPIXELS_RE_EVEN
+    MC 66  feedback  extra_byte
+    MC 68  feedback  abc:n389 (QN)
+    MC 69  feedback  ham_second
+    MC 70  feedback  abc:n360
+    MC 71  feedback  shift_reg_1
+    MC 72  feedback  set_capture_7
+    MC 73  feedback  fifo_select
+    MC 74  feedback  shift_reg_3
+    MC 75  feedback  abc:n354
+    MC 76  feedback  align_cnt_2
+    MC 78  feedback  align_cnt_1
+    MC 79  feedback  align_cnt_0
+    MC 77  FOLDBACK  abc:n339  [from id00091Q]
+
+  LAB F (MC 81-96):  17/16 used  (4 pin, 13 feedback, 0 foldback)  fan-in: 30/40
+    MC 91  pin 58  RGB_OUT_0
+    MC 93  pin 60  RGB_OUT_10
+    MC 94  pin 61  RGB_OUT_7
+    MC 96  pin 62  TCK
+    MC 81  feedback  set_capture_9
+    MC 82  feedback  set_capture_5
+    MC 83  feedback  pal_fg_3
+    MC 84  feedback  set_capture_1
+    MC 85  feedback  set_capture_2
+    MC 86  feedback  pal_fg_4
+    MC 87  feedback  set_capture_11
+    MC 88  feedback  set_capture_3
+    MC 89  feedback  set_capture_0
+    MC 90  feedback  set_capture_6
+    MC 92  feedback  set_capture_10
+    MC 95  feedback  set_capture_8
+    MC 96  feedback  set_capture_4
+
+  LAB G (MC 97-112):  17/16 used  (8 pin, 9 feedback, 0 foldback)  fan-in: 18/40
+    MC 97  pin 63  RGB_OUT_8
+    MC 99  pin 64  RGB_OUT_4
+    MC101  pin 65  RGB_OUT_11
+    MC104  pin 67  RGB_OUT_3
+    MC105  pin 68  RGB_OUT_5
+    MC107  pin 69  RGB_OUT_1
+    MC109  pin 70  RGB_OUT_2
+    MC112  pin 71  TDO
+    MC 98  feedback  ham_held_1
+    MC100  feedback  ham_held_0
+    MC102  feedback  pal_fg_10
+    MC103  feedback  ham_held_11
+    MC106  feedback  pal_fg_8
+    MC108  feedback  pal_fg_6
+    MC110  feedback  pal_fg_11
+    MC111  feedback  pal_fg_5
+    MC112  feedback  pal_fg_7
+
+  LAB H (MC 113-128):  16/16 used  (3 pin, 13 feedback, 0 foldback)  fan-in: 17/40
+    MC115  pin 73  PIX_PRELOAD
+    MC126  pin 80  RGB_OUT_6
+    MC128  pin 81  RGB_OUT_9
+    MC113  feedback  ham_held_3
+    MC114  feedback  ham_held_4
+    MC116  feedback  ham_held_7
+    MC117  feedback  pal_fg_0
+    MC118  feedback  pal_fg_1
+    MC119  feedback  ham_held_10
+    MC120  feedback  pal_fg_2
+    MC121  feedback  ham_held_8
+    MC122  feedback  ham_held_9
+    MC123  feedback  ham_held_6
+    MC124  feedback  ham_held_2
+    MC125  feedback  ham_held_5
+    MC127  feedback  pal_fg_9
+
+FOLDBACK ANALYSIS
+------------------------------------------------------------------------
+  Total foldbacks: 6
+
+  Signals replicated as foldbacks (most replicas first):
+
+    abc:n348 (QN)                             3 copies  in LABs: A, B, C
+      consumed by: abc:n414, abc:n387, XXL_941, XXL_942, XXL_943, XXL_944, XXL_945, XXL_946 ... +6 more
+
+    abc:n339                                  2 copies  in LABs: D, E
+      consumed by: shift_reg_1.D, shift_reg_2.D, shift_reg_3.D, shift_reg_4.D, code_lo.D, shift_reg_5.D, code_hi.D
+
+    abc:n352                                  1 copies  in LABs: A
+      consumed by: XXL_949
+
+  Foldback imports per LAB:
+
+    LAB A: 2 foldback(s)
+      - abc:n352
+      - abc:n348 (QN)
+    LAB B: 1 foldback(s)
+      - abc:n348 (QN)
+    LAB C: 1 foldback(s)
+      - abc:n348 (QN)
+    LAB D: 1 foldback(s)
+      - abc:n339
+    LAB E: 1 foldback(s)
+      - abc:n339
+
+FAN-IN DETAIL
+------------------------------------------------------------------------
+  LAB A: 31/40 inputs
+    I/O pins (5): PIX_CONSUME, set_pix_target_2, set_pix_target_1, set_pix_commit, set_pix_target_0
+    Internal (26):
+      pal_bg_7
+      ham_type
+      ham_held_5
+      abc:n358 (QN)
+      ham_held_4
+      pal_fg_5
+      ham_second
+      pal_bg_5
+      set_capture_5
+      ham_held_7
+      ham_held_6
+      set_capture_6
+      code_hi
+      abc:n354
+      code_lo
+      pal_bg_4
+      set_capture_0
+      set_capture_7
+      abc:n362
+      set_capture_4
+      pal_fg_4
+      pal_fg_6
+      pal_bg_6
+      abc:n360
+      pal_fg_7
+      mode_ham
+
+  LAB B: 31/40 inputs
+    I/O pins (5): PIX_CONSUME, set_pix_target_1, set_pix_target_0, set_pix_target_2, set_pix_commit
+    Internal (26):
+      set_capture_3
+      pal_bg_11
+      abc:n354
+      set_capture_1
+      abc:n414
+      set_capture_11
+      ham_held_3
+      pal_fg_3
+      pal_bg_3
+      code_lo
+      pal_fg_11
+      pal_bg_0
+      pal_fg_0
+      set_capture_0
+      ham_held_11
+      abc:n387
+      ham_held_2
+      pal_fg_1
+      set_capture_2
+      abc:n358 (QN)
+      pal_fg_2
+      ham_held_0
+      pal_bg_1
+      abc:n389 (QN)
+      ham_held_1
+      pal_bg_2
+
+  LAB C: 31/40 inputs
+    I/O pins (5): PIX_CONSUME, set_pix_target_2, set_pix_target_1, set_pix_commit, set_pix_target_0
+    Internal (26):
+      set_capture_3
+      ham_held_9
+      abc:n387
+      pal_fg_10
+      pal_bg_9
+      ham_held_8
+      pixel_skip_0
+      pal_bg_10
+      code_hi
+      abc:n354
+      code_lo
+      set_capture_2
+      set_capture_9
+      pixel_skip_1
+      set_capture_8
+      abc:n389 (QN)
+      pal_bg_8
+      ham_held_10
+      pixel_skip_3
+      set_capture_0
+      abc:n358 (QN)
+      pal_fg_8
+      set_capture_1
+      pal_fg_9
+      set_capture_10
+      pixel_skip_2
+
+  LAB D: 31/40 inputs
+    I/O pins (9): PIX_LAST, PIXELS_Q_4, PIXELS_Q_6, PIX_CONSUME, PIXELS_Q_0, PIXELS_Q_2, PIX_PRELOAD, PIXELS_Q_7, PIXELS_Q_5
+    Internal (22):
+      shift_reg_1
+      shift_reg_4
+      shift_reg_0
+      extra_byte
+      shift_reg_5
+      pixel_skip_2
+      code_lo
+      shift_reg_2
+      align_cnt_0
+      pixel_skip_1
+      bit_pos_2
+      abc:n303
+      align_cnt_2
+      pixel_skip_0
+      bit_pos_1
+      mode_ham
+      code_hi
+      shift_reg_3
+      bit_pos_0
+      align_cnt_1
+      abc:n338
+      fifo_loading
+
+  LAB E: 31/40 inputs
+    I/O pins (9): PIX_CONSUME, PIXELS_Q_1, PIX_PRELOAD, PIXELS_Q_3, VIDCMD_Q_7, nPIXELS_RE_ODD, nRESET, nPIXELS_RE_EVEN, set_pix_valid
+    Internal (22):
+      pixel_skip_1
+      abc:n338
+      align_cnt_0
+      pixel_skip_2
+      pixel_skip_0
+      shift_reg_1
+      set_capture_7
+      extra_byte
+      code_lo
+      fifo_select
+      code_hi
+      abc:n354
+      shift_reg_0
+      align_cnt_2
+      ham_second
+      abc:n325
+      shift_reg_3
+      mode_ham
+      align_cnt_1
+      pixel_skip_3
+      shift_reg_2
+      fifo_loading
+
+  LAB F: 30/40 inputs
+    I/O pins (13): VIDCMD_Q_10, VIDCMD_Q_4, VIDCMD_Q_5, VIDCMD_Q_0, VIDCMD_Q_1, VIDCMD_Q_9, VIDCMD_Q_3, VIDCMD_Q_11, VIDCMD_Q_2, VIDCMD_Q_8, VIDCMD_Q_6, nRESET, set_pix_valid
+    Internal (17):
+      XXL_931  (unmapped)
+      XXL_929  (unmapped)
+      set_capture_3
+      set_capture_0
+      ham_held_10
+      set_capture_11
+      set_capture_10
+      set_capture_8
+      set_capture_5
+      set_capture_6
+      set_capture_1
+      set_capture_9
+      pix_consume_d
+      set_capture_2
+      ham_held_7
+      ham_held_0
+      set_capture_4
+
+  LAB G: 18/40 inputs
+    I/O pins (1): nRESET
+    Internal (17):
+      XXL_943  (unmapped)
+      XXL_930  (unmapped)
+      XXL_941  (unmapped)
+      XXL_933  (unmapped)
+      XXL_937  (unmapped)
+      XXL_935  (unmapped)
+      XXL_932  (unmapped)
+      XXL_934  (unmapped)
+      XXL_942  (unmapped)
+      ham_held_3
+      ham_held_4
+      ham_held_8
+      ham_held_5
+      ham_held_11
+      ham_held_2
+      pix_consume_d
+      ham_held_1
+
+  LAB H: 17/40 inputs
+    I/O pins (1): nRESET
+    Internal (16):
+      XXL_939  (unmapped)
+      XXL_949  (unmapped)
+      XXL_948  (unmapped)
+      XXL_947  (unmapped)
+      XXL_940  (unmapped)
+      XXL_950  (unmapped)
+      XXL_951  (unmapped)
+      XXL_946  (unmapped)
+      XXL_936  (unmapped)
+      XXL_945  (unmapped)
+      XXL_938  (unmapped)
+      XXL_952  (unmapped)
+      XXL_944  (unmapped)
+      ham_held_9
+      pix_consume_d
+      ham_held_6
+
+PRODUCT TERM USAGE (signals using >3 PTs)
+------------------------------------------------------------------------
+  10 PTs  bit_pos_2.D
+   5 PTs  abc:n325
+   5 PTs  ham_type.D
+   5 PTs  pal_bg_11.D
+   5 PTs  pixel_skip_0.D
+   5 PTs  pixel_skip_1.D
+   5 PTs  pixel_skip_2.D
+   5 PTs  pal_bg_0.D
+   5 PTs  pal_bg_3.D
+   5 PTs  pal_bg_1.D
+   5 PTs  pal_bg_2.D
+   5 PTs  pixel_skip_3.D
+   5 PTs  pal_bg_4.D
+   5 PTs  pal_bg_6.D
+   5 PTs  pal_bg_5.D
+   5 PTs  pal_bg_7.D
+   5 PTs  pal_bg_8.D
+   5 PTs  mode_ham.D
+   5 PTs  pal_bg_9.D
+   5 PTs  pal_bg_10.D
+   5 PTs  bit_pos_1.D
+   5 PTs  XXL_929
+   5 PTs  XXL_930
+   5 PTs  XXL_931
+   5 PTs  XXL_932
+   5 PTs  XXL_933
+   5 PTs  XXL_934
+   5 PTs  XXL_935
+   5 PTs  XXL_936
+   5 PTs  XXL_937
+   5 PTs  XXL_938
+   5 PTs  XXL_939
+   5 PTs  XXL_940
+   5 PTs  XXL_941
+   5 PTs  XXL_942
+   5 PTs  XXL_943
+   5 PTs  XXL_944
+   5 PTs  XXL_945
+   5 PTs  XXL_946
+   5 PTs  XXL_947
+   5 PTs  XXL_948
+   5 PTs  XXL_949
+   5 PTs  XXL_950
+   5 PTs  XXL_951
+   5 PTs  XXL_952
+   4 PTs  fifo_loading.D
+   4 PTs  shift_reg_2.D
+   4 PTs  shift_reg_3.D
+   4 PTs  shift_reg_4.D
+   4 PTs  code_lo.D
+   4 PTs  shift_reg_5.D
+   4 PTs  code_hi.D
+   4 PTs  align_cnt_0.D
+   4 PTs  bit_pos_0.D
+
+ALL EQUATIONS
+------------------------------------------------------------------------
+  [ 2 PTs]  abc:n358 (QN) = ((mode_ham & code_lo) # (!mode_ham & code_hi))
+  [ 2 PTs]  set_capture_4.D = ((set_pix_valid & VIDCMD_Q_4) # (!set_pix_valid & set_capture_4))
+  [ 2 PTs]  set_capture_5.D = ((set_pix_valid & VIDCMD_Q_5) # (!set_pix_valid & set_capture_5))
+  [ 2 PTs]  set_capture_6.D = ((set_pix_valid & VIDCMD_Q_6) # (!set_pix_valid & set_capture_6))
+  [ 2 PTs]  set_capture_7.D = ((set_pix_valid & VIDCMD_Q_7) # (!set_pix_valid & set_capture_7))
+  [ 2 PTs]  set_capture_8.D = ((set_pix_valid & VIDCMD_Q_8) # (!set_pix_valid & set_capture_8))
+  [ 2 PTs]  set_capture_9.D = ((set_pix_valid & VIDCMD_Q_9) # (!set_pix_valid & set_capture_9))
+  [ 2 PTs]  extra_byte.D = ((!PIX_PRELOAD & extra_byte & !fifo_loading) # (PIX_PRELOAD & pixel_skip_3))
+  [ 2 PTs]  set_capture_10.D = ((set_pix_valid & VIDCMD_Q_10) # (!set_pix_valid & set_capture_10))
+  [ 1 PTs]  RGB_OUT_1.D = (ham_held_1 & pix_consume_d)
+  [ 1 PTs]  RGB_OUT_2.D = (ham_held_2 & pix_consume_d)
+  [ 1 PTs]  RGB_OUT_5.D = (ham_held_5 & pix_consume_d)
+  [ 1 PTs]  RGB_OUT_3.D = (ham_held_3 & pix_consume_d)
+  [ 1 PTs]  RGB_OUT_4.D = (ham_held_4 & pix_consume_d)
+  [ 2 PTs]  set_capture_11.D = ((set_pix_valid & VIDCMD_Q_11) # (!set_pix_valid & set_capture_11))
+  [ 1 PTs]  RGB_OUT_11.D = (ham_held_11 & pix_consume_d)
+  [ 1 PTs]  pix_consume_d.D = PIX_CONSUME
+  [ 1 PTs]  RGB_OUT_7.D = (ham_held_7 & pix_consume_d)
+  [ 1 PTs]  RGB_OUT_8.D = (ham_held_8 & pix_consume_d)
+  [ 1 PTs]  RGB_OUT_9.D = (ham_held_9 & pix_consume_d)
+  [ 1 PTs]  RGB_OUT_10.D = (ham_held_10 & pix_consume_d)
+  [ 1 PTs]  RGB_OUT_0.D = (ham_held_0 & pix_consume_d)
+  [ 1 PTs]  RGB_OUT_6.D = (ham_held_6 & pix_consume_d)
+  [ 2 PTs]  set_capture_1.D = ((set_pix_valid & VIDCMD_Q_1) # (!set_pix_valid & set_capture_1))
+  [ 2 PTs]  set_capture_0.D = ((set_pix_valid & VIDCMD_Q_0) # (!set_pix_valid & set_capture_0))
+  [ 2 PTs]  set_capture_2.D = ((set_pix_valid & VIDCMD_Q_2) # (!set_pix_valid & set_capture_2))
+  [ 2 PTs]  set_capture_3.D = ((set_pix_valid & VIDCMD_Q_3) # (!set_pix_valid & set_capture_3))
+  [ 2 PTs]  abc:n338 = ((!PIX_CONSUME & align_cnt_2 & !fifo_loading & align_cnt_0 & align_cnt_1) # PIX_PRELOAD)
+  [ 1 PTs]  ham_second.D = (code_hi & mode_ham & PIX_CONSUME & !ham_second)
+  [ 5 PTs]  abc:n325 = ((!PIX_CONSUME & align_cnt_2 & align_cnt_0 & align_cnt_1) # (align_cnt_2 & align_cnt_0 & align_cnt_1 & !PIX_LAST & bit_pos_2 & !bit_pos_0 & !mode_ham & bit_pos_1) # (align_cnt_2 & align_cnt_0 & align_cnt_1 & !PIX_LAST & bit_pos_2 & mode_ham & !bit_pos_1) # fifo_loading # PIX_PRELOAD)
+  [ 2 PTs]  abc:n354 = ((PIX_CONSUME & !mode_ham) # (PIX_CONSUME & !ham_second & !code_hi))
+  [ 5 PTs]  ham_type.D = ((ham_type & !PIX_CONSUME) # (ham_type & ham_second) # (mode_ham & PIX_CONSUME & !ham_second & code_hi & code_lo) # (ham_type & !code_hi) # (!mode_ham & ham_type))
+  [ 4 PTs]  fifo_loading.D = ((fifo_loading & extra_byte) # (!fifo_loading & !PIX_LAST & !mode_ham & bit_pos_1 & bit_pos_2 & PIX_CONSUME & align_cnt_2 & align_cnt_0 & align_cnt_1 & !bit_pos_0) # (!fifo_loading & !PIX_LAST & mode_ham & !bit_pos_1 & bit_pos_2 & PIX_CONSUME & align_cnt_2 & align_cnt_0 & align_cnt_1) # PIX_PRELOAD)
+  [ 2 PTs]  fifo_select.D = ((!PIX_PRELOAD & !fifo_select & fifo_loading) # (!PIX_PRELOAD & fifo_select & !fifo_loading))
+  [ 2 PTs]  abc:n303 = ((PIX_CONSUME & align_cnt_2 & !fifo_loading & align_cnt_0 & align_cnt_1) # PIX_PRELOAD)
+  [ 5 PTs]  pal_bg_11.D = ((pal_bg_11 & !set_pix_target_0) # (pal_bg_11 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_11) # (pal_bg_11 & !set_pix_commit) # (pal_bg_11 & set_pix_target_2))
+  [ 1 PTs]  pal_fg_3.D = (XXL_929)
+  [ 1 PTs]  pal_fg_11.D = (XXL_930)
+  [ 1 PTs]  pal_fg_4.D = (XXL_931)
+  [ 1 PTs]  pal_fg_5.D = (XXL_932)
+  [ 3 PTs]  shift_reg_0.D = ((shift_reg_0 & !fifo_loading & !PIX_CONSUME & align_cnt_2 & align_cnt_0 & align_cnt_1) # (!PIX_PRELOAD & fifo_loading & PIXELS_Q_0) # (PIX_PRELOAD & shift_reg_0))
+  [ 1 PTs]  pal_fg_6.D = (XXL_933)
+  [ 1 PTs]  pal_fg_7.D = (XXL_934)
+  [ 3 PTs]  shift_reg_1.D = ((!abc:n338Q & !fifo_loading & shift_reg_0 & abc:n339Q) # (abc:n338Q & shift_reg_1) # (!abc:n338Q & fifo_loading & PIXELS_Q_1))
+  [ 4 PTs]  shift_reg_2.D = ((!abc:n338Q & fifo_loading & PIXELS_Q_2) # (abc:n338Q & shift_reg_2) # (!abc:n338Q & !fifo_loading & shift_reg_0 & mode_ham & align_cnt_2 & align_cnt_0 & align_cnt_1) # (!abc:n338Q & !fifo_loading & abc:n339Q & shift_reg_1))
+  [ 4 PTs]  shift_reg_3.D = ((!abc:n338Q & fifo_loading & PIXELS_Q_3) # (abc:n338Q & shift_reg_3) # (!abc:n338Q & !fifo_loading & shift_reg_1 & mode_ham & align_cnt_2 & align_cnt_0 & align_cnt_1) # (!abc:n338Q & !fifo_loading & abc:n339Q & shift_reg_2))
+  [ 4 PTs]  shift_reg_4.D = ((!abc:n338Q & fifo_loading & PIXELS_Q_4) # (abc:n338Q & shift_reg_4) # (!abc:n338Q & !fifo_loading & shift_reg_2 & mode_ham & align_cnt_2 & align_cnt_0 & align_cnt_1) # (!abc:n338Q & !fifo_loading & abc:n339Q & shift_reg_3))
+  [ 4 PTs]  code_lo.D = ((!abc:n338Q & fifo_loading & PIXELS_Q_6) # (abc:n338Q & code_lo) # (!abc:n338Q & !fifo_loading & shift_reg_4 & mode_ham & align_cnt_2 & align_cnt_0 & align_cnt_1) # (!abc:n338Q & !fifo_loading & abc:n339Q & shift_reg_5))
+  [ 1 PTs]  pal_fg_8.D = (XXL_935)
+  [ 4 PTs]  shift_reg_5.D = ((!abc:n338Q & fifo_loading & PIXELS_Q_5) # (abc:n338Q & shift_reg_5) # (!abc:n338Q & !fifo_loading & shift_reg_3 & mode_ham & align_cnt_2 & align_cnt_0 & align_cnt_1) # (!abc:n338Q & !fifo_loading & abc:n339Q & shift_reg_4))
+  [ 1 PTs]  pal_fg_9.D = (XXL_936)
+  [ 5 PTs]  pixel_skip_0.D = ((pixel_skip_0 & !set_pix_commit) # (pixel_skip_0 & !set_pix_target_1) # (set_pix_target_2 & set_pix_commit & set_pix_target_1 & !set_pix_target_0 & set_capture_0) # (pixel_skip_0 & set_pix_target_0) # (pixel_skip_0 & !set_pix_target_2))
+  [ 1 PTs]  pal_fg_10.D = (XXL_937)
+  [ 4 PTs]  code_hi.D = ((!abc:n338Q & fifo_loading & PIXELS_Q_7) # (abc:n338Q & code_hi) # (!abc:n338Q & !fifo_loading & shift_reg_5 & mode_ham & align_cnt_2 & align_cnt_0 & align_cnt_1) # (!abc:n338Q & !fifo_loading & abc:n339Q & code_lo))
+  [ 5 PTs]  pixel_skip_1.D = ((pixel_skip_1 & !set_pix_commit) # (pixel_skip_1 & !set_pix_target_1) # (set_pix_target_2 & set_pix_commit & set_pix_target_1 & !set_pix_target_0 & set_capture_1) # (pixel_skip_1 & set_pix_target_0) # (pixel_skip_1 & !set_pix_target_2))
+  [ 5 PTs]  pixel_skip_2.D = ((pixel_skip_2 & !set_pix_commit) # (pixel_skip_2 & !set_pix_target_1) # (set_pix_target_2 & set_pix_commit & set_pix_target_1 & !set_pix_target_0 & set_capture_2) # (pixel_skip_2 & set_pix_target_0) # (pixel_skip_2 & !set_pix_target_2))
+  [ 5 PTs]  pal_bg_0.D = ((pal_bg_0 & !set_pix_target_0) # (pal_bg_0 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_0) # (pal_bg_0 & !set_pix_commit) # (pal_bg_0 & set_pix_target_2))
+  [ 5 PTs]  pal_bg_3.D = ((pal_bg_3 & !set_pix_target_0) # (pal_bg_3 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_3) # (pal_bg_3 & !set_pix_commit) # (pal_bg_3 & set_pix_target_2))
+  [ 5 PTs]  pal_bg_1.D = ((pal_bg_1 & !set_pix_target_0) # (pal_bg_1 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_1) # (pal_bg_1 & !set_pix_commit) # (pal_bg_1 & set_pix_target_2))
+  [ 5 PTs]  pal_bg_2.D = ((pal_bg_2 & !set_pix_target_0) # (pal_bg_2 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_2) # (pal_bg_2 & !set_pix_commit) # (pal_bg_2 & set_pix_target_2))
+  [ 5 PTs]  pixel_skip_3.D = ((pixel_skip_3 & !set_pix_commit) # (pixel_skip_3 & !set_pix_target_1) # (set_pix_target_2 & set_pix_commit & set_pix_target_1 & !set_pix_target_0 & set_capture_3) # (pixel_skip_3 & set_pix_target_0) # (pixel_skip_3 & !set_pix_target_2))
+  [ 5 PTs]  pal_bg_4.D = ((pal_bg_4 & !set_pix_target_0) # (pal_bg_4 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_4) # (pal_bg_4 & !set_pix_commit) # (pal_bg_4 & set_pix_target_2))
+  [ 5 PTs]  pal_bg_6.D = ((pal_bg_6 & !set_pix_target_0) # (pal_bg_6 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_6) # (pal_bg_6 & !set_pix_commit) # (pal_bg_6 & set_pix_target_2))
+  [ 5 PTs]  pal_bg_5.D = ((pal_bg_5 & !set_pix_target_0) # (pal_bg_5 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_5) # (pal_bg_5 & !set_pix_commit) # (pal_bg_5 & set_pix_target_2))
+  [ 3 PTs]  align_cnt_2.D = ((PIX_PRELOAD & !pixel_skip_2) # (!PIX_PRELOAD & align_cnt_2) # (!PIX_PRELOAD & !fifo_loading & align_cnt_0 & align_cnt_1))
+  [ 5 PTs]  pal_bg_7.D = ((pal_bg_7 & !set_pix_target_0) # (pal_bg_7 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_7) # (pal_bg_7 & !set_pix_commit) # (pal_bg_7 & set_pix_target_2))
+  [ 5 PTs]  pal_bg_8.D = ((pal_bg_8 & !set_pix_target_0) # (pal_bg_8 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_8) # (pal_bg_8 & !set_pix_commit) # (pal_bg_8 & set_pix_target_2))
+  [ 5 PTs]  mode_ham.D = ((mode_ham & !set_pix_target_0) # (mode_ham & !set_pix_target_2) # (!set_pix_target_1 & set_pix_target_0 & set_pix_target_2 & set_pix_commit & set_capture_0) # (mode_ham & !set_pix_commit) # (set_pix_target_1 & mode_ham))
+  [ 5 PTs]  pal_bg_9.D = ((pal_bg_9 & !set_pix_target_0) # (pal_bg_9 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_9) # (pal_bg_9 & !set_pix_commit) # (pal_bg_9 & set_pix_target_2))
+  [ 5 PTs]  pal_bg_10.D = ((pal_bg_10 & !set_pix_target_0) # (pal_bg_10 & !set_pix_target_1) # (!set_pix_target_2 & set_pix_target_0 & set_pix_target_1 & set_pix_commit & set_capture_10) # (pal_bg_10 & !set_pix_commit) # (pal_bg_10 & set_pix_target_2))
+  [ 4 PTs]  align_cnt_0.D = ((!PIX_PRELOAD & fifo_loading & align_cnt_0) # (!PIX_PRELOAD & align_cnt_0 & align_cnt_2 & align_cnt_1) # (!PIX_PRELOAD & !fifo_loading & !align_cnt_0) # (PIX_PRELOAD & !pixel_skip_0))
+  [ 1 PTs]  pal_fg_0.D = (XXL_938)
+  [ 1 PTs]  pal_fg_1.D = (XXL_939)
+  [ 1 PTs]  pal_fg_2.D = (XXL_940)
+  [ 2 PTs]  abc:n362 = ((PIX_CONSUME & !code_hi) # (PIX_CONSUME & abc:n354Q))
+  [ 3 PTs]  abc:n389 (QN) = (!PIX_CONSUME # (!code_hi & mode_ham & !ham_second & code_lo) # (code_hi & !mode_ham))
+  [ 3 PTs]  abc:n360 = ((PIX_CONSUME & !code_hi & !mode_ham) # (PIX_CONSUME & mode_ham & !code_lo) # (PIX_CONSUME & code_hi & !abc:n354Q))
+  [ 3 PTs]  abc:n414 = ((PIX_CONSUME & abc:n348 (QN)QN & !abc:n354Q & !ham_type) # (PIX_CONSUME & abc:n348 (QN)QN & !abc:n354Q & !mode_ham) # (PIX_CONSUME & !ham_second & abc:n348 (QN)QN & !abc:n354Q))
+  [ 3 PTs]  abc:n387 = ((PIX_CONSUME & abc:n348 (QN)QN & !abc:n354Q & ham_type) # (PIX_CONSUME & abc:n348 (QN)QN & !abc:n354Q & !mode_ham) # (PIX_CONSUME & !ham_second & abc:n348 (QN)QN & !abc:n354Q))
+  [10 PTs]  bit_pos_2.D = ((!PIX_PRELOAD & !PIX_CONSUME & bit_pos_2) # (!PIX_PRELOAD & bit_pos_2 & !align_cnt_2) # (!PIX_PRELOAD & bit_pos_2 & !align_cnt_0) # (!PIX_PRELOAD & bit_pos_2 & !align_cnt_1) # (!PIX_PRELOAD & bit_pos_2 & fifo_loading) # (!PIX_PRELOAD & PIX_CONSUME & !bit_pos_2 & align_cnt_2 & align_cnt_0 & align_cnt_1 & !fifo_loading & bit_pos_1 & mode_ham) # (!PIX_PRELOAD & PIX_CONSUME & !bit_pos_2 & align_cnt_2 & align_cnt_0 & align_cnt_1 & !fifo_loading & bit_pos_1 & bit_pos_0) # (!PIX_PRELOAD & bit_pos_2 & !mode_ham & !bit_pos_0) # (!PIX_PRELOAD & bit_pos_2 & !bit_pos_1) # (PIX_PRELOAD & pixel_skip_2))
+  [ 4 PTs]  bit_pos_0.D = ((!bit_pos_0 & !fifo_loading & PIX_CONSUME & align_cnt_2 & align_cnt_0 & align_cnt_1 & !PIX_PRELOAD & !mode_ham) # (PIX_PRELOAD & pixel_skip_0) # (bit_pos_0 & !abc:n303Q) # (bit_pos_0 & !fifo_loading & PIX_CONSUME & align_cnt_2 & align_cnt_0 & align_cnt_1 & !PIX_PRELOAD & mode_ham))
+  [ 5 PTs]  bit_pos_1.D = ((bit_pos_1 & !PIX_PRELOAD & !fifo_loading & PIX_CONSUME & align_cnt_2 & align_cnt_0 & align_cnt_1 & !bit_pos_0 & !mode_ham) # (!bit_pos_1 & !PIX_PRELOAD & !fifo_loading & PIX_CONSUME & align_cnt_2 & align_cnt_0 & align_cnt_1 & mode_ham) # (!bit_pos_1 & !PIX_PRELOAD & !fifo_loading & PIX_CONSUME & align_cnt_2 & align_cnt_0 & align_cnt_1 & bit_pos_0) # (PIX_PRELOAD & pixel_skip_1) # (bit_pos_1 & !abc:n303Q))
+  [ 1 PTs]  ham_held_0.D = (XXL_941)
+  [ 1 PTs]  ham_held_11.D = (XXL_942)
+  [ 1 PTs]  ham_held_1.D = (XXL_943)
+  [ 1 PTs]  ham_held_2.D = (XXL_944)
+  [ 1 PTs]  ham_held_8.D = (XXL_946)
+  [ 1 PTs]  ham_held_9.D = (XXL_947)
+  [ 1 PTs]  ham_held_10.D = (XXL_948)
+  [ 1 PTs]  ham_held_3.D = (XXL_952)
+  [ 5 PTs]  XXL_929 = ((pal_fg_3 & set_pix_target_0) # (pal_fg_3 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_3) # (pal_fg_3 & set_pix_target_2) # (pal_fg_3 & !set_pix_target_1))
+  [ 5 PTs]  XXL_930 = ((pal_fg_11 & set_pix_target_0) # (pal_fg_11 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_11) # (pal_fg_11 & set_pix_target_2) # (pal_fg_11 & !set_pix_target_1))
+  [ 5 PTs]  XXL_931 = ((pal_fg_4 & set_pix_target_0) # (pal_fg_4 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_4) # (pal_fg_4 & set_pix_target_2) # (pal_fg_4 & !set_pix_target_1))
+  [ 5 PTs]  XXL_932 = ((pal_fg_5 & set_pix_target_0) # (pal_fg_5 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_5) # (pal_fg_5 & set_pix_target_2) # (pal_fg_5 & !set_pix_target_1))
+  [ 5 PTs]  XXL_933 = ((pal_fg_6 & set_pix_target_0) # (pal_fg_6 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_6) # (pal_fg_6 & set_pix_target_2) # (pal_fg_6 & !set_pix_target_1))
+  [ 5 PTs]  XXL_934 = ((pal_fg_7 & set_pix_target_0) # (pal_fg_7 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_7) # (pal_fg_7 & set_pix_target_2) # (pal_fg_7 & !set_pix_target_1))
+  [ 5 PTs]  XXL_935 = ((pal_fg_8 & set_pix_target_0) # (pal_fg_8 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_8) # (pal_fg_8 & set_pix_target_2) # (pal_fg_8 & !set_pix_target_1))
+  [ 5 PTs]  XXL_936 = ((pal_fg_9 & set_pix_target_0) # (pal_fg_9 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_9) # (pal_fg_9 & set_pix_target_2) # (pal_fg_9 & !set_pix_target_1))
+  [ 5 PTs]  XXL_937 = ((pal_fg_10 & set_pix_target_0) # (pal_fg_10 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_10) # (pal_fg_10 & set_pix_target_2) # (pal_fg_10 & !set_pix_target_1))
+  [ 5 PTs]  XXL_938 = ((pal_fg_0 & set_pix_target_0) # (pal_fg_0 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_0) # (pal_fg_0 & set_pix_target_2) # (pal_fg_0 & !set_pix_target_1))
+  [ 5 PTs]  XXL_939 = ((pal_fg_1 & set_pix_target_0) # (pal_fg_1 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_1) # (pal_fg_1 & set_pix_target_2) # (pal_fg_1 & !set_pix_target_1))
+  [ 5 PTs]  XXL_940 = ((pal_fg_2 & set_pix_target_0) # (pal_fg_2 & !set_pix_commit) # (set_pix_target_1 & !set_pix_target_0 & set_pix_commit & !set_pix_target_2 & set_capture_2) # (pal_fg_2 & set_pix_target_2) # (pal_fg_2 & !set_pix_target_1))
+  [ 5 PTs]  XXL_941 = ((!abc:n414Q & abc:n348 (QN)QN & pal_fg_0 & abc:n389 (QN)QN) # (!abc:n414Q & set_capture_0 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit) # (!abc:n414Q & abc:n348 (QN)QN & PIX_CONSUME & !abc:n354Q & code_lo) # (!abc:n414Q & abc:n348 (QN)QN & PIX_CONSUME & abc:n354Q & pal_bg_0 & !abc:n358 (QN)QN) # (abc:n414Q & ham_held_0))
+  [ 5 PTs]  XXL_942 = ((abc:n387Q & ham_held_11) # (!abc:n387Q & abc:n348 (QN)QN & pal_fg_11 & abc:n389 (QN)QN) # (!abc:n387Q & abc:n348 (QN)QN & PIX_CONSUME & abc:n354Q & pal_bg_11 & !abc:n358 (QN)QN) # (!abc:n387Q & abc:n348 (QN)QN & PIX_CONSUME & !abc:n354Q & code_lo) # (!abc:n387Q & set_capture_11 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit))
+  [ 5 PTs]  XXL_943 = ((!abc:n414Q & abc:n348 (QN)QN & pal_fg_1 & abc:n389 (QN)QN) # (!abc:n414Q & set_capture_1 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit) # (!abc:n414Q & abc:n348 (QN)QN & PIX_CONSUME & !abc:n354Q & code_lo) # (!abc:n414Q & abc:n348 (QN)QN & PIX_CONSUME & abc:n354Q & pal_bg_1 & !abc:n358 (QN)QN) # (abc:n414Q & ham_held_1))
+  [ 5 PTs]  XXL_944 = ((!abc:n414Q & abc:n348 (QN)QN & pal_fg_2 & abc:n389 (QN)QN) # (!abc:n414Q & set_capture_2 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit) # (!abc:n414Q & abc:n348 (QN)QN & PIX_CONSUME & !abc:n354Q & code_lo) # (!abc:n414Q & abc:n348 (QN)QN & PIX_CONSUME & abc:n354Q & pal_bg_2 & !abc:n358 (QN)QN) # (abc:n414Q & ham_held_2))
+  [ 5 PTs]  XXL_945 = ((abc:n348 (QN)QN & !abc:n354Q & abc:n362Q) # (abc:n348 (QN)QN & abc:n362Q & !pal_bg_7 & !abc:n358 (QN)QN) # (abc:n348 (QN)QN & !ham_held_7 & PIX_CONSUME & code_hi & mode_ham & !ham_second) # (!set_capture_7 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit) # (abc:n348 (QN)QN & !pal_fg_7 & !abc:n360Q))
+  [ 5 PTs]  XXL_946 = ((!abc:n387Q & abc:n348 (QN)QN & pal_fg_8 & abc:n389 (QN)QN) # (!abc:n387Q & abc:n348 (QN)QN & PIX_CONSUME & !abc:n354Q & code_lo) # (!abc:n387Q & abc:n348 (QN)QN & PIX_CONSUME & abc:n354Q & pal_bg_8 & !abc:n358 (QN)QN) # (!abc:n387Q & set_capture_8 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit) # (abc:n387Q & ham_held_8))
+  [ 5 PTs]  XXL_947 = ((abc:n387Q & ham_held_9) # (!abc:n387Q & abc:n348 (QN)QN & pal_fg_9 & abc:n389 (QN)QN) # (!abc:n387Q & abc:n348 (QN)QN & PIX_CONSUME & !abc:n354Q & code_lo) # (!abc:n387Q & set_capture_9 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit) # (!abc:n387Q & abc:n348 (QN)QN & PIX_CONSUME & abc:n354Q & pal_bg_9 & !abc:n358 (QN)QN))
+  [ 5 PTs]  XXL_948 = ((abc:n387Q & ham_held_10) # (!abc:n387Q & abc:n348 (QN)QN & pal_fg_10 & abc:n389 (QN)QN) # (!abc:n387Q & abc:n348 (QN)QN & PIX_CONSUME & abc:n354Q & pal_bg_10 & !abc:n358 (QN)QN) # (!abc:n387Q & abc:n348 (QN)QN & PIX_CONSUME & !abc:n354Q & code_lo) # (!abc:n387Q & set_capture_10 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit))
+  [ 5 PTs]  XXL_949 = ((abc:n348 (QN)QN & abc:n352Q & abc:n362Q & !pal_bg_4 & !abc:n358 (QN)QN) # (abc:n348 (QN)QN & !ham_held_4 & PIX_CONSUME & code_hi & mode_ham & !ham_second) # (abc:n352Q & !set_capture_4 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit) # (abc:n348 (QN)QN & abc:n352Q & !pal_fg_4 & !abc:n360Q) # (abc:n348 (QN)QN & abc:n352Q & !abc:n354Q & abc:n362Q))
+  [ 5 PTs]  XXL_950 = ((abc:n348 (QN)QN & !pal_fg_6 & !abc:n360Q) # (abc:n348 (QN)QN & abc:n362Q & !pal_bg_6 & !abc:n358 (QN)QN) # (abc:n348 (QN)QN & abc:n362Q & !abc:n354Q) # (abc:n348 (QN)QN & !ham_held_6 & PIX_CONSUME & code_hi & mode_ham & !ham_second) # (!set_capture_6 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit))
+  [ 5 PTs]  XXL_951 = ((abc:n348 (QN)QN & !pal_fg_5 & !abc:n360Q) # (abc:n348 (QN)QN & abc:n362Q & !pal_bg_5 & !abc:n358 (QN)QN) # (abc:n348 (QN)QN & abc:n362Q & !abc:n354Q) # (abc:n348 (QN)QN & !ham_held_5 & PIX_CONSUME & code_hi & mode_ham & !ham_second) # (!set_capture_5 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit))
+  [ 5 PTs]  XXL_952 = ((abc:n414Q & ham_held_3) # (!abc:n414Q & abc:n348 (QN)QN & pal_fg_3 & abc:n389 (QN)QN) # (!abc:n414Q & abc:n348 (QN)QN & PIX_CONSUME & !abc:n354Q & code_lo) # (!abc:n414Q & set_capture_3 & set_pix_target_2 & !set_pix_target_1 & !set_pix_target_0 & set_pix_commit) # (!abc:n414Q & abc:n348 (QN)QN & PIX_CONSUME & abc:n354Q & pal_bg_3 & !abc:n358 (QN)QN))
+  [ 1 PTs]  set_capture_4.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_4.AR = !nRESET
+  [ 1 PTs]  set_capture_5.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_5.AR = !nRESET
+  [ 1 PTs]  set_capture_6.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_6.AR = !nRESET
+  [ 1 PTs]  set_capture_7.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_7.AR = !nRESET
+  [ 1 PTs]  set_capture_8.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_8.AR = !nRESET
+  [ 1 PTs]  set_capture_9.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_9.AR = !nRESET
+  [ 1 PTs]  extra_byte.C = PIXEL_CLK
+  [ 1 PTs]  extra_byte.AR = !nRESET
+  [ 1 PTs]  set_capture_10.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_10.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_1.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_1.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_2.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_2.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_5.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_5.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_3.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_3.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_4.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_4.AR = !nRESET
+  [ 1 PTs]  set_capture_11.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_11.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_11.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_11.AR = !nRESET
+  [ 1 PTs]  pix_consume_d.C = PIXEL_CLK
+  [ 1 PTs]  pix_consume_d.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_7.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_7.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_8.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_8.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_9.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_9.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_10.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_10.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_0.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_0.AR = !nRESET
+  [ 1 PTs]  RGB_OUT_6.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_6.AR = !nRESET
+  [ 1 PTs]  set_capture_1.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_1.AR = !nRESET
+  [ 1 PTs]  set_capture_0.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_0.AR = !nRESET
+  [ 1 PTs]  set_capture_2.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_2.AR = !nRESET
+  [ 1 PTs]  set_capture_3.C = PIXEL_CLK
+  [ 1 PTs]  set_capture_3.AR = !nRESET
+  [ 1 PTs]  ham_second.C = PIXEL_CLK
+  [ 1 PTs]  ham_second.AR = !nRESET
+  [ 1 PTs]  ham_type.C = PIXEL_CLK
+  [ 1 PTs]  ham_type.AR = !nRESET
+  [ 1 PTs]  fifo_loading.C = PIXEL_CLK
+  [ 1 PTs]  fifo_loading.AR = !nRESET
+  [ 1 PTs]  fifo_select.C = PIXEL_CLK
+  [ 1 PTs]  fifo_select.AR = !nRESET
+  [ 1 PTs]  pal_bg_11.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_11.AR = !nRESET
+  [ 1 PTs]  pal_fg_3.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_3.AP = !nRESET
+  [ 1 PTs]  pal_fg_11.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_11.AP = !nRESET
+  [ 1 PTs]  pal_fg_4.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_4.AP = !nRESET
+  [ 1 PTs]  pal_fg_5.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_5.AP = !nRESET
+  [ 1 PTs]  shift_reg_0.C = PIXEL_CLK
+  [ 1 PTs]  shift_reg_0.AR = !nRESET
+  [ 1 PTs]  pal_fg_6.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_6.AP = !nRESET
+  [ 1 PTs]  pal_fg_7.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_7.AP = !nRESET
+  [ 1 PTs]  shift_reg_1.C = PIXEL_CLK
+  [ 1 PTs]  shift_reg_1.AR = !nRESET
+  [ 1 PTs]  shift_reg_2.C = PIXEL_CLK
+  [ 1 PTs]  shift_reg_2.AR = !nRESET
+  [ 1 PTs]  shift_reg_3.C = PIXEL_CLK
+  [ 1 PTs]  shift_reg_3.AR = !nRESET
+  [ 1 PTs]  shift_reg_4.C = PIXEL_CLK
+  [ 1 PTs]  shift_reg_4.AR = !nRESET
+  [ 1 PTs]  code_lo.C = PIXEL_CLK
+  [ 1 PTs]  code_lo.AR = !nRESET
+  [ 1 PTs]  pal_fg_8.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_8.AP = !nRESET
+  [ 1 PTs]  shift_reg_5.C = PIXEL_CLK
+  [ 1 PTs]  shift_reg_5.AR = !nRESET
+  [ 1 PTs]  pal_fg_9.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_9.AP = !nRESET
+  [ 1 PTs]  pixel_skip_0.C = PIXEL_CLK
+  [ 1 PTs]  pixel_skip_0.AR = !nRESET
+  [ 1 PTs]  pal_fg_10.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_10.AP = !nRESET
+  [ 1 PTs]  code_hi.C = PIXEL_CLK
+  [ 1 PTs]  code_hi.AR = !nRESET
+  [ 1 PTs]  pixel_skip_1.C = PIXEL_CLK
+  [ 1 PTs]  pixel_skip_1.AR = !nRESET
+  [ 1 PTs]  pixel_skip_2.C = PIXEL_CLK
+  [ 1 PTs]  pixel_skip_2.AR = !nRESET
+  [ 1 PTs]  pal_bg_0.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_0.AR = !nRESET
+  [ 1 PTs]  pal_bg_3.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_3.AR = !nRESET
+  [ 1 PTs]  pal_bg_1.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_1.AR = !nRESET
+  [ 1 PTs]  pal_bg_2.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_2.AR = !nRESET
+  [ 1 PTs]  pixel_skip_3.C = PIXEL_CLK
+  [ 1 PTs]  pixel_skip_3.AR = !nRESET
+  [ 1 PTs]  pal_bg_4.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_4.AR = !nRESET
+  [ 1 PTs]  pal_bg_6.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_6.AR = !nRESET
+  [ 1 PTs]  pal_bg_5.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_5.AR = !nRESET
+  [ 1 PTs]  align_cnt_2.C = PIXEL_CLK
+  [ 1 PTs]  align_cnt_2.AP = !nRESET
+  [ 1 PTs]  pal_bg_7.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_7.AR = !nRESET
+  [ 1 PTs]  pal_bg_8.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_8.AR = !nRESET
+  [ 1 PTs]  mode_ham.C = PIXEL_CLK
+  [ 1 PTs]  mode_ham.AR = !nRESET
+  [ 1 PTs]  pal_bg_9.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_9.AR = !nRESET
+  [ 1 PTs]  pal_bg_10.C = PIXEL_CLK
+  [ 1 PTs]  pal_bg_10.AR = !nRESET
+  [ 1 PTs]  align_cnt_0.C = PIXEL_CLK
+  [ 1 PTs]  align_cnt_0.AP = !nRESET
+  [ 1 PTs]  align_cnt_1.C = PIXEL_CLK
+  [ 1 PTs]  align_cnt_1.AP = !nRESET
+  [ 1 PTs]  pal_fg_0.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_0.AP = !nRESET
+  [ 1 PTs]  pal_fg_1.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_1.AP = !nRESET
+  [ 1 PTs]  pal_fg_2.C = PIXEL_CLK
+  [ 1 PTs]  pal_fg_2.AP = !nRESET
+  [ 1 PTs]  nPIXELS_RE_EVEN.C = PIXEL_CLK
+  [ 1 PTs]  nPIXELS_RE_EVEN.AP = !nRESET
+  [ 1 PTs]  nPIXELS_RE_ODD.C = PIXEL_CLK
+  [ 1 PTs]  nPIXELS_RE_ODD.AP = !nRESET
+  [ 1 PTs]  bit_pos_2.C = PIXEL_CLK
+  [ 1 PTs]  bit_pos_2.AR = !nRESET
+  [ 1 PTs]  bit_pos_0.C = PIXEL_CLK
+  [ 1 PTs]  bit_pos_0.AR = !nRESET
+  [ 1 PTs]  bit_pos_1.C = PIXEL_CLK
+  [ 1 PTs]  bit_pos_1.AR = !nRESET
+  [ 1 PTs]  ham_held_0.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_0.AP = !nRESET
+  [ 1 PTs]  ham_held_11.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_11.AP = !nRESET
+  [ 1 PTs]  ham_held_1.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_1.AP = !nRESET
+  [ 1 PTs]  ham_held_2.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_2.AP = !nRESET
+  [ 1 PTs]  ham_held_7.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_7.AP = !nRESET
+  [ 1 PTs]  ham_held_8.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_8.AP = !nRESET
+  [ 1 PTs]  ham_held_9.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_9.AP = !nRESET
+  [ 1 PTs]  ham_held_10.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_10.AP = !nRESET
+  [ 1 PTs]  ham_held_4.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_4.AP = !nRESET
+  [ 1 PTs]  ham_held_6.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_6.AP = !nRESET
+  [ 1 PTs]  ham_held_5.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_5.AP = !nRESET
+  [ 1 PTs]  ham_held_3.C = PIXEL_CLK
+  [ 1 PTs]  ham_held_3.AP = !nRESET
+

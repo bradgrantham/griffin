@@ -1,0 +1,98 @@
+Name = pixelnt
+Device = ATF1508AS
+Package = PLCC84
+Speed = 15
+Options = -preassign ignore -strategy debug = on
+013c:err:environ:init_peb starting L"Z:\\Users\\grantham\\trees\\atf15xx_yosys\\vendor\\fit1508.exe" in experimental wow64 mode
+Atmel ATF1508AS Fitter Version 1.8.7.8 (02-05-03)
+Copyright 1999,2000 Atmel Corporation
+Mode debug ... 
+---------------------------------------------------------
+ Fitter_Pass 1, Preassign = IGNORE, LOGIC_DOUBLING : OFF 
+ ... 
+ ## Warning : Placement fail 
+---------------------------------------------------------
+ Fitter_Pass 2, Preassign = IGNORE, CASCADE_LOGIC : (TRY) 
+ ... 
+ Design fits successfully
+ 
+  If you wish to have more pins available for future logic change
+  Atmel recommends using a larger device.
+  If you wish to have more pins available for future logic change
+  Atmel recommends using a larger device.
+                                                                                    
+                                                                                    
+                                                                                    
+                       P  P P   P P P                                               
+                       I  I I   I I I        P   R R                                
+                     P X  X X   X X X        I   G G                                
+                     I E  E E   E E E        X   B B                                
+                     X L  L L   L L L     n  E   _ _                                
+                     _ S  S S   S S S     R  L   O O                                
+                     L _  _ _   _ _ _     E  _   U U                                
+                     A Q  Q Q G Q Q Q V   S  C G T T   V                            
+                     S _  _ _ N _ _ _ C   E  L N _ _   C                            
+                     T 7  4 6 D 5 2 0 C   T  K D 9 6   C                            
+                    -------------------------------------------                     
+                   / 11   9   7   5   3   1  83  81  79  77  75 \                  
+                  /    10   8   6   4   2  84  82  80  78  76    \                 
+   set_pix_valid | 12                    (*)                   74 |                 
+             VCC | 13                                          73 | PIX_PRELOAD     
+             TDI | 14                                          72 | GND             
+      VIDCMD_Q_6 | 15                                          71 | TDO             
+     VIDCMD_Q_10 | 16                                          70 | RGB_OUT_2       
+      VIDCMD_Q_8 | 17                                          69 | RGB_OUT_1       
+      VIDCMD_Q_4 | 18                                          68 | RGB_OUT_5       
+             GND | 19                                          67 | RGB_OUT_3       
+      VIDCMD_Q_7 | 20                                          66 | VCC             
+      PIXELS_Q_1 | 21                                          65 | RGB_OUT_11      
+      PIXELS_Q_3 | 22                 ATF1508                  64 | RGB_OUT_4       
+             TMS | 23               84-Lead PLCC               63 | RGB_OUT_8       
+      VIDCMD_Q_9 | 24                                          62 | TCK             
+      VIDCMD_Q_5 | 25                                          61 | RGB_OUT_7       
+             VCC | 26                                          60 | RGB_OUT_10      
+      VIDCMD_Q_1 | 27                                          59 | GND             
+     VIDCMD_Q_11 | 28                                          58 | RGB_OUT_0       
+      VIDCMD_Q_0 | 29                                          57 |                 
+     PIX_CONSUME | 31                                          55 |                 
+             GND | 32                                          54 |                 
+                  \     34  36  38  40  42  44  46  48  50  52   /                 
+                   \  33  35  37  39  41  43  45  47  49  51  53/                  
+              	    --------------------------------------------                     
+                                V V V s G V s s   G       n n V                     
+                                C I I e N C e e   N       P P C                     
+                                C D D t D C t t   D       I I C                     
+                                  C C _     _ _           X X                       
+                                  M M p     p p           E E                       
+                                  D D i     i i           L L                       
+                                  _ _ x     x x           S S                       
+                                  Q Q _     _ _           _ _                       
+                                  _ _ t     t c           R R                       
+                                  2 3 a     a o           E E                       
+                                      r     r m           _ _                       
+                                      g     g m           O E                       
+                                      e     e i           D V                       
+
+Logic Array Block       Macro Cells     I/O Pins        Foldbacks       TotalPT         FanIN           Cascades
+A: LC1	- LC16		16/16(100%)	8/16(50%)	2/16(12%)	78/80(97%)	(31)	0
+B: LC17	- LC32		16/16(100%)	8/16(50%)	1/16(6%)	77/80(96%)	(31)	0
+C: LC33	- LC48		14/16(87%)	8/16(50%)	1/16(6%)	68/80(85%)	(31)	0
+D: LC49	- LC64		14/16(87%)	3/16(18%)	1/16(6%)	58/80(72%)	(31)	1
+E: LC65	- LC80		14/16(87%)	4/16(25%)	1/16(6%)	46/80(57%)	(31)	0
+F: LC81	- LC96		16/16(100%)	4/16(25%)	0/16(0%)	29/80(36%)	(30)	0
+G: LC97	- LC112		16/16(100%)	8/16(50%)	0/16(0%)	25/80(31%)	(18)	0
+H: LC113- LC128		15/16(93%)	3/16(18%)	0/16(0%)	28/80(35%)	(17)	0
+
+Total dedicated input used:	2/4 	(50%)
+Total I/O pins used		46/64 	(71%)
+Total Logic cells used 		122/128 	(95%)
+Total Flip-Flop used 		87/128 	(67%)
+Total Foldback logic used 	6/128 	(4%)
+Total Nodes+FB/MCells 		127/128 	(99%)
+Total cascade used 		1
+Total input pins	34
+Total output pins 		14
+Total Pts		409
+
+$Device PLCC84 fits 
+

@@ -1,0 +1,29 @@
+Name = pixel
+Device = ATF1508AS
+Package = PLCC84
+Speed = 15
+Options = -preassign ignore -strategy xor_synthesis = on
+013c:err:environ:init_peb starting L"Z:\\Users\\grantham\\trees\\atf15xx_yosys\\vendor\\fit1508.exe" in experimental wow64 mode
+Atmel ATF1508AS Fitter Version 1.8.7.8 (02-05-03)
+Copyright 1999,2000 Atmel Corporation
+Xor Detection ...
+   A XOR is detected for the OUTPUT 	id00644D
+   A XOR is detected for the OUTPUT 	id00650D
+   A XOR is detected for the OUTPUT 	id00652D
+   A XOR is detected for the OUTPUT 	id00654D
+   A XOR is detected for the OUTPUT 	id00656D
+   A XOR is detected for the OUTPUT 	id00658D
+---------------------------------------------------------
+ Fitter_Pass 1, Preassign = IGNORE, LOGIC_DOUBLING : OFF 
+ ... 
+ ## Warning : Grouping fail 
+---------------------------------------------------------
+ Fitter_Pass 2, Preassign = IGNORE, CASCADE_LOGIC : (TRY) 
+ ... 
+ ## Warning : Grouping fail 
+---------------------------------------------------------
+ Fitter_Pass 3, Preassign = IGNORE, CASCADE_LOGIC : (OFF) 
+ ... 
+
+
+INTERNAL ERROR - Please contact your Hot-Line
