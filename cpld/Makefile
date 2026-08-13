@@ -34,9 +34,14 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "adapter speed 2000" \
     -c init
 
-.PHONY: all glue video engine audio ports clean
+.PHONY: all glue video engine audio ports compositor compositor-sim pixel timing clean
 
-all: glue video engine ports
+# The default set is the Rev 2 super-engine video path: display-list ENGINE,
+# TIMING + PIXEL + COMPOSITOR.  VIDEO is the Rev 1 in-band-header design,
+# retired from `all` when ENGINE was promoted to the display-list model the
+# two can't interoperate with; `make video` still builds it for the Rev 1
+# board.
+all: glue engine ports compositor pixel timing
 
 # Single source of truth: regenerate ../griffin.generated.vh (a prereq of the
 # .edif targets below) by delegating to the root, keyed to griffin.yml/codegen.py.
@@ -71,7 +76,7 @@ flash-glue: glue/glue.svf
 	    -c shutdown
 	
 # ------------------------------------------------------------
-# VIDEO (ATF1508AS)
+# VIDEO (ATF1508AS) — Rev 1 legacy, not in `all` (see note at `all:`)
 # ------------------------------------------------------------
 
 video: video/video.svf
@@ -156,6 +161,58 @@ ports/ports.svf: ports/ports.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/ports/ports.jed $(CURDIR)/ports/ports.svf
 
 # ------------------------------------------------------------
+# COMPOSITOR (ATF1508AS)
+#
+# VIDCMD display-list player for the super-engine video path.  There is no
+# board for it yet, so compositor.v carries no //PIN: block and the fitter
+# places pins freely (-preassign ignore); its placement is input to the Rev 2
+# layout.  Self-contained — no griffin.generated.vh — until the VIDCMD
+# encoding migrates into griffin.yml.
+#
+# `make compositor-sim` runs the iverilog testbench, which is the real
+# specification of the timing semantics; it exits nonzero if any check fails.
+# ------------------------------------------------------------
+
+compositor: compositor/compositor.jed
+
+compositor/compositor.edif: compositor/compositor.v
+	cd compositor && $(YOSYS) compositor
+
+compositor/compositor.jed: compositor/compositor.edif
+	cd compositor && $(FITTER) compositor -preassign ignore -strategy debug = on
+
+compositor-sim: compositor/compositor_tb.v compositor/compositor.v
+	cd compositor && iverilog -g2012 -o compositor_tb.vvp compositor_tb.v compositor.v && vvp compositor_tb.vvp
+
+# ------------------------------------------------------------
+# PIXEL (ATF1508AS) and TIMING (ATF1504AS PLCC44)
+#
+# VIDEO's successors on the super-engine path.  The combined PIXEL+TIMING
+# needs ~153 logic cells and does not fit an ATF1508AS (pixel_combined.v,
+# kept as the measured negative result), so the raster lives in TIMING —
+# which fits the smaller ATF1504AS PLCC44 at 48% with room to grow — and
+# PIXEL takes the raster as the PIX_CONSUME/PIX_PRELOAD/PIX_LAST event
+# strobes.  No boards yet: free placement, no //PIN: blocks, placements
+# feed the Rev 2 layout.  Self-contained like compositor.v for now.
+# ------------------------------------------------------------
+
+pixel: pixel/pixel.jed
+
+pixel/pixel.edif: pixel/pixel.v
+	cd pixel && $(YOSYS) pixel
+
+pixel/pixel.jed: pixel/pixel.edif
+	cd pixel && $(FITTER) pixel -preassign ignore -strategy debug = on
+
+timing: pixel/timing.jed
+
+pixel/timing.edif: pixel/timing.v
+	cd pixel && $(YOSYS) timing
+
+pixel/timing.jed: pixel/timing.edif
+	cd pixel && $(FITTER) -d ATF1504AS -p PLCC44 timing -preassign ignore -strategy debug = on
+
+# ------------------------------------------------------------
 
 flash-video: video/video.svf
 	$(OPENOCD_JTAG) \
@@ -227,4 +284,5 @@ clean:
 	rm -f engine/engine.edif engine/engine.fit engine/engine.jed engine/engine.vo
 	rm -f audio/audio.edif audio/audio.fit audio/audio.jed audio/audio.vo
 	rm -f ports/ports.edif ports/ports.fit ports/ports.jed ports/ports.vo ports/ports.svf
+	rm -f compositor/compositor.edif compositor/compositor.fit compositor/compositor.jed compositor/compositor_tb.vvp
 	rm -f glue/glue-verify.svf video/video-verify.svf
