@@ -1,0 +1,5 @@
+# Build and run artifacts; `make check` regenerates all of these.
+*.o
+super-engine
+*.ppm
+*.wav
