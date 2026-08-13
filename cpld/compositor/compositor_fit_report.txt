@@ -1,0 +1,587 @@
+========================================================================
+ATF1508 Fitter Report
+========================================================================
+
+UTILIZATION SUMMARY
+----------------------------------------
+  dedicated input                 2/4 	(50%)
+  I/O pins                        52/64 	(81%)
+  Logic cells                     98/128 	(76%)
+  Flip-Flop                       64/128 	(50%)
+  Foldback logic                  8/128 	(6%)
+  Nodes+FB/MCells                 85/128 	(66%)
+  cascade                         21
+  input pins                      36
+  output pins                     18
+  Pts                             338
+
+PER-LAB PLACEMENT
+------------------------------------------------------------------------
+  LAB A (MC 1-16):  20/16 used  (8 pin, 10 feedback, 2 foldback)  fan-in: 29/40
+    MC  3  pin 12  RGB_IN_5
+    MC  5  pin 11  VIDCMD_Q_15
+    MC  6  pin 10  RGB_IN_7
+    MC  8  pin  9  RGB_IN_6
+    MC 11  pin  8  RGB_IN_10
+    MC 13  pin  6  RGB_IN_8
+    MC 14  pin  5  VIDCMD_Q_14
+    MC 16  pin  4  RGB_IN_9
+    MC  1  feedback  abc:n433
+    MC  2  feedback  abc:n424
+    MC  3  feedback  abc:n213
+    MC  4  feedback  run_count_1
+    MC  6  feedback  run_count_9
+    MC  8  feedback  run_count_6
+    MC  9  feedback  run_count_8
+    MC 11  feedback  run_count_2
+    MC 13  feedback  run_count_3
+    MC 16  feedback  run_count_7
+    MC  6  FOLDBACK  abc:n232  [from id00061Q]
+    MC  7  FOLDBACK  abc:n229  [from id00058Q]
+
+  LAB B (MC 17-32):  18/16 used  (6 pin, 10 feedback, 2 foldback)  fan-in: 29/40
+    MC 17  pin 22  VIDCMD_Q_13
+    MC 24  pin 18  set_pix_target_1
+    MC 25  pin 17  set_pix_target_0
+    MC 27  pin 16  set_pix_target_2
+    MC 29  pin 15  set_pix_valid
+    MC 32  pin 14  TDI
+    MC 18  feedback  abc:n211 (QN)
+    MC 19  feedback  h_active_d
+    MC 20  feedback  cur_colour_0
+    MC 21  feedback  abc:n404
+    MC 22  feedback  cur_src_1
+    MC 23  feedback  cur_colour_1
+    MC 26  feedback  abc:n432
+    MC 28  feedback  abc:n435 (QN)
+    MC 30  feedback  abc:n442 (QN)
+    MC 32  feedback  abc:n411
+    MC 31  FOLDBACK  abc:n232  [from id00061Q]
+    MC 32  FOLDBACK  abc:n229  [from id00058Q]
+
+  LAB C (MC 33-48):  16/16 used  (8 pin, 7 feedback, 1 foldback)  fan-in: 29/40
+    MC 35  pin 31  VIDCMD_Q_12
+    MC 37  pin 30  VIDCMD_Q_2
+    MC 38  pin 29  VIDCMD_Q_1
+    MC 40  pin 28  H_ACTIVE
+    MC 43  pin 27  VIDCMD_Q_7
+    MC 45  pin 25  VIDCMD_Q_6
+    MC 46  pin 24  set_pix_commit
+    MC 48  pin 23  TMS
+    MC 34  feedback  abc:n413 (QN)
+    MC 36  feedback  abc:n410
+    MC 39  feedback  abc:n416 (QN)
+    MC 41  feedback  abc:n403
+    MC 42  feedback  cur_colour_2
+    MC 44  feedback  cur_src_0
+    MC 48  feedback  run_count_0
+    MC 48  FOLDBACK  abc:n229  [from id00058Q]
+
+  LAB D (MC 49-64):  15/16 used  (6 pin, 8 feedback, 1 foldback)  fan-in: 22/40
+    MC 49  pin 41  VIDCMD_Q_8
+    MC 51  pin 40  VIDCMD_Q_11
+    MC 53  pin 39  VIDCMD_Q_10
+    MC 57  pin 36  VIDCMD_Q_9
+    MC 59  pin 35  VIDCMD_Q_0
+    MC 61  pin 34  VIDCMD_Q_3
+    MC 50  feedback  cmp_held_fg_1
+    MC 52  feedback  cmp_held_fg_6
+    MC 54  feedback  cmp_held_fg_2
+    MC 56  feedback  cmp_held_fg_7
+    MC 58  feedback  cmp_held_fg_10
+    MC 60  feedback  cmp_held_fg_8
+    MC 62  feedback  cmp_held_fg_0
+    MC 64  feedback  cmp_held_fg_3
+    MC 64  FOLDBACK  abc:n215  [from id00044Q]
+
+  LAB E (MC 65-80):  16/16 used  (3 pin, 12 feedback, 1 foldback)  fan-in: 27/40
+    MC 73  pin 49  VIDCMD_Q_5
+    MC 75  pin 50  VIDCMD_Q_4
+    MC 77  pin 51  nVIDCMD_EF
+    MC 65  feedback  cmp_held_bg_5
+    MC 66  feedback  cmp_held_bg_2
+    MC 67  feedback  cmp_held_bg_6
+    MC 68  feedback  cmp_held_bg_8
+    MC 69  feedback  cmp_held_bg_4
+    MC 70  feedback  cmp_held_bg_1
+    MC 71  feedback  cmp_held_bg_11
+    MC 72  feedback  cmp_held_bg_3
+    MC 74  feedback  cmp_held_fg_11
+    MC 76  feedback  cmp_held_fg_4
+    MC 78  feedback  cmp_held_fg_5
+    MC 80  feedback  cmp_held_fg_9
+    MC 80  FOLDBACK  abc:n215  [from id00044Q]
+
+  LAB F (MC 81-96):  18/16 used  (5 pin, 12 feedback, 1 foldback)  fan-in: 26/40
+    MC 83  pin 54  RGB_IN_1
+    MC 85  pin 55  RGB_IN_0
+    MC 93  pin 60  RGB_IN_2
+    MC 94  pin 61  nVIDCMD_RE
+    MC 96  pin 62  TCK
+    MC 81  feedback  have_staged
+    MC 82  feedback  run_count_10
+    MC 84  feedback  run_count_4
+    MC 86  feedback  ef_sync
+    MC 87  feedback  run_count_5
+    MC 88  feedback  ef_meta
+    MC 89  feedback  run_count_11
+    MC 90  feedback  cmp_held_bg_10
+    MC 91  feedback  pop_in_flight
+    MC 92  feedback  cmp_held_bg_7
+    MC 95  feedback  cmp_held_bg_0
+    MC 96  feedback  cmp_held_bg_9
+    MC 94  FOLDBACK  abc:n215  [from id00044Q]
+
+  LAB G (MC 97-112):  8/16 used  (8 pin, 0 feedback, 0 foldback)  fan-in: 27/40
+    MC 97  pin 63  RGB_OUT_5
+    MC 99  pin 64  RGB_OUT_11
+    MC101  pin 65  RGB_OUT_4
+    MC104  pin 67  RGB_OUT_3
+    MC105  pin 68  RGB_OUT_2
+    MC107  pin 69  RGB_OUT_0
+    MC109  pin 70  RGB_OUT_1
+    MC112  pin 71  TDO
+
+  LAB H (MC 113-128):  8/16 used  (8 pin, 0 feedback, 0 foldback)  fan-in: 20/40
+    MC115  pin 73  RGB_IN_3
+    MC117  pin 74  RGB_IN_4
+    MC118  pin 75  RGB_IN_11
+    MC120  pin 76  RGB_OUT_9
+    MC123  pin 77  RGB_OUT_8
+    MC125  pin 79  RGB_OUT_10
+    MC126  pin 80  RGB_OUT_6
+    MC128  pin 81  RGB_OUT_7
+
+FOLDBACK ANALYSIS
+------------------------------------------------------------------------
+  Total foldbacks: 8
+
+  Signals replicated as foldbacks (most replicas first):
+
+    abc:n229                                  3 copies  in LABs: A, B, C
+      consumed by: abc:n411, run_count_1.D, abc:n424, abc:n433, run_count_2.D, run_count_3.D, run_count_6.D, run_count_7.D
+
+    abc:n215                                  3 copies  in LABs: D, E, F
+      consumed by: cmp_held_fg_9.D, cmp_held_bg_2.D, cmp_held_fg_10.D, cmp_held_bg_3.D, cmp_held_bg_4.D, cmp_held_bg_11.D, cmp_held_bg_5.D, cmp_held_bg_6.D ... +16 more
+
+    abc:n232                                  2 copies  in LABs: A, B
+      consumed by: abc:n411, abc:n424, abc:n433, run_count_2.D, run_count_3.D, run_count_7.D, run_count_8.D, run_count_9.D
+
+  Foldback imports per LAB:
+
+    LAB A: 2 foldback(s)
+      - abc:n232
+      - abc:n229
+    LAB B: 2 foldback(s)
+      - abc:n232
+      - abc:n229
+    LAB C: 1 foldback(s)
+      - abc:n229
+    LAB D: 1 foldback(s)
+      - abc:n215
+    LAB E: 1 foldback(s)
+      - abc:n215
+    LAB F: 1 foldback(s)
+      - abc:n215
+
+FAN-IN DETAIL
+------------------------------------------------------------------------
+  LAB A: 29/40 inputs
+    I/O pins (9): H_ACTIVE, VIDCMD_Q_2, VIDCMD_Q_14, VIDCMD_Q_7, VIDCMD_Q_8, VIDCMD_Q_6, VIDCMD_Q_15, VIDCMD_Q_1, nRS
+    Internal (20):
+      abc:n410
+      run_count_1
+      abc:n413 (QN)
+      run_count_6
+      abc:n411
+      run_count_0
+      run_count_7
+      run_count_9
+      run_count_5
+      run_count_4
+      run_count_8
+      abc:n432
+      run_count_2
+      have_staged
+      run_count_10
+      abc:n404
+      abc:n416 (QN)
+      run_count_3
+      abc:n424
+      run_count_11
+
+  LAB B: 29/40 inputs
+    I/O pins (10): H_ACTIVE, VIDCMD_Q_15, VIDCMD_Q_2, VIDCMD_Q_9, VIDCMD_Q_1, VIDCMD_Q_14, VIDCMD_Q_11, VIDCMD_Q_13, VIDCMD_Q_10, VIDCMD_Q_12
+    Internal (19):
+      run_count_1
+      run_count_10
+      run_count_9
+      abc:n211 (QN)
+      cur_src_1
+      run_count_8
+      run_count_7
+      abc:n403
+      run_count_5
+      run_count_2
+      cur_colour_0
+      have_staged
+      run_count_11
+      run_count_6
+      cur_colour_1
+      run_count_4
+      abc:n410
+      run_count_3
+      run_count_0
+
+  LAB C: 29/40 inputs
+    I/O pins (11): H_ACTIVE, VIDCMD_Q_5, VIDCMD_Q_15, VIDCMD_Q_14, VIDCMD_Q_12, VIDCMD_Q_4, VIDCMD_Q_0, VIDCMD_Q_3, VIDCMD_Q_11, VIDCMD_Q_13, nRS
+    Internal (18):
+      have_staged
+      run_count_2
+      cur_src_0
+      abc:n213
+      run_count_11
+      cur_colour_2
+      abc:n211 (QN)
+      abc:n403
+      run_count_8
+      run_count_6
+      run_count_7
+      run_count_5
+      run_count_9
+      run_count_4
+      run_count_10
+      run_count_3
+      run_count_1
+      run_count_0
+
+  LAB D: 22/40 inputs
+    I/O pins (13): VIDCMD_Q_15, VIDCMD_Q_8, VIDCMD_Q_1, VIDCMD_Q_14, VIDCMD_Q_7, VIDCMD_Q_13, VIDCMD_Q_0, VIDCMD_Q_6, VIDCMD_Q_2, VIDCMD_Q_12, VIDCMD_Q_10, VIDCMD_Q_3, nRS
+    Internal (9):
+      cmp_held_fg_6
+      cmp_held_fg_2
+      abc:n213
+      cmp_held_fg_8
+      cmp_held_fg_10
+      cmp_held_fg_7
+      cmp_held_fg_3
+      cmp_held_fg_1
+      cmp_held_fg_0
+
+  LAB E: 27/40 inputs
+    I/O pins (14): VIDCMD_Q_5, VIDCMD_Q_2, VIDCMD_Q_9, VIDCMD_Q_8, VIDCMD_Q_1, VIDCMD_Q_14, VIDCMD_Q_11, VIDCMD_Q_13, VIDCMD_Q_6, VIDCMD_Q_3, VIDCMD_Q_4, VIDCMD_Q_15, VIDCMD_Q_12, nRS
+    Internal (13):
+      abc:n213
+      cmp_held_bg_8
+      cmp_held_fg_4
+      cmp_held_bg_6
+      cmp_held_bg_2
+      cmp_held_bg_1
+      cmp_held_fg_5
+      cmp_held_bg_5
+      cmp_held_fg_9
+      cmp_held_bg_4
+      cmp_held_bg_3
+      cmp_held_bg_11
+      cmp_held_fg_11
+
+  LAB F: 26/40 inputs
+    I/O pins (11): VIDCMD_Q_15, VIDCMD_Q_9, VIDCMD_Q_7, VIDCMD_Q_12, VIDCMD_Q_14, VIDCMD_Q_0, VIDCMD_Q_10, VIDCMD_Q_13, nVIDCMD_EF, nVIDCMD_RE, nRS
+    Internal (15):
+      abc:n433
+      abc:n413 (QN)
+      cmp_held_bg_0
+      cmp_held_bg_9
+      cmp_held_bg_7
+      cmp_held_bg_10
+      abc:n435 (QN)
+      abc:n442 (QN)
+      ef_meta
+      abc:n213
+      abc:n411
+      abc:n416 (QN)
+      ef_sync
+      have_staged
+      pop_in_flight
+
+  LAB G: 27/40 inputs
+    I/O pins (7): RGB_IN_1, RGB_IN_4, RGB_IN_2, RGB_IN_11, RGB_IN_0, RGB_IN_5, RGB_IN_3
+    Internal (20):
+      h_active_d
+      cur_colour_0
+      cmp_held_bg_5
+      cmp_held_bg_2
+      cmp_held_fg_3
+      cur_colour_1
+      cmp_held_fg_5
+      cmp_held_fg_2
+      cmp_held_bg_11
+      cur_src_0
+      cmp_held_fg_0
+      cmp_held_bg_3
+      cmp_held_bg_0
+      cmp_held_bg_4
+      cur_src_1
+      cmp_held_fg_1
+      cur_colour_2
+      cmp_held_bg_1
+      cmp_held_fg_4
+      cmp_held_fg_11
+
+  LAB H: 20/40 inputs
+    I/O pins (5): RGB_IN_8, RGB_IN_6, RGB_IN_9, RGB_IN_7, RGB_IN_10
+    Internal (15):
+      cur_src_0
+      cmp_held_fg_8
+      cur_src_1
+      cmp_held_bg_10
+      cmp_held_fg_9
+      cur_colour_1
+      cmp_held_bg_9
+      h_active_d
+      cmp_held_fg_6
+      cmp_held_fg_10
+      cmp_held_fg_7
+      cur_colour_2
+      cmp_held_bg_6
+      cmp_held_bg_7
+      cmp_held_bg_8
+
+PRODUCT TERM USAGE (signals using >3 PTs)
+------------------------------------------------------------------------
+  14 PTs  run_count_7.D
+   9 PTs  run_count_2.D
+   9 PTs  run_count_3.D
+   8 PTs  run_count_6.D
+   6 PTs  abc:n411
+   6 PTs  run_count_0.D
+   5 PTs  cmp_held_fg_9.D
+   5 PTs  cmp_held_bg_2.D
+   5 PTs  cmp_held_fg_10.D
+   5 PTs  cmp_held_bg_3.D
+   5 PTs  nVIDCMD_RE.D
+   5 PTs  cmp_held_bg_4.D
+   5 PTs  cmp_held_bg_11.D
+   5 PTs  cmp_held_bg_5.D
+   5 PTs  cmp_held_bg_6.D
+   5 PTs  cmp_held_bg_7.D
+   5 PTs  cmp_held_bg_8.D
+   5 PTs  cmp_held_bg_9.D
+   5 PTs  cmp_held_bg_10.D
+   5 PTs  cmp_held_fg_0.D
+   5 PTs  cmp_held_fg_1.D
+   5 PTs  cmp_held_fg_2.D
+   5 PTs  cmp_held_fg_3.D
+   5 PTs  cmp_held_fg_11.D
+   5 PTs  cmp_held_fg_4.D
+   5 PTs  cmp_held_fg_5.D
+   5 PTs  cmp_held_bg_0.D
+   5 PTs  cmp_held_fg_6.D
+   5 PTs  cmp_held_fg_7.D
+   5 PTs  cmp_held_bg_1.D
+   5 PTs  cmp_held_fg_8.D
+   5 PTs  run_count_9.D
+   4 PTs  RGB_OUT_0.D
+   4 PTs  RGB_OUT_1.D
+   4 PTs  RGB_OUT_2.D
+   4 PTs  RGB_OUT_3.D
+   4 PTs  RGB_OUT_4.D
+   4 PTs  RGB_OUT_5.D
+   4 PTs  RGB_OUT_6.D
+   4 PTs  RGB_OUT_7.D
+   4 PTs  RGB_OUT_8.D
+   4 PTs  RGB_OUT_9.D
+   4 PTs  RGB_OUT_10.D
+   4 PTs  RGB_OUT_11.D
+   4 PTs  run_count_1.D
+   4 PTs  abc:n424
+   4 PTs  abc:n433
+   4 PTs  run_count_8.D
+
+ALL EQUATIONS
+------------------------------------------------------------------------
+  [ 4 PTs]  RGB_OUT_0.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_0) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_0) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_0))
+  [ 4 PTs]  RGB_OUT_1.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_1) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_1) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_1))
+  [ 4 PTs]  RGB_OUT_2.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_2) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_2) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_2))
+  [ 4 PTs]  RGB_OUT_3.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_3) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_3) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_3))
+  [ 4 PTs]  RGB_OUT_4.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_4) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_4) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_4))
+  [ 4 PTs]  RGB_OUT_5.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_5) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_5) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_5))
+  [ 4 PTs]  RGB_OUT_6.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_6) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_6) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_6))
+  [ 4 PTs]  RGB_OUT_7.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_7) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_7) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_7))
+  [ 4 PTs]  RGB_OUT_8.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_8) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_8) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_8))
+  [ 4 PTs]  RGB_OUT_9.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_9) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_9) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_9))
+  [ 4 PTs]  RGB_OUT_10.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_10) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_10) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_10))
+  [ 4 PTs]  RGB_OUT_11.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_11) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_11) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_11))
+  [ 2 PTs]  abc:n404 = ((abc:n403Q & !abc:n211 (QN)QN) # (abc:n403Q & have_staged & H_ACTIVE & !VIDCMD_Q_14 & !VIDCMD_Q_15))
+  [ 6 PTs]  abc:n411 = ((H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_2 & have_staged & abc:n403Q & abc:n410Q & VIDCMD_Q_2 & run_count_1 & abc:n229Q) # (H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_2 & have_staged & abc:n403Q & abc:n410Q & VIDCMD_Q_1 & run_count_10 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & run_count_11 & abc:n232Q) # (run_count_2 & abc:n403Q & abc:n410Q & run_count_1 & abc:n229Q & abc:n232Q & !abc:n211 (QN)QN) # (run_count_2 & abc:n403Q & abc:n410Q & VIDCMD_Q_2 & run_count_1 & abc:n229Q & !abc:n211 (QN)QN) # (H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_2 & have_staged & abc:n403Q & abc:n410Q & run_count_1 & abc:n229Q & abc:n232Q) # (H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_2 & have_staged & abc:n403Q & abc:n410Q & VIDCMD_Q_1 & VIDCMD_Q_2 & run_count_10 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & run_count_11))
+  [ 6 PTs]  run_count_0.D = ((abc:n403Q & abc:n211 (QN)QN & VIDCMD_Q_14) # (abc:n403Q & abc:n211 (QN)QN & VIDCMD_Q_15) # (!abc:n403Q & !abc:n211 (QN)QN) # (!abc:n403Q & H_ACTIVE & !VIDCMD_Q_14 & !VIDCMD_Q_15 & have_staged) # (abc:n403Q & abc:n211 (QN)QN & !have_staged) # (abc:n403Q & abc:n211 (QN)QN & !H_ACTIVE))
+  [ 3 PTs]  set_pix_commit.D = ((abc:n213Q & VIDCMD_Q_13 & VIDCMD_Q_15 & !VIDCMD_Q_12) # (abc:n213Q & VIDCMD_Q_13 & VIDCMD_Q_15 & !VIDCMD_Q_14) # (abc:n213Q & !VIDCMD_Q_13 & VIDCMD_Q_15 & VIDCMD_Q_14))
+  [ 2 PTs]  have_staged.D = ((!abc:n213Q & pop_in_flight) # (!abc:n213Q & have_staged))
+  [ 2 PTs]  pop_in_flight.D = ((ef_meta & nVIDCMD_EF & ef_sync & !pop_in_flight & abc:n213Q) # (ef_meta & nVIDCMD_EF & ef_sync & !pop_in_flight & !have_staged))
+  [ 5 PTs]  cmp_held_fg_9.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_9 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_9 & abc:n215Q) # (cmp_held_fg_9 & VIDCMD_Q_12) # (cmp_held_fg_9 & !VIDCMD_Q_15) # (cmp_held_fg_9 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_bg_2.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_2 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_2 & abc:n215Q) # (cmp_held_bg_2 & !VIDCMD_Q_15) # (cmp_held_bg_2 & !abc:n213Q) # (cmp_held_bg_2 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_fg_10.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_10 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_10 & abc:n215Q) # (cmp_held_fg_10 & VIDCMD_Q_12) # (cmp_held_fg_10 & !VIDCMD_Q_15) # (cmp_held_fg_10 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_bg_3.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_3 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_3 & abc:n215Q) # (cmp_held_bg_3 & !VIDCMD_Q_15) # (cmp_held_bg_3 & !abc:n213Q) # (cmp_held_bg_3 & !VIDCMD_Q_12))
+  [ 5 PTs]  nVIDCMD_RE.D = ((nVIDCMD_RE.Q & !nVIDCMD_EF) # (nVIDCMD_RE.Q & !ef_sync) # pop_in_flight # (nVIDCMD_RE.Q & !abc:n213Q & have_staged) # (nVIDCMD_RE.Q & !ef_meta))
+  [ 4 PTs]  run_count_1.D = ((!abc:n404Q & VIDCMD_Q_1 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11) # (!abc:n404Q & run_count_1 & abc:n229Q) # (abc:n404Q & !run_count_1 & abc:n229Q) # (abc:n404Q & !VIDCMD_Q_1 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11))
+  [ 2 PTs]  run_count_4.D = ((abc:n411Q & abc:n413 (QN)QN) # (!abc:n411Q & !abc:n413 (QN)QN))
+  [ 5 PTs]  cmp_held_bg_4.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_4 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_4 & abc:n215Q) # (cmp_held_bg_4 & !VIDCMD_Q_15) # (cmp_held_bg_4 & !abc:n213Q) # (cmp_held_bg_4 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_bg_11.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_11 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_11 & abc:n215Q) # (cmp_held_bg_11 & !VIDCMD_Q_15) # (cmp_held_bg_11 & !abc:n213Q) # (cmp_held_bg_11 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_bg_5.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_5 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_5 & abc:n215Q) # (cmp_held_bg_5 & !VIDCMD_Q_15) # (cmp_held_bg_5 & !abc:n213Q) # (cmp_held_bg_5 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_bg_6.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_6 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_6 & abc:n215Q) # (cmp_held_bg_6 & !VIDCMD_Q_15) # (cmp_held_bg_6 & !abc:n213Q) # (cmp_held_bg_6 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_bg_7.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_7 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_7 & abc:n215Q) # (cmp_held_bg_7 & !VIDCMD_Q_15) # (cmp_held_bg_7 & !abc:n213Q) # (cmp_held_bg_7 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_bg_8.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_8 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_8 & abc:n215Q) # (cmp_held_bg_8 & !VIDCMD_Q_15) # (cmp_held_bg_8 & !abc:n213Q) # (cmp_held_bg_8 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_bg_9.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_9 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_9 & abc:n215Q) # (cmp_held_bg_9 & !VIDCMD_Q_15) # (cmp_held_bg_9 & !abc:n213Q) # (cmp_held_bg_9 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_bg_10.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_10 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_10 & abc:n215Q) # (cmp_held_bg_10 & !VIDCMD_Q_15) # (cmp_held_bg_10 & !abc:n213Q) # (cmp_held_bg_10 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_fg_0.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_0 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_0 & abc:n215Q) # (cmp_held_fg_0 & VIDCMD_Q_12) # (cmp_held_fg_0 & !VIDCMD_Q_15) # (cmp_held_fg_0 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_fg_1.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_1 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_1 & abc:n215Q) # (cmp_held_fg_1 & VIDCMD_Q_12) # (cmp_held_fg_1 & !VIDCMD_Q_15) # (cmp_held_fg_1 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_fg_2.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_2 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_2 & abc:n215Q) # (cmp_held_fg_2 & VIDCMD_Q_12) # (cmp_held_fg_2 & !VIDCMD_Q_15) # (cmp_held_fg_2 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_fg_3.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_3 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_3 & abc:n215Q) # (cmp_held_fg_3 & VIDCMD_Q_12) # (cmp_held_fg_3 & !VIDCMD_Q_15) # (cmp_held_fg_3 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_fg_11.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_11 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_11 & abc:n215Q) # (cmp_held_fg_11 & VIDCMD_Q_12) # (cmp_held_fg_11 & !VIDCMD_Q_15) # (cmp_held_fg_11 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_fg_4.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_4 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_4 & abc:n215Q) # (cmp_held_fg_4 & VIDCMD_Q_12) # (cmp_held_fg_4 & !VIDCMD_Q_15) # (cmp_held_fg_4 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_fg_5.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_5 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_5 & abc:n215Q) # (cmp_held_fg_5 & VIDCMD_Q_12) # (cmp_held_fg_5 & !VIDCMD_Q_15) # (cmp_held_fg_5 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_bg_0.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_0 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_0 & abc:n215Q) # (cmp_held_bg_0 & !VIDCMD_Q_15) # (cmp_held_bg_0 & !abc:n213Q) # (cmp_held_bg_0 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_fg_6.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_6 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_6 & abc:n215Q) # (cmp_held_fg_6 & VIDCMD_Q_12) # (cmp_held_fg_6 & !VIDCMD_Q_15) # (cmp_held_fg_6 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_fg_7.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_7 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_7 & abc:n215Q) # (cmp_held_fg_7 & VIDCMD_Q_12) # (cmp_held_fg_7 & !VIDCMD_Q_15) # (cmp_held_fg_7 & !abc:n213Q))
+  [ 5 PTs]  cmp_held_bg_1.D = ((VIDCMD_Q_12 & abc:n213Q & VIDCMD_Q_15 & VIDCMD_Q_1 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_bg_1 & abc:n215Q) # (cmp_held_bg_1 & !VIDCMD_Q_15) # (cmp_held_bg_1 & !abc:n213Q) # (cmp_held_bg_1 & !VIDCMD_Q_12))
+  [ 5 PTs]  cmp_held_fg_8.D = ((abc:n213Q & VIDCMD_Q_15 & !VIDCMD_Q_12 & VIDCMD_Q_8 & !VIDCMD_Q_13 & !VIDCMD_Q_14) # (cmp_held_fg_8 & abc:n215Q) # (cmp_held_fg_8 & VIDCMD_Q_12) # (cmp_held_fg_8 & !VIDCMD_Q_15) # (cmp_held_fg_8 & !abc:n213Q))
+  [ 4 PTs]  abc:n424 = ((abc:n411Q & run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & run_count_7 & abc:n229Q & abc:n232Q) # (abc:n411Q & run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & run_count_7 & VIDCMD_Q_7 & VIDCMD_Q_6) # (abc:n411Q & run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & run_count_7 & abc:n232Q & VIDCMD_Q_6) # (abc:n411Q & run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & run_count_7 & VIDCMD_Q_7 & abc:n229Q))
+  [ 4 PTs]  abc:n433 = ((abc:n411Q & run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & run_count_7 & run_count_8 & abc:n432Q & VIDCMD_Q_8 & VIDCMD_Q_7 & VIDCMD_Q_6) # (abc:n411Q & run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & run_count_7 & run_count_8 & abc:n432Q & abc:n232Q & VIDCMD_Q_6) # (abc:n411Q & run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & run_count_7 & run_count_8 & abc:n432Q & abc:n229Q & VIDCMD_Q_8 & VIDCMD_Q_7) # (abc:n411Q & run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & run_count_7 & run_count_8 & abc:n432Q & abc:n229Q & abc:n232Q))
+  [ 9 PTs]  run_count_2.D = ((run_count_2 & !VIDCMD_Q_1 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11 & VIDCMD_Q_2) # (run_count_2 & abc:n232Q & !run_count_1 & abc:n229Q) # (run_count_2 & !run_count_1 & VIDCMD_Q_2 & abc:n229Q) # (H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11 & !VIDCMD_Q_2 & abc:n229Q & abc:n404Q) # (!run_count_2 & run_count_1 & abc:n229Q & abc:n404Q) # (run_count_2 & VIDCMD_Q_1 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11 & !VIDCMD_Q_2 & abc:n404Q) # (run_count_2 & abc:n232Q & !abc:n404Q) # (run_count_2 & VIDCMD_Q_2 & !abc:n404Q) # (run_count_2 & abc:n232Q & !VIDCMD_Q_1 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11))
+  [ 9 PTs]  run_count_3.D = ((abc:n410Q & !run_count_2) # (!abc:n410Q & run_count_1 & run_count_2 & abc:n404Q & abc:n232Q & abc:n229Q) # (!abc:n410Q & VIDCMD_Q_2 & run_count_1 & run_count_2 & abc:n404Q & abc:n229Q) # (abc:n410Q & !abc:n404Q) # (abc:n410Q & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11 & !VIDCMD_Q_1) # (abc:n410Q & !run_count_1 & abc:n229Q) # (!abc:n410Q & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11 & abc:n404Q & abc:n232Q & VIDCMD_Q_1) # (!abc:n410Q & VIDCMD_Q_2 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11 & abc:n404Q & VIDCMD_Q_1) # (abc:n410Q & !VIDCMD_Q_2 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11))
+  [ 3 PTs]  run_count_5.D = ((abc:n416 (QN)QN & !abc:n413 (QN)QN & abc:n411Q) # (!abc:n416 (QN)QN & !abc:n411Q) # (!abc:n416 (QN)QN & abc:n413 (QN)QN))
+  [ 8 PTs]  run_count_6.D = ((!run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & abc:n411Q) # (!abc:n416 (QN)QN & !abc:n413 (QN)QN & abc:n411Q & !VIDCMD_Q_6 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_7 & run_count_8 & run_count_9 & have_staged & run_count_11) # (run_count_6 & !abc:n411Q & VIDCMD_Q_6) # (run_count_6 & abc:n413 (QN)QN & VIDCMD_Q_6) # (run_count_6 & abc:n229Q & !abc:n411Q) # (run_count_6 & abc:n229Q & abc:n413 (QN)QN) # (run_count_6 & abc:n416 (QN)QN & VIDCMD_Q_6) # (run_count_6 & abc:n416 (QN)QN & abc:n229Q))
+  [14 PTs]  run_count_7.D = ((run_count_7 & !run_count_6 & abc:n232Q) # (run_count_7 & VIDCMD_Q_7 & !VIDCMD_Q_6 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_8 & run_count_9 & have_staged & run_count_11) # (run_count_7 & abc:n232Q & !VIDCMD_Q_6 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_8 & run_count_9 & have_staged & run_count_11) # (run_count_7 & VIDCMD_Q_7 & abc:n416 (QN)QN) # (run_count_7 & abc:n232Q & abc:n416 (QN)QN) # (run_count_7 & VIDCMD_Q_7 & abc:n413 (QN)QN) # (run_count_7 & abc:n232Q & abc:n413 (QN)QN) # (!run_count_7 & run_count_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & abc:n411Q & abc:n229Q) # (!VIDCMD_Q_7 & run_count_6 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_8 & run_count_9 & have_staged & run_count_11 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & abc:n411Q & abc:n229Q) # (!run_count_7 & run_count_6 & VIDCMD_Q_6 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & abc:n411Q) # (!VIDCMD_Q_7 & run_count_6 & VIDCMD_Q_6 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_8 & run_count_9 & have_staged & run_count_11 & !abc:n416 (QN)QN & !abc:n413 (QN)QN & abc:n411Q) # (run_count_7 & VIDCMD_Q_7 & !abc:n411Q) # (run_count_7 & abc:n232Q & !abc:n411Q) # (run_count_7 & VIDCMD_Q_7 & !run_count_6))
+  [ 2 PTs]  run_count_10.D = ((abc:n433Q & abc:n435 (QN)QN) # (!abc:n433Q & !abc:n435 (QN)QN))
+  [ 4 PTs]  run_count_8.D = ((abc:n424Q & !run_count_8) # (abc:n424Q & !VIDCMD_Q_8 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_9 & have_staged & run_count_11) # (!abc:n424Q & run_count_8 & VIDCMD_Q_8) # (!abc:n424Q & run_count_8 & abc:n232Q))
+  [ 5 PTs]  run_count_9.D = ((!abc:n432Q & run_count_8 & abc:n424Q & abc:n232Q) # (abc:n432Q & !abc:n424Q) # (abc:n432Q & !run_count_8) # (abc:n432Q & !VIDCMD_Q_8 & H_ACTIVE & !VIDCMD_Q_15 & !VIDCMD_Q_14 & run_count_10 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & run_count_7 & run_count_9 & have_staged & run_count_11) # (!abc:n432Q & VIDCMD_Q_8 & run_count_8 & abc:n424Q))
+  [ 3 PTs]  run_count_11.D = ((!abc:n442 (QN)QN & !abc:n433Q) # (abc:n435 (QN)QN & !abc:n442 (QN)QN) # (!abc:n435 (QN)QN & abc:n442 (QN)QN & abc:n433Q))
+  [ 1 PTs]  set_pix_target_0.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_target_0.AR = !nRS
+  [ 1 PTs]  set_pix_target_1.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_target_1.AR = !nRS
+  [ 1 PTs]  ef_meta.C = PIXEL_CLK
+  [ 1 PTs]  ef_meta.AR = !nRS
+  [ 1 PTs]  set_pix_target_2.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_target_2.AR = !nRS
+  [ 1 PTs]  ef_sync.C = PIXEL_CLK
+  [ 1 PTs]  ef_sync.AR = !nRS
+  [ 1 PTs]  h_active_d.C = PIXEL_CLK
+  [ 1 PTs]  h_active_d.AR = !nRS
+  [ 1 PTs]  cur_colour_0.C = PIXEL_CLK
+  [ 1 PTs]  cur_colour_0.AR = !nRS
+  [ 1 PTs]  cur_colour_1.C = PIXEL_CLK
+  [ 1 PTs]  cur_colour_1.AR = !nRS
+  [ 1 PTs]  cur_src_0.C = PIXEL_CLK
+  [ 1 PTs]  cur_src_0.AR = !nRS
+  [ 1 PTs]  cur_src_1.C = PIXEL_CLK
+  [ 1 PTs]  cur_src_1.AR = !nRS
+  [ 1 PTs]  set_pix_valid.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_valid.AR = !nRS
+  [ 1 PTs]  cur_colour_2.C = PIXEL_CLK
+  [ 1 PTs]  cur_colour_2.AR = !nRS
+  [ 1 PTs]  RGB_OUT_0.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_0.AR = !nRS
+  [ 1 PTs]  RGB_OUT_1.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_1.AR = !nRS
+  [ 1 PTs]  RGB_OUT_2.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_2.AR = !nRS
+  [ 1 PTs]  RGB_OUT_3.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_3.AR = !nRS
+  [ 1 PTs]  RGB_OUT_4.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_4.AR = !nRS
+  [ 1 PTs]  RGB_OUT_5.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_5.AR = !nRS
+  [ 1 PTs]  RGB_OUT_6.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_6.AR = !nRS
+  [ 1 PTs]  RGB_OUT_7.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_7.AR = !nRS
+  [ 1 PTs]  RGB_OUT_8.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_8.AR = !nRS
+  [ 1 PTs]  RGB_OUT_9.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_9.AR = !nRS
+  [ 1 PTs]  RGB_OUT_10.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_10.AR = !nRS
+  [ 1 PTs]  RGB_OUT_11.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_11.AR = !nRS
+  [ 1 PTs]  run_count_0.C = PIXEL_CLK
+  [ 1 PTs]  run_count_0.AP = !nRS
+  [ 1 PTs]  set_pix_commit.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_commit.AR = !nRS
+  [ 1 PTs]  have_staged.C = PIXEL_CLK
+  [ 1 PTs]  have_staged.AR = !nRS
+  [ 1 PTs]  pop_in_flight.C = PIXEL_CLK
+  [ 1 PTs]  pop_in_flight.AR = !nRS
+  [ 1 PTs]  cmp_held_fg_9.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_9.AP = !nRS
+  [ 1 PTs]  cmp_held_bg_2.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_2.AR = !nRS
+  [ 1 PTs]  cmp_held_fg_10.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_10.AP = !nRS
+  [ 1 PTs]  cmp_held_bg_3.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_3.AR = !nRS
+  [ 1 PTs]  nVIDCMD_RE.C = PIXEL_CLK
+  [ 1 PTs]  nVIDCMD_RE.AP = !nRS
+  [ 1 PTs]  run_count_1.C = PIXEL_CLK
+  [ 1 PTs]  run_count_1.AP = !nRS
+  [ 1 PTs]  run_count_4.C = PIXEL_CLK
+  [ 1 PTs]  run_count_4.AP = !nRS
+  [ 1 PTs]  cmp_held_bg_4.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_4.AR = !nRS
+  [ 1 PTs]  cmp_held_bg_11.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_11.AR = !nRS
+  [ 1 PTs]  cmp_held_bg_5.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_5.AR = !nRS
+  [ 1 PTs]  cmp_held_bg_6.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_6.AR = !nRS
+  [ 1 PTs]  cmp_held_bg_7.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_7.AR = !nRS
+  [ 1 PTs]  cmp_held_bg_8.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_8.AR = !nRS
+  [ 1 PTs]  cmp_held_bg_9.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_9.AR = !nRS
+  [ 1 PTs]  cmp_held_bg_10.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_10.AR = !nRS
+  [ 1 PTs]  cmp_held_fg_0.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_0.AP = !nRS
+  [ 1 PTs]  cmp_held_fg_1.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_1.AP = !nRS
+  [ 1 PTs]  cmp_held_fg_2.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_2.AP = !nRS
+  [ 1 PTs]  cmp_held_fg_3.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_3.AP = !nRS
+  [ 1 PTs]  cmp_held_fg_11.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_11.AP = !nRS
+  [ 1 PTs]  cmp_held_fg_4.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_4.AP = !nRS
+  [ 1 PTs]  cmp_held_fg_5.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_5.AP = !nRS
+  [ 1 PTs]  cmp_held_bg_0.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_0.AR = !nRS
+  [ 1 PTs]  cmp_held_fg_6.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_6.AP = !nRS
+  [ 1 PTs]  cmp_held_fg_7.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_7.AP = !nRS
+  [ 1 PTs]  cmp_held_bg_1.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_bg_1.AR = !nRS
+  [ 1 PTs]  cmp_held_fg_8.C = PIXEL_CLK
+  [ 1 PTs]  cmp_held_fg_8.AP = !nRS
+  [ 1 PTs]  run_count_2.C = PIXEL_CLK
+  [ 1 PTs]  run_count_2.AP = !nRS
+  [ 1 PTs]  run_count_3.C = PIXEL_CLK
+  [ 1 PTs]  run_count_3.AP = !nRS
+  [ 1 PTs]  run_count_5.C = PIXEL_CLK
+  [ 1 PTs]  run_count_5.AP = !nRS
+  [ 1 PTs]  run_count_6.C = PIXEL_CLK
+  [ 1 PTs]  run_count_6.AP = !nRS
+  [ 1 PTs]  run_count_7.C = PIXEL_CLK
+  [ 1 PTs]  run_count_7.AP = !nRS
+  [ 1 PTs]  run_count_10.C = PIXEL_CLK
+  [ 1 PTs]  run_count_10.AP = !nRS
+  [ 1 PTs]  run_count_8.C = PIXEL_CLK
+  [ 1 PTs]  run_count_8.AP = !nRS
+  [ 1 PTs]  run_count_9.C = PIXEL_CLK
+  [ 1 PTs]  run_count_9.AP = !nRS
+  [ 1 PTs]  run_count_11.C = PIXEL_CLK
+  [ 1 PTs]  run_count_11.AP = !nRS
+

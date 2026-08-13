@@ -1,0 +1,1126 @@
+++ dirname /Users/grantham/trees/atf15xx_yosys/run_yosys.sh
++ export ROOT=/Users/grantham/trees/atf15xx_yosys
++ ROOT=/Users/grantham/trees/atf15xx_yosys
++ NAME=compositor
++ shift
+++ yosys --version
+++ cut '-d ' -f2
++ VERSION=0.62+117
++ '[' 0.62+117 '>' 0.30+20 ']'
++ LSBIDX=-lsbidx
++ yosys
+
+ /----------------------------------------------------------------------------\
+ |  yosys -- Yosys Open SYnthesis Suite                                       |
+ |  Copyright (C) 2012 - 2026  Claire Xenia Wolf <claire@yosyshq.com>         |
+ |  Distributed under an ISC-like license, type "license" to see terms        |
+ \----------------------------------------------------------------------------/
+ Yosys 0.62+117 (git sha1 1d3f9b790-dirty, aarch64-apple-darwin23.5-clang++ 18.1.8 -fPIC -O3)
+
+yosys> read_liberty -lib /Users/grantham/trees/atf15xx_yosys/cells.lib
+
+1. Executing Liberty frontend: /Users/grantham/trees/atf15xx_yosys/cells.lib
+Imported 102 cell types from liberty file.
+
+yosys> read_verilog compositor.v
+
+2. Executing Verilog-2005 frontend: compositor.v
+Parsing Verilog input from `compositor.v' to AST representation.
+Generating RTLIL representation for module `\Compositor'.
+Successfully finished Verilog frontend.
+
+yosys> stat
+
+3. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+       99 wires
+      360 wire bits
+       43 public wires
+      178 public wire bits
+       11 ports
+       50 port bits
+        1 processes
+       41 cells
+        1   $add
+       16   $and
+        6   $eq
+        1   $ge
+        1   $le
+        6   $mux
+        6   $not
+        3   $or
+        1   $reduce_and
+
+
+yosys> tribuf
+4. Executing TRIBUF pass.
+
+yosys> stat
+
+5. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+       99 wires
+      360 wire bits
+       43 public wires
+      178 public wire bits
+       11 ports
+       50 port bits
+        1 processes
+       41 cells
+        1   $add
+       16   $and
+        6   $eq
+        1   $ge
+        1   $le
+        6   $mux
+        6   $not
+        3   $or
+        1   $reduce_and
+
+
+yosys> synth -flatten -noabc -auto-top
+6. Executing SYNTH pass.
+
+6.1. Executing HIERARCHY pass (managing design hierarchy).
+
+6.1.1. Finding top of design hierarchy..
+root of   0 design levels: Compositor          
+Automatically selected Compositor as design top module.
+
+6.1.2. Analyzing design hierarchy..
+Top module:  \Compositor
+
+6.1.3. Analyzing design hierarchy..
+Top module:  \Compositor
+Removed 0 unused modules.
+
+6.2. Executing PROC pass (convert processes to netlists).
+
+6.2.1. Executing PROC_CLEAN pass (remove empty switches from decision trees).
+Cleaned up 0 empty switches.
+
+6.2.2. Executing PROC_RMDEAD pass (remove dead branches from decision trees).
+Marked 2 switch rules as full_case in process $proc$compositor.v:216$36 in module Compositor.
+Removed a total of 0 dead cases.
+
+6.2.3. Executing PROC_PRUNE pass (remove redundant assignments in processes).
+Removed 8 redundant assignments.
+Promoted 0 assignments to connections.
+
+6.2.4. Executing PROC_INIT pass (extract init attributes).
+
+6.2.5. Executing PROC_ARST pass (detect async resets in processes).
+Found async reset \RESET in `\Compositor.$proc$compositor.v:216$36'.
+
+6.2.6. Executing PROC_ROM pass (convert switches to ROMs).
+Converted 0 switches.
+<suppressed ~7 debug messages>
+
+6.2.7. Executing PROC_MUX pass (convert decision trees to multiplexers).
+Creating decoders for process `\Compositor.$proc$compositor.v:216$36'.
+     1/15: $0\run_count[11:0]
+     2/15: $0\set_pix_commit[0:0]
+     3/15: $0\set_pix_target[2:0]
+     4/15: $0\set_pix_valid[0:0]
+     5/15: $0\RGB_OUT[11:0]
+     6/15: $0\h_active_d[0:0]
+     7/15: $0\ef_sync[0:0]
+     8/15: $0\ef_meta[0:0]
+     9/15: $0\pop_in_flight[0:0]
+    10/15: $0\have_staged[0:0]
+    11/15: $0\cur_colour[2:0]
+    12/15: $0\cur_src[1:0]
+    13/15: $0\cmp_held_bg[11:0]
+    14/15: $0\cmp_held_fg[11:0]
+    15/15: $0\nVIDCMD_RE[0:0]
+
+6.2.8. Executing PROC_DLATCH pass (convert process syncs to latches).
+
+6.2.9. Executing PROC_DFF pass (convert process syncs to FFs).
+Creating register for signal `\Compositor.\RGB_OUT' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$72' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\nVIDCMD_RE' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$75' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\set_pix_valid' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$78' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\set_pix_target' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$81' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\set_pix_commit' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$84' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\cmp_held_fg' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$87' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\cmp_held_bg' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$90' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\run_count' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$93' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\cur_src' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$96' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\cur_colour' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$99' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\have_staged' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$102' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\pop_in_flight' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$105' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\h_active_d' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$108' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\ef_meta' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$111' with positive edge clock and positive level reset.
+Creating register for signal `\Compositor.\ef_sync' using process `\Compositor.$proc$compositor.v:216$36'.
+  created $adff cell `$procdff$114' with positive edge clock and positive level reset.
+
+6.2.10. Executing PROC_MEMWR pass (convert process memory writes to cells).
+
+6.2.11. Executing PROC_CLEAN pass (remove empty switches from decision trees).
+Found and cleaned up 7 empty switches in `\Compositor.$proc$compositor.v:216$36'.
+Removing empty process `Compositor.$proc$compositor.v:216$36'.
+Cleaned up 7 empty switches.
+
+6.2.12. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+<suppressed ~32 debug messages>
+
+6.3. Executing FLATTEN pass (flatten design).
+
+6.4. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.5. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+Removed 1 unused cells and 59 unused wires.
+<suppressed ~3 debug messages>
+
+6.6. Executing CHECK pass (checking for obvious problems).
+Checking module Compositor...
+Found and reported 0 problems.
+
+6.7. Executing OPT pass (performing simple optimizations).
+
+6.7.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.7.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 67 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.7.3. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Compositor..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+      Replacing known input bits on port A of cell $procmux$43: \pop_in_flight -> 1'0
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~27 debug messages>
+
+6.7.4. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Compositor.
+Performed a total of 0 changes.
+
+6.7.5. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 67 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.7.6. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.7.7. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.7.8. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.7.9. Finished fast OPT passes. (There is nothing left to do.)
+
+6.8. Executing FSM pass (extract and optimize FSM).
+
+6.8.1. Executing FSM_DETECT pass (finding FSMs in design).
+
+6.8.2. Executing FSM_EXTRACT pass (extracting FSM from design).
+
+6.8.3. Executing FSM_OPT pass (simple optimizations of FSMs).
+
+6.8.4. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.8.5. Executing FSM_OPT pass (simple optimizations of FSMs).
+
+6.8.6. Executing FSM_RECODE pass (re-assigning FSM state encoding).
+
+6.8.7. Executing FSM_INFO pass (dumping all available information on FSM cells).
+
+6.8.8. Executing FSM_MAP pass (mapping FSMs to basic logic).
+
+6.9. Executing OPT pass (performing simple optimizations).
+
+6.9.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.9.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 67 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.9.3. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Compositor..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~27 debug messages>
+
+6.9.4. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Compositor.
+Performed a total of 0 changes.
+
+6.9.5. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 67 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.9.6. Executing OPT_DFF pass (perform DFF optimizations).
+Adding EN signal on $procdff$75 ($adff) from module Compositor (D = $0\nVIDCMD_RE[0:0], Q = \nVIDCMD_RE).
+Adding EN signal on $procdff$96 ($adff) from module Compositor (D = \VIDCMD_Q [13:12], Q = \cur_src).
+Adding EN signal on $procdff$99 ($adff) from module Compositor (D = \VIDCMD_Q [11:9], Q = \cur_colour).
+Adding EN signal on $procdff$87 ($adff) from module Compositor (D = \VIDCMD_Q [11:0], Q = \cmp_held_fg).
+Adding EN signal on $procdff$102 ($adff) from module Compositor (D = $0\have_staged[0:0], Q = \have_staged).
+Adding EN signal on $procdff$90 ($adff) from module Compositor (D = \VIDCMD_Q [11:0], Q = \cmp_held_bg).
+
+6.9.7. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+Removed 6 unused cells and 6 unused wires.
+<suppressed ~7 debug messages>
+
+6.9.8. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+<suppressed ~2 debug messages>
+
+6.9.9. Rerunning OPT passes. (Maybe there is more to do..)
+
+6.9.10. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Compositor..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~17 debug messages>
+
+6.9.11. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Compositor.
+Performed a total of 0 changes.
+
+6.9.12. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 65 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.9.13. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.9.14. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.9.15. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.9.16. Finished fast OPT passes. (There is nothing left to do.)
+
+6.10. Executing WREDUCE pass (reducing word size of cells).
+Removed top 1 bits (of 3) from port B of cell Compositor.$ge$compositor.v:176$9 ($ge).
+Removed top 1 bits (of 2) from port B of cell Compositor.$eq$compositor.v:212$31 ($eq).
+Removed top 2 bits (of 3) from port B of cell Compositor.$eq$compositor.v:258$41 ($eq).
+Removed top 11 bits (of 12) from port B of cell Compositor.$add$compositor.v:270$42 ($add).
+
+6.11. Executing PEEPOPT pass (run peephole optimizers).
+
+6.12. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.13. Executing ALUMACC pass (create $alu and $macc cells).
+Extracting $alu and $macc cells in module Compositor:
+  creating $macc model for $add$compositor.v:270$42 ($add).
+  creating $alu model for $macc $add$compositor.v:270$42.
+  creating $alu model for $le$compositor.v:176$11 ($le): new $alu
+  creating $alu model for $ge$compositor.v:176$9 ($ge): new $alu
+  creating $alu cell for $ge$compositor.v:176$9: $auto$alumacc.cc:512:replace_alu$131
+  creating $alu cell for $le$compositor.v:176$11: $auto$alumacc.cc:512:replace_alu$144
+  creating $alu cell for $add$compositor.v:270$42: $auto$alumacc.cc:512:replace_alu$153
+  created 3 $alu and 0 $macc cells.
+
+6.14. Executing SHARE pass (SAT-based resource sharing).
+
+6.15. Executing OPT pass (performing simple optimizations).
+
+6.15.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.15.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 73 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.15.3. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Compositor..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~17 debug messages>
+
+6.15.4. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Compositor.
+Performed a total of 0 changes.
+
+6.15.5. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 73 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.15.6. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.15.7. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+Removed 0 unused cells and 2 unused wires.
+<suppressed ~1 debug messages>
+
+6.15.8. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.15.9. Rerunning OPT passes. (Maybe there is more to do..)
+
+6.15.10. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Compositor..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~17 debug messages>
+
+6.15.11. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Compositor.
+Performed a total of 0 changes.
+
+6.15.12. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 73 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.15.13. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.15.14. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.15.15. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.15.16. Finished fast OPT passes. (There is nothing left to do.)
+
+6.16. Executing MEMORY pass.
+
+6.16.1. Executing OPT_MEM pass (optimize memories).
+Performed a total of 0 transformations.
+
+6.16.2. Executing OPT_MEM_PRIORITY pass (removing unnecessary memory write priority relations).
+Performed a total of 0 transformations.
+
+6.16.3. Executing OPT_MEM_FEEDBACK pass (finding memory read-to-write feedback paths).
+
+6.16.4. Executing MEMORY_BMUX2ROM pass (converting muxes to ROMs).
+
+6.16.5. Executing MEMORY_DFF pass (merging $dff cells to $memrd).
+
+6.16.6. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.16.7. Executing MEMORY_SHARE pass (consolidating $memrd/$memwr cells).
+
+6.16.8. Executing OPT_MEM_WIDEN pass (optimize memories where all ports are wide).
+Performed a total of 0 transformations.
+
+6.16.9. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.16.10. Executing MEMORY_COLLECT pass (generating $mem cells).
+
+6.17. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.18. Executing OPT pass (performing simple optimizations).
+
+6.18.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+<suppressed ~7 debug messages>
+
+6.18.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 71 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Computing hashes of 70 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+<suppressed ~3 debug messages>
+Removed a total of 1 cells.
+
+6.18.3. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.18.4. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+Removed 0 unused cells and 6 unused wires.
+<suppressed ~1 debug messages>
+
+6.18.5. Finished fast OPT passes.
+
+6.19. Executing MEMORY_MAP pass (converting memories to logic and flip-flops).
+
+6.20. Executing OPT pass (performing simple optimizations).
+
+6.20.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+<suppressed ~1 debug messages>
+
+6.20.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 70 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.20.3. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Compositor..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~10 debug messages>
+
+6.20.4. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Compositor.
+    Consolidated identical input bits for $mux cell $ternary$compositor.v:180$13:
+      Old ports: A=\VIDCMD_Q [11:0], B={ 3'111 \VIDCMD_Q [8:0] }, Y=\w_load
+      New ports: A=\VIDCMD_Q [11:9], B=3'111, Y=\w_load [11:9]
+      New connections: \w_load [8:0] = \VIDCMD_Q [8:0]
+  Optimizing cells in module \Compositor.
+Performed a total of 1 changes.
+
+6.20.5. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 70 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.20.6. Executing OPT_SHARE pass.
+
+6.20.7. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.20.8. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.20.9. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.20.10. Rerunning OPT passes. (Maybe there is more to do..)
+
+6.20.11. Executing OPT_MUXTREE pass (detect dead branches in mux trees).
+Running muxtree optimizer on module \Compositor..
+  Creating internal representation of mux trees.
+  Evaluating internal representation of mux trees.
+  Analyzing evaluation results.
+Removed 0 multiplexer ports.
+<suppressed ~10 debug messages>
+
+6.20.12. Executing OPT_REDUCE pass (consolidate $*mux and $reduce_* inputs).
+  Optimizing cells in module \Compositor.
+Performed a total of 0 changes.
+
+6.20.13. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 70 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Removed a total of 0 cells.
+
+6.20.14. Executing OPT_SHARE pass.
+
+6.20.15. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.20.16. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+
+6.20.17. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+
+6.20.18. Finished fast OPT passes. (There is nothing left to do.)
+
+6.21. Executing TECHMAP pass (map to technology primitives).
+
+6.21.1. Executing Verilog-2005 frontend: /Users/grantham/trees/oss-cad-suite/libexec/../share/yosys/techmap.v
+Parsing Verilog input from `/Users/grantham/trees/oss-cad-suite/libexec/../share/yosys/techmap.v' to AST representation.
+Generating RTLIL representation for module `\_90_simplemap_bool_ops'.
+Generating RTLIL representation for module `\_90_simplemap_reduce_ops'.
+Generating RTLIL representation for module `\_90_simplemap_logic_ops'.
+Generating RTLIL representation for module `\_90_simplemap_compare_ops'.
+Generating RTLIL representation for module `\_90_simplemap_various'.
+Generating RTLIL representation for module `\_90_simplemap_registers'.
+Generating RTLIL representation for module `\_90_shift_ops_shr_shl_sshl_sshr'.
+Generating RTLIL representation for module `\_90_shift_shiftx'.
+Generating RTLIL representation for module `\_90_fa'.
+Generating RTLIL representation for module `\_90_lcu_brent_kung'.
+Generating RTLIL representation for module `\_90_alu'.
+Generating RTLIL representation for module `\_90_macc'.
+Generating RTLIL representation for module `\_90_alumacc'.
+Generating RTLIL representation for module `$__div_mod_u'.
+Generating RTLIL representation for module `$__div_mod_trunc'.
+Generating RTLIL representation for module `\_90_div'.
+Generating RTLIL representation for module `\_90_mod'.
+Generating RTLIL representation for module `$__div_mod_floor'.
+Generating RTLIL representation for module `\_90_divfloor'.
+Generating RTLIL representation for module `\_90_modfloor'.
+Generating RTLIL representation for module `\_90_pow'.
+Generating RTLIL representation for module `\_90_pmux'.
+Generating RTLIL representation for module `\_90_demux'.
+Generating RTLIL representation for module `\_90_lut'.
+Generating RTLIL representation for module `$connect'.
+Generating RTLIL representation for module `$input_port'.
+Successfully finished Verilog frontend.
+
+6.21.2. Continuing TECHMAP pass.
+Using extmapper simplemap for cells of type $not.
+Using template $paramod$8f780356cb6cdb52f6a744190131b65634639c4e\_90_alu for cells of type $alu.
+Using extmapper simplemap for cells of type $reduce_or.
+Using extmapper simplemap for cells of type $reduce_and.
+Using template $paramod$7e708ae28ab761f11d0fb59d3ffc72f6a4baf5d9\_90_alu for cells of type $alu.
+Using extmapper simplemap for cells of type $or.
+Using template $paramod$ba698a254f9a5947e85cbe7beae6b161eefc5386\_90_alu for cells of type $alu.
+Using extmapper simplemap for cells of type $adffe.
+Using extmapper simplemap for cells of type $reduce_bool.
+Using extmapper simplemap for cells of type $and.
+Using extmapper simplemap for cells of type $eq.
+Using extmapper simplemap for cells of type $mux.
+Using extmapper simplemap for cells of type $logic_not.
+Using extmapper simplemap for cells of type $adff.
+Using extmapper simplemap for cells of type $xor.
+Using template $paramod\_90_fa\WIDTH=32'00000000000000000000000000001100 for cells of type $fa.
+Using template $paramod\_90_lcu_brent_kung\WIDTH=32'00000000000000000000000000001100 for cells of type $lcu.
+Using extmapper simplemap for cells of type $pos.
+Using template $paramod\_90_fa\WIDTH=32'00000000000000000000000000000010 for cells of type $fa.
+Using template $paramod\_90_lcu_brent_kung\WIDTH=32'00000000000000000000000000000010 for cells of type $lcu.
+No more expansions possible.
+<suppressed ~543 debug messages>
+
+6.22. Executing OPT pass (performing simple optimizations).
+
+6.22.1. Executing OPT_EXPR pass (perform const folding).
+Optimizing module Compositor.
+<suppressed ~181 debug messages>
+
+6.22.2. Executing OPT_MERGE pass (detect identical cells).
+Finding identical cells in module `\Compositor'.
+Computing hashes of 249 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+Computing hashes of 243 cells of `\Compositor'.
+Finding duplicate cells in `\Compositor'.
+<suppressed ~18 debug messages>
+Removed a total of 6 cells.
+
+6.22.3. Executing OPT_DFF pass (perform DFF optimizations).
+
+6.22.4. Executing OPT_CLEAN pass (remove unused cells and wires).
+Finding unused cells or wires in module \Compositor..
+Removed 20 unused cells and 177 unused wires.
+<suppressed ~21 debug messages>
+
+6.22.5. Finished fast OPT passes.
+
+6.23. Executing HIERARCHY pass (managing design hierarchy).
+Attribute `top' found on module `Compositor'. Setting top module to Compositor.
+
+6.23.1. Analyzing design hierarchy..
+Top module:  \Compositor
+
+6.23.2. Analyzing design hierarchy..
+Top module:  \Compositor
+Removed 0 unused modules.
+
+6.24. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      102 wires
+      316 wire bits
+       42 public wires
+      177 public wire bits
+       11 ports
+       50 port bits
+      223 cells
+       50   $_AND_
+       18   $_DFFE_PN0P_
+       13   $_DFFE_PN1P_
+       21   $_DFF_PN0_
+       12   $_DFF_PN1_
+       64   $_MUX_
+       16   $_NOT_
+       17   $_OR_
+       12   $_XOR_
+
+6.25. Executing CHECK pass (checking for obvious problems).
+Checking module Compositor...
+Found and reported 0 problems.
+
+yosys> stat
+
+7. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      102 wires
+      316 wire bits
+       42 public wires
+      177 public wire bits
+       11 ports
+       50 port bits
+      223 cells
+       50   $_AND_
+       18   $_DFFE_PN0P_
+       13   $_DFFE_PN1P_
+       21   $_DFF_PN0_
+       12   $_DFF_PN1_
+       64   $_MUX_
+       16   $_NOT_
+       17   $_OR_
+       12   $_XOR_
+
+
+yosys> techmap -map /Users/grantham/trees/atf15xx_yosys/techmap.v -D skip_DFFE_XX_
+8. Executing TECHMAP pass (map to technology primitives).
+
+8.1. Executing Verilog-2005 frontend: /Users/grantham/trees/atf15xx_yosys/techmap.v
+Parsing Verilog input from `/Users/grantham/trees/atf15xx_yosys/techmap.v' to AST representation.
+Generating RTLIL representation for module `$_DLATCH_P_'.
+Generating RTLIL representation for module `$_DLATCH_N_'.
+Generating RTLIL representation for module `$_DLATCH_NN0_'.
+Generating RTLIL representation for module `$_DLATCH_NN1_'.
+Generating RTLIL representation for module `$_DLATCH_NP0_'.
+Generating RTLIL representation for module `$_DLATCH_NP1_'.
+Generating RTLIL representation for module `$_DLATCH_PN0_'.
+Generating RTLIL representation for module `$_DLATCH_PN1_'.
+Generating RTLIL representation for module `$_DLATCH_PP0_'.
+Generating RTLIL representation for module `$_DLATCH_PP1_'.
+Generating RTLIL representation for module `$_DLATCHSR_NNN_'.
+Generating RTLIL representation for module `$_DLATCHSR_NNP_'.
+Generating RTLIL representation for module `$_DLATCHSR_NPN_'.
+Generating RTLIL representation for module `$_DLATCHSR_NPP_'.
+Generating RTLIL representation for module `$_DLATCHSR_PNN_'.
+Generating RTLIL representation for module `$_DLATCHSR_PNP_'.
+Generating RTLIL representation for module `$_DLATCHSR_PPN_'.
+Generating RTLIL representation for module `$_DLATCHSR_PPP_'.
+Generating RTLIL representation for module `$_DFFE_NN0P_'.
+Generating RTLIL representation for module `$_DFFE_PP1P_'.
+Generating RTLIL representation for module `$_DFFSRE_PPPP_'.
+Successfully finished Verilog frontend.
+
+8.2. Continuing TECHMAP pass.
+No more expansions possible.
+<suppressed ~23 debug messages>
+
+yosys> stat
+
+9. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      102 wires
+      316 wire bits
+       42 public wires
+      177 public wire bits
+       11 ports
+       50 port bits
+      223 cells
+       50   $_AND_
+       18   $_DFFE_PN0P_
+       13   $_DFFE_PN1P_
+       21   $_DFF_PN0_
+       12   $_DFF_PN1_
+       64   $_MUX_
+       16   $_NOT_
+       17   $_OR_
+       12   $_XOR_
+
+
+yosys> simplemap
+10. Executing SIMPLEMAP pass (map simple cells to gate primitives).
+
+yosys> stat
+
+11. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      102 wires
+      316 wire bits
+       42 public wires
+      177 public wire bits
+       11 ports
+       50 port bits
+      223 cells
+       50   $_AND_
+       18   $_DFFE_PN0P_
+       13   $_DFFE_PN1P_
+       21   $_DFF_PN0_
+       12   $_DFF_PN1_
+       64   $_MUX_
+       16   $_NOT_
+       17   $_OR_
+       12   $_XOR_
+
+
+yosys> dfflibmap -liberty /Users/grantham/trees/atf15xx_yosys/cells.lib
+12. Executing DFFLIBMAP pass (mapping DFF cells to sequential cells from liberty file).
+  cell DFF (noninv, pins=4, area=600.00) is a direct match for cell type $_DFF_P_.
+  cell DFFAR (noninv, pins=5, area=600.00) is a direct match for cell type $_DFF_PP0_.
+  cell DFFAS (noninv, pins=5, area=600.00) is a direct match for cell type $_DFF_PP1_.
+  cell DFFARS (noninv, pins=6, area=600.00) is a direct match for cell type $_DFFSR_PPP_.
+  final dff cell mappings:
+    unmapped dff cell: $_DFF_N_
+    \DFF _DFF_P_ (.CLK( C), .D( D), .Q( Q), .QN(~Q));
+    unmapped dff cell: $_DFF_NN0_
+    unmapped dff cell: $_DFF_NN1_
+    unmapped dff cell: $_DFF_NP0_
+    unmapped dff cell: $_DFF_NP1_
+    unmapped dff cell: $_DFF_PN0_
+    unmapped dff cell: $_DFF_PN1_
+    \DFFAR _DFF_PP0_ (.AR( R), .CLK( C), .D( D), .Q( Q), .QN(~Q));
+    \DFFAS _DFF_PP1_ (.AS( R), .CLK( C), .D( D), .Q( Q), .QN(~Q));
+    unmapped dff cell: $_DFFE_NN_
+    unmapped dff cell: $_DFFE_NP_
+    unmapped dff cell: $_DFFE_PN_
+    unmapped dff cell: $_DFFE_PP_
+    unmapped dff cell: $_DFFSR_NNN_
+    unmapped dff cell: $_DFFSR_NNP_
+    unmapped dff cell: $_DFFSR_NPN_
+    unmapped dff cell: $_DFFSR_NPP_
+    unmapped dff cell: $_DFFSR_PNN_
+    unmapped dff cell: $_DFFSR_PNP_
+    unmapped dff cell: $_DFFSR_PPN_
+    \DFFARS _DFFSR_PPP_ (.AR( R), .AS( S), .CLK( C), .D( D), .Q( Q), .QN(~Q));
+
+12.1. Executing DFFLEGALIZE pass (convert FFs to types supported by the target).
+Mapping DFF cells in module `\Compositor':
+  mapped 39 $_DFF_PP0_ cells to \DFFAR cells.
+  mapped 25 $_DFF_PP1_ cells to \DFFAS cells.
+
+yosys> stat
+
+13. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      264 wires
+      478 wire bits
+       42 public wires
+      177 public wire bits
+       11 ports
+       50 port bits
+      318 cells
+       50   $_AND_
+       95   $_MUX_
+       80   $_NOT_
+       17   $_OR_
+       12   $_XOR_
+       39   DFFAR
+       25   DFFAS
+
+
+yosys> abc -liberty /Users/grantham/trees/atf15xx_yosys/cells.lib
+14. Executing ABC pass (technology mapping using ABC).
+
+14.1. Extracting gate netlist of module `\Compositor' to `<abc-temp-dir>/input.blif'..
+
+14.1.1. Executed ABC.
+Extracted 254 gates and 337 wires to a netlist network with 81 inputs and 122 outputs.
+Running ABC script: <abc-temp-dir>/abc.script
+ABC: ======== ABC command line "source <abc-temp-dir>/abc.script"
+ABC: + read_blif <abc-temp-dir>/input.blif 
+ABC: + read_lib -w /Users/grantham/trees/atf15xx_yosys/cells.lib 
+ABC: Parsing finished successfully.  Parsing time =     0.00 sec
+ABC: Warning: Templates are not defined.
+ABC: Liberty parser cannot read "time_unit".  Assuming   time_unit : "1ns".
+ABC: Liberty parser cannot read "capacitive_load_unit". Assuming   capacitive_load_unit(1, pf).
+ABC: Scl_LibertyReadGenlib() skipped cell "bibuf" without logic function.
+ABC: Scl_LibertyReadGenlib() skipped cell "TRI" without logic function.
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFEARS".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFF".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFE".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFAR".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFAS".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "DFFARS".
+ABC: Scl_LibertyReadGenlib() skipped sequential cell "LATCH".
+ABC: Library "atf15xx" from "/Users/grantham/trees/atf15xx_yosys/cells.lib" has 93 cells (9 skipped: 7 seq; 0 tri-state; 2 no func; 0 dont_use; 0 with 2 outputs; 0 with 3+ outputs).  Time =     0.00 sec
+ABC: Memory =    0.17 MB. Time =     0.00 sec
+ABC: + strash 
+ABC: + &get -n 
+ABC: + &fraig -x 
+ABC: + &put 
+ABC: + scorr 
+ABC: Warning: The network is combinational (run "fraig" or "fraig_sweep").
+ABC: + dc2 
+ABC: + dretime 
+ABC: + strash 
+ABC: + &get -n 
+ABC: + &dch -f 
+ABC: + &nf 
+ABC: + &put 
+ABC: + write_blif <abc-temp-dir>/output.blif 
+
+14.1.2. Re-integrating ABC results.
+ABC RESULTS:              AND2 cells:       20
+ABC RESULTS:            AND2I1 cells:        3
+ABC RESULTS:            AND2I2 cells:        9
+ABC RESULTS:              AND3 cells:       15
+ABC RESULTS:            AND3I1 cells:        2
+ABC RESULTS:              AND4 cells:        5
+ABC RESULTS:            AND4I1 cells:        1
+ABC RESULTS:            AND4I2 cells:        1
+ABC RESULTS:              AND6 cells:        3
+ABC RESULTS:               INV cells:       66
+ABC RESULTS:              MUX2 cells:        3
+ABC RESULTS:             NAND2 cells:       99
+ABC RESULTS:           NAND2I1 cells:       51
+ABC RESULTS:           NAND2I2 cells:       12
+ABC RESULTS:             NAND3 cells:       14
+ABC RESULTS:             OR2I1 cells:        5
+ABC RESULTS:             XNOR2 cells:       11
+ABC RESULTS:               XOR cells:        1
+ABC RESULTS:        internal signals:      134
+ABC RESULTS:           input signals:       81
+ABC RESULTS:          output signals:      122
+Removing temp directory.
+Removing global temp directory.
+
+yosys> stat
+
+15. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      666 wires
+      880 wire bits
+       42 public wires
+      177 public wire bits
+       11 ports
+       50 port bits
+      385 cells
+       20   AND2
+        3   AND2I1
+        9   AND2I2
+       15   AND3
+        2   AND3I1
+        5   AND4
+        1   AND4I1
+        1   AND4I2
+        3   AND6
+       39   DFFAR
+       25   DFFAS
+       66   INV
+        3   MUX2
+       99   NAND2
+       51   NAND2I1
+       12   NAND2I2
+       14   NAND3
+        5   OR2I1
+       11   XNOR2
+        1   XOR
+
+
+yosys> #hilomap -hicell VCC X -locell GND X
+
+yosys> #stat
+
+yosys> iopadmap -bits -inpad INBUF Q:A -outpad BUF A:Q -toutpad TRI ENA:A:Q -tinoutpad bibuf EN:Q:A:PAD
+16. Executing IOPADMAP pass (mapping inputs/outputs to IO-PAD cells).
+Mapping port Compositor.set_pix_commit using BUF.
+Mapping port Compositor.set_pix_target using BUF.
+Mapping port Compositor.set_pix_valid using BUF.
+Mapping port Compositor.nVIDCMD_EF using INBUF.
+Mapping port Compositor.nVIDCMD_RE using BUF.
+Mapping port Compositor.VIDCMD_Q using INBUF.
+Mapping port Compositor.RGB_OUT using BUF.
+Mapping port Compositor.RGB_IN using INBUF.
+Mapping port Compositor.H_ACTIVE using INBUF.
+Mapping port Compositor.nRS using INBUF.
+Mapping port Compositor.PIXEL_CLK using INBUF.
+
+yosys> stat
+
+17. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      677 wires
+      930 wire bits
+       42 public wires
+      177 public wire bits
+       11 ports
+       50 port bits
+      435 cells
+       20   AND2
+        3   AND2I1
+        9   AND2I2
+       15   AND3
+        2   AND3I1
+        5   AND4
+        1   AND4I1
+        1   AND4I2
+        3   AND6
+       18   BUF
+       39   DFFAR
+       25   DFFAS
+       32   INBUF
+       66   INV
+        3   MUX2
+       99   NAND2
+       51   NAND2I1
+       12   NAND2I2
+       14   NAND3
+        5   OR2I1
+       11   XNOR2
+        1   XOR
+
+
+yosys> clean
+Removed 0 unused cells and 264 unused wires.
+
+yosys> stat
+
+18. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      413 wires
+      572 wire bits
+       28 public wires
+      141 public wire bits
+       11 ports
+       50 port bits
+      435 cells
+       20   AND2
+        3   AND2I1
+        9   AND2I2
+       15   AND3
+        2   AND3I1
+        5   AND4
+        1   AND4I1
+        1   AND4I2
+        3   AND6
+       18   BUF
+       39   DFFAR
+       25   DFFAS
+       32   INBUF
+       66   INV
+        3   MUX2
+       99   NAND2
+       51   NAND2I1
+       12   NAND2I2
+       14   NAND3
+        5   OR2I1
+       11   XNOR2
+        1   XOR
+
+
+yosys> hierarchy
+19. Executing HIERARCHY pass (managing design hierarchy).
+Attribute `top' found on module `Compositor'. Setting top module to Compositor.
+
+19.1. Analyzing design hierarchy..
+Top module:  \Compositor
+
+19.2. Analyzing design hierarchy..
+Top module:  \Compositor
+Removed 0 unused modules.
+
+yosys> stat
+
+20. Printing statistics.
+
+=== Compositor ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      413 wires
+      572 wire bits
+       28 public wires
+      141 public wire bits
+       11 ports
+       50 port bits
+      435 cells
+       20   AND2
+        3   AND2I1
+        9   AND2I2
+       15   AND3
+        2   AND3I1
+        5   AND4
+        1   AND4I1
+        1   AND4I2
+        3   AND6
+       18   BUF
+       39   DFFAR
+       25   DFFAS
+       32   INBUF
+       66   INV
+        3   MUX2
+       99   NAND2
+       51   NAND2I1
+       12   NAND2I2
+       14   NAND3
+        5   OR2I1
+       11   XNOR2
+        1   XOR
+
+
+yosys> splitnets -format _
+21. Executing SPLITNETS pass (splitting up multi-bit signals).
+
+yosys> rename -wire -suffix _reg t:*DFF*
+
+yosys> rename -wire -suffix _comb
+
+yosys> #write_edif -attrprop compositor.edif
+
+yosys> delete t:$scopeinfo
+
+yosys> write_edif -lsbidx compositor.edif
+
+22. Executing EDIF backend.
+
+yosys> exit
+
+End of script. Logfile hash: 443a677839, CPU: user 0.07s system 0.01s, MEM: 21.45 MB peak
+Yosys 0.62+117 (git sha1 1d3f9b790-dirty, aarch64-apple-darwin23.5-clang++ 18.1.8 -fPIC -O3)
+Time spent: 72% 1x abc (0 sec), 5% 19x opt_expr (0 sec), ...
++ '[' -lsbidx = '' ']'
