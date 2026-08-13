@@ -73,6 +73,16 @@ properties:
     items:
       type: string
 
+  interfaces:
+    type: array
+    description: >
+      Chip-to-chip interface contracts: support parts and the reasons
+      they exist, recorded at decision time. At schematic capture, read
+      top-to-bottom as a parts checklist first, and diff the netlist
+      distiller output against these annotations last.
+    items:
+      type: string
+
 # ======================================================================
 # Reusable definitions
 # ======================================================================

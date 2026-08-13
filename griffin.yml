@@ -871,6 +871,52 @@ constants:
   VIDEO_WORDS_PER_LINE:        42     # stride / 2
   ENGINE_WORDS_PER_FRAME:      20160  # 480 lines * 42 words
 
+  # --- Rev 2 super-engine video path: shared numeric contracts ------------
+  # Sources of truth today: super-engine/descriptor.h (encodings and their
+  # rationale), cpld/{engine/engine.v,compositor/compositor.v,pixel/*.v}
+  # (implementations), vidcmd-spec.md (semantics).  These constants are the
+  # numbers more than one component must agree on; the full bit-level VIDCMD
+  # encoders stay in descriptor.h until the format is frozen enough to teach
+  # codegen.
+
+  # ENGINE descriptor word0 one-hot strobe mask bits (3 assigned + 1 spare;
+  # bits [6:4] of the field were reclaimed when the strobes shrank from 7).
+  ENGINE_SIGNAL_PIXELS_FIFO_W:  0x01
+  ENGINE_SIGNAL_VIDCMD_FIFO_W:  0x02
+  ENGINE_SIGNAL_AUDIO_FIFO_W:   0x04
+
+  # VIDCMD SET instruction target numbering {1, ttt, value[11:0]}.
+  # 0..1 are COMPOSITOR-local; 2..6 are forwarded to PIXEL over the
+  # valid/target/commit handshake; 7 is spare.
+  VIDCMD_SET_CMP_HELD_FG:    0
+  VIDCMD_SET_CMP_HELD_BG:    1
+  VIDCMD_SET_PIX_PAL_FG:     2
+  VIDCMD_SET_PIX_PAL_BG:     3
+  VIDCMD_SET_PIX_HAM_HELD:   4
+  VIDCMD_SET_PIX_MODE:       5
+  VIDCMD_SET_PIX_PIXEL_SKIP: 6
+
+  # Stream FIFOs (2x IDT7200 256x9 per stream, 16-bit word per pair for
+  # VIDCMD; byte-interleaved shared-Q pair for PIXELS).
+  PIXELS_FIFO_WORDS: 256
+  VIDCMD_FIFO_WORDS: 256
+
+  # Out-of-band pixel stream lengths (no in-band header in the Rev 2 path):
+  # 1bpp direct = 1 bit/px, 2bpp micro-HAM = exactly 2 stream bits/px clock.
+  PIXELS_WORDS_PER_LINE_1BPP: 40
+  PIXELS_WORDS_PER_LINE_HAM:  80
+
+  # Pipeline lead constants — DERIVED, NOT TUNED (rev2_interfaces contract).
+  # Every stage's fixed latency is absorbed by firing TIMING's comparators
+  # early by exactly that amount.
+  COMPOSITOR_LEAD:    2    # consume edge + registered RGB_OUT, measured by compositor_tb
+  PIXEL_OUT_LEAD:     1    # ham_held -> registered RGB_OUT inside PIXEL
+  TIMING_SPLIT_LEAD:  1    # TIMING->PIXEL registered strobe hop (two-chip split)
+  DAC_LEAD:           4    # sum of the above: sync compares shift by this
+  PIXEL_PRELOAD_LEAD: 16   # hblank fetch lead: first byte 2 + skip-discard 2
+                           # + 7 alignment shifts = 11, rounded up (was 35 in
+                           # rev-1 VIDEO, which had 32 clocks of in-band header)
+
 # Firmware<->application syscall ABI.  Apps are independent flat binaries linked
 # at _app_base; they reach firmware services with TRAP #15: call number in d0,
 # up to three args in d1/d2/d3 (pointers passed as longs), return value in d0.
@@ -927,6 +973,9 @@ bodges:
   - "Pull up CPU HALT with 4.7K to nearby CPU +5V"
 
 issues:
+  - "ENGINE's peripheral registers: block above still describes the rev-1 streaming engine (SOURCE_PAGE/CTRL); the promoted display-list engine.v has DESC (15-bit descriptor word address, write arms) and a different CTRL. Update the register map + firmware + emulator together — the generated ENGINE_* header constants are stale until then."
+  - "Rev-2 FIFO desync telemetry is TBD: the display-list ENGINE no longer drives the 7200s' 9th-bit toggle, so VIDEO's Q8 detector has no signal and PIXEL dropped it. Decide whether rev 2 wants any desync observability (a status the CPU can poll?) or whether frame-bounded /RS recovery is enough."
+  - "pixel_skip open decisions from the PIXEL fit: (1) with nonzero skip the line's final partial byte is never fetched, so the last <=7 px tile the previous byte — pad the per-line PIXELS record by a byte (costs a real byte counter, ~8 FF vs 6 spare cells) or declare fine skip costs the tail; (2) odd skip in micro-HAM shifts code phase and mis-parses the line — enforce even in the author or force skip[0]=0 in HAM mode (~1 cell)."
   - "need to address *what* raises nIRQ on ENGINE; it's reserved and routed but always 1."
   - "need to finalize micro-HAM; not in the YAML, disagreement between encoder and implementation"
   - "want a 'video_timing:' constants block; is 640x480(800x525)@60 enough?"
@@ -940,4 +989,91 @@ issues:
   - "The YAML has per-peripheral interrupt.level but never states that GLUE encodes IPL2:0 and asserts ~VPA on IACK, nor which IRQ signals are physical nets (VIDEO, ENGINE, DUART, PORTS → GLUE) versus internal (~PS2_IRQ never leaves GLUE — listing it as a signal: alongside real nets will produce a false netlist expectation"
   - "Reset and clocking aren't in the YAML at all. DS1233, the ~RESET/~HALT nets, the open-drain external-master requirement (griffin.md:396), the two oscillators, and 'SYSCLK into a GCLK on each CPLD' are all MD-only. Even one small clocks:/reset: section (or prose annotations) would make these checkable."
   - "DUART bus interface. The Rev 2 board bullet (griffin.md:427) lists A1-A4, D0-7, R/~W, ~RESET, ~IACK, crystal — but not the ~CS routing from GLUE nor where DTACKN goes (the YAML's dtack: ~DUART_DTACK handshake at griffin.yml:612, plus berr_timeout: 256). That's the one net set on the DUART that isn't a straight pin-to-bus wire, and it's the one the checklist omits."
+
+# chip-to-chip interface contracts.  Each entry is one interface with
+# its support parts and the reason each part exists, recorded when the
+# decision was made rather than reconstructed at schematic time.  KiCad
+# remains the connectivity authority; this section is the intent layer.
+# Capture ritual: read as a parts checklist BEFORE schematic entry; diff
+# kicad_netlist_summary_2.py output against these annotations AFTER.
+interfaces:
+  - |
+    VGA R4G4B4 output stage (design handoff 2026-08-12).
+    Signal chain: ATF1508AS (5V AS part) -> 2x 74AC541 -> weighted-resistor
+    DAC -> DE-15.  14 signals from CPLD: R[3:0], G[3:0], B[3:0], HSYNC, VSYNC.
+    - U-a (74AC541): R[3:0] + G[3:0].  U-b (74AC541): B[3:0] + HSYNC + VSYNC
+      (2 sections spare).  Both /OE pins grounded; 100nF X7R at each VCC;
+      VCC = +5V.
+    - Buffers are MANDATORY, not optional: ATF1508AS VOH is only specified to
+      -2mA and the MSB sources ~8.6mA in this network; direct drive produces
+      code-dependent nonlinearity.  Do not remove them to save a chip.
+    DAC topology (per channel, x3): binary-weighted ladder + shunt to ground;
+    the shunt is what lets a 5V CMOS rail hit both 0.7V full-scale and ~75R
+    back-termination simultaneously.  Ideal values 500/1k/2k/4k weights,
+    105R shunt.  Chosen E12-only implementation (precision spent proportional
+    to bit weight):
+    - bit3: 2x 1k in parallel (= 500R exact ratio)
+    - bit2: 1x 1k
+    - bit1: 2x 1k in series (= 2k exact ratio)
+    - bit0: 1x 3.9k single (2.6% weight error = 0.03 LSB; do not double up)
+    - shunt: 1x 100R
+    All 1k are 1% metal film, ideally same batch/reel (tolerance tracking);
+    3.9k may be 5%.  Resulting electricals: FS ~= 0.693V loaded, Zth ~= 72.7R,
+    worst-case systematic error ~= 0.03 LSB.  74AC541 Rout (~10-15R) folds
+    into series values; optionally trim bit3 toward 487R equivalent if
+    measured FS matters, otherwise ignore.
+    Syncs: buffer output -> 100R series -> DE-15 pins 13/14.  No DAC, no
+    termination.  Connector: DE-15 R=1, G=2, B=3, HS=13, VS=14; pins
+    5,6,7,8,10 + shell -> GND.
+    Resistor BOM: 21x 1k 1% (ladders), 3x 3.9k (bit0), 3x 100R (shunts),
+    2x 100R (syncs) = 29 resistors, 3 stocked values.  Plus 2x 74AC541.
+    Layout: ladders + shunts placed at the DE-15, not at the buffers; 12 DAC
+    traces short and roughly matched length (bit skew smears edges); solid
+    ground return between shunt grounds and connector shell.  CPLD pin
+    assignment unconstrained by this design; assign per fitter/board
+    convenience.
+  - |
+    VIDCMD FIFO read port (COMPOSITOR <- 2x IDT7200L15, shared /RE).
+    One 74AC00 (or 74F00 pending the timing re-derivation) shapes /RE so
+    VIDCMD sustains one word per 25.175MHz pixel clock — a registered CPLD
+    output can only change once per clock, so a full read cycle inside one
+    39.7ns tick needs the clock itself to supply the mid-tick edges:
+    - gate A: /RE = NAND(want_pop, PIXEL_CLK)
+    - gate B: inverts PIXEL_CLK for the falling-edge want_pop register clock
+      (prevents runt /RE pulses when want_pop changes mid-high-phase)
+    - gates C, D: spare (candidate: same shaping for the PIXELS FIFO /RE)
+    Decision 2026-08-10; parameter table (IDT7200L15 tA/tRC/tRPW/tRR,
+    ATF1508AS tCO/tSU, gate tPD) still to be pinned from datasheets before
+    schematic capture — see feedback_timing_discipline.  Fallback if margins
+    fail: omit the gate, registered /RE, 2 slots/word cadence (1-px VIDCMD
+    spans then render 2px wide).
+  - |
+    VIDCMD FIFO empty flag -> COMPOSITOR (new pin vs Rev 1).
+    /EF from the VIDCMD FIFOs routes to a COMPOSITOR input; synchronized
+    on-chip with an asymmetric guard (2-FF sync governs the asynchronous
+    RISE from ENGINE-domain writes; the raw flag governs the FALL caused by
+    COMPOSITOR's own clock-aligned read).  Hardware requirement this
+    creates: FIFO tEFL from /RE must settle within one pixel clock minus
+    setup (~25ns typ on L15 vs 39.7ns — verify at worst case, and re-verify
+    if the 1-word/clock /RE shaping is adopted, which halves the budget).
+  - |
+    FIFO control strobes: series source termination on every /RE and /W
+    line at the driver end (all 7200/7202 FIFOs — PIXELS, VIDCMD, AUDIO).
+    Promotes the Rev 1 fix to design: the Rev 1 7200 /RE bodge wires rang
+    and needed 10pF band-aid caps at the FIFO pins; Rev 2 terminates
+    properly at the source instead.
+  - |
+    TIMING -> COMPOSITOR contract: H_ACTIVE (and the /RS vsync pulse) must
+    LEAD the visible window by 2 pixel clocks — COMPOSITOR's consume-edge
+    plus registered-RGB_OUT pipeline is exactly 2 clocks (measured in the
+    compositor testbench).  Constrains whichever chip generates timing
+    (TIMING may be combined with PIXEL in one ATF1508); not a discrete
+    part, recorded here so the timing chip's counters are offset by design
+    rather than trimmed by bodge.
+  - |
+    Carried forward from Rev 1 unchanged: 74155 dual 2-to-4 decoder fans
+    ~IO_WR_EN out by A19:18 (write section: ~AUDIO_W etc.; read section
+    reserved), and the XR68C681 DUART on its DIP carrier with the ~CS
+    routing from GLUE and DTACKN return (see the DUART issue entry above —
+    resolve that checklist gap during Rev 2 capture).
 

@@ -1,0 +1,41 @@
+# Griffin Dual-Mode Video Format
+
+640×480, 1 bit fetched per pixel clock in both modes. Constant rate; no
+FIFO or bandwidth changes.
+
+## Line stream (FIFO pop order, 42 16-bit words per line)
+
+word 0 : palette: bits 15..8 = fg, bits 7..0 = bg (R3G3B2)
+word 1 : mode: bit 0 = mode select; bits 15..1 reserved — hardware ignores
+words 2..41 : 640 pixel bits, MSB-first
+
+big-endian.
+
+Mode bit 0: 0 = direct 1bpp, 1 = micro-HAM.
+
+## Mode 0 — direct 1bpp (existing)
+
+Bit 0 → color is bg, bit 1 → color is fg
+
+## Mode 1 — micro-HAM
+
+8-bit `held` color. At start of each visible line: held <- fg.
+Bits parse as codes spanning 2 or 4 pixels.
+
+2-bit 0_p : held is set from palette entry p (1: fg, 0: bg)
+4-bit 10_g_r: green in held color is from g, replicated; red in held color is from r, replicated
+4-bit 11_g_b: green in held color is from g, replicated; blue in held color is from b, replicated
+
+No state carries across lines.
+
+## File format (image loader)
+
+84 bytes/line × 480 = 40,320 bytes, line 0 first:
+
+| offset | size | field |
+|---|---|---|
+| 0 | 1 | palette entry 0 |
+| 1 | 1 | palette entry 1 |
+| 2 | 1 | mode high byte (always 0x00) |
+| 3 | 1 | mode low byte (bit 0 = mode) |
+| 4 | 80 | pixel bits, MSB-first per byte |

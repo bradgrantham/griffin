@@ -403,6 +403,25 @@ static constexpr uint32_t VIDEO_LINE_PIXEL_OFFSET = 0x04U;
 static constexpr uint32_t VIDEO_LINE_STRIDE_BYTES = 0x54U;
 static constexpr uint32_t VIDEO_WORDS_PER_LINE = 0x2AU;
 static constexpr uint32_t ENGINE_WORDS_PER_FRAME = 0x4EC0U;
+static constexpr uint32_t ENGINE_SIGNAL_PIXELS_FIFO_W = 0x01U;
+static constexpr uint32_t ENGINE_SIGNAL_VIDCMD_FIFO_W = 0x02U;
+static constexpr uint32_t ENGINE_SIGNAL_AUDIO_FIFO_W = 0x04U;
+static constexpr uint32_t VIDCMD_SET_CMP_HELD_FG = 0x00U;
+static constexpr uint32_t VIDCMD_SET_CMP_HELD_BG = 0x01U;
+static constexpr uint32_t VIDCMD_SET_PIX_PAL_FG = 0x02U;
+static constexpr uint32_t VIDCMD_SET_PIX_PAL_BG = 0x03U;
+static constexpr uint32_t VIDCMD_SET_PIX_HAM_HELD = 0x04U;
+static constexpr uint32_t VIDCMD_SET_PIX_MODE = 0x05U;
+static constexpr uint32_t VIDCMD_SET_PIX_PIXEL_SKIP = 0x06U;
+static constexpr uint32_t PIXELS_FIFO_WORDS = 0x100U;
+static constexpr uint32_t VIDCMD_FIFO_WORDS = 0x100U;
+static constexpr uint32_t PIXELS_WORDS_PER_LINE_1BPP = 0x28U;
+static constexpr uint32_t PIXELS_WORDS_PER_LINE_HAM = 0x50U;
+static constexpr uint32_t COMPOSITOR_LEAD = 0x02U;
+static constexpr uint32_t PIXEL_OUT_LEAD = 0x01U;
+static constexpr uint32_t TIMING_SPLIT_LEAD = 0x01U;
+static constexpr uint32_t DAC_LEAD = 0x04U;
+static constexpr uint32_t PIXEL_PRELOAD_LEAD = 0x10U;
 
 // Syscalls (TRAP #15 ABI; number in d0, args in d1/d2/d3, return in d0)
 static constexpr unsigned SYS_TRAP = 15U;
