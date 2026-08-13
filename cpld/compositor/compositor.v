@@ -58,20 +58,60 @@
 // and a RUN emits its first pixel in the slot in which it is consumed.  The
 // constant pipeline from H_ACTIVE to the matching RGB_OUT is two clocks.
 //
-// FETCH.  The one-word lookahead lives in the FIFO's own output latch: the 7200
-// holds Q after /RE rises, so there is no internal 16-bit staging register, just
-// have_staged and a one-bit pop-in-flight.  nVIDCMD_RE is asserted for exactly
-// one clock and the word is valid at the next edge (IDT7200L-15 tA 25 ns < the
-// 39.7 ns period).  A pop is launched only when the FIFO holds data, so /RE is
-// never strobed against an empty FIFO and a hold is this compositor's own
-// source registers persisting — a latch, not a tape loop.
+// FETCH.  One word of lookahead, one word per pixel clock.
 //
-// THROUGHPUT (measured by the testbench, and a constraint on list building):
-// the 7200 advances on /RE's rising edge, so one pop needs one low cycle and one
-// high cycle.  Sustained consumption is therefore ONE WORD EVERY TWO SLOTS, and
-// a record whose duration is one slot is followed by one hold slot.  A record's
-// effective line cost is max(duration, 2) slots.
+// The VIDCMD FIFO's read strobe is shaped OFF-CHIP, per the board contract in
+// griffin.yml (interfaces: "VIDCMD FIFO read port"): a registered CPLD output
+// can only change once per clock, so a whole 7200 read cycle inside one 39.7 ns
+// tick needs the clock itself to supply the mid-tick edges.
 //
+//   gate A:  /RE = NAND(want_pop, PIXEL_CLK)
+//   gate B:  inverts PIXEL_CLK to clock the want_pop register on the FALLING
+//            edge, so want_pop never changes while gate A is passing the clock
+//            — without it a want_pop change mid-high-phase emits a runt /RE.
+//
+// That is the ONLY negedge-clocked register in this module; everything else is
+// posedge, full-cycle, single-edge.
+//
+//   PIXEL_CLK   __/‾‾\__/‾‾\__/‾‾\__/‾‾\__
+//   want_pop    ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾   (changes only on falling edges)
+//   /RE         ‾‾‾\__/‾‾‾\__/‾‾‾\__/‾‾‾\_   (low for each high phase)
+//   Q            ---<  W0 ><  W1 ><  W2 >-   (advances on each /RE rise)
+//
+// **Q IS NO LONGER THE LOOKAHEAD LATCH.**  At one pop per clock the FIFO's
+// output changes every cycle, so the popped word must be captured on-chip:
+// staged_word is that capture, taken on the rising edge that ends the pop's
+// cycle.  (The pre-A0 design decoded Q directly, which only worked because a
+// registered /RE could not pop two cycles running.)
+//
+// The second buffer slot is Q itself.  If a word is popped while staged_word
+// is still occupied, it is NOT captured and NOT lost: q_pending records that a
+// word is sitting on Q, want_pop drops so nothing overwrites it, and the next
+// edge that frees staged_word captures it from Q.  The pop rule is therefore
+// exact — no prediction of the next slot's H_ACTIVE anywhere:
+//
+//   want_pop <= fifo_has_data & ~q_pending_next
+//
+// Cadence, verified by the testbench rather than asserted here: consume at
+// edge N with a pop already in flight, capture at edge N, pop again during
+// cycle N, capture at edge N+1 — ONE WORD PER SLOT sustained, so a one-slot
+// record costs one slot and back-to-back SETs commit on successive pixels.
+// When consumption stalls (a long RUN) the in-flight word parks in q_pending
+// and fetching idles until the run expires; restart costs no extra slot.
+//
+// ELECTRICAL MARGIN: PENDING THE DATASHEET TABLE named in griffin.yml
+// interfaces:.  The parameters this arrangement rests on are IDT7200L15 tA
+// (access, must be met inside the clock high phase), tRPW (read pulse width),
+// tRR (read recovery), and tEFL (empty-flag delay from /RE); 74AC00/74F00 tPD
+// for gates A and B; ATF1508AS tCO and tSU.  Values are not asserted here —
+// pinning that table gates schematic capture, not these models.
+//
+// NO-GATE FALLBACK (also in interfaces:): omit the 74AC00, drive a registered
+// /RE directly, and the FIFO advances only on alternate clocks — one word per
+// TWO slots, one-slot records cost two slots, one-pixel spans render two
+// pixels wide.  That was the as-built pre-A0 behaviour and remains the
+// documented retreat if the margins above do not hold.
+
 // HOLD.  Active, count terminal, nothing staged: keep the current source and
 // keep trying.  This is first-class line framing, not underrun mercy.
 //   - Short-line / just-in-time: a line's records may total fewer than 640
@@ -114,7 +154,7 @@ module Compositor
 
     // VIDCMD FIFO (IDT7200)
     input  wire [15:0] VIDCMD_Q,
-    output reg         nVIDCMD_RE,
+    output reg         want_pop,        // NEGEDGE-clocked; /RE = NAND(want_pop, PIXEL_CLK)
     input  wire        nVIDCMD_EF,      // low = empty, ENGINE domain
 
     // PIXEL register forwarding (shadow / pending / commit)
@@ -139,45 +179,52 @@ module Compositor
     reg [11:0] run_count;               // up-counter, all-ones = expired
     reg [1:0]  cur_src;
     reg [2:0]  cur_colour;
-    reg        have_staged;             // VIDCMD_Q holds an unconsumed word
-    reg        pop_in_flight;           // nVIDCMD_RE is low this cycle
+    reg [15:0] staged_word;             // the on-chip lookahead (Q moves every cycle now)
+    reg        have_staged;             // staged_word holds an unconsumed word
+    reg        q_pending;               // a popped word waits on Q, uncaptured
+    reg        pop_in_flight;           // a pop is happening this cycle
+    reg        ef_at_pop;               // raw /EF as of this cycle's start
     reg        h_active_d;              // aligns the RGB_OUT blank with the mux
     reg        ef_meta, ef_sync;
 
-    // /EF is gated three ways, and the raw flag is deliberately one of them.
+    // /EF, at one pop per clock.
     //
-    // /EF rises asynchronously (ENGINE writes a word) — that edge is what the
-    // two synchronizer stages are for, and requiring both to agree means a
-    // pop is only launched once the flag has been stable for two clocks.
+    // The RISE is asynchronous (ENGINE writes a word): the two synchronizer
+    // stages cover it, and want_pop needs both to agree.
     //
-    // /EF falls because OUR OWN pop took the last word, one clock earlier;
-    // the synchronized copies still read "data" for two more clocks, and the
-    // re-pop that overlaps a consume happens inside that window.  A read of an
-    // empty 7200 is ignored while Q holds, so the compositor would stage the
-    // word it just executed and run it again — a tape loop, exactly what hold
-    // must not be.  The raw flag closes that window: while ef_sync & ef_meta
-    // are high the only thing that can pull /EF low is our own read, which is
-    // aligned to this clock, so sampling it unsynchronized is sound.
-    // Hardware requirement: tEFL from /RE rising must beat one clock less
-    // setup (25 ns typical on an IDT7200L-15 against a 39.7 ns period).
+    // The FALL is our own read emptying the FIFO, and at this cadence the
+    // pre-A0 raw-flag trick is DEAD: the pointer advances at the middle of the
+    // cycle, which is the very edge that clocks want_pop, so that decision has
+    // ZERO budget to see its own effect.  Instead the flag guards the CAPTURE,
+    // not the pop.  ef_at_pop samples the raw flag on the rising edge that
+    // STARTS a pop's cycle, which is the FIFO's occupancy for exactly that
+    // read: high, and the read returns a word; low, and the 7200 ignores the
+    // read while holding Q, and nothing is captured — so a dry FIFO can never
+    // restage the word it just executed.  A wasted /RE pulse is harmless.
+    //
+    // Hardware requirement this creates: tEFL must settle within HALF a pixel
+    // clock less tSU (the pointer advances mid-cycle; ef_at_pop samples at the
+    // next rising edge) — half the pre-A0 budget, as griffin.yml's interfaces:
+    // entry predicted.  Parameter pending the datasheet table; if it fails,
+    // the failure mode is one duplicated word after the FIFO runs dry.
     wire fifo_has_data = nVIDCMD_EF & ef_sync & ef_meta;
 
     // ----------------------------------------------------------------
-    // Decode of the staged word, read straight out of the FIFO's latch
+    // Decode of the staged word, from the on-chip capture
     // ----------------------------------------------------------------
 
-    wire        w_is_set    = VIDCMD_Q[15];
-    wire        w_is_run    = ~VIDCMD_Q[15] & ~VIDCMD_Q[14];
-    wire [1:0]  w_src       = VIDCMD_Q[13:12];
+    wire        w_is_set    = staged_word[15];
+    wire        w_is_run    = ~staged_word[15] & ~staged_word[14];
+    wire [1:0]  w_src       = staged_word[13:12];
     wire        w_is_colour = w_is_run & (w_src == SRC_COLOUR);
-    wire [2:0]  w_colour    = VIDCMD_Q[11:9];
-    wire [2:0]  w_target    = VIDCMD_Q[14:12];
-    wire [11:0] w_value     = VIDCMD_Q[11:0];
+    wire [2:0]  w_colour    = staged_word[11:9];
+    wire [2:0]  w_target    = staged_word[14:12];
+    wire [11:0] w_value     = staged_word[11:0];
     wire        w_set_pixel = w_is_set & (w_target >= 3'd2) & (w_target <= 3'd6);
 
     // RUN_COLOR's count is nine bits; force the unused top bits to the terminal
     // value so one 12-bit comparator serves both encodings.
-    wire [11:0] w_load = w_is_colour ? {3'b111, VIDCMD_Q[8:0]} : VIDCMD_Q[11:0];
+    wire [11:0] w_load = w_is_colour ? {3'b111, staged_word[8:0]} : staged_word[11:0];
 
     // ----------------------------------------------------------------
     // Slot arbitration
@@ -197,9 +244,14 @@ module Compositor
     wire [11:0] count_mux = load_run ? w_load : run_count;
     wire        count_inc = load_run | (H_ACTIVE & ~terminal);
 
-    // A pop is launched when nothing is staged, or in the same edge as the
-    // consume that frees the latch.
-    wire pop_launch = fifo_has_data & (~have_staged | consume_now);
+    // Fetch arbitration.  Every term is a register or a combinational function
+    // of registers plus this cycle's H_ACTIVE, so the negedge decision below is
+    // exact — it never has to guess the next slot.
+    wire pop_delivers   = pop_in_flight & ef_at_pop;   // this cycle's read returns a word
+    wire word_on_q      = q_pending | pop_delivers;    // a word is available on Q now
+    wire buffer_frees   = ~have_staged | consume_now;  // staged_word is free at this edge
+    wire capture_now    = word_on_q & buffer_frees;
+    wire q_pending_next = word_on_q & ~capture_now;    // it waits on Q instead
 
     // ----------------------------------------------------------------
     // Source mux — the slot's colour, combinational from post-edge state
@@ -222,9 +274,11 @@ module Compositor
             run_count      <= 12'hFFF;
             cur_src        <= SRC_PASSTHROUGH;
             cur_colour     <= 3'd0;
+            staged_word    <= 16'h0000;
             have_staged    <= 1'b0;
+            q_pending      <= 1'b0;
             pop_in_flight  <= 1'b0;
-            nVIDCMD_RE     <= 1'b1;
+            ef_at_pop      <= 1'b0;
             ef_meta        <= 1'b0;
             ef_sync        <= 1'b0;
             h_active_d     <= 1'b0;
@@ -242,9 +296,12 @@ module Compositor
             RGB_OUT    <= h_active_d ? pixel_mux : 12'h000;
 
             // PIXEL forwarding: valid/target hold for as long as the SET is
-            // staged (VIDCMD_Q is stable then, so PIXEL can latch the shadow
-            // off Q at its leisure), and commit pulses one clock after the
-            // edge that executed the SET.
+            // staged, and commit pulses one clock after the edge that executed
+            // it.  NOTE FOR PIXEL: at one word per clock VIDCMD_Q no longer
+            // holds the SET's value for that window — Q has moved on by one or
+            // two words — so "capture Q while valid is high" is no longer a
+            // valid way to get the value.  See the report; this interface needs
+            // either a forwarded value or a re-timed strobe.
             set_pix_valid  <= have_staged & w_set_pixel;
             set_pix_target <= w_target;
             set_pix_commit <= apply_set & w_set_pixel;
@@ -269,22 +326,37 @@ module Compositor
 
             run_count <= count_mux + {11'd0, count_inc};
 
-            if (pop_in_flight)
-            begin
-                nVIDCMD_RE    <= 1'b1;
-                pop_in_flight <= 1'b0;
-                have_staged   <= 1'b1;
-            end
-            else if (pop_launch)
-            begin
-                nVIDCMD_RE    <= 1'b0;
-                pop_in_flight <= 1'b1;
-            end
+            ef_at_pop     <= nVIDCMD_EF;
+            pop_in_flight <= want_pop;
+            q_pending     <= q_pending_next;
 
+            // Consume first, capture second: at this cadence both happen on the
+            // same edge in steady state and the fresh word must win.
             if (consume_now)
             begin
                 have_staged <= 1'b0;
             end
+
+            if (capture_now)
+            begin
+                staged_word <= VIDCMD_Q;
+                have_staged <= 1'b1;
+            end
+        end
+    end
+
+    // The one negedge register in the design — gate B's runt-pulse fix.  Its
+    // inputs are the posedge state plus this cycle's H_ACTIVE, all stable well
+    // before the falling edge.
+    always @(negedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            want_pop <= 1'b0;
+        end
+        else
+        begin
+            want_pop <= fifo_has_data & ~q_pending_next;
         end
     end
 

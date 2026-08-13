@@ -1,8 +1,8 @@
 ================ COMPOSITOR TESTBENCH ================
 PASS  NORMATIVE_M0 pixel 0 is the pre-SET held_fg
 PASS  NORMATIVE_M0 tail is the SET value
-PASS  NORMATIVE_M0 SET lands within 2 slots
-      MEASURED  SET becomes visible at slot 2 (suite model says 1)
+PASS  NORMATIVE_M0 SET lands on pixel 1
+      MEASURED  SET becomes visible at slot 1
 PASS  RUN_COLOR leading passthrough span
 PASS  RUN_COLOR replicated nibbles 0xF00
 PASS  RUN_COLOR trailing passthrough span
@@ -24,7 +24,7 @@ PASS  POSITIONAL_EAGER SET executes as slot 4
 PASS  POSITIONAL_EAGER tail is the new held_bg
 PASS  PIXEL_SET_BLANK one commit pulse
 PASS  PIXEL_SET_BLANK target forwarded
-      MEASURED  pop->commit skew, blanking = 2 clocks
+      MEASURED  pop->commit skew, blanking = 3 clocks
 PASS  LOCAL_SET no PIXEL commit for targets 0/1/7
 PASS  LOCAL_SET cmp_held_fg written
 PASS  LOCAL_SET cmp_held_bg written
@@ -33,12 +33,20 @@ PASS  PIXEL_SET_ACTIVE one commit pulse
 PASS  PIXEL_SET_ACTIVE target forwarded
 PASS  PIXEL_SET_ACTIVE commit precedes its own slot pixel
       MEASURED  commit at cycle 3759, the SET two slots later reaches
-                RGB_OUT at cycle 3762 -> commit leads its own slot's
+                RGB_OUT at cycle 3761 -> commit leads its own slot's
                 pixel by 1 clock(s)
 PASS  BACK_TO_BACK_SETS all three values appear
 PASS  BACK_TO_BACK_SETS strictly increasing slots
 PASS  BACK_TO_BACK_SETS evenly spaced
-      MEASURED  SET slots 2, 4, 6 -> fetch cadence 2 slots/word
+PASS  BACK_TO_BACK_SETS commit on SUCCESSIVE pixels
+PASS  BACK_TO_BACK_SETS start at slot 1 behind a 1-slot RUN
+      MEASURED  SET slots 1, 2, 3 -> fetch cadence 1 slots/word
+PASS  ONE_PX_SPANS red is exactly pixel 0
+PASS  ONE_PX_SPANS green is exactly pixel 1
+PASS  ONE_PX_SPANS blue is exactly pixel 2
+PASS  ONE_PX_SPANS passthrough resumes at pixel 3
+PASS  SUSTAINED_1PX 640 one-slot records fill 640 pixels
+      MEASURED  0 of 640 alternating one-pixel records wrong
 PASS  SHORT_LINE one RUN(pt,1) paints the line
 PASS  SHORT_LINE unfilled line keeps holding passthrough
 PASS  SHORT_LINE later fill re-frames cleanly
@@ -55,7 +63,7 @@ PASS  OVERRUN leftover record is staged at the H_ACTIVE fall
 PASS  OVERRUN staged leftover blocked the eager SETs
 PASS  OVERRUN leftover plays at slot 0 of line N+1
 PASS  OVERRUN SETs land late, inside line N+1
-      MEASURED  stolen-eagerness SETs land at slot 4
+      MEASURED  stolen-eagerness SETs land at slot 2
 PASS  MERGE packet A plays slots 0..3
 PASS  MERGE packet B merged into the SAME line
       MEASURED  packet B took over at slot 4
@@ -65,22 +73,22 @@ PASS  RLE_TRUNCATION holds the last colour to the line end
 PASS  RESERVED_01 slots 0..1 are the RUN
 PASS  RESERVED_01 its own slot changes nothing
 PASS  RESERVED_01 the next record still runs
-      MEASURED  record after the reserved no-op starts at slot 4
+      MEASURED  record after the reserved no-op starts at slot 3
 PASS  NRS_RECOVERY pre-reset line shows the SET colour
 PASS  NRS_RECOVERY held_fg back to 0xFFF
 PASS  NRS_RECOVERY held_bg back to 0x000
 PASS  NRS_RECOVERY source back to passthrough
 PASS  NRS_RECOVERY count already terminal
 PASS  NRS_RECOVERY unfilled frame shows the framebuffer for free
-PASS  FIFO_PROTOCOL nVIDCMD_RE never strobed on an empty FIFO
-      MEASURED  57 words popped over the run
+      MEASURED  0 want_pop cycles against an empty FIFO
+      MEASURED  701 words popped over the run
 ------------------------------------------------------
 MEASURED CONSTANTS FOR THE SUITE
   H_ACTIVE -> RGB_OUT pipeline           : 2 clocks (by construction)
-  SET value visible at slot              : 2
-  pop -> set_pix_commit, blanking        : 2 clocks
+  SET value visible at slot              : 1
+  pop -> set_pix_commit, blanking        : 3 clocks
   set_pix_commit leads its slot's RGB_OUT: 1 clock(s)
-  sustained fetch cadence               : 2 slots per VIDCMD word
+  sustained fetch cadence                : 1 slot(s) per VIDCMD word
 ------------------------------------------------------
 TESTBENCH RESULT: PASS (0 failures)
-compositor_tb.v:733: $finish called at 618440000 (1ps)
+compositor_tb.v:792: $finish called at 675500000 (1ps)

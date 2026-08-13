@@ -3,10 +3,17 @@
 // Self-checking.  Every named check prints PASS or FAIL; the run ends with
 // "TESTBENCH RESULT: PASS" (and exit status 0) only if no check failed.
 //
-// The VIDCMD FIFO stub models an IDT7200: nVIDCMD_RE low for one clock pops a
-// word which is valid at the next edge and then HELD on Q until the next pop,
-// and a read attempted while empty is ignored (Q holds) — which is why the
-// "never read an empty FIFO" check matters.
+// The VIDCMD FIFO stub models an IDT7200 behind the board's 74AC00 /RE shaping
+// (griffin.yml interfaces: "VIDCMD FIFO read port"): /RE = NAND(want_pop,
+// PIXEL_CLK), so a cycle whose want_pop is high performs one whole read — the
+// word appears on Q for that cycle and the pointer advances — and consecutive
+// cycles pop consecutive words.  A read attempted while empty is ignored and Q
+// holds, which is what the stale-capture checks probe.
+//
+// This model is at CLOCK GRANULARITY: it proves the cycle-level semantics, not
+// nanoseconds.  Whether the real parts meet tA inside the clock high phase and
+// tEFL inside the half cycle is a datasheet question named in the RTL header,
+// not something a behavioural testbench can answer.
 //
 // Besides pass/fail the bench MEASURES and prints the constants the
 // super-engine suite needs to pin: the H_ACTIVE-to-RGB_OUT pipeline, the slot
@@ -29,7 +36,7 @@ module CompositorTb;
     reg  [11:0] RGB_IN;
     wire [11:0] RGB_OUT;
     wire [15:0] VIDCMD_Q;
-    wire        nVIDCMD_RE;
+    wire        want_pop;
     wire        nVIDCMD_EF;
     wire        set_pix_valid;
     wire [2:0]  set_pix_target;
@@ -46,7 +53,7 @@ module CompositorTb;
         .RGB_IN         (RGB_IN),
         .RGB_OUT        (RGB_OUT),
         .VIDCMD_Q       (VIDCMD_Q),
-        .nVIDCMD_RE     (nVIDCMD_RE),
+        .want_pop       (want_pop),
         .nVIDCMD_EF     (nVIDCMD_EF),
         .set_pix_valid  (set_pix_valid),
         .set_pix_target (set_pix_target),
@@ -92,9 +99,12 @@ module CompositorTb;
     assign VIDCMD_Q   = q_reg;
     assign nVIDCMD_EF = (fifo_wr == fifo_rd) ? 1'b0 : 1'b1;    // low = empty
 
+    // want_pop is sampled at the rising edge that starts its cycle: the NAND
+    // then holds /RE low for that cycle's high phase and releases it at the
+    // falling edge, which is the pointer advance.
     always @(posedge clk)
     begin
-        if (nVIDCMD_RE == 1'b0)
+        if (want_pop === 1'b1)
         begin
             if (fifo_wr == fifo_rd)
             begin
@@ -193,7 +203,7 @@ module CompositorTb;
     reg [11:0] watch_value;
     integer    watch_cycle;
 
-    localparam integer fetch_cadence_expected = 2;   // slots per word, see the header
+    localparam integer fetch_cadence_expected = 1;   // slots per word, see the header
 
     integer commit_count;
     integer last_commit_cycle;
@@ -240,27 +250,34 @@ module CompositorTb;
 
     task reset_dut;
         begin
-            @(negedge clk);
+            @(posedge clk);
+            #1;
             H_ACTIVE = 1'b0;
             nRS      = 1'b0;
             fifo_wr  = 0;
             fifo_rd  = 0;
             q_reg    = 16'h0000;
-            repeat (3) @(negedge clk);
-            nRS = 1'b1;
-            repeat (4) @(negedge clk);
+            repeat (3) @(posedge clk);
+            #1 nRS = 1'b1;
+            repeat (4) @(posedge clk);
         end
     endtask
 
+    // H_ACTIVE is driven the way TIMING drives it: a registered output that
+    // changes just after a rising edge and is then stable for the whole cycle.
+    // That stability is REQUIRED by the negedge want_pop register — if
+    // H_ACTIVE moved near the falling edge, the negedge fetch decision and the
+    // posedge slot decision would disagree about the same cycle and the line
+    // would lose a slot to a fetch bubble.
     task blank;                                  // n cycles of HBLANK
         input integer n;
         integer i;
         begin
-            @(negedge clk);
-            H_ACTIVE = 1'b0;
+            @(posedge clk);
+            #1 H_ACTIVE = 1'b0;
             for (i = 0; i < n; i = i + 1)
             begin
-                @(negedge clk);
+                @(posedge clk);
             end
         end
     endtask
@@ -269,15 +286,15 @@ module CompositorTb;
         input integer n;
         integer i;
         begin
-            @(negedge clk);
-            pix_idx  = 0;
+            @(posedge clk);
+            #1 pix_idx  = 0;
             H_ACTIVE = 1'b1;
             for (i = 0; i < n; i = i + 1)
             begin
-                @(negedge clk);
+                @(posedge clk);
             end
-            H_ACTIVE = 1'b0;
-            repeat (4) @(negedge clk);            // let the pipeline drain
+            #1 H_ACTIVE = 1'b0;
+            repeat (4) @(posedge clk);            // let the pipeline drain
         end
     endtask
 
@@ -381,8 +398,8 @@ module CompositorTb;
         skew_set_visible_slot = k;
         chk("NORMATIVE_M0 pixel 0 is the pre-SET held_fg", pix[0] === 12'hFFF);
         chk("NORMATIVE_M0 tail is the SET value",          span_is(k, SLOTS - 1, 12'h0F0));
-        chk("NORMATIVE_M0 SET lands within 2 slots",       k >= 1 && k <= 2);
-        $display("      MEASURED  SET becomes visible at slot %0d (suite model says 1)", k);
+        chk("NORMATIVE_M0 SET lands on pixel 1",            k === 1);
+        $display("      MEASURED  SET becomes visible at slot %0d", k);
 
         // ---------------------------------------------------------------
         // RUN_COLOR between passthrough gaps
@@ -535,8 +552,47 @@ module CompositorTb;
             commit_slot_a < commit_slot_b && commit_slot_b < commit_slot_c);
         chk("BACK_TO_BACK_SETS evenly spaced",
             (commit_slot_b - commit_slot_a) === (commit_slot_c - commit_slot_b));
+        chk("BACK_TO_BACK_SETS commit on SUCCESSIVE pixels", fetch_cadence_slots === 1);
+        chk("BACK_TO_BACK_SETS start at slot 1 behind a 1-slot RUN", commit_slot_a === 1);
         $display("      MEASURED  SET slots %0d, %0d, %0d -> fetch cadence %0d slots/word",
                  commit_slot_a, commit_slot_b, commit_slot_c, fetch_cadence_slots);
+
+        // ---------------------------------------------------------------
+        // One-slot records really are one pixel wide (the whole point of A0)
+        // ---------------------------------------------------------------
+        reset_dut;
+        RGB_IN = 12'h9A3;
+        push(vc_run_colour(3'd4, 9'd1));            // RED,   1 px
+        push(vc_run_colour(3'd2, 9'd1));            // GREEN, 1 px
+        push(vc_run_colour(3'd1, 9'd1));            // BLUE,  1 px
+        push(vc_run(2'd0, 12'd637));
+        blank(40);
+        line(SLOTS);
+        chk("ONE_PX_SPANS red is exactly pixel 0",   pix[0] === 12'hF00);
+        chk("ONE_PX_SPANS green is exactly pixel 1", pix[1] === 12'h0F0);
+        chk("ONE_PX_SPANS blue is exactly pixel 2",  pix[2] === 12'h00F);
+        chk("ONE_PX_SPANS passthrough resumes at pixel 3",
+            span_is(3, SLOTS - 1, 12'h9A3));
+
+        // Alternating one-slot RUNs for a whole line: 640 records, 640 pixels,
+        // no hold slot anywhere — the strongest cadence check there is.
+        reset_dut;
+        for (i = 0; i < SLOTS; i = i + 1)
+        begin
+            push(vc_run_colour((i % 2) == 0 ? 3'd4 : 3'd2, 9'd1));
+        end
+        blank(80);
+        line(SLOTS);
+        k = 0;
+        for (i = 0; i < SLOTS; i = i + 1)
+        begin
+            if (pix[i] !== ((i % 2) == 0 ? 12'hF00 : 12'h0F0))
+            begin
+                k = k + 1;
+            end
+        end
+        chk("SUSTAINED_1PX 640 one-slot records fill 640 pixels", k === 0);
+        $display("      MEASURED  %0d of 640 alternating one-pixel records wrong", k);
 
         // ---------------------------------------------------------------
         // Short-line framing
@@ -573,15 +629,15 @@ module CompositorTb;
         reset_dut;
         RGB_IN = 12'h060;
         blank(40);
-        @(negedge clk);
-        pix_idx  = 0;
+        @(posedge clk);
+        #1 pix_idx = 0;
         H_ACTIVE = 1'b1;
-        repeat (200) @(negedge clk);
+        repeat (200) @(posedge clk);
         push(vc_run(2'd1, 12'd100));                // arrives ~200 slots in
         push(vc_run(2'd2, 12'd100));
-        repeat (SLOTS - 200) @(negedge clk);
-        H_ACTIVE = 1'b0;
-        repeat (4) @(negedge clk);
+        repeat (SLOTS - 200) @(posedge clk);
+        #1 H_ACTIVE = 1'b0;
+        repeat (4) @(posedge clk);
         chk("LATE_FILL line starts on the held passthrough", span_is(0, 190, 12'h060));
         chk("LATE_FILL resumed at the wrong x, not at slot 0",
             pix[SLOTS - 1] !== 12'h060);
@@ -652,16 +708,16 @@ module CompositorTb;
         push(vc_run_colour(3'd2, 9'd200));          // green
         push(vc_run_colour(3'd1, 9'd200));          // blue, then starvation
         blank(40);
-        @(negedge clk);
-        pix_idx  = 0;
+        @(posedge clk);
+        #1 pix_idx = 0;
         H_ACTIVE = 1'b1;
         for (i = 0; i < SLOTS; i = i + 1)
         begin
             RGB_IN = RGB_IN + 12'h137;              // deterministic junk
-            @(negedge clk);
+            @(posedge clk);
         end
-        H_ACTIVE = 1'b0;
-        repeat (4) @(negedge clk);
+        #1 H_ACTIVE = 1'b0;
+        repeat (4) @(posedge clk);
         chk("RLE_TRUNCATION green span",  span_is(0, 199, 12'h0F0));
         chk("RLE_TRUNCATION blue span",   span_is(200, 399, 12'h00F));
         chk("RLE_TRUNCATION holds the last colour to the line end",
@@ -712,8 +768,11 @@ module CompositorTb;
         // ---------------------------------------------------------------
         // FIFO protocol
         // ---------------------------------------------------------------
-        chk("FIFO_PROTOCOL nVIDCMD_RE never strobed on an empty FIFO",
-            re_while_empty === 0);
+        // A wasted /RE on an empty FIFO is harmless now (the 7200 ignores it
+        // and ef_at_pop suppresses the capture), so this is reported rather
+        // than required — what must hold is that nothing stale was ever
+        // executed, which the SHORT_LINE and RLE checks above prove.
+        $display("      MEASURED  %0d want_pop cycles against an empty FIFO", re_while_empty);
         $display("      MEASURED  %0d words popped over the run", words_popped);
 
         // ---------------------------------------------------------------
@@ -723,7 +782,7 @@ module CompositorTb;
         $display("  SET value visible at slot              : %0d", skew_set_visible_slot);
         $display("  pop -> set_pix_commit, blanking        : %0d clocks", skew_commit_blank);
         $display("  set_pix_commit leads its slot's RGB_OUT: %0d clock(s)", skew_commit_active);
-        $display("  sustained fetch cadence               : %0d slots per VIDCMD word",
+        $display("  sustained fetch cadence                : %0d slot(s) per VIDCMD word",
                  fetch_cadence_slots);
         $display("------------------------------------------------------");
 
