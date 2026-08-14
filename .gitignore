@@ -50,6 +50,10 @@ cpld/.config.mk
 apps/*/*.elf
 apps/*/*.bin
 
+# CF card images and the staging directory `make -C apps cf` builds them from
+apps/*.img
+apps/stage/
+
 # Generated code: griffin.generated.* are tracked (single source of truth);
 # only the build stamp stays ignored.
 .codegen.stamp
