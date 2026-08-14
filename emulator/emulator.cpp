@@ -1922,6 +1922,190 @@ struct PS2Mouse : PS2Device
 };
 
 // ---------------------------------------------------------------------------
+// Audio sink — host capture (--wav-out) and host playback.
+//
+// PORTS' two R2R DACs are loaded by the FIFO pop strobe at
+// AUDIO_SAMPLES_PER_SECOND and hold their value between pops, so a faithful
+// recording is "whatever the output registers hold, sampled once per pop
+// tick" — including the ticks where the FIFO was empty and the DAC simply
+// held its last sample.  That makes the sample rate a property of VIDEO's
+// line rate alone, so a capture is exactly as deterministic as the run.
+//
+// This is a sink only: nothing here is ever read back into the emulation, so
+// neither the capture nor the playback can perturb guest timing.  Playback
+// therefore never blocks — if the host device queue backs up (it always will
+// under --no-throttle, where the guest outruns real time) the samples are
+// dropped, not waited on.
+// ---------------------------------------------------------------------------
+
+class AudioOutput
+{
+public:
+    ~AudioOutput() { close(); }
+
+    // Canonical 44-byte PCM WAV, 8-bit unsigned (the DAC's own format, so the
+    // samples are stored verbatim), stereo.  The header is rewritten at close
+    // with the final frame count.
+    bool open_wav(const char *path)
+    {
+        wav = fopen(path, "wb");
+        if (!wav)
+        {
+            fprintf(stderr, "--wav-out: cannot open %s for writing\n", path);
+            return false;
+        }
+        wav_path = path;
+        wav_frames = 0;
+        write_wav_header();
+        return true;
+    }
+
+    // Best-effort host playback: any failure is a single warning, never fatal.
+    // SDL is asked for the DAC's own format and rate and converts as needed.
+    void open_playback()
+    {
+        if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+        {
+            fprintf(stderr, "Warning: SDL audio init failed (%s); no sound\n",
+                    SDL_GetError());
+            return;
+        }
+        SDL_AudioSpec spec = {};
+        spec.format = SDL_AUDIO_U8;
+        spec.channels = CHANNELS;
+        spec.freq = SAMPLE_RATE_HZ;
+        stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+                                           &spec, nullptr, nullptr);
+        if (!stream)
+        {
+            fprintf(stderr, "Warning: SDL_OpenAudioDeviceStream failed (%s); "
+                    "no sound\n", SDL_GetError());
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+            return;
+        }
+        SDL_ResumeAudioStreamDevice(stream);
+    }
+
+    bool active() const { return wav != nullptr || stream != nullptr; }
+
+    // One DAC update, called from the PORTS pop strobe.
+    void sample(uint8_t left, uint8_t right)
+    {
+        if (!active())
+        {
+            return;
+        }
+        pending[pending_bytes++] = left;
+        pending[pending_bytes++] = right;
+        if (wav)
+        {
+            wav_frames++;
+        }
+        if (pending_bytes >= pending.size())
+        {
+            flush();
+        }
+    }
+
+    void close()
+    {
+        flush();
+        if (stream)
+        {
+            SDL_DestroyAudioStream(stream);   // also closes the bound device
+            stream = nullptr;
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+        }
+        if (wav)
+        {
+            fseek(wav, 0, SEEK_SET);
+            write_wav_header();
+            fclose(wav);
+            wav = nullptr;
+            fprintf(stderr, "Wrote %" PRIu32 " audio frames: %s\n",
+                    wav_frames, wav_path);
+        }
+    }
+
+private:
+    static constexpr int SAMPLE_RATE_HZ = static_cast<int>(AUDIO_SAMPLES_PER_SECOND);
+    static constexpr int CHANNELS = 2;
+    static constexpr uint32_t BYTES_PER_FRAME = CHANNELS;    // u8 per channel
+
+    // Roughly a quarter second of host queue.  Past that the device is behind
+    // the guest and catching up would only add latency, so drop instead.
+    static constexpr int QUEUE_LIMIT_BYTES = SAMPLE_RATE_HZ * BYTES_PER_FRAME / 4;
+
+    FILE *wav = nullptr;
+    const char *wav_path = nullptr;
+    uint32_t wav_frames = 0;
+    SDL_AudioStream *stream = nullptr;
+    bool drop_reported = false;
+    std::array<uint8_t, 2048> pending{};
+    size_t pending_bytes = 0;
+
+    void flush()
+    {
+        if (pending_bytes == 0)
+        {
+            return;
+        }
+        if (wav)
+        {
+            fwrite(pending.data(), 1, pending_bytes, wav);
+        }
+        if (stream)
+        {
+            if (SDL_GetAudioStreamQueued(stream) > QUEUE_LIMIT_BYTES)
+            {
+                if (!drop_reported)
+                {
+                    drop_reported = true;
+                    fprintf(stderr, "Audio: host queue behind the guest, "
+                            "dropping samples\n");
+                }
+            }
+            else
+            {
+                SDL_PutAudioStreamData(stream, pending.data(),
+                                       static_cast<int>(pending_bytes));
+            }
+        }
+        pending_bytes = 0;
+    }
+
+    void put_u32(uint32_t v)
+    {
+        uint8_t b[4] = {static_cast<uint8_t>(v), static_cast<uint8_t>(v >> 8),
+                        static_cast<uint8_t>(v >> 16), static_cast<uint8_t>(v >> 24)};
+        fwrite(b, 1, sizeof(b), wav);
+    }
+
+    void put_u16(uint16_t v)
+    {
+        uint8_t b[2] = {static_cast<uint8_t>(v), static_cast<uint8_t>(v >> 8)};
+        fwrite(b, 1, sizeof(b), wav);
+    }
+
+    void write_wav_header()
+    {
+        uint32_t data_bytes = wav_frames * BYTES_PER_FRAME;
+        fwrite("RIFF", 1, 4, wav);
+        put_u32(36 + data_bytes);
+        fwrite("WAVEfmt ", 1, 8, wav);
+        put_u32(16);                                    // PCM fmt chunk size
+        put_u16(1);                                     // PCM
+        put_u16(CHANNELS);
+        put_u32(SAMPLE_RATE_HZ);
+        put_u32(SAMPLE_RATE_HZ * BYTES_PER_FRAME);      // byte rate
+        put_u16(BYTES_PER_FRAME);                       // block align
+        put_u16(8);                                     // bits per sample
+        fwrite("data", 1, 4, wav);
+        put_u32(data_bytes);
+    }
+};
+
+// ---------------------------------------------------------------------------
 // PORTS — the fourth ATF1508AS CPLD (cpld/ports/ports.v), at PORTS_BASE.
 //
 // Byte-wide registers, zero wait states (GLUE decodes the region and answers
@@ -1994,6 +2178,11 @@ struct PortsState
     uint8_t dac_left = 0;
     uint8_t dac_right = 0;              // 7202 output registers hold last sample
 
+    // Optional host sink for what the DACs present (--wav-out / playback).
+    // Write-only from here: PORTS never reads it back, so attaching one cannot
+    // change guest behaviour or timing.
+    AudioOutput *audio_out = nullptr;
+
     bool init()
     {
         return mouse.init(PORTS_BASE, mouse_device);
@@ -2061,12 +2250,23 @@ struct PortsState
         uint32_t phased = lines + (audio_pop_phase ? 1u : 0u);
         uint32_t pops = phased / 2;
         audio_pop_phase = (phased & 1u) != 0;
-        if (audio_enable)
+        for (uint32_t i = 0; i < pops; i++)
         {
-            for (uint32_t i = 0; i < pops; i++)
+            if (audio_enable)
             {
                 audio_fifo_pop();
             }
+            // The DACs are sampled on every pop tick whether or not the pop
+            // strobe is enabled and whether or not the FIFO had anything: the
+            // converters are always converting whatever their registers hold.
+            // That keeps the capture rate exactly AUDIO_SAMPLES_PER_SECOND.
+            if (audio_out)
+            {
+                audio_out->sample(dac_left, dac_right);
+            }
+        }
+        if (audio_enable)
+        {
             update_half_full_edge();
         }
     }
@@ -2764,6 +2964,10 @@ class GriffinEmulator : public moira::Moira
     SDL_Gamepad *gamepads[PortsState::JOYSTICK_PORTS] = {};
     SDL_JoystickID gamepad_ids[PortsState::JOYSTICK_PORTS] = {};
 
+    // --keys-to-joystick, and which of the two FIRE keys are currently held.
+    bool keys_to_joystick = false;
+    uint8_t fire_keys_held = 0;
+
     // Scanline count already handed to PORTS as LINE_STROBE edges.
     uint64_t ports_line_count = 0;
 
@@ -3382,6 +3586,11 @@ public:
         return stdin_console.open();
     }
 
+    // --keys-to-joystick: send the host arrow/fire keys to joystick port 1
+    // instead of to the PS/2 keyboard.  Interactive only (headless runs get no
+    // SDL key events; they use --joystick-in).
+    void set_keys_to_joystick(bool on) { keys_to_joystick = on; }
+
     // Interactive joystick input comes from SDL gamepads.  Only meaningful
     // when SDL is up (i.e. not headless); scripted input needs none of this.
     bool init_gamepads()
@@ -3454,6 +3663,10 @@ public:
                 {
                     continue;
                 }
+                if (keys_to_joystick && apply_key_to_joystick(ev))
+                {
+                    continue;
+                }
                 uint16_t code = sdl_to_ps2_set2(ev.key.scancode);
                 if (code != 0)
                 {
@@ -3482,11 +3695,61 @@ public:
         update_ipl();
     }
 
+    // --keys-to-joystick: divert the host arrow keys and space/left-control to
+    // joystick port 1 rather than to the PS/2 keyboard, for testing a game
+    // without a gamepad plugged in.  Returns true when the event was consumed
+    // as a joystick input, so the caller drops it; every other key still types
+    // normally.  Two keys share FIRE, so the button is the OR of them —
+    // releasing one while the other is held must not release the button.
+    bool apply_key_to_joystick(const SDL_Event &ev)
+    {
+        static constexpr uint8_t FIRE_SPACE = 1;
+        static constexpr uint8_t FIRE_CTRL = 2;
+
+        uint8_t bit = 0;
+        uint8_t fire_key = 0;
+        switch (ev.key.scancode)
+        {
+            case SDL_SCANCODE_UP:    bit = PORTS_JOYSTICK_PORT_1_UP_MASK; break;
+            case SDL_SCANCODE_DOWN:  bit = PORTS_JOYSTICK_PORT_1_DOWN_MASK; break;
+            case SDL_SCANCODE_LEFT:  bit = PORTS_JOYSTICK_PORT_1_LEFT_MASK; break;
+            case SDL_SCANCODE_RIGHT: bit = PORTS_JOYSTICK_PORT_1_RIGHT_MASK; break;
+            case SDL_SCANCODE_SPACE: fire_key = FIRE_SPACE; break;
+            case SDL_SCANCODE_LCTRL: fire_key = FIRE_CTRL; break;
+            default: return false;
+        }
+
+        bool down = (ev.type == SDL_EVENT_KEY_DOWN);
+        if (fire_key != 0)
+        {
+            if (down)
+            {
+                fire_keys_held |= fire_key;
+            }
+            else
+            {
+                fire_keys_held &= static_cast<uint8_t>(~fire_key);
+            }
+            bit = PORTS_JOYSTICK_PORT_1_FIRE_MASK;
+            down = (fire_keys_held != 0);
+        }
+
+        if (down)
+        {
+            ports.joystick_pressed[0] |= bit;
+        }
+        else
+        {
+            ports.joystick_pressed[0] &= static_cast<uint8_t>(~bit);
+        }
+        return true;
+    }
+
     // Map an SDL gamepad onto a Griffin DE-9 joystick port.  Gamepad 0 becomes
     // port 1 and gamepad 1 port 2; the left stick's X axis also drives paddle
     // A and the right stick's paddle B, so a pad exercises the paddle counters
-    // too.  Host keyboard keys are deliberately not used: they all belong to
-    // the PS/2 keyboard model.
+    // too.  Host keyboard keys belong to the PS/2 keyboard model by default;
+    // --keys-to-joystick is the explicit opt-out (see apply_key_to_joystick).
     int gamepad_port(SDL_JoystickID which) const
     {
         for (int i = 0; i < PortsState::JOYSTICK_PORTS; i++)
@@ -4041,7 +4304,10 @@ void usage(const char *progname)
     printf("                                socat pty bridge to a persistent host pppd)\n");
     printf("  --serialb-in FILE             feed DUART channel B input from FILE\n");
     printf("  --serialb-out FILE            write DUART channel B output to FILE\n");
-    printf("  --headless                    do not open an SDL video window\n");
+    printf("  --keys-to-joystick            host arrows + space/left-ctrl drive joystick\n");
+    printf("                                port 1 instead of the PS/2 keyboard\n");
+    printf("  --wav-out FILE                record the audio DACs to FILE (8-bit stereo WAV)\n");
+    printf("  --headless                    do not open an SDL video window (also no sound)\n");
     printf("  --screenshot FILE             write the framebuffer to FILE (BMP) on exit\n");
     printf("  --run-cycles N                stop after N emulated SYSCLK cycles\n");
     printf("  --no-throttle                 run as fast as possible (no real-time pacing)\n");
@@ -4067,6 +4333,8 @@ int main(int argc, const char** argv)
     const char *serialb_in_path = nullptr;
     const char *serialb_out_path = nullptr;
     const char *screenshot_path = nullptr;
+    const char *wav_out_path = nullptr;
+    bool keys_to_joystick = false;
     bool selftest_displaylist = false;
     bool headless = false;
     bool no_throttle = false;
@@ -4169,6 +4437,18 @@ int main(int argc, const char** argv)
             selftest_displaylist = true;
             argv += 1;
             argc -= 1;
+        } else if(strcmp(argv[0], "--keys-to-joystick") == 0) {
+            keys_to_joystick = true;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--wav-out") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--wav-out option requires a file path.\n");
+                exit(EXIT_FAILURE);
+            }
+            wav_out_path = argv[1];
+            argv += 2;
+            argc -= 2;
         } else if(strcmp(argv[0], "--headless") == 0) {
             headless = true;
             argv += 1;
@@ -4349,6 +4629,25 @@ int main(int argc, const char** argv)
         // --joystick-in instead and need no SDL at all.
         emulator.init_gamepads();
     }
+    emulator.set_keys_to_joystick(keys_to_joystick);
+
+    // Attach the DAC sink before the CPU is released so a capture always
+    // starts at reset and is reproducible for a given --run-cycles.  Host
+    // playback follows the window: an SDL audio device makes no sense for an
+    // unattended headless run, and a capture is what those runs want anyway.
+    AudioOutput audio_output;
+    if (wav_out_path && !audio_output.open_wav(wav_out_path))
+    {
+        exit(EXIT_FAILURE);
+    }
+    if (!headless)
+    {
+        audio_output.open_playback();
+    }
+    if (audio_output.active())
+    {
+        emulator.ports_model().audio_out = &audio_output;
+    }
 
     // Bring-up self-check: poke a descriptor list into RAM and arm ENGINE
     // before the guest runs.  Whatever the CPU does afterwards is irrelevant —
@@ -4486,6 +4785,12 @@ int main(int argc, const char** argv)
     {
         fclose(audio);
     }
+
+    // Patch the WAV header with the final frame count and let go of the host
+    // audio device while SDL is still up (VideoState's destructor calls
+    // SDL_Quit).
+    emulator.ports_model().audio_out = nullptr;
+    audio_output.close();
 
     if (selftest_displaylist)
     {
