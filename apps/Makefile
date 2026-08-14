@@ -1,5 +1,5 @@
 # Build all Griffin applications (flat binaries loadable by the firmware).
-SUBDIRS = hello exctest basic
+SUBDIRS = hello exctest basic dtest
 
 all clean:
 	@for d in $(SUBDIRS); do $(MAKE) -C $$d $@ || exit 1; done
