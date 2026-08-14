@@ -4,9 +4,11 @@
 #include <cstdarg>
 #include <cstring>
 #include <cstdlib>
+#include <cerrno>
 
 #include "../griffin.generated.h"
 #include "../griffin.generated.refs.h"
+#include "../griffin_abi.h"
 // #include "splash.h"
 
 #include "ps2.h"
@@ -651,23 +653,57 @@ static constexpr se::Rgb444 CONSOLE_BG = 0x0000;   // black
 //
 // edma3.v's descriptor pointer is 15 bits of WORD address inside a hard-wired
 // page, so every descriptor has to live in 0x3F0000..0x3FFFFF and be 8-byte
-// aligned.  linker.ld reserves the top 32 KB for it and drops _stack_top below
-// the window, because the stack used to start at 0x400000 and would have grown
-// straight down through the table.
+// aligned.  linker.ld reserves the top 40 KB (0x3F6000..0x3FFFFF) for it and
+// drops _stack_top below the window, because the stack used to start at
+// 0x400000 and would have grown straight down through the table.
 //
-// Descriptors occupy the low 28 KB; the top 4 KB holds the VIDCMD payload
-// words, which are frame-owned data the descriptors point at (the console
-// needs three of them, the viewer 1440).
+// The window is split by the direct-video syscalls, not by the hardware:
+//
+//   0x3F6000 +-------------------------------+
+//            | console table   0x1F40 (1000  |  the CONSOLE list and its VIDCMD
+//            |                  descriptors) |  payload live entirely below the
+//   0x3F7F40 | console VIDCMD  0x00C0        |  app carve, so they survive an
+//   0x3F8000 +-------------------------------+  app owning it
+//            | GRIFFIN_APP_DESC_BASE, 32 KB  |
+//            | carved out for an application |  handed to the app by
+//            | holding direct video access   |  SYS_VIDEO_DIRECT_START
+//   0x400000 +-------------------------------+
+//
+// While no app holds direct access the firmware uses the WHOLE 40 KB: the
+// image viewer's list is 1475 descriptors (11800 bytes) plus 1440 VIDCMD words
+// (2880 bytes), which does not fit under 0x3F8000.  Both lists start at
+// dl_table_base, so engine_desc_word_addr never changes; only the region sizes
+// differ, and dl_reset() takes them.
 // ---------------------------------------------------------------------------
 extern "C" char _displaylist_start[];
 
-static constexpr uint32_t DL_SIZE          = 0x8000;
-static constexpr uint32_t DL_VIDCMD_BYTES  = 0x1000;
-static constexpr uint32_t DL_TABLE_BYTES   = DL_SIZE - DL_VIDCMD_BYTES;
-static constexpr uint32_t DL_MAX_DESC      = DL_TABLE_BYTES / se::DESC_BYTES;   // 3584
+// Must match linker.ld's _displaylist_size / _displaylist_start; checked
+// against the linker symbol at runtime in video_framebuffer_init().
+static constexpr uint32_t DL_SIZE  = 0xA000;
+static constexpr uint32_t DL_START = se::DESC_TABLE_BASE + 0x10000 - DL_SIZE;   // 0x3F6000
 
-static uint32_t dl_table_base = 0;    // 0x3F8000
-static uint32_t dl_vidcmd_base = 0;   // 0x3FF000
+// Console: table + payload sized to land exactly on the app carve boundary.
+static constexpr uint32_t DL_CONSOLE_TABLE_BYTES  = 0x1F40;   // 1000 descriptors
+static constexpr uint32_t DL_CONSOLE_VIDCMD_BYTES = 0x00C0;   // 96 words
+
+// Viewer: the whole window, descriptors low and payload high, as before.
+static constexpr uint32_t DL_VIEWER_TABLE_BYTES   = 0x8000;   // 4096 descriptors
+static constexpr uint32_t DL_VIEWER_VIDCMD_BYTES  = DL_SIZE - DL_VIEWER_TABLE_BYTES;
+
+static_assert(DL_START + DL_CONSOLE_TABLE_BYTES + DL_CONSOLE_VIDCMD_BYTES
+                  <= GRIFFIN_APP_DESC_BASE,
+              "the console list and its VIDCMD payload must fit below the app "
+              "descriptor carve, or an app holding direct video would clobber "
+              "the console");
+static_assert(DL_START + DL_SIZE == GRIFFIN_APP_DESC_BASE + GRIFFIN_APP_DESC_BYTES,
+              "the display-list window must end at the top of the descriptor page");
+static_assert(DL_VIEWER_TABLE_BYTES + DL_VIEWER_VIDCMD_BYTES == DL_SIZE,
+              "the viewer regions must tile the display-list window exactly");
+
+static uint32_t dl_table_base = 0;    // 0x3F6000, both lists
+static uint32_t dl_max_desc = 0;      // descriptor capacity of the active list's region
+static uint32_t dl_vidcmd_base = 0;   // just above the active list's table
+static uint32_t dl_vidcmd_bytes = 0;  // payload capacity of the active list's region
 static uint32_t dl_desc_count = 0;    // descriptors emitted into the current list
 static uint32_t dl_vidcmd_used = 0;   // VIDCMD payload words emitted
 static bool     dl_overflow = false;
@@ -678,16 +714,19 @@ extern "C" uint16_t engine_desc_word_addr;
 extern "C" volatile uint32_t video_frame_counter;
 extern "C" volatile uint32_t engine_frame_counter;
 
-static void dl_reset()
+static void dl_reset(uint32_t table_bytes, uint32_t vidcmd_bytes)
 {
-    dl_desc_count  = 0;
-    dl_vidcmd_used = 0;
-    dl_overflow    = false;
+    dl_max_desc     = table_bytes / se::DESC_BYTES;
+    dl_vidcmd_base  = dl_table_base + table_bytes;
+    dl_vidcmd_bytes = vidcmd_bytes;
+    dl_desc_count   = 0;
+    dl_vidcmd_used  = 0;
+    dl_overflow     = false;
 }
 
 static void dl_emit(const se::Descriptor &d)
 {
-    if (dl_desc_count >= DL_MAX_DESC)
+    if (dl_desc_count >= dl_max_desc)
     {
         dl_overflow = true;
         return;
@@ -721,7 +760,7 @@ static void dl_emit_pacer(bool stop_after)
 static uint32_t dl_put_vidcmd(const uint16_t *words, unsigned n)
 {
     const uint32_t at = dl_vidcmd_base + dl_vidcmd_used * 2;
-    if ((dl_vidcmd_used + n) * 2 > DL_VIDCMD_BYTES)
+    if ((dl_vidcmd_used + n) * 2 > dl_vidcmd_bytes)
     {
         dl_overflow = true;
         return at;
@@ -774,9 +813,24 @@ static constexpr unsigned VBLANK_WALK_LINES = 34;   // lines 491..524
 // last source to the end of a line and a line that receives no records at all
 // keeps holding, so one 1-slot passthrough RUN paints all 480 lines.  The two
 // SETs are consumed during blanking and cost no slot at all.
+
+// Descriptor and payload budgets, checked here where VBLANK_WALK_LINES is in
+// scope.  The console's is the one that matters for correctness: it is what
+// keeps the console list below GRIFFIN_APP_DESC_BASE.
+static constexpr unsigned CONSOLE_DESCRIPTORS = 1 + VBLANK_WALK_LINES + 2 * FB_LINES + 1;
+static constexpr unsigned VIEWER_DESCRIPTORS  = VBLANK_WALK_LINES + 3 * FB_LINES + 1;
+static_assert(CONSOLE_DESCRIPTORS * se::DESC_BYTES <= DL_CONSOLE_TABLE_BYTES,
+              "console display list outgrew its below-the-carve table region");
+static_assert(3 * 2 <= DL_CONSOLE_VIDCMD_BYTES,
+              "console frame preamble outgrew its below-the-carve payload region");
+static_assert(VIEWER_DESCRIPTORS * se::DESC_BYTES <= DL_VIEWER_TABLE_BYTES,
+              "viewer display list outgrew the 40 KB display-list window");
+static_assert(FB_LINES * 3 * 2 <= DL_VIEWER_VIDCMD_BYTES,
+              "viewer per-line palette payload outgrew the display-list window");
+
 static void dl_build_console_list()
 {
-    dl_reset();
+    dl_reset(DL_CONSOLE_TABLE_BYTES, DL_CONSOLE_VIDCMD_BYTES);
 
     const uint16_t preamble[3] = {
         se::vidcmd_set(se::SET_PIX_PAL_FG, CONSOLE_FG),
@@ -840,7 +894,7 @@ static constexpr se::Rgb444 r3g3b2_to_rgb444(uint8_t c)
 
 static void dl_build_viewer_list(const uint16_t *palettes)
 {
-    dl_reset();
+    dl_reset(DL_VIEWER_TABLE_BYTES, DL_VIEWER_VIDCMD_BYTES);
 
     for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
     {
@@ -1128,8 +1182,19 @@ static void video_framebuffer_init()
         return;
     }
 
-    dl_table_base  = reinterpret_cast<uint32_t>(_displaylist_start);
-    dl_vidcmd_base = dl_table_base + DL_TABLE_BYTES;
+    // DL_START mirrors linker.ld's _displaylist_start so the region sizes above
+    // can be static_asserted against GRIFFIN_APP_DESC_BASE; if the two ever
+    // drift apart those asserts are checking the wrong window, so say so and
+    // leave video off rather than scribble somewhere unexpected.
+    dl_table_base = reinterpret_cast<uint32_t>(_displaylist_start);
+    if (dl_table_base != DL_START)
+    {
+        printf("ENGINE: linker display list at 0x%06lX, rom.cpp expects 0x%06lX -- video disabled\n",
+               static_cast<unsigned long>(dl_table_base),
+               static_cast<unsigned long>(DL_START));
+        dl_table_base = 0;
+        return;
+    }
 
     debug_printf("VIDEO: framebuffer at 0x%06lX (%u lines x %u bytes, headerless)\n",
                  static_cast<unsigned long>(FB_ADDR),
@@ -1138,8 +1203,8 @@ static void video_framebuffer_init()
     dl_build_console_list();
     if (dl_overflow)
     {
-        printf("ENGINE: display list does not fit the %lu-byte window -- video disabled\n",
-               static_cast<unsigned long>(DL_SIZE));
+        printf("ENGINE: console list does not fit its %lu-byte region -- video disabled\n",
+               static_cast<unsigned long>(DL_CONSOLE_TABLE_BYTES + DL_CONSOLE_VIDCMD_BYTES));
         return;
     }
 
@@ -1167,6 +1232,109 @@ static void video_framebuffer_init()
 
     printf("ENGINE: armed at DESC=0x%04X\n",
            static_cast<unsigned>(engine_desc_word_addr));
+}
+
+// ---------------------------------------------------------------------------
+// Direct video access — SYS_VIDEO_DIRECT_START / SYS_VIDEO_DIRECT_END
+//
+// The firmware's claim on ENGINE is exactly two things: the level-6 vsync ISR
+// re-arming ENGINE_DESC from engine_desc_word_addr every frame, and the console
+// display list sitting at dl_table_base.  Handing the hardware to an app is
+// therefore just dropping the first (mask VSYNC_IRQ_EN, and gate the re-arm in
+// the ISR itself so a stray latched vsync cannot sneak one in) and promising
+// not to touch the app's carve.  ENGINE finishes the frame it is parked on and
+// idles, because the list's trailing stop_after pacer disarms it and nothing
+// re-arms; the app then writes its own DESC whenever it likes.
+//
+// POLLING IS THE SUPPORTED MODEL.  An app paces itself by watching
+// GLUE_VSYNC_STATUS bit 0 and write-1-to-clearing GLUE_VSYNC_CLEAR.  The
+// VSYNC_IRQ_EN bit stays syscall-owned rather than app-owned because GLUE
+// CONFIG is write-only and shadowed by the firmware (glue_config_shadow in
+// crt0.s), so an app has no way to read-modify-write it safely.
+//
+// See griffin_abi.h for the carve constants and the full ownership contract.
+// ---------------------------------------------------------------------------
+
+// Nonzero while an app holds direct access.  Lives in crt0.s so _vsync_isr can
+// tst.b it; cleared explicitly in _start because .monitor_data is NOLOAD and
+// deliberately not zeroed.
+extern "C" volatile uint8_t video_direct_mode;
+
+// Level-6 autovector (vector 30) in the RAM vector table, saved across a direct
+// session so an app that installs its own handler cannot leave it installed.
+static constexpr uint32_t VECTOR_LEVEL6_ADDR = 30 * 4;
+static uint32_t video_direct_saved_vector = 0;
+
+// The vector table lives at address 0, which every C++ compiler assumes is
+// unmapped: a plain reinterpret_cast of a small constant trips -Warray-bounds
+// ("source object is likely at address zero").  Laundering the address through
+// an empty asm makes it opaque to that analysis without emitting an
+// instruction.  The 68000 really does keep its vectors down there.
+static volatile uint32_t *vector_slot(uint32_t addr)
+{
+    asm("" : "+r"(addr));
+    return reinterpret_cast<volatile uint32_t *>(addr);
+}
+
+extern "C" long sys_video_direct_start(long info_ptr)
+{
+    if (video_direct_mode != 0)
+    {
+        errno = EBUSY;
+        return -1;
+    }
+    if (FB_ADDR == 0 || dl_table_base == 0)
+    {
+        errno = ENODEV;
+        return -1;
+    }
+    if (info_ptr == 0)
+    {
+        errno = EFAULT;
+        return -1;
+    }
+
+    video_direct_saved_vector = *vector_slot(VECTOR_LEVEL6_ADDR);
+
+    // Order matters: stop the ISR re-arming before the IRQ is masked, so there
+    // is no window where a vsync taken between the two writes re-arms the
+    // firmware list on top of whatever the app is about to install.
+    video_direct_mode = 1;
+    glue_config_clear_bits(Griffin::GLUE_CONFIG_VSYNC_IRQ_EN_MASK);
+    GLUE_VSYNC_CLEAR = Griffin::GLUE_VSYNC_CLEAR_VSYNC_PENDING_MASK;
+
+    GriffinVideoDirectInfo *info = reinterpret_cast<GriffinVideoDirectInfo *>(info_ptr);
+    info->desc_table_base  = GRIFFIN_APP_DESC_BASE;
+    info->desc_table_bytes = GRIFFIN_APP_DESC_BYTES;
+    return 0;
+}
+
+extern "C" long sys_video_direct_end(void)
+{
+    if (video_direct_mode == 0)
+    {
+        return 0;   // idempotent: never taken, or already given back
+    }
+
+    *vector_slot(VECTOR_LEVEL6_ADDR) = video_direct_saved_vector;
+    video_direct_mode = 0;
+
+    // Unconditionally rebuild: the app's carve overlaps the region the viewer
+    // list uses, and the app may have armed anything at all, so nothing about
+    // the previous list can be trusted.  The framebuffer is NOT in the carve or
+    // in the app region (it is a firmware heap allocation up above
+    // _firmware_ram), so the console text page is still intact and must NOT be
+    // cleared here.  Apps run supervisor and could scribble on it anyway; that
+    // is a bug in the app, not something this can defend against.
+    dl_build_console_list();
+
+    // Re-enable ENGINE without aborting: any write to CTRL acks a pending
+    // level-3 IRQ, and ENABLE=1 leaves it running for the vsync ISR to arm.
+    ENGINE_CTRL = Griffin::ENGINE_CTRL_ENABLE_MASK;
+
+    GLUE_VSYNC_CLEAR = Griffin::GLUE_VSYNC_CLEAR_VSYNC_PENDING_MASK;
+    glue_config_set_bits(Griffin::GLUE_CONFIG_VSYNC_IRQ_EN_MASK);
+    return 0;   // the next vsync ISR writes DESC and the console is back
 }
 
 void process_ps2_inputs()

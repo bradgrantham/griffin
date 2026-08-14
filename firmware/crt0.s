@@ -126,6 +126,11 @@ _start:
     move.b  #(GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK), GLUE_CONFIG
     move.b  #(GLUE_CONFIG_DEFAULT + GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK), glue_config_shadow
 
+    /* No application owns the video ENGINE at reset.  Explicit because
+       video_direct_mode lives in .monitor_data, which is NOLOAD and is
+       deliberately never cleared (bss_clear below does not cover it). */
+    clr.b   video_direct_mode
+
     lea     rom_unshadowed, %a1
     lea     .rom_un(%pc), %a6
     jmp     duart_puts
@@ -835,10 +840,19 @@ _duart_isr:
 |
 | DESC is a TRUE 16-bit register holding a WORD address inside the descriptor
 | page — it must be move.w, and a move.b does nothing at all.
+|
+| While an application holds direct video access (SYS_VIDEO_DIRECT_START) the
+| re-arm is skipped and ONLY the re-arm: the syscall masks VSYNC_IRQ_EN so this
+| handler should not run at all, but if a latched vsync gets through anyway the
+| ack and the frame counter must still happen or the level-6 line livelocks.
+| tst/bne touch no data register, so the handler still clobbers nothing.
 _vsync_isr:
     move.b  #1, GLUE_VSYNC_CLEAR        | W1C the latch; anything else livelocks
     addq.l  #1, video_frame_counter
+    tst.b   video_direct_mode
+    bne.s   .vsync_app_owns_engine
     move.w  engine_desc_word_addr, ENGINE_DESC   | re-arm for the next frame
+.vsync_app_owns_engine:
     rte
 
 | _engine_isr: level 3, the display list's trailing stop_after descriptor.
@@ -1349,4 +1363,13 @@ engine_frame_counter:
     .global engine_desc_word_addr
 engine_desc_word_addr:
     .skip 2
+    .align 2
+
+    | Nonzero while an application holds direct control of the video ENGINE
+    | (SYS_VIDEO_DIRECT_START..SYS_VIDEO_DIRECT_END).  _vsync_isr tests it and
+    | skips the ENGINE_DESC re-arm; the firmware syscalls in rom.cpp own every
+    | write to it.  Explicitly cleared in _start — .monitor_data is NOLOAD.
+    .global video_direct_mode
+video_direct_mode:
+    .skip 1
     .align 2

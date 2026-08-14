@@ -33,6 +33,8 @@ extern "C"
     // firmware/rom.cpp
     uint32_t get_milliseconds(void);
     uint32_t get_epoch_seconds(void);
+    long     sys_video_direct_start(long info_ptr);
+    long     sys_video_direct_end(void);
 
     void app_exit(int code);
     long sys_dispatch(long num, long a1, long a2, long a3);
@@ -106,6 +108,15 @@ long sys_dispatch(long num, long a1, long a2, long a3)
             break;
         case Griffin::SYS_GETTIME:
             r = static_cast<long>(get_epoch_seconds());
+            break;
+        // Direct video access.  d1 is a GriffinVideoDirectInfo * the firmware
+        // fills in (see griffin_abi.h); the loader calls the END path itself
+        // for any app that exits still holding the engine.
+        case Griffin::SYS_VIDEO_DIRECT_START:
+            r = sys_video_direct_start(a1);
+            break;
+        case Griffin::SYS_VIDEO_DIRECT_END:
+            r = sys_video_direct_end();
             break;
         case Griffin::SYS_EXIT:
             app_exit(static_cast<int>(a1));

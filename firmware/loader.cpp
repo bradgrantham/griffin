@@ -22,6 +22,12 @@
 extern "C" char _app_base[];       // 0x001000  (app load/link base, linker.ld)
 extern "C" char _firmware_ram[];   // 0x380000  (top of the app region)
 
+// Direct video access (firmware/rom.cpp, crt0.s).  An app that took the video
+// ENGINE and then exited -- or died -- would otherwise leave the vsync IRQ
+// masked and the display list unrestored, so the loader always gives it back.
+extern "C" volatile uint8_t video_direct_mode;
+extern "C" long sys_video_direct_end(void);
+
 static jmp_buf app_ctx;
 static int     app_exit_code = 0;
 
@@ -82,6 +88,12 @@ extern "C" int load_and_run_app(const char *path, int argc, char **argv)
     {
         auto entry = reinterpret_cast<void (*)(int, char **)>(base);
         entry(argc, argv);   // runs the app; returns here via app_exit() -> longjmp
+    }
+
+    if (video_direct_mode != 0)
+    {
+        printf("loader: app left direct video access held; reclaiming\n");
+        (void)sys_video_direct_end();
     }
 
     printf("loader: app exited (code %d)\n", app_exit_code);

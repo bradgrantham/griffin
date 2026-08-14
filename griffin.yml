@@ -957,6 +957,16 @@ syscalls:
     - name: GETTIME
       number: 12
       description: "Return seconds since the Unix epoch derived from the boot epoch plus milliseconds since boot."
+    # Direct video access.  The full ownership contract -- what may live in the
+    # descriptor carve, what may not, and the poll-the-vsync-latch pacing model
+    # -- is in griffin_abi.h, which also defines GriffinVideoDirectInfo and the
+    # GRIFFIN_APP_DESC_* carve constants shared by firmware and applications.
+    - name: VIDEO_DIRECT_START
+      number: 13
+      description: "Take direct control of the video ENGINE: d1 points to a GriffinVideoDirectInfo the firmware fills with the app descriptor-table region."
+    - name: VIDEO_DIRECT_END
+      number: 14
+      description: "Return the video ENGINE to the firmware console."
 
 bodges:
   - "Reroute A6 pad on U12 to A18"

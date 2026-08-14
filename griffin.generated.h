@@ -426,5 +426,7 @@ static constexpr unsigned SYS_INPUTREADY = 9U;  // Return 1 if console input is 
 static constexpr unsigned SYS_READDIR = 10U;  // readdir(path in d1, index in d2, entry buffer in d3) fills one directory entry and returns 0, or 1 past the end.
 static constexpr unsigned SYS_GETTICKS = 11U;  // Return milliseconds since boot as an unsigned 32-bit count that wraps.
 static constexpr unsigned SYS_GETTIME = 12U;  // Return seconds since the Unix epoch derived from the boot epoch plus milliseconds since boot.
+static constexpr unsigned SYS_VIDEO_DIRECT_START = 13U;  // Take direct control of the video ENGINE: d1 points to a GriffinVideoDirectInfo the firmware fills with the app descriptor-table region.
+static constexpr unsigned SYS_VIDEO_DIRECT_END = 14U;  // Return the video ENGINE to the firmware console.
 
 } // namespace Griffin
