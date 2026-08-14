@@ -5,6 +5,13 @@
 // Ordinary applications should prefer the POSIX veneer built on top of them
 // (poll(), opendir()/readdir()/closedir(), gettimeofday(), usleep()) and reach
 // for these only when they want the Griffin call with no translation.
+//
+// The services that are about hardware the app takes over rather than asks the
+// firmware for live in their own headers, pulled in below: griffin_video.h
+// (direct display ownership and vblank pacing, apps/lib/griffin_video.cpp) and
+// griffin_input.h (joystick and paddle sampling, apps/lib/griffin_input.cpp).
+// Those objects are not in every app's link line -- see the comment at the top
+// of griffin_video.cpp, or include apps/lib/lib.mk from the app Makefile.
 
 #ifndef GRIFFIN_APP_H
 #define GRIFFIN_APP_H
@@ -12,6 +19,8 @@
 #include <stdint.h>
 
 #include "../../griffin_dirent.h"
+#include "griffin_input.h"
+#include "griffin_video.h"
 
 #ifdef __cplusplus
 extern "C" {

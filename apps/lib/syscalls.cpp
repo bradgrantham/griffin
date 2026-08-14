@@ -19,92 +19,61 @@
 #include "../../griffin.generated.h"
 #include "dirent.h"
 #include "griffin_app.h"
+#include "griffin_syscall.h"
 #include "poll.h"
 #include "unistd.h"
 
-static_assert(Griffin::SYS_TRAP == 15, "the 'trap #15' literal below must match SYS_TRAP");
-
-// Generic syscall: number in d0, up to three args in d1/d2/d3, return in d0.
-// d0-d3 are clobbered (the firmware dispatch may use a0/a1 too).
-static long griffin_syscall(long num, long a1, long a2, long a3)
-{
-    register long d0 asm("d0") = num;
-    register long d1 asm("d1") = a1;
-    register long d2 asm("d2") = a2;
-    register long d3 asm("d3") = a3;
-    asm volatile("trap #15"
-                 : "+d"(d0)
-                 : "d"(d1), "d"(d2), "d"(d3)
-                 : "memory", "a0", "a1", "cc");
-    return d0;
-}
-
-// Translate the Linux-style return (>=0 result, <0 is -errno) into errno/-1.
-static long sys_ret(long r)
-{
-    if (r < 0)
-    {
-        errno = static_cast<int>(-r);
-        return -1;
-    }
-    return r;
-}
-
-// Same trap, no error translation.  The clock calls return unsigned 32-bit
-// counts in which bit 31 is data (49.7-day tick wrap, post-2038 dates), so
-// running them through sys_ret() would turn a perfectly good value into -1.
-static uint32_t griffin_syscall_raw(long num, long a1, long a2, long a3)
-{
-    return static_cast<uint32_t>(griffin_syscall(num, a1, a2, a3));
-}
+// griffin_syscall(), griffin_sys_ret() and griffin_syscall_raw() used to live
+// here; they moved to griffin_syscall.h when a second apps/lib translation unit
+// (griffin_video.cpp) needed the same trap sequence.
 
 extern "C"
 {
 
 ssize_t write(int fd, const void *buf, size_t len)
 {
-    return static_cast<ssize_t>(sys_ret(griffin_syscall(
+    return static_cast<ssize_t>(griffin_sys_ret(griffin_syscall(
         Griffin::SYS_WRITE, fd, reinterpret_cast<long>(buf), static_cast<long>(len))));
 }
 
 ssize_t read(int fd, void *buf, size_t len)
 {
-    return static_cast<ssize_t>(sys_ret(griffin_syscall(
+    return static_cast<ssize_t>(griffin_sys_ret(griffin_syscall(
         Griffin::SYS_READ, fd, reinterpret_cast<long>(buf), static_cast<long>(len))));
 }
 
 int open(const char *path, int flags, ...)
 {
     // The optional mode arg is unused by the FatFs-backed firmware open.
-    return static_cast<int>(sys_ret(griffin_syscall(
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(
         Griffin::SYS_OPEN, reinterpret_cast<long>(path), flags, 0)));
 }
 
 int close(int fd)
 {
-    return static_cast<int>(sys_ret(griffin_syscall(Griffin::SYS_CLOSE, fd, 0, 0)));
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(Griffin::SYS_CLOSE, fd, 0, 0)));
 }
 
 off_t lseek(int fd, off_t off, int whence)
 {
-    return static_cast<off_t>(sys_ret(griffin_syscall(
+    return static_cast<off_t>(griffin_sys_ret(griffin_syscall(
         Griffin::SYS_LSEEK, fd, static_cast<long>(off), whence)));
 }
 
 int fstat(int fd, struct stat *st)
 {
-    return static_cast<int>(sys_ret(griffin_syscall(
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(
         Griffin::SYS_FSTAT, fd, reinterpret_cast<long>(st), 0)));
 }
 
 int isatty(int fd)
 {
-    return static_cast<int>(sys_ret(griffin_syscall(Griffin::SYS_ISATTY, fd, 0, 0)));
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(Griffin::SYS_ISATTY, fd, 0, 0)));
 }
 
 int stat(const char *path, struct stat *st)
 {
-    return static_cast<int>(sys_ret(griffin_syscall(
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(
         Griffin::SYS_STAT, reinterpret_cast<long>(path), reinterpret_cast<long>(st), 0)));
 }
 
@@ -154,12 +123,12 @@ int kill(int, int)
 
 int griffin_inputready(void)
 {
-    return static_cast<int>(sys_ret(griffin_syscall(Griffin::SYS_INPUTREADY, 0, 0, 0)));
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(Griffin::SYS_INPUTREADY, 0, 0, 0)));
 }
 
 int griffin_readdir(const char *path, int index, GriffinDirEnt *out)
 {
-    return static_cast<int>(sys_ret(griffin_syscall(
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(
         Griffin::SYS_READDIR, reinterpret_cast<long>(path), index,
         reinterpret_cast<long>(out))));
 }
