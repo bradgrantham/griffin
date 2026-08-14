@@ -151,7 +151,17 @@ vec_copy:
 
     /* RAM is fixed at RAM_TOTAL_SIZE (griffin.generated.inc); no probing */
     move.l  #(RAM_TOTAL_SIZE/1024), memory_size
-    move.l  #RAM_TOTAL_SIZE, %sp
+
+    /* Stack top is _stack_top, NOT RAM_TOTAL_SIZE.  This used to reload the
+       top of RAM (a leftover from before the display list had a home), which
+       silently put the supervisor stack ABOVE _displaylist_start and let it
+       grow down through the 40 KB descriptor window — including the 32 KB
+       carve an app owns in direct-video mode (GRIFFIN_APP_DESC_BASE).  An app
+       whose tables actually reach the top of the carve had its descriptors and
+       the firmware's stack writing over each other.  Reset already loads this
+       value from vector 0; the reload is kept only so the value is obvious
+       here next to the RAM test. */
+    move.l  #_stack_top, %sp
     lea     memory_fixed, %a1
     lea     memory_size_done(%pc), %a6
     jmp     duart_puts
