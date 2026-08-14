@@ -2,3 +2,16 @@
 *.png
 griffin_dither
 griffin_preview
+
+# Phase 6 asset pipeline
+microham_encode
+microham_roundtrip
+sprite2spans
+make_smurf_assets
+obj/
+smurf-assets/src/.stamp
+
+# The demo's art and its encoded forms are checked in so the target side does
+# not need the host tools to build.
+!smurf-assets/src/*.png
+!smurf-assets/*-preview.png
