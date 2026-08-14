@@ -1241,31 +1241,53 @@ duart_hex4:
 |
 | Both routines save/restore SR to mask interrupts across the
 | read-modify-write so an ISR cannot race on the shadow.
+|
+| CALLING CONVENTION: these are declared in rom.cpp as
+|
+|     extern "C" void glue_config_set_bits(uint8_t mask);
+|
+| so the mask arrives the way the m68k C ABI passes it — int-promoted on the
+| stack, NOT in a register.  On entry that longword is at 4(%sp) and its byte
+| is at 7(%sp); after this routine's own two pushes it is at 13(%sp).
+|
+| It used to read the mask from %d0, which no caller ever loaded: the callers
+| are all C and pushed the argument.  The bits actually written were whatever
+| the preceding call happened to leave in %d0, which is a return value — the
+| character count from the printf just above the boot-time enable, as it
+| happened, and that number has bit 2 set, so VSYNC_IRQ_EN came up by accident
+| and the console worked.  SYS_VIDEO_DIRECT_END's re-enable drew a different
+| stale %d0, left VSYNC_IRQ_EN clear, and the console never came back after an
+| application released direct video access.  Found by apps/dtest.
 | ====================================================================
 
 | glue_config_set_bits: set bits in GLUE CONFIG
-| Input:  d0.b = mask of bits to set
+| Input:  mask of bits to set, int-promoted on the stack
 | Clobbers: none (d0 preserved)
     .global glue_config_set_bits
 glue_config_set_bits:
     move.w  %sr, -(%sp)
     ori.w   #0x0700, %sr
+    move.l  %d0, -(%sp)
+    move.b  13(%sp), %d0                | mask: 4 (saved d0) + 2 (sr) + 4 (ret) + 3
     or.b    %d0, glue_config_shadow
     move.b  glue_config_shadow, GLUE_CONFIG
+    move.l  (%sp)+, %d0
     move.w  (%sp)+, %sr
     rts
 
 | glue_config_clear_bits: clear bits in GLUE CONFIG
-| Input:  d0.b = mask of bits to clear
+| Input:  mask of bits to clear, int-promoted on the stack
 | Clobbers: none (d0 preserved)
     .global glue_config_clear_bits
 glue_config_clear_bits:
     move.w  %sr, -(%sp)
     ori.w   #0x0700, %sr
+    move.l  %d0, -(%sp)
+    move.b  13(%sp), %d0                | mask: 4 (saved d0) + 2 (sr) + 4 (ret) + 3
     not.b   %d0
     and.b   %d0, glue_config_shadow
-    not.b   %d0
     move.b  glue_config_shadow, GLUE_CONFIG
+    move.l  (%sp)+, %d0
     move.w  (%sp)+, %sr
     rts
 
