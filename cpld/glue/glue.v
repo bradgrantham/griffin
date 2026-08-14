@@ -184,7 +184,8 @@ module glue (
     // Interrupt priority encoder (active-low nIPL to 68000)
     //
     // Priority levels (from griffin.yml / griffin.md):
-    //   6: VSYNC    (latched from TIMING's nVSYNC; W1C via VSYNC_CLEAR)
+    //   6: VSYNC    (latched from TIMING's nVSYNC; W1C via VSYNC_CLEAR;
+    //                gated by CONFIG bit VSYNC_IRQ_EN)
     //                                        — nIPL = 001
     //   5: DUART    (~DUART_IRQ)            — nIPL = 010
     //   4: PS/2     (~PS2_IRQ,    internal) — nIPL = 011
@@ -197,6 +198,10 @@ module glue (
     // its assertion (falling) edge, hold vsync_pending until the ISR writes
     // VSYNC_CLEAR bit 0.  A raw level would double-fire (sync pulse is two
     // lines, ~63 us, longer than the ISR) or be missed if shortened.
+    //
+    // CONFIG bit VSYNC_IRQ_EN gates only the level-6 IPL term below.  The
+    // latch, the VSYNC_STATUS readback and the VSYNC_CLEAR W1C stay live
+    // whatever its value, so firmware can poll vblank with the IRQ off.
     // ----------------------------------------------------------------
 
     wire duart_irq_active     = ~nDUART_IRQ;
@@ -212,6 +217,10 @@ module glue (
     reg [1:0] vsync_sync;
     reg       vsync_last;
     reg       vsync_pending;
+    // CONFIG bit VSYNC_IRQ_EN: gates only the level-6 IPL term.  The
+    // vsync_pending latch and the VSYNC_STATUS readback stay live when it
+    // is clear so firmware can poll vblank instead of taking an interrupt.
+    reg       vsync_irq_en;
 
     always @(posedge SYSCLK) begin
         if (RESET) begin
@@ -230,7 +239,8 @@ module glue (
         end
     end
 
-    assign nIPL = vsync_pending      ? 3'b001 :  // level 6
+    assign nIPL = (vsync_pending
+                   & vsync_irq_en)   ? 3'b001 :  // level 6
                   duart_irq_active   ? 3'b010 :  // level 5
                   ps2_irq_active     ? 3'b011 :  // level 4
                   engine_irq_active  ? 3'b100 :  // level 3
@@ -353,12 +363,14 @@ module glue (
         if(RESET) begin
             rom_overlay_disable <= 0;
             flash_we_en         <= 0;
+            vsync_irq_en        <= 0;
             debug_out_reg       <= 0;
         end else begin
             if (glue_select & lo_byte_selected & write
                 & (A_lo[5:1] == GLUE_CONFIG_ADDR[5:1])) begin
                 rom_overlay_disable <= D[0];
                 flash_we_en         <= D[`GLUE_CONFIG_FLASH_WE_EN_SHIFT];
+                vsync_irq_en        <= D[`GLUE_CONFIG_VSYNC_IRQ_EN_SHIFT];
             end
             if (debug_out_select)
                 debug_out_reg <= D[0];

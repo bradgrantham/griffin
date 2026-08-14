@@ -2743,6 +2743,10 @@ class GriffinEmulator : public moira::Moira
     mutable std::array<uint8_t, ROM_SIZE> ROM{};
     mutable int debug_out_latch = 0;
     mutable bool ROMoverlay = true;
+    // GLUE CONFIG bit VSYNC_IRQ_EN.  Gates only the level-6 IPL term; the
+    // vsync latch, VSYNC_STATUS and VSYNC_CLEAR stay live so the guest can
+    // poll vblank.  Resets to 0, matching GLUE.
+    mutable bool vsync_irq_en = false;
     PTYConsole pty_console;
     PTYConsole pty_console_b;   // DUART channel B (unconnected by default)
     mutable CFState cf;
@@ -2887,10 +2891,16 @@ class GriffinEmulator : public moira::Moira
                 if(debug & DEBUG_IO) printf("ROM overlay disabled\n");
                 ROMoverlay = false;
             }
+            // Not sticky, unlike the overlay: GLUE reloads this bit from the
+            // data bus on every CONFIG write.  Re-evaluate the IPL because
+            // enabling it can expose an already-latched vsync.
+            vsync_irq_en = (val & GLUE_CONFIG_VSYNC_IRQ_EN_MASK) != 0;
+            const_cast<GriffinEmulator*>(this)->update_ipl();
             if (debug & DEBUG_IO)
             {
-                printf("[GLUE CONFIG: 0x%02X overlay=%s]\n", val,
-                       (val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK) ? "off" : "on");
+                printf("[GLUE CONFIG: 0x%02X overlay=%s vsync_irq=%s]\n", val,
+                       (val & GLUE_CONFIG_ROM_OVERLAY_DISABLE_MASK) ? "off" : "on",
+                       vsync_irq_en ? "on" : "off");
             }
         } else if(addr + IO_BASE == GLUE_VSYNC_CLEAR) {
             // Write-1-to-clear, and it must re-evaluate the IPL: level 6 is
@@ -3901,8 +3911,10 @@ public:
     // Unified IPL management — picks highest active interrupt source
     void update_ipl()
     {
-        // Level 6 is TIMING's vsync, latched in GLUE (VSYNC_STATUS/VSYNC_CLEAR).
-        if (video.irq_pending()) {
+        // Level 6 is TIMING's vsync, latched in GLUE (VSYNC_STATUS/VSYNC_CLEAR),
+        // and gated onto IPL by CONFIG bit VSYNC_IRQ_EN — the latch itself keeps
+        // running when that is clear so the guest can poll VSYNC_STATUS.
+        if (video.irq_pending() && vsync_irq_en) {
             setIPL(VSYNC_IRQ_LEVEL);
         } else if (duart.irq_pending(pty_console, pty_console_b)) {
             setIPL(DUART_IRQ_LEVEL);

@@ -39,6 +39,8 @@ peripherals:
               description: "Write 1 to disable ROM overlay and unmap ROM from RAM bank 1 address space" }
           - { bit: "1", name: FLASH_WE_EN, default: 0,
               description: "Write 1 to enable the ~ROM_WE strobe so ROM-window word writes reach the flash (JEDEC program/erase); 0 write-protects flash" }
+          - { bit: "2", name: VSYNC_IRQ_EN, default: 0,
+              description: "Write 1 to let a latched vsync drive the level-6 IPL code; 0 (reset value) suppresses only the IRQ term, leaving the vsync_pending latch, VSYNC_STATUS readback and VSYNC_CLEAR W1C live so firmware can poll vblank without an ISR" }
       - offset: 0x09
         name: PS2_TX_DATA
         access: write
@@ -125,12 +127,16 @@ peripherals:
           register; GLUE therefore latches the assertion edge of TIMING's
           VSYNC output (the same net that feeds the VGA connector, tapped
           before the 74AC541 buffer, 2-FF synchronized into the SYSCLK
-          domain) and asserts the level-6 IRQ until the CPU clears it via
-          VSYNC_CLEAR.  Replaces rev 1's ~VIDEO_IRQ from the retired VIDEO
-          CPLD on the same GLUE pin.
+          domain) and, while CONFIG bit VSYNC_IRQ_EN is set, asserts the
+          level-6 IRQ until the CPU clears it via VSYNC_CLEAR.  The latch
+          and this readback are unconditional: with VSYNC_IRQ_EN clear
+          (the reset state) only the IPL term is suppressed, so firmware
+          may poll here and acknowledge via VSYNC_CLEAR with no ISR.
+          Replaces rev 1's ~VIDEO_IRQ from the retired VIDEO CPLD on the
+          same GLUE pin.
         bits:
           - { bit: "0", name: VSYNC_PENDING,
-              description: "1 = a vsync edge has been latched; asserts the level-6 IRQ; W1C via VSYNC_CLEAR" }
+              description: "1 = a vsync edge has been latched; asserts the level-6 IRQ when CONFIG bit VSYNC_IRQ_EN is set; W1C via VSYNC_CLEAR" }
       - offset: 0x17
         name: VSYNC_CLEAR
         access: write

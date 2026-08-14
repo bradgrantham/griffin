@@ -1159,6 +1159,12 @@ static void video_framebuffer_init()
     // back as open bus — so the descriptor address is what gets printed.
     ENGINE_CTRL = Griffin::ENGINE_CTRL_ENABLE_MASK;
     ENGINE_DESC = engine_desc_word_addr;
+
+    // Only now let the latched vsync reach IPL: GLUE keeps latching it from
+    // reset, but the level-6 ISR is only meaningful once there is a list for
+    // it to re-arm.  Before this the CPU could still poll VSYNC_STATUS.
+    glue_config_set_bits(Griffin::GLUE_CONFIG_VSYNC_IRQ_EN_MASK);
+
     printf("ENGINE: armed at DESC=0x%04X\n",
            static_cast<unsigned>(engine_desc_word_addr));
 }
