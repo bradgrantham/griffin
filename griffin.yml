@@ -757,7 +757,7 @@ peripherals:
   # holding "dumb" peripherals whose data pins sit directly on the bus.
   # GLUE emits two fully-timed region strobes -- ~IO_RD_EN (region & AS &
   # R/W) and ~IO_WR_EN (region & UDS & LDS & ~R/W, so only deliberate
-  # full-word writes qualify) -- and a 74155 dual 2-to-4 decoder fans them
+  # full-word writes qualify) -- and a 74HCT155 dual 2-to-4 decoder fans them
   # out by A19:18 (section 1: 1C high, 1G = ~IO_RD_EN -> read strobes;
   # section 2: 2C low, 2G = ~IO_WR_EN -> write strobes).  GLUE never
   # touches the data path, and future direct peripherals cost zero GLUE
@@ -792,7 +792,7 @@ peripherals:
           Write one stereo sample pair into the audio FIFOs.
           Left channel is D15-D8, right channel is D7-D0, each an unsigned
           8-bit sample landing directly in its 7200.  ~AUDIO_W comes from
-          the 74155 write section gated by GLUE ~IO_WR_EN, which qualifies
+          the 74HCT155 write section gated by GLUE ~IO_WR_EN, which qualifies
           on UDS & LDS & ~R/W -- only deliberate full-word writes clock
           the FIFOs (no A17 alias trick needed).  PORTS drives the FIFO
           read strobe at half the 31.469 kHz line rate (~15.7 kS/s, see
@@ -979,8 +979,10 @@ issues:
   - "RESOLVED 2026-08-13 (kept for the record): pixel_skip decisions. (1) The scrolled line's tail is a DECLARED FEATURE LIMIT — with nonzero skip the last <=7 px re-shift the previous byte's pattern (borders/overlay hide it); the correct-right-edge alternative (per-line fetched-byte counter + padded record, ~8 FF) stays affordable if ever wanted. (2) Odd skip in micro-HAM is CLAMPED IN HARDWARE — skip bit 0 is ignored in HAM mode at the line-start consumption point (SET-order independent), so a buggy list rounds to the nearest even bit instead of mis-parsing the whole line. Both documented in pixel.v's header; suite PixelUnit models the clamp."
   - "need to address *what* raises nIRQ on ENGINE; it's reserved and routed but always 1."
   - "need to finalize micro-HAM; not in the YAML, disagreement between encoder and implementation"
+  - "2026-08-19: VIDCMD 2-clock cadence rework — compositor.v + testbench DONE (registered /RE with park-on-Q banking; 102 checks pass incl the PAIR_LOCAL/PAIR_PIX banked-pair tests; fits 112/128 LC, down 4 from the value-bus baseline; Q is X-poisoned after /RE rises in the tb so stale-Q use fails visibly).  Measured constants for the suite: sustained cadence 2 slots/word, banked-pair gap 1 slot, PIXEL-target SET cost 2 slots, commit still leads its slot's RGB_OUT by 1 clock, pipeline still 2 clocks.  DONE 2026-08-19 (all layers): vidcmd-spec.md carries a dated addendum (fetch engine, pair law, value bus replacing the stale Q-tap conduit, TILE annotated dropped); super-engine render.cpp implements the RTL fetch engine equation-for-equation; the author sizes CUSHION fillers from a vidcmd_plan_line() fetch simulation (the reinstated cadence-aware prefetch invariant) and reports occupancy + stretch; suite all-PASS with only one visible-pixel expectation change (m3-cursor 84->98: HOLD widens 1-px outline segments), m0/m2-split pixel-identical.  Measured cadence floor: 1-px spans need >=4-px pitch to land as authored (2/3-px pitch stretches to 2 px wide); the ENGINE delivery ceiling (~1 word/3.6 px clocks) still binds before the fetch cadence at realistic densities, so the tempest density budgets are unchanged."
   - "want a 'video_timing:' constants block; is 640x480(800x525)@60 enough?"
   - "want to formalize 7200 FIFOs from ENGINE to VIDEO"
+  - "AUDIO FIFO /RS source is unpinned (found 2026-08-21): the 7200 requires a reset after power-up before the first write; PIXELS/VIDCMD get TIMING's nRS (8 px clocks at the top of the vsync line) but the audio pair is on no reset net.  Proposed: wire system ~RESET directly to both audio /RS pins — polarity matches, asserts once at power-on when nothing streams, and a reset-button press dumping buffered audio is correct behavior.  Decide at schematic capture."
   - "need to specify to BERR in 0x400000-0x7fffff?"
   - "need to specify to BERR in unassigned IO spaces?"
   - "what do writes to bank 1 do during overlay?"
@@ -988,7 +990,7 @@ issues:
   - "need to state IO ports repeat within their range"
   - "who owns DTACK?  For ENGINE it's unstated; probably would need to route back through GLUE so maybe GLUE should continue to own DTACK."
   - "The YAML has per-peripheral interrupt.level but never states that GLUE encodes IPL2:0 and asserts ~VPA on IACK, nor which IRQ signals are physical nets (VIDEO, ENGINE, DUART, PORTS → GLUE) versus internal (~PS2_IRQ never leaves GLUE — listing it as a signal: alongside real nets will produce a false netlist expectation"
-  - "Reset and clocking aren't in the YAML at all. DS1233, the ~RESET/~HALT nets, the open-drain external-master requirement (griffin.md:396), the two oscillators, and 'SYSCLK into a GCLK on each CPLD' are all MD-only. Even one small clocks:/reset: section (or prose annotations) would make these checkable."
+  - "PARTIALLY RESOLVED 2026-08-16: power entry + DS1233D-5 reset supervision now captured as an interfaces: entry below.  Still MD-only: the two oscillators, 'SYSCLK into a GCLK on each CPLD', and the ~HALT open-drain contract — a small clocks: section (or one more interfaces entry) would make those checkable too."
   - "DUART bus interface. The Rev 2 board bullet (griffin.md:427) lists A1-A4, D0-7, R/~W, ~RESET, ~IACK, crystal — but not the ~CS routing from GLUE nor where DTACKN goes (the YAML's dtack: ~DUART_DTACK handshake at griffin.yml:612, plus berr_timeout: 256). That's the one net set on the DUART that isn't a straight pin-to-bus wire, and it's the one the checklist omits."
 
 # chip-to-chip interface contracts.  Each entry is one interface with
@@ -1035,19 +1037,39 @@ interfaces:
     convenience.
   - |
     VIDCMD FIFO read port (COMPOSITOR <- 2x IDT7200L15, shared /RE).
-    One 74AC00 (or 74F00 pending the timing re-derivation) shapes /RE so
-    VIDCMD sustains one word per 25.175MHz pixel clock — a registered CPLD
-    output can only change once per clock, so a full read cycle inside one
-    39.7ns tick needs the clock itself to supply the mid-tick edges:
-    - gate A: /RE = NAND(want_pop, PIXEL_CLK)
-    - gate B: inverts PIXEL_CLK for the falling-edge want_pop register clock
-      (prevents runt /RE pulses when want_pop changes mid-high-phase)
-    - gates C, D: spare (candidate: same shaping for the PIXELS FIFO /RE)
-    Decision 2026-08-10; parameter table (IDT7200L15 tA/tRC/tRPW/tRR,
-    ATF1508AS tCO/tSU, gate tPD) still to be pinned from datasheets before
-    schematic capture — see feedback_timing_discipline.  Fallback if margins
-    fail: omit the gate, registered /RE, 2 slots/word cadence (1-px VIDCMD
-    spans then render 2px wide).
+    RESOLVED 2026-08-18: registered /RE from COMPOSITOR, 2 pixel clocks
+    per word, NO shaping gate — the 2026-08-10 74AC00 NAND scheme is
+    rejected by the pinned worst-case table (feedback_timing_discipline).
+    Pinned parameters: IDT7200L15 tRC 25 min / tA 15 max / tRPW 15 min /
+    tRR 10 min / tDV 5 min / tRHZ 15 max / tREF 15 max (REN_7200-7202_DST
+    20171127, com'l+ind'l column, 30 pF test load); ATF1508AS-10 GCLK
+    tSU 7 / tH 0, clock-pin-to-output-pin tIN 0.5 + tCOP 5 + tOD1 2.5 =
+    8.0 ns max at 35 pF (DS20006682A Table 1-4); 74AC00 tPD 7-8 ns max;
+    T = 39.72 ns at 25.175 MHz.
+    Why the gate scheme dies (structural, not marginal): a captured word
+    must be valid from T - tSU = 32.7 ns through the capture edge at T,
+    so /RE must FALL by 32.7 - tA = 17.7 ns and RISE at or after
+    T - tDV = 34.7 ns.  A half-period /RE rises near T/2 and data dies
+    tDV = 5 ns later, so the guaranteed-valid window is [tPD + 15,
+    T/2 + ~6] — it misses every capture edge by ~8-15 ns in every phasing
+    (either clock phase, either capture edge), even with a zero-delay
+    gate.  Manufacturing the required ~87%-phase rising edge needs a
+    ~15 ns delay element whose tolerance stack (74AC00 tPD spread
+    2-8 ns, or an RC into non-Schmitt AC inputs) exceeds the placement
+    window.  Rejected without a breadboard.
+    Registered-/RE margins (worst case, incl ~2 ns flight + series
+    termination): pulse T = 39.7 vs tRPW 15 (+24.7); recovery T vs
+    tRR 10 (+29.7); cycle 2T = 79.4 vs tRC 25 (+54.4); data
+    tCO 8.0 + tA 15 + 2 = 25.0 vs T - tSU = 32.7 (+7.7); hold: valid to
+    /RE-rise + tDV ≈ T + 6 vs tH 0 (+6).  No duty-cycle dependence — all
+    edges are GCLK rising edges (oscillator only owes tCH/tCL >= 4 ns).
+    74AC00/74F00 purchase dropped.  PIXELS FIFO never needed shaping:
+    >= 8 clocks/word (2bpp micro-HAM) or 16 (1bpp), same arithmetic at
+    8x the period.
+    CONSEQUENCE (pending work, see issues): VIDCMD cadence is uniformly
+    2 slots per word — 1-px spans render 2 px wide; compositor.v, its
+    testbench, vidcmd-spec.md, and the super-engine models/slot budgets
+    encode 1 word/clock and must be updated, then COMPOSITOR refit.
   - |
     COMPOSITOR -> PIXEL SET register path (decided 2026-08-13): a dedicated
     12-bit registered value bus (set_pix_value[11:0]) alongside the
@@ -1072,9 +1094,12 @@ interfaces:
     on-chip with an asymmetric guard (2-FF sync governs the asynchronous
     RISE from ENGINE-domain writes; the raw flag governs the FALL caused by
     COMPOSITOR's own clock-aligned read).  Hardware requirement this
-    creates: FIFO tEFL from /RE must settle within one pixel clock minus
-    setup (~25ns typ on L15 vs 39.7ns — verify at worst case, and re-verify
-    if the 1-word/clock /RE shaping is adopted, which halves the budget).
+    creates: FIFO tREF (/RE low to /EF low) must settle within one pixel
+    clock minus setup.  VERIFIED 2026-08-18 at the adopted 2-clock
+    cadence: tCO 8.0 + tREF 15 max + ~2 ns flight = 25.0 ns vs
+    T - tSU = 32.7 ns — +7.7 ns worst case (L15 column, ATF1508AS-10;
+    the shaping scheme whose halved budget this entry warned about was
+    rejected, see the read-port entry).
   - |
     Stream FIFO part unification (2026-08-13): all three streams use 2x
     IDT7200 (256x9) — PIXELS byte-interleaved shared-Q pair, VIDCMD ganged
@@ -1108,7 +1133,30 @@ interfaces:
     part, recorded here so the timing chip's counters are offset by design
     rather than trimmed by bodge.
   - |
-    Carried forward from Rev 1 unchanged: 74155 dual 2-to-4 decoder fans
+    Power entry + reset supervision (standardized 2026-08-16).
+    Input: 5.5mm x 2.1mm center-positive barrel jack, regulated 5V >= 2.5A
+    adapter, inline switch retained; silkscreen the contract at the jack
+    ("5V regulated 2.5A+ center positive").  Replaces rev-1 USB-C — a
+    plain-Rd sink is only entitled to 500 mA without CC sensing or PD, and
+    the rev-2 budget is ~1.3-1.7 A typ vs rev 1's measured 0.84 A (budget
+    and >=2 A switch/trace/bulk-cap requirements: rev2-electrical-review.md
+    section 8).  A CH224K-style PD trigger module with a barrel pigtail
+    adapts any PD charger if ever needed.
+    Supervisor: DS1233D-5 (datasheet 041002): open-drain RST, internal
+    5 kohm (3.75-6.25 k) pull-up, trip 4.50-4.74 V (typ 4.625), 350 ms
+    stretch, IOL 8 mA.  Wire-OR on ~RESET with the user button, the CPU's
+    own RESET-instruction driver, and the debug-header external master.
+    The D variant has NO pushbutton detect (selection guide: N/A) — an
+    external low is tolerated but not debounced or re-stretched, so button
+    release rides raw switch bounce.  Accepted: the bounce window sits
+    immediately after a completed reset and the worst case is a botched
+    boot cured by pressing again; plain DS1233-5 is the drop-in upgrade.
+    No RC on the reset net (rev-1 C3 retired — a cap there fights the
+    CPU's 124-clock RESET-instruction drive).  Bring-up gate: rail must
+    measure >= 4.85 V at the supervisor under full load, else move to
+    DS1233D-10 (4.25-4.49 V) or trim the supply.
+  - |
+    Carried forward from Rev 1 unchanged: 74HCT155 dual 2-to-4 decoder fans
     ~IO_WR_EN out by A19:18 (write section: ~AUDIO_W etc.; read section
     reserved), and the XR68C681 DUART on its DIP carrier with the ~CS
     routing from GLUE and DTACKN return (see the DUART issue entry above —
