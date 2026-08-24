@@ -5,16 +5,21 @@
 // compositor.v's, not an invention:
 //
 //   1. retire any skew-delayed register commits whose effect pixel has arrived
-//   2. COMPOSITOR consumes this slot's staged word if the run count is terminal;
+//   2. sample the fetch engine's pre-edge state (is a word sitting on Q, is
+//      staged_word occupied) — compositor.v decides every fetch term from the
+//      registers as they stand when the cycle begins
+//   3. COMPOSITOR consumes this slot's staged word if the run count is terminal;
 //      a SET commits here, a RUN loads its source and count here
-//   3. sample PIXEL — so a PIXEL-target SET committed in step 2 is already
+//   4. sample PIXEL — so a PIXEL-target SET committed in step 3 is already
 //      visible in this very slot
-//   4. mux the slot's source against PIXEL's colour
-//   5. fetch: one word per clock into the lookahead
+//   5. mux the slot's source against PIXEL's colour
+//   6. fetch edge: capture-or-park, then the /RE fall/rise decision
 //
-// Hence RUN(passthrough,1), SET(pix_pal_fg,C2), RUN(passthrough,638) over
+// Hence RUN(passthrough,1), SET(pix_pal_fg,C2), RUN(passthrough,637) over
 // all-foreground bits renders pixel 0 as C1 and pixels 1..639 as C2, which is
-// compositor_tb's NORMATIVE_M0.
+// compositor_tb's NORMATIVE_M0: the RUN and the SET are a banked pair, so the
+// SET still lands on pixel 1, and the tail RUN follows the 2-slot cadence onto
+// slot 3 with slot 2 holding the same passthrough behind it.
 
 #include "render.h"
 
@@ -210,6 +215,11 @@ void CompositorUnit::reset()
     held_bg_       = VIDCMD_RESET_HELD_BG;
     staged_valid_  = false;
     staged_word_   = 0;
+    re_low_        = false;                 // /RE idles high
+    ef_at_pop_     = false;
+    q_word_        = 0;
+    ef_meta_       = false;
+    ef_sync_       = false;
     run_remaining_ = 0;                     // count already terminal
     cur_src_       = RUN_SRC_PASSTHROUGH;   // source back to passthrough
     cur_colour_    = RGB444_BLACK;
@@ -247,18 +257,61 @@ bool CompositorUnit::pop(uint16_t &w)
     return true;
 }
 
-// One word per clock into the single on-chip lookahead.
-void CompositorUnit::fetch_clock()
+// /EF, asymmetrically guarded exactly as compositor.v guards it: the RISE is
+// asynchronous (an ENGINE-domain write) and has to cross two synchronizer
+// stages before the fall rule will believe it, so a word deposited this clock
+// cannot start a read for two more.  The FALL is our own read emptying the
+// FIFO and the raw flag governs it.
+bool CompositorUnit::fifo_has_data() const
 {
-    if (staged_valid_)
+    return count_ > 0 && ef_sync_ && ef_meta_;
+}
+
+// The fetch half of one clock edge — registered /RE, two pixel clocks per word,
+// park-on-Q banking (griffin.yml interfaces "VIDCMD FIFO read port", resolved
+// 2026-08-18; compositor.v implements it and compositor_tb.v pins the timing
+// semantics).  All three arguments are the PRE-edge state, because that is what
+// the RTL's combinational terms see:
+//
+//   word_on_q   /RE was low for the whole cycle ending here, and the read it
+//               started found a word, so Q is readable at this edge.
+//   had_staged  staged_word was occupied when the cycle began.
+//   consumed    this edge's playback freed staged_word.
+//
+// The two laws the suite has to reproduce come straight out of these five
+// lines: a word captured here cannot execute before the NEXT slot (2 slots per
+// word sustained), and a word PARKED on Q moves into staged_word on the very
+// edge the record ahead of it is consumed, so a banked pair executes on
+// consecutive slots.
+void CompositorUnit::fetch_edge(bool word_on_q, bool had_staged, bool consumed)
+{
+    const bool buffer_frees = !had_staged || consumed;
+    const bool capture_now  = word_on_q && buffer_frees;
+    const bool q_parked     = word_on_q && !capture_now;
+    const bool re_fall      = !re_low_ && fifo_has_data();
+    const bool re_rise      = re_low_ && !q_parked;
+
+    // Sampled before the pop below, like the flag itself.
+    ef_sync_ = ef_meta_;
+    ef_meta_ = count_ > 0;
+
+    if (capture_now)
     {
-        return;
-    }
-    uint16_t w = 0;
-    if (pop(w))
-    {
-        staged_word_  = w;
+        staged_word_  = q_word_;
         staged_valid_ = true;
+    }
+
+    // Fall and rise are mutually exclusive by construction: one needs /RE high,
+    // the other /RE low.  The 7200 advances its read pointer on the fall, and
+    // ef_at_pop remembers whether that read was answered at all.
+    if (re_fall)
+    {
+        re_low_    = true;
+        ef_at_pop_ = pop(q_word_);
+    }
+    if (re_rise)
+    {
+        re_low_ = false;
     }
 }
 
@@ -302,19 +355,36 @@ void CompositorUnit::apply_pending(PixelUnit &pix)
 // blocks everything behind it — eagerness is positional, not temporal.
 void CompositorUnit::blank_clock(PixelUnit &pix)
 {
+    const bool word_on_q  = re_low_ && ef_at_pop_;
+    const bool had_staged = staged_valid_;
+    bool       consumed   = false;
+
     if (staged_valid_ && vidcmd_type_of(staged_word_) == VidcmdType::SET)
     {
         // Skew is unobservable here: nothing is being displayed.  Only the weak
         // property is modelled — the write has landed before pixel 0.
         commit(vidcmd_set_target(staged_word_), vidcmd_set_value(staged_word_), pix);
         staged_valid_ = false;
+        consumed      = true;
     }
-    fetch_clock();
+
+    // Blanking does not exempt the fetch from the cadence: a run of eager SETs
+    // still executes at one per two clocks (a pair when one is parked).  With
+    // H_BLANK = 160 clocks that is invisible to a cushioned list and exactly
+    // what a starved one runs out of.
+    fetch_edge(word_on_q, had_staged, consumed);
 }
 
 Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
 {
     apply_pending(pix);
+
+    // The fetch engine's pre-edge state, sampled before playback can disturb
+    // it: compositor.v evaluates every fetch term from the registers plus this
+    // cycle's H_ACTIVE, so no edge ever has to guess the next slot.
+    const bool word_on_q  = re_low_ && ef_at_pop_;
+    const bool had_staged = staged_valid_;
+    bool       consumed   = false;
 
     // consume_active = H_ACTIVE & have_staged & terminal
     if (run_remaining_ == 0)
@@ -324,6 +394,7 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
             const uint16_t     w = staged_word_;
             const VidcmdType   t = vidcmd_type_of(w);
             staged_valid_ = false;
+            consumed      = true;
 
             if (t == VidcmdType::SET)
             {
@@ -364,8 +435,19 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
         else if (counting_ && stats_ != nullptr)
         {
             // HOLD: terminal count, nothing staged.  Keep the current source and
-            // keep trying.  First-class line framing, not underrun mercy.
-            stats_->vidcmd_hold_slots++;
+            // keep trying.  First-class line framing, not underrun mercy — but
+            // it arises for two unrelated reasons and the checker cares which.
+            // If a word is on Q or still in the FIFO the hold is the second
+            // slot of the 2-clock fetch, which is structural.  If there is
+            // nothing anywhere, the stream really has run dry.
+            if (word_on_q || count_ > 0)
+            {
+                stats_->vidcmd_cadence_slots++;
+            }
+            else
+            {
+                stats_->vidcmd_hold_slots++;
+            }
         }
     }
 
@@ -392,7 +474,7 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
         run_remaining_--;
     }
 
-    fetch_clock();
+    fetch_edge(word_on_q, had_staged, consumed);
     abs_pixel_++;
     return out;
 }

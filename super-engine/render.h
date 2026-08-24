@@ -9,8 +9,10 @@
 // exact cycles.  ONE IMPLEMENTATION, TWO DRIVERS.
 //
 // Both units model the as-built RTL: cpld/pixel/pixel.v and
-// cpld/compositor/compositor.v, with cpld/compositor/compositor_sim.log as the
-// measured spec.  Where a model choice is not the RTL's, it says so in place.
+// cpld/compositor/compositor.v, with cpld/compositor/compositor_tb.v as the
+// measured spec — its normative traces, not the checked-in compositor_sim.log,
+// which is an artifact of an earlier run.  Where a model choice is not the
+// RTL's, it says so in place.
 
 #pragma once
 
@@ -39,7 +41,14 @@ struct RenderStats
     uint32_t vidcmd_fifo_high    = 0;
     uint32_t vidcmd_fifo_low     = VIDCMD_FIFO_WORDS + 1;
     uint32_t vidcmd_overflows    = 0;
-    uint32_t vidcmd_hold_slots   = 0;   // terminal count, nothing staged
+
+    // Two flavours of HOLD, and telling them apart is the whole point.  A
+    // CADENCE hold is the second slot of the 2-clock fetch — the word exists,
+    // it is simply still in flight — and it is structural, not a fault.  A
+    // STARVATION hold is a genuinely dry FIFO with no read outstanding, which
+    // under the CUSHION discipline means the cushion ran out.
+    uint32_t vidcmd_cadence_slots = 0;
+    uint32_t vidcmd_hold_slots   = 0;   // terminal count, nothing staged, nothing coming
     uint32_t vidcmd_overruns     = 0;   // a record still running at the H_ACTIVE fall
     uint32_t vidcmd_late_words   = 0;   // arrived during active video, not in HBLANK
     uint32_t vidcmd_color_runs   = 0;
@@ -107,10 +116,16 @@ private:
 // COMPOSITOR
 // ---------------------------------------------------------------------------
 //
-// One word of on-chip lookahead, one word per clock, four sources.  The slot
-// rule is compositor.v's: a record's effects land on the edge that ENDS its own
-// slot, so a SET is visible in the pixel of the slot it occupies and a RUN
-// emits its first pixel in the slot in which it is consumed.
+// Four sources, one slot per record, and a two-deep fetch bank behind it.  The
+// slot rule is compositor.v's: a record's effects land on the edge that ENDS
+// its own slot, so a SET is visible in the pixel of the slot it occupies and a
+// RUN emits its first pixel in the slot in which it is consumed.
+//
+// The FETCH is the as-built one (registered /RE, 2 pixel clocks per word,
+// park-on-Q banking; griffin.yml interfaces "VIDCMD FIFO read port" 2026-08-18)
+// and it is modelled at the same granularity the RTL runs at, because its
+// state — /RE's own level plus the word parked on Q — is what decides whether
+// two records land on adjacent slots or two apart.
 class CompositorUnit
 {
 public:
@@ -135,7 +150,8 @@ public:
 
 private:
     bool pop(uint16_t &w);
-    void fetch_clock();
+    bool fifo_has_data() const;
+    void fetch_edge(bool word_on_q, bool had_staged, bool consumed);
     void commit(uint32_t target, uint32_t value, PixelUnit &pix);
     void apply_pending(PixelUnit &pix);
 
@@ -148,6 +164,15 @@ private:
 
     bool     staged_valid_ = false;
     uint16_t staged_word_  = 0;
+
+    // The fetch engine's own registers, one for one with compositor.v.  There
+    // is deliberately no "parked" flag: /RE's low level IS the parked state,
+    // which is what makes the bank exactly two deep and unclobberable.
+    bool     re_low_    = false;   // nVIDCMD_RE low: a read is in progress
+    bool     ef_at_pop_ = false;   // raw /EF sampled at the /RE fall
+    uint16_t q_word_    = 0;       // what the 7200 is presenting on Q
+    bool     ef_meta_   = false;   // 2-FF synchronizer on the asynchronous /EF rise
+    bool     ef_sync_   = false;
 
     // Playback.  compositor.v freezes this across the line boundary — nothing
     // re-frames until /RS — so an overrunning run simply continues.

@@ -31,16 +31,18 @@
 //   FIT-RISKY ASSUMPTION 3: a 12-bit SET value committed atomically into
 //     whichever register the 3-bit target names.  If the register file has to
 //     be written in halves the slot semantics below change shape.
-//   FIT-RISKY ASSUMPTION 4 — NOW A KNOWN BREAK, NOT AN ASSUMPTION.  The
-//     COMPOSITOR->PIXEL SET forwarding interface does not currently work at one
-//     word per clock: compositor.v raises set_pix_valid/target as levels and
-//     pulses set_pix_commit, and pixel.v captures VIDCMD_Q while valid is high
-//     — but at this cadence Q has moved on by one or two words before the
-//     capture.  compositor.v says so in its own header.  The interface needs a
-//     forwarded value or a re-timed strobe, and until it has one this suite
-//     applies a PIXEL-target SET at its commit slot, exactly like a
-//     COMPOSITOR-target one, with SKEW_PIX_TARGET left as the named knob.
-//     THIS IS THE ONE PLACE THE SUITE CANNOT MATCH A TB MEASUREMENT.
+//   FIT-RISKY ASSUMPTION 4 — RESOLVED 2026-08-19, TWICE OVER.  The
+//     COMPOSITOR->PIXEL SET conduit used to be a shadow tap of the VIDCMD Q
+//     bus, and it did not work: Q had moved on by the time PIXEL captured it.
+//     Two decisions closed it.  (1) A dedicated 12-bit registered value bus,
+//     set_pix_value[11:0], carries the payload point to point; PIXEL no longer
+//     touches VIDCMD_Q at all (griffin.yml interfaces, "COMPOSITOR -> PIXEL SET
+//     register path", 2026-08-13).  (2) The registered-/RE fetch holds Q
+//     high-Z between reads, which would have made a Q tap impossible anyway.
+//     value/valid/target/commit now share one pipeline stage, so a PIXEL-target
+//     SET costs exactly what any other record costs and the suite's "apply at
+//     the commit slot" model IS the measurement.  SKEW_PIX_TARGET stays a named
+//     knob at zero so the compensation path stays exercised.
 //   FIT-RISKY ASSUMPTION 5 — RUN_COLOR, still explicitly at risk.  It needs its
 //     own 3-bit colour latch in the PLAYBACK registers (staging is clobbered by
 //     the next record's prefetch mid-run) and a fourth input on the 12-bit
@@ -406,16 +408,29 @@ constexpr uint32_t pixels_words_per_line(uint32_t mode, uint32_t pixel_skip)
 // emits it.  If `01` ever returns as a limited 2-word variant it gets whatever
 // flip-flops are left over.
 //
-// FRAMING IS DURATION ARITHMETIC, WITH HOLD.  Every active pixel clock is one
-// slot.  A RUN contributes its count, a RUN_COLOR its count, a SET one slot,
-// the reserved no-op one slot.  When the count is terminal and nothing is
-// staged the compositor HOLDS — it keeps the current source and keeps trying —
-// and that is first-class line framing, not underrun mercy.  It gives two
-// authoring disciplines off one hardware rule (see author.h's FramingMode):
+// FRAMING IS DURATION ARITHMETIC, WITH HOLD — AND WITH THE FETCH CADENCE.
+// Every active pixel clock is one slot.  A RUN contributes its count, a
+// RUN_COLOR its count, a SET one slot, the reserved no-op one slot.  That is
+// what a record costs WHEN IT EXECUTES; what it costs to DELIVER is a separate
+// number, and since 2026-08-19 the two are not the same.  The fetch is one word
+// per TWO pixel clocks (registered /RE, see VIDCMD_SLOTS_PER_WORD below), so a
+// run of one-slot records stretches: each pays for its own slot and for the
+// HOLD slot the fetch spends behind it, except across a banked pair.  The
+// authored slot sum is therefore a LOWER bound on a line's occupancy, and an
+// exact-640 line has to be closed against vidcmd_plan_line() rather than
+// against the sum.
+//
+// When the count is terminal and nothing is staged the compositor HOLDS — it
+// keeps the current source and keeps trying.  That covers both the cadence's
+// gap slots and a genuinely dry FIFO; only the second is a list-builder bug,
+// which is why render.cpp counts them separately.  Hold is first-class line
+// framing, not underrun mercy, and it gives two authoring disciplines off one
+// hardware rule (see author.h's FramingMode):
 //
 //   CUSHION   records are buffered ahead in VBLANK, the FIFO never empties
-//             mid-line, hold never engages, and the per-line slot sums must be
-//             EXACTLY H_ACTIVE.  Overrunning is the hazard: a leftover record
+//             mid-line, hold never engages FOR WANT OF DATA, and the per-line
+//             OCCUPANCY — cadence holds included — must be EXACTLY H_ACTIVE.
+//             Overrunning is the hazard: a leftover record
 //             staged at the H_ACTIVE fall plays at the start of the next line
 //             and, while staged, blocks the fetch that would have run that
 //             line's eager SETs.
@@ -459,8 +474,11 @@ inline constexpr uint32_t RUN_SRC_COLOR       = 3;   // RUN_COLOR, see below
 // The count is 9 bits and stored complemented, matching the convention the
 // 12-bit RUN count already uses: the field is ~count masked to the field
 // width, so decoding is another complement and the maximum span is 511 pixels.
-// A one-word record also satisfies the prefetch invariant unconditionally,
-// since playback(k) >= 1 >= words(k+1) for any k whose successor is one word.
+// Being one word, a RUN_COLOR is as cheap to DELIVER as any other record — but
+// "one word" is no longer free: at the 2-clock fetch cadence a record has to
+// average two slots of playback to keep the stream fed (vidcmd_plan_line()).
+// A one-pixel RUN_COLOR next to a one-pixel gap does not, which is the
+// cadence-aware form of the old prefetch invariant.
 inline constexpr uint32_t RUN_COLOR_MAX_COUNT = 511;
 
 inline constexpr uint32_t RUN_COLOR_BLACK   = 0;   // 000
@@ -550,11 +568,12 @@ constexpr uint32_t vidcmd_record_words(uint16_t)
     return 1u;
 }
 
-// Active slots this record consumes.  A RUN contributes its count exactly —
-// one word per clock means a one-slot record really is one slot (compositor.v
-// loads ~count and adds 1 for the slot the record is consumed in, so the
-// terminal is reached after `count` active slots).  SET and the reserved no-op
-// are one slot each.
+// Active slots this record occupies WHEN IT EXECUTES.  A RUN contributes its
+// count exactly (compositor.v loads ~count and adds 1 for the slot the record
+// is consumed in, so the terminal is reached after `count` active slots); SET
+// and the reserved no-op are one slot each.  This is playback cost only — what
+// the record costs to fetch is the cadence's business, and a line's real
+// occupancy comes from vidcmd_plan_line() below.
 constexpr uint32_t vidcmd_record_slots(uint16_t lead)
 {
     switch (vidcmd_type_of(lead))
@@ -569,14 +588,16 @@ constexpr uint32_t vidcmd_record_slots(uint16_t lead)
 }
 
 // ---------------------------------------------------------------------------
-// Measured pipeline constants — from cpld/compositor/compositor_sim.log
+// Measured pipeline constants — from cpld/compositor/compositor_tb.v
 // ---------------------------------------------------------------------------
 //
 // These are the testbench's numbers, not this suite's guesses.  Most of them
 // are UNIFORM pipeline latencies: every pixel is delayed by the same amount, so
 // a frame image is unaffected and the sync generator absorbs the shift (see
 // pixel.v's DAC_LEAD discussion).  They live here so the emulator and any
-// future TB comparison have one place to read them from.
+// future TB comparison have one place to read them from.  The 2026-08-19
+// registered-/RE rework did NOT move any of the K constants below; it changed
+// the FETCH cadence only.
 //
 // The one that is NOT uniform, and therefore the one the renderer actually
 // implements, is the slot rule: a record's effects land on the edge that ENDS
@@ -600,8 +621,24 @@ inline constexpr uint32_t SET_PIX_COMMIT_BLANK_CLOCKS = 3;
 // set_pix_commit pulses this many clocks before its own slot's RGB_OUT.
 inline constexpr uint32_t SET_PIX_COMMIT_LEAD = 1;
 
-// Sustained fetch: one VIDCMD word per slot (Phase A0's 1-word/clock rework).
-inline constexpr uint32_t VIDCMD_SLOTS_PER_WORD = 1;
+// Sustained fetch: one VIDCMD word per TWO slots (registered /RE, resolved
+// 2026-08-18 in griffin.yml interfaces "VIDCMD FIFO read port", measured by
+// compositor_tb's BACK_TO_BACK_SETS/SUSTAINED_2SLOT).  Fall at edge k, capture
+// at edge k+1, fall again at edge k+2.
+inline constexpr uint32_t VIDCMD_SLOTS_PER_WORD = 2;
+
+// How far a parked record trails the record it was banked with.  The bank is
+// two deep — staged_word plus a word held on the FIFO's Q while /RE stays low —
+// and the park moves into staged_word on the very edge the first record is
+// consumed, so a banked PAIR executes on CONSECUTIVE slots (compositor_tb's
+// PAIR_LOCAL / PAIR_PIX).  The third record of a burst is back on the cadence.
+inline constexpr uint32_t VIDCMD_PAIR_SLOT_GAP = 1;
+
+// The on-chip bank's depth, in records: staged_word plus the parked Q.  This is
+// the whole cushion a line gets for free at pixel 0 no matter how deep the FIFO
+// behind it is, which is why an exact-640 line's arithmetic is a simulation and
+// not a sum.
+inline constexpr uint32_t VIDCMD_BANK_DEPTH = 2;
 
 // PIXEL's own ham_held -> RGB_OUT register, from pixel.v's lead discussion.
 inline constexpr uint32_t PIXEL_OUT_LEAD = 1;
@@ -611,23 +648,175 @@ inline constexpr uint32_t PIXEL_OUT_LEAD = 1;
 // ---------------------------------------------------------------------------
 //
 // A SET aimed at COMPOSITOR's own held colours commits inside COMPOSITOR.  A
-// SET aimed at PIXEL has to cross a chip boundary, and at one word per clock
-// the current handshake does not carry the value across (FIT-RISKY ASSUMPTION
-// 4 above; compositor.v says so in its own header).  Until that interface is
-// re-timed there is no measurement to match, so the model applies a
-// PIXEL-target SET at its commit slot — the same slot a COMPOSITOR-target SET
-// lands on — and keeps the knob named and at zero.
+// SET aimed at PIXEL crosses a chip boundary on the dedicated 12-bit
+// set_pix_value bus, whose value/valid/target/commit all live in ONE pipeline
+// stage (compositor.v).  PIXEL applies the bus at the commit pulse, and the
+// commit leads its own slot's RGB_OUT by SET_PIX_COMMIT_LEAD — a pipeline
+// constant, not a pixel offset.  So both targets land on the slot the SET
+// occupies and both knobs measure zero.
 //
-// This is deliberately NOT hidden: when RTL pins the real number, exactly one
-// line changes here and the list builder's compensation follows.  main.cpp
-// re-runs a case at a nonzero skew and requires the identical image, so the
-// compensation path stays exercised rather than becoming vacuous.
-inline constexpr uint32_t SKEW_PIX_TARGET = 0;   // PROVISIONAL — interface under redesign
+// The knobs stay named rather than deleted: main.cpp re-runs a case at a
+// nonzero, asymmetric skew and requires the identical image, so the list
+// builder's compensation path stays exercised rather than becoming vacuous.
+inline constexpr uint32_t SKEW_PIX_TARGET = 0;   // measured: value bus, same slot
 inline constexpr uint32_t SKEW_CMP_TARGET = 0;   // measured: SET lands in its own slot
 
 constexpr uint32_t vidcmd_set_skew(uint32_t target, uint32_t skew_pix, uint32_t skew_cmp)
 {
     return vidcmd_set_targets_pixel(target) ? skew_pix : skew_cmp;
+}
+
+// ============================================================================
+// The fetch engine, as a line-planning simulation
+// ============================================================================
+//
+// THE CADENCE-AWARE PREFETCH INVARIANT.  The 1-word-per-clock era retired the
+// old playback(k) >= words(k+1) rule (main.cpp finding 17) because it was
+// satisfied by construction.  The registered-/RE fetch brings it back, and it
+// is no longer a closed form, so this is a simulation rather than a rule.
+//
+// compositor.v's engine, verbatim (its header calls these fall / capture /
+// park, and the testbench derives every expectation from them):
+//
+//   fall     /RE may go low at an edge only if it was HIGH for the whole cycle
+//            ending at that edge and the FIFO has data.  The 7200 advances its
+//            read pointer on that falling edge and presents the word on Q.
+//   capture  when /RE has been low for a full cycle the word is valid at the
+//            ending edge; if staged_word is free — or is being freed by that
+//            same edge's consume — the word lands in staged_word and /RE
+//            registers high.
+//   park     otherwise /RE stays LOW and Q holds the word until a later edge
+//            frees staged_word.  /RE's own level carries the parked state, so
+//            the bank is exactly two deep and a parked word cannot be
+//            overwritten.
+//
+// L4 falls out as 2 slots per word sustained; L5 (the banked-pair law) falls
+// out as "a parked record executes on the slot after the one it was banked
+// with".  A record therefore has to average two slots of playback to keep the
+// stream fed, with the two-deep bank as the line's entire free credit.
+//
+// This simulation assumes the CUSHION discipline — every word already in the
+// FIFO when HBLANK starts — because that is the discipline whose slot sums have
+// to close.  Whether a word ARRIVES in time is the render model's job (it
+// drives the same engine against real deposit cycles); this one answers "given
+// that they are all there, which slot does each record land on".
+//
+// Bare-metal safe: no allocation, no recursion, bounded loop.
+
+struct VidcmdSlotPlan
+{
+    uint32_t slots      = 0;   // active slots the list occupies, holds included
+    uint32_t last_slot  = 0;   // slot in which the final record executed
+    uint32_t records    = 0;   // records that executed in active video
+    uint32_t blank_sets = 0;   // records consumed eagerly in HBLANK, zero slots
+    uint32_t stretch    = 0;   // worst slots the cadence pushed any record back by
+    uint32_t starved    = 0;   // records that executed later than their authored slot
+};
+
+inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
+                                       uint32_t hblank_clocks = H_BLANK)
+{
+    VidcmdSlotPlan plan;
+
+    uint32_t next        = 0;       // next word the FIFO would hand over
+    bool     re_low      = false;   // nVIDCMD_RE: a read is in progress
+    bool     q_full      = false;   // ef_at_pop: that read found a word
+    uint16_t q_word      = 0;
+    bool     staged      = false;
+    uint16_t staged_word = 0;
+
+    uint32_t run_remaining = 0;
+    uint32_t slot          = 0;     // active slots elapsed
+    uint32_t authored      = 0;     // where the authored sum puts the next record
+
+    // Four times the line is far beyond the worst stretch a 640-slot list can
+    // suffer (2 slots per word, 640 words maximum), and it keeps a malformed
+    // list from spinning.
+    const uint32_t limit = hblank_clocks + 4u * H_ACTIVE;
+    for (uint32_t clock = 0; clock < limit; clock++)
+    {
+        const bool active     = clock >= hblank_clocks;
+        const bool word_on_q  = re_low && q_full;
+        const bool had_staged = staged;
+        bool       consumed   = false;
+
+        // Playback: consume_active = H_ACTIVE & have_staged & terminal, or the
+        // eager blank-region SET.
+        if (staged)
+        {
+            const bool is_set = vidcmd_type_of(staged_word) == VidcmdType::SET;
+            if (active ? (run_remaining == 0) : is_set)
+            {
+                consumed = true;
+                staged   = false;
+                if (active)
+                {
+                    const uint32_t duration = vidcmd_record_slots(staged_word);
+                    // A record that executes past its authored slot has starved
+                    // the beam by that much.  A long RUN later on lets playback
+                    // fall back behind the fetch, so the delay can come back
+                    // down — the worst one is what an author needs to see.
+                    if (slot > authored)
+                    {
+                        plan.starved++;
+                        if (slot - authored > plan.stretch)
+                        {
+                            plan.stretch = slot - authored;
+                        }
+                    }
+                    plan.last_slot = slot;
+                    plan.slots     = slot + duration;
+                    plan.records++;
+                    authored      += duration;
+                    run_remaining  = duration;
+                }
+                else
+                {
+                    plan.blank_sets++;
+                }
+            }
+        }
+
+        // Fetch, from the registers as they stood when the cycle began.
+        const bool buffer_frees = !had_staged || consumed;
+        const bool capture_now  = word_on_q && buffer_frees;
+        const bool q_parked     = word_on_q && !capture_now;
+        const bool re_fall      = !re_low && (next < words.size());
+        const bool re_rise      = re_low && !q_parked;
+
+        if (capture_now)
+        {
+            staged_word = q_word;
+            staged      = true;
+        }
+        if (re_fall)
+        {
+            re_low = true;
+            q_word = words[next];
+            q_full = true;
+            next++;
+        }
+        if (re_rise)
+        {
+            re_low = false;
+        }
+
+        if (active)
+        {
+            if (run_remaining > 0)
+            {
+                run_remaining--;
+            }
+            slot++;
+        }
+
+        if (next >= words.size() && !staged && !re_low)
+        {
+            break;
+        }
+    }
+
+    return plan;
 }
 
 // ============================================================================

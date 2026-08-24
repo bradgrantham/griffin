@@ -106,18 +106,33 @@ inline constexpr uint32_t TEMPEST_SHOTS         = 2;
 inline constexpr uint32_t TEMPEST_SHOT_ROWS     = 2;
 inline constexpr uint32_t TEMPEST_SHOT_WIDTH    = 2;
 
-// Density stress: N one-pixel spans at a two-pixel pitch on one band of rows.
-// One pixel of span alternating with one pixel of gap is the worst case the
-// format allows — every record is one word and every playback is one slot, so
-// the prefetch invariant playback(k) >= words(k+1) is satisfied with exactly
-// zero margin.  Sweeping this is how the suite turns "the demo works" into an
-// object budget.
-// The spans are SPREAD evenly across the line rather than packed together,
-// which is what a well full of objects actually looks like and, more
-// importantly, is the arrangement the delivery rate can hope to sustain: the
-// engine puts one VIDCMD word on the bus every 2 SYSCLK, i.e. one word per ~3.6
-// pixel clocks, so a burst denser than that has to have been pre-buffered
-// during HBLANK and cannot be streamed against the beam.
+// Density stress: N one-pixel spans on one band of rows, SPREAD evenly across
+// the line.  Sweeping this is how the suite turns "the demo works" into an
+// object budget, and what it measures is DELIVERY: the engine puts one VIDCMD
+// word on the bus every 2 SYSCLK, i.e. one word per ~3.6 pixel clocks, so a
+// dense line has to be pre-buffered during HBLANK and the limit is how much bus
+// time that steals from the PIXELS stream.  Spreading rather than packing is
+// also what a well full of objects actually looks like.
+//
+// There is a SECOND ceiling since 2026-08-19, independent of the bus: the
+// compositor fetches one word per two pixel clocks, so a record list has to
+// AVERAGE two slots per record however early its words arrived.  Below is the
+// tightest pitch a one-pixel-span list can be authored at and still land where
+// it was authored — DERIVED from L4/L5, not measured.  A 1-px span alternating
+// with a (pitch-1)-px gap averages pitch/2 slots per record against a
+// requirement of VIDCMD_SLOTS_PER_WORD, so pitch >= 4.  At pitch 3 the list
+// loses half a slot per record; at pitch 2 it loses one per record and the
+// band is drawn at half density with every span two pixels wide
+// (compositor_tb's SUSTAINED_2SLOT).  The on-chip bank — staged_word plus the
+// parked Q — pays for the first two records and nothing after them.
+//
+// The two ceilings do not meet here: 64 spans spread over 640 pixels is a
+// 9-pixel pitch, so this sweep is still measuring the bus.  main.cpp asserts
+// that rather than assuming it, and the cadence floor itself is measured
+// clean-room in main.cpp's cadence traces where no deposit schedule can
+// confound it.
+inline constexpr uint32_t TEMPEST_STRESS_MIN_PITCH = 2 * VIDCMD_SLOTS_PER_WORD;
+
 inline constexpr uint32_t TEMPEST_MAX_STRESS_SPANS = 64;
 inline constexpr uint32_t TEMPEST_STRESS_ROW       = 236;
 inline constexpr uint32_t TEMPEST_STRESS_ROWS      = 6;
@@ -193,8 +208,11 @@ struct FrameParams
     Rgb444   split_bg         = rgb444(0, 15, 0);
 
     // The normative slot-arithmetic regression: RUN(passthrough,1),
-    // SET(pix_pal_fg,C2), RUN(passthrough,638) over all-foreground pixel bits.
-    // Pixel 0 must render C1 and pixels 1..639 must render C2.
+    // SET(pix_pal_fg,C2), then a tail RUN whose length the builder derives —
+    // 637 slots at the 2-clock fetch cadence, because the tail is a fresh fetch
+    // and lands on slot 3 with slot 2 holding the same passthrough behind it.
+    // Pixel 0 must render C1 and pixels 1..639 must render C2 either way: the
+    // SET is the leading RUN's banked pair partner and still owns pixel 1.
     bool     slot_regression  = false;
     Rgb444   regression_c1    = rgb444(15, 0, 0);
     Rgb444   regression_c2    = rgb444(0, 0, 15);
@@ -305,14 +323,21 @@ void write_test_pattern_microham(Memory ram, uint32_t base, uint32_t stride_byte
                                  uint32_t lines);
 
 // Writes each line's VIDCMD records.  Reports the per-line word count, record
-// count and ACTIVE SLOT SUM through the caller-provided spans; the slot sum
-// must be exactly H_ACTIVE or the stream desyncs for the rest of the frame, so
-// exposing it is the cheapest way for a builder to catch its own arithmetic.
-// Returns the total word count.
+// count, ACTIVE SLOT OCCUPANCY and cadence STRETCH through the caller-provided
+// spans.  The occupancy is what vidcmd_plan_line() says the records really take
+// — authored slots plus the HOLD slots the 2-clock fetch cadence spends between
+// them — and it must be exactly H_ACTIVE under CUSHION or the stream desyncs
+// for the rest of the frame.  The stretch is occupancy minus authored sum at
+// the last record, i.e. how far the cadence pushed the line back; it is zero
+// for any list whose records average two slots, and it is the WORST record's
+// delay, not the last one's — a long RUN lets playback fall back behind the
+// fetch, so a line can stretch in the middle and recover by its end.  Returns
+// the total word count.
 uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
                               std::span<uint8_t> line_words,
                               std::span<uint8_t> line_records,
-                              std::span<uint16_t> line_slots);
+                              std::span<uint16_t> line_slots,
+                              std::span<uint16_t> line_stretch);
 
 // An integer sawtooth on left and triangle on right — no <cmath>, so this
 // compiles for the target and produces identical bytes on every host.

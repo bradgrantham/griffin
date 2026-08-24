@@ -359,6 +359,8 @@ struct CaseResult
     double          vidcmd_records_mean = 0.0;
     uint32_t        vidcmd_slot_min    = 0xFFFFFFFF;
     uint32_t        vidcmd_slot_max    = 0;
+    uint32_t        vidcmd_stretch_max = 0;
+    uint32_t        vidcmd_stretch_lines = 0;
     std::vector<std::string> artifacts;
 };
 
@@ -377,6 +379,7 @@ CaseResult run_case(const CaseSpec &spec, Memory ram, uint64_t rearm_latency)
     std::vector<uint8_t>  line_words(V_ACTIVE, 0);
     std::vector<uint8_t>  line_records(V_ACTIVE, 0);
     std::vector<uint16_t> line_slots(V_ACTIVE, 0);
+    std::vector<uint16_t> line_stretch(V_ACTIVE, 0);
 
     uint32_t audio_pair_cursor = 0;
     for (uint32_t f = 0; f < RENDER_FRAMES; f++)
@@ -395,7 +398,7 @@ CaseResult run_case(const CaseSpec &spec, Memory ram, uint64_t rearm_latency)
         audio_pair_cursor += fp.audio_preamble_pairs +
                              (V_ACTIVE / spec.base.audio_burst_interval) * spec.base.audio_burst_pairs;
 
-        write_vidcmd_records(fp, ram, line_words, line_records, line_slots);
+        write_vidcmd_records(fp, ram, line_words, line_records, line_slots, line_stretch);
 
         out.author[f] = author_frame(fp, ram, line_words);
         ip.arm_addresses.push_back(tables[f]);
@@ -413,6 +416,14 @@ CaseResult run_case(const CaseSpec &spec, Memory ram, uint64_t rearm_latency)
             if (line_records[line] > out.vidcmd_records_max) { out.vidcmd_records_max = line_records[line]; }
             if (line_slots[line] < out.vidcmd_slot_min)    { out.vidcmd_slot_min = line_slots[line]; }
             if (line_slots[line] > out.vidcmd_slot_max)    { out.vidcmd_slot_max = line_slots[line]; }
+            if (line_stretch[line] > out.vidcmd_stretch_max)
+            {
+                out.vidcmd_stretch_max = line_stretch[line];
+            }
+            if (line_stretch[line] > 0)
+            {
+                out.vidcmd_stretch_lines++;
+            }
         }
         if (f == 0)
         {
@@ -461,8 +472,12 @@ void print_report(const CaseSpec &spec, const CaseResult &res)
     printf("  VIDCMD slots/line   %6u..%-6u framing %s (%s)\n",
            res.vidcmd_slot_min, res.vidcmd_slot_max,
            (spec.base.framing == FramingMode::CUSHION) ? "CUSHION" : "JIT    ",
-           (spec.base.framing == FramingMode::CUSHION) ? "must be exactly 640"
+           (spec.base.framing == FramingMode::CUSHION) ? "occupancy must be exactly 640"
                                                        : "<= 640, hold covers the rest");
+    printf("  VIDCMD cadence      stretch max %3u slot(s) on %u of %u lines "
+           "(fetch = %u slots/word)\n",
+           res.vidcmd_stretch_max, res.vidcmd_stretch_lines, V_ACTIVE * RENDER_FRAMES,
+           VIDCMD_SLOTS_PER_WORD);
     printf("  bus utilization     %6.1f%%         over %llu SYSCLK of the 2-frame run\n",
            util, static_cast<unsigned long long>(span));
     printf("  per-line SYSCLK     max %4u  mean %6.1f   (line = %llu SYSCLK, %.0f%% worst)\n",
@@ -491,10 +506,12 @@ void print_report(const CaseSpec &spec, const CaseResult &res)
     printf("  VIDCMD FIFO         high %3u  low %3u  popped %u  overflows %u\n",
            rr.stats.vidcmd_fifo_high, rr.stats.vidcmd_fifo_low, rr.stats.vidcmd_words_popped,
            rr.stats.vidcmd_overflows);
-    printf("  VIDCMD framing      hold slots %u  overruns %u  late words %u  RUN_COLOR %u  "
-           "reserved no-ops %u\n",
-           rr.stats.vidcmd_hold_slots, rr.stats.vidcmd_overruns, rr.stats.vidcmd_late_words,
-           rr.stats.vidcmd_color_runs, rr.stats.vidcmd_reserved_ops);
+    printf("  VIDCMD holds        cadence %u  starved %u   (cadence = the 2-clock fetch, "
+           "starved = a dry FIFO)\n",
+           rr.stats.vidcmd_cadence_slots, rr.stats.vidcmd_hold_slots);
+    printf("  VIDCMD framing      overruns %u  late words %u  RUN_COLOR %u  reserved no-ops %u\n",
+           rr.stats.vidcmd_overruns, rr.stats.vidcmd_late_words, rr.stats.vidcmd_color_runs,
+           rr.stats.vidcmd_reserved_ops);
     if (spec.base.audio)
     {
         printf("  AUDIO FIFO          high %4u low %4u underruns %u  overflows %u  (depth %u)\n",
@@ -549,12 +566,14 @@ void check_case(const CaseSpec &spec, const CaseResult &res)
     // it signed up to.
     if (spec.base.framing == FramingMode::CUSHION)
     {
-        // Records are buffered ahead in VBLANK, so the sums must close exactly
-        // and hold must never engage.  A hold slot here means the cushion was
-        // not deep enough; an overrun means a leftover record will play at the
-        // start of the next line and block its eager SETs.
+        // Records are buffered ahead in VBLANK, so the OCCUPANCY must close
+        // exactly and hold must never engage for want of data.  The occupancy
+        // the author reports comes from vidcmd_plan_line(); the render model
+        // drives the same fetch engine independently against real deposit
+        // cycles, so the overrun counter below is what cross-checks the two —
+        // if the planner's arithmetic were wrong the line would overrun here.
         CHECK(res.vidcmd_slot_min == H_ACTIVE && res.vidcmd_slot_max == H_ACTIVE,
-              "%s: cushion list slot sums range %u..%u, must be exactly %u on every line",
+              "%s: cushion list occupancy ranges %u..%u, must be exactly %u on every line",
               spec.name.c_str(), res.vidcmd_slot_min, res.vidcmd_slot_max, H_ACTIVE);
         CHECK(rr.stats.vidcmd_hold_slots == 0,
               "%s: cushion list held on an empty FIFO for %u slots — the cushion ran out",
@@ -716,6 +735,255 @@ void check_incremental_api(const CaseSpec &spec, const CaseResult &res)
           "one on %u pixels", spec.name.c_str(), differing);
 }
 
+// ---------------------------------------------------------------------------
+// Fetch-cadence traces — the model against compositor_tb.v's normative ones
+// ---------------------------------------------------------------------------
+//
+// These drive the two units the way the testbench drives the DUT — push a
+// line's words, run one HBLANK, then take slots — instead of going through a
+// display list, so they pin the COMPOSITOR laws themselves rather than a
+// list builder's use of them.  Every expectation below is DERIVED from
+// compositor.v's header and matches a named check in compositor_tb.v:
+//
+//   L1  entry-edge commit: a record's effect lands on the edge ending the slot
+//       it occupies, and that slot's pixel shows it.
+//   L2  one slot per record when it executes; RUN(N) banked before the line
+//       occupies slots 0..N-1.
+//   L4  fetch cadence 2 slots per word: a word captured on the edge ending
+//       slot k executes no earlier than the edge ending slot k+1.
+//   L5  banked pair: a record staged with a second parked on Q executes on
+//       slot k and the parked one on slot k+1.
+//
+// The pixel stream is all ones, so passthrough resolves to pix_pal_fg and a
+// passthrough span is distinguishable from every held colour used here.
+constexpr Rgb444 TRACE_PASSTHROUGH = rgb444(9, 10, 3);
+
+std::vector<Rgb444> trace_slots(const std::vector<uint16_t> &words, uint32_t slots)
+{
+    PixelUnit      pix;
+    CompositorUnit cmp;
+    pix.reset();
+    cmp.reset();
+    pix.set_register(SET_PIX_PAL_FG, TRACE_PASSTHROUGH);
+    for (uint32_t i = 0; i < PIXELS_WORDS_1BPP + 1; i++)
+    {
+        pix.push_word(0xFFFF);
+    }
+    for (uint16_t w : words)
+    {
+        cmp.push_word(w);
+    }
+    for (uint32_t i = 0; i < H_BLANK; i++)
+    {
+        cmp.blank_clock(pix);
+    }
+    pix.begin_line();
+
+    std::vector<Rgb444> out;
+    out.reserve(slots);
+    for (uint32_t i = 0; i < slots; i++)
+    {
+        out.push_back(cmp.active_slot(pix));
+    }
+    return out;
+}
+
+void check_cadence_traces()
+{
+    printf("\n=== compositor-cadence — the model against compositor_tb.v's traces ===\n");
+
+    const Rgb444 reset_fg = VIDCMD_RESET_HELD_FG;
+
+    // NORMATIVE_M0.  RUN(fg,1) and the SET are banked as a pair in HBLANK, so
+    // L5 puts the SET on slot 1 — exactly where the 1-word-per-clock design put
+    // it.  L4 then puts the tail RUN on slot 3, and slot 2 HOLDs the held_fg
+    // the SET just wrote, so the tail is blind to the cadence.
+    {
+        const std::vector<uint16_t> w = {vidcmd_run(RUN_SRC_HELD_FG, 1),
+                                         vidcmd_set(SET_CMP_HELD_FG, 0x0F0),
+                                         vidcmd_run(RUN_SRC_HELD_FG, 637)};
+        const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+        uint32_t bad = 0;
+        for (uint32_t i = 1; i < H_ACTIVE; i++)
+        {
+            if (px[i] != 0x0F0)
+            {
+                bad++;
+            }
+        }
+        printf("  M0                  px0 0x%03X px1 0x%03X px2 0x%03X, %u tail exceptions\n",
+               px[0], px[1], px[2], bad);
+        CHECK(px[0] == reset_fg, "trace M0: pixel 0 is 0x%03X, expected the pre-SET held_fg 0x%03X",
+              px[0], reset_fg);
+        CHECK(px[1] == 0x0F0, "trace M0: the SET must land on pixel 1 (banked pair), got 0x%03X",
+              px[1]);
+        CHECK(bad == 0, "trace M0: %u pixels of the tail are not the SET value", bad);
+    }
+
+    // PAIR_LOCAL.  RUN(fg,4) occupies slots 0..3 (L2) and banks SET(fg) staged
+    // with SET(bg) parked while it counts, so the two SETs execute on slots 4
+    // and 5 (L5).  Slot 6 is the HOLD behind the pair (L4) and RUN(bg) follows
+    // on slot 7.
+    {
+        const std::vector<uint16_t> w = {vidcmd_run(RUN_SRC_HELD_FG, 4),
+                                         vidcmd_set(SET_CMP_HELD_FG, 0x1B2),
+                                         vidcmd_set(SET_CMP_HELD_BG, 0x3C4),
+                                         vidcmd_run(RUN_SRC_HELD_BG, 600)};
+        const std::vector<Rgb444> px = trace_slots(w, 16);
+        printf("  pair                slots 0..7 %03X %03X %03X %03X %03X %03X %03X %03X\n",
+               px[0], px[1], px[2], px[3], px[4], px[5], px[6], px[7]);
+        CHECK(px[0] == reset_fg && px[3] == reset_fg,
+              "trace pair: slots 0..3 must be the old held_fg");
+        CHECK(px[4] == 0x1B2 && px[5] == 0x1B2,
+              "trace pair: the SETs must land on slots 4 and 5 (banked pair), got 0x%03X 0x%03X",
+              px[4], px[5]);
+        CHECK(px[6] == 0x1B2, "trace pair: slot 6 must HOLD the new held_fg, got 0x%03X", px[6]);
+        CHECK(px[7] == 0x3C4, "trace pair: RUN(bg) must start on slot 7, got 0x%03X", px[7]);
+    }
+
+    // BACK_TO_BACK_SETS.  L5 gives the first SET slot 1 behind a one-slot RUN;
+    // L4 gives every SET after that a slot of its own plus a HOLD slot, so the
+    // burst lands on slots 1, 3, 5.
+    {
+        const std::vector<uint16_t> w = {vidcmd_run(RUN_SRC_HELD_FG, 1),
+                                         vidcmd_set(SET_CMP_HELD_FG, 0x111),
+                                         vidcmd_set(SET_CMP_HELD_FG, 0x222),
+                                         vidcmd_set(SET_CMP_HELD_FG, 0x333),
+                                         vidcmd_run(RUN_SRC_HELD_FG, 600)};
+        const std::vector<Rgb444> px = trace_slots(w, 16);
+        printf("  triple burst        slots 0..6 %03X %03X %03X %03X %03X %03X %03X\n",
+               px[0], px[1], px[2], px[3], px[4], px[5], px[6]);
+        CHECK(px[0] == reset_fg, "trace burst: slot 0 is the RUN's own pixel");
+        CHECK(px[1] == 0x111 && px[3] == 0x222 && px[5] == 0x333,
+              "trace burst: the three SETs must land on slots 1, 3, 5 — got 0x%03X 0x%03X 0x%03X "
+              "at those slots", px[1], px[3], px[5]);
+        CHECK(px[2] == 0x111 && px[4] == 0x222,
+              "trace burst: slots 2 and 4 must HOLD the value behind them");
+    }
+
+    // ONE_PX_SPANS.  RED is staged and GREEN parked at the line start, so RED
+    // takes slot 0 and GREEN slot 1 (L5); slot 2 HOLDs GREEN; BLUE is captured
+    // on the edge ending slot 2 and executes on slot 3 (L4) with slot 4 its
+    // HOLD; the passthrough RUN then executes on slot 5.
+    {
+        const std::vector<uint16_t> w = {vidcmd_run_color(RUN_COLOR_RED, 1),
+                                         vidcmd_run_color(RUN_COLOR_GREEN, 1),
+                                         vidcmd_run_color(RUN_COLOR_BLUE, 1),
+                                         vidcmd_run(RUN_SRC_PASSTHROUGH, 637)};
+        const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+        uint32_t bad = 0;
+        for (uint32_t i = 5; i < H_ACTIVE; i++)
+        {
+            if (px[i] != TRACE_PASSTHROUGH)
+            {
+                bad++;
+            }
+        }
+        printf("  one-px spans        slots 0..5 %03X %03X %03X %03X %03X %03X, %u tail "
+               "exceptions\n", px[0], px[1], px[2], px[3], px[4], px[5], bad);
+        CHECK(px[0] == 0xF00 && px[1] == 0x0F0 && px[2] == 0x0F0,
+              "trace 1px: R then G on adjacent slots (pair) with slot 2 holding G");
+        CHECK(px[3] == 0x00F && px[4] == 0x00F,
+              "trace 1px: B is one cadence later, slots 3 and 4");
+        CHECK(bad == 0, "trace 1px: passthrough must resume at slot 5 (%u exceptions)", bad);
+    }
+
+    // SUSTAINED_2SLOT.  A line of one-slot RUN_COLORs: record 1 paints slot 0 as
+    // the staged half of the opening pair, and every record after that paints
+    // its own slot plus the HOLD slot behind it, so record k >= 2 covers slots
+    // 2k-3 and 2k-2 and N records reach only slot 2N-2.  A full 256-word FIFO
+    // therefore covers 511 of the 640 slots — the cadence, not the depth, is
+    // what a dense line runs out of.
+    {
+        constexpr uint32_t RECORDS = VIDCMD_FIFO_WORDS;
+        constexpr uint32_t COVERED = 2 * RECORDS - 1;
+        std::vector<uint16_t> w;
+        for (uint32_t i = 0; i < RECORDS; i++)
+        {
+            w.push_back(vidcmd_run_color((i % 2) == 0 ? RUN_COLOR_RED : RUN_COLOR_GREEN, 1));
+        }
+        const std::vector<Rgb444> px = trace_slots(w, COVERED);
+        uint32_t off = 0;
+        for (uint32_t i = 0; i < COVERED; i++)
+        {
+            const Rgb444 want = (i == 0) ? 0xF00 : ((((i - 1) / 2) % 2) == 0 ? 0x0F0 : 0xF00);
+            if (px[i] != want)
+            {
+                off++;
+            }
+        }
+        printf("  sustained 2-slot    %u of %u one-slot records reach the screen, %u pixels off "
+               "the pattern\n", RECORDS, H_ACTIVE, off);
+        CHECK(off == 0,
+              "trace sustained: %u pixels do not follow the 2-slot cadence pattern", off);
+    }
+
+    // THE CADENCE CEILING, clean-room: 1-px spans at a fixed pitch, with the
+    // whole line already in the FIFO so nothing about DELIVERY can confound it.
+    // A span alternating with a (pitch-1)-px gap averages pitch/2 slots per
+    // record against the fetch's requirement of VIDCMD_SLOTS_PER_WORD, so the
+    // tightest pitch that still lands where it was authored is
+    // TEMPEST_STRESS_MIN_PITCH = 4.  Hand-derived pixel counts:
+    //
+    //   pitch >= 4  no HOLD lands inside the band: SPANS spans, SPANS pixels.
+    //   pitch 3     half a slot lost per record, so the deficit lands as one
+    //               HOLD per span (widening it to 2 px, same count as pitch 2)
+    //               AND as a rightward drift of one pixel per span, which the
+    //               count cannot see and the pitch-4 case is the guard against.
+    //   pitch 2     the bank pays for the first span only, every span after it
+    //               carries a HOLD, and a HOLD keeps the span's own source —
+    //               so each of those renders 2 px: 1 + 2*(SPANS-1).
+    {
+        constexpr uint32_t SPANS   = 32;
+        constexpr uint32_t FIRST_X = 64;
+        printf("  cadence ceiling     pitch  authored px  painted px  verdict\n");
+        for (uint32_t pitch : {2u, 3u, 4u, 6u})
+        {
+            std::vector<uint16_t> w;
+            uint32_t x = 0;
+            for (uint32_t i = 0; i < SPANS; i++)
+            {
+                const uint32_t sx = FIRST_X + i * pitch;
+                if (sx > x)
+                {
+                    w.push_back(vidcmd_run(RUN_SRC_PASSTHROUGH, sx - x));
+                }
+                w.push_back(vidcmd_run_color(RUN_COLOR_MAGENTA, 1));
+                x = sx + 1;
+            }
+            w.push_back(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - x));
+
+            const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+            const Rgb444 magenta = run_colour_to_rgb444(RUN_COLOR_MAGENTA);
+            uint32_t painted = 0;
+            for (Rgb444 c : px)
+            {
+                if (c == magenta)
+                {
+                    painted++;
+                }
+            }
+            const bool sustains = pitch >= TEMPEST_STRESS_MIN_PITCH;
+            printf("                      %5u  %11u  %10u  %s\n", pitch, SPANS, painted,
+                   sustains ? "lands as authored" : "STRETCHED, spans widen");
+            if (sustains)
+            {
+                CHECK(painted == SPANS,
+                      "trace cadence: a %u-pixel pitch averages %u slots per record and must "
+                      "land as authored — %u pixels painted, expected %u",
+                      pitch, pitch / 2, painted, SPANS);
+            }
+            if (pitch == 2)
+            {
+                CHECK(painted == 1 + 2 * (SPANS - 1),
+                      "trace cadence: at a 2-pixel pitch every span but the banked first one "
+                      "must render two pixels wide — %u painted, expected %u",
+                      painted, 1 + 2 * (SPANS - 1));
+            }
+        }
+    }
+}
+
 }  // namespace
 
 int main()
@@ -749,16 +1017,23 @@ int main()
            "%u vblank pacing lines\n",
            ENGINE_ARBITRATION_CYCLES, static_cast<unsigned long long>(REARM_LATENCY_CYCLES),
            VBLANK_PACING_LINES);
-    printf("  skew PROVISIONAL: SET->PIXEL %u px, SET->COMPOSITOR %u px\n",
+    printf("  skew MEASURED: SET->PIXEL %u px, SET->COMPOSITOR %u px (dedicated value bus, "
+           "both land in the SET's own slot)\n",
            SKEW_PIX_TARGET, SKEW_CMP_TARGET);
     printf("  rendering raster frames %u and %u (frame 0 is the arming frame)\n",
            RENDER_FIRST_FRAME, RENDER_FIRST_FRAME + 1);
+    printf("  VIDCMD fetch %u slots/word, banked pair gap %u slot, on-chip bank %u records\n",
+           VIDCMD_SLOTS_PER_WORD, VIDCMD_PAIR_SLOT_GAP, VIDCMD_BANK_DEPTH);
+
+    // The laws first, directly against the two units, before any list builder
+    // gets to interpret them.
+    check_cadence_traces();
 
     // --- Normative slot-arithmetic regression ---------------------------------
     {
         CaseSpec s;
         s.name  = "m0-slot-regression";
-        s.title = "NORMATIVE: RUN(pt,1) SET(pix_pal_fg,C2) RUN(pt,638) over all-fg bits";
+        s.title = "NORMATIVE: RUN(pt,1) SET(pix_pal_fg,C2) RUN(pt,637) over all-fg bits";
         s.base  = common;
         s.base.fb_base         = FB_SOLID_BASE;
         s.base.slot_regression = true;
@@ -1033,8 +1308,27 @@ int main()
         print_report(s, r);
         check_case(s, r);
         // The arrow mask has 84 opaque pixels and every one of them is painted
-        // with a held colour.
-        check_tiles_visible(s, r, 84);
+        // with a held colour — plus, since 2026-08-19, the HOLD slots the fetch
+        // cadence spends inside the art, because a HOLD keeps the current
+        // source and the current source there IS a held colour.
+        //
+        // Derived per row from L4/L5, not measured.  A row's records are
+        // {RUN(pt,gap), seg, seg, ...}; the leading RUN and the first segment
+        // are the line's banked pair, so the first segment lands on its
+        // authored slot and every later segment lands one slot after the
+        // previous segment ENDS if that segment was long enough to cover a
+        // fetch, and two slots after it starts otherwise.  Rows 0,1 (single
+        // segment) and 5..10 (segments >= 4 px) are exact; rows 2 and 13,15
+        // add 2 HOLDs each, rows 3,12,14 add 1, and row 11 — six 1-px segments
+        // with a 1-px hole — adds 5.  2+1+0+0+0+0+0+0+0+5+1+2+1+2 = 14.
+        check_tiles_visible(s, r, 84 + 14);
+        printf("  cadence regression  the arrow's 84 opaque pixels now paint %u: %u rows carry\n"
+               "                      1-px fg/bg segments, and at the 2-clock fetch each of\n"
+               "                      those costs a HOLD slot that keeps the art's own held\n"
+               "                      colour.  Worst row +5 (six 1-px segments).  The line\n"
+               "                      still frames exactly %u — the stretch comes out of the\n"
+               "                      trailing filler — so the damage stays on its own row.\n",
+               84 + 14, r.vidcmd_stretch_lines / RENDER_FRAMES, H_ACTIVE);
         m3_cursor_words = r.vidcmd_words_max;
     }
 
@@ -1150,6 +1444,16 @@ int main()
         // The previous round of this suite concluded the opposite ordering.
         // That conclusion was correct for the old overlay stream and is wrong
         // for VIDCMD; see finding 6.
+        //
+        // The DRY figures fell on 2026-08-19 (138..181 -> 105..148) and the
+        // reason is not that deferring got safer.  Two things moved, both
+        // consequences of the 2-clock fetch: the beam now waits two extra
+        // clocks at the top of a starved line (the /EF synchronizer has to see
+        // the deposit), and — much larger — a compositor that eats one word per
+        // two slots empties the FIFO half as fast, so most of the holds that
+        // used to be genuine starvation are now cadence holds against a FIFO
+        // that has words in it.  Both columns are printed so the reattribution
+        // is visible rather than looking like an improvement.
         for (uint32_t defer = 0; defer < 2; defer++)
         {
             for (uint32_t arb = 4; arb <= 8; arb++)
@@ -1159,10 +1463,12 @@ int main()
                 t.base.vidcmd_after_pixels = (defer != 0);
                 CaseResult tr = run_case(t, ram, REARM_LATENCY_CYCLES);
                 printf("  arbitration %u        VIDCMD %-13s line %3u SYSCLK, "
-                       "banked at line start %2u, PIXELS underruns %u, VIDCMD dry %u\n",
+                       "banked at line start %2u, PIXELS underruns %u, VIDCMD dry %u "
+                       "(cadence %u)\n",
                        arb, (defer != 0) ? "after pixels" : "before pixels",
                        tr.budget.max_busy, tr.rendered.stats.pixels_line_start_min,
-                       tr.rendered.stats.pixels_tiled_words, tr.rendered.stats.vidcmd_hold_slots);
+                       tr.rendered.stats.pixels_tiled_words, tr.rendered.stats.vidcmd_hold_slots,
+                       tr.rendered.stats.vidcmd_cadence_slots);
                 if (defer == 0)
                 {
                     CHECK(tr.rendered.stats.pixels_tiled_words == 0 && tr.rendered.stats.vidcmd_hold_slots == 0,
@@ -1380,6 +1686,31 @@ int main()
               "tempest-web: only %u one-pixel spans per line fit even with the interleaved "
               "list shape — fewer than a Tempest-class game needs", budget_split);
 
+        // The OTHER ceiling, new on 2026-08-19 and independent of the bus: the
+        // COMPOSITOR's own fetch needs every record to average
+        // VIDCMD_SLOTS_PER_WORD slots however early the words arrived.  A 1-px
+        // span alternating with a (pitch-1)-px gap averages pitch/2, so the
+        // tightest pitch that still lands where it was authored is
+        // TEMPEST_STRESS_MIN_PITCH.  The sweep above never approaches it, and
+        // that is the point: the sweep SPREADS its spans, so even its densest
+        // point is a comfortable pitch and the ENGINE's bus delivery is still
+        // what runs out first.  The ceiling itself is measured clean-room in
+        // the cadence traces, where no deposit schedule can confound it.
+        const uint32_t densest_pitch = H_ACTIVE / (TEMPEST_MAX_STRESS_SPANS + 1);
+        printf("  cadence headroom    densest sweep point is a %u-pixel pitch (%u spans spread\n"
+               "                      over %u pixels) against a %u-pixel cadence floor, so the\n"
+               "                      2-clock fetch never binds here — stretch %u on every line.\n",
+               densest_pitch, TEMPEST_MAX_STRESS_SPANS, H_ACTIVE, TEMPEST_STRESS_MIN_PITCH,
+               r.vidcmd_stretch_max);
+        CHECK(densest_pitch >= TEMPEST_STRESS_MIN_PITCH,
+              "tempest-web: the density sweep now authors below the %u-pixel cadence floor "
+              "(%u spans is a %u-pixel pitch), so its results mix delivery with cadence",
+              TEMPEST_STRESS_MIN_PITCH, TEMPEST_MAX_STRESS_SPANS, densest_pitch);
+        CHECK(r.vidcmd_stretch_max == 0,
+              "tempest-web: the object set stretched %u slots — claw/flipper/shot spans are all "
+              "at least %u pixels wide and should not",
+              r.vidcmd_stretch_max, VIDCMD_SLOTS_PER_WORD);
+
         // Re-author with the case's own parameters so the artifacts match.
         run_case(s, ram, REARM_LATENCY_CYCLES);
     }
@@ -1414,7 +1745,11 @@ int main()
            "     41 words banked.  Under VIDCMD the answer is the opposite, and the sweep\n"
            "     above shows it: VIDCMD ahead of PIXELS is clean through 8 SYSCLK/descriptor\n"
            "     (14 words banked falling to 10), while VIDCMD behind PIXELS leaves\n"
-           "     COMPOSITOR dry for 523+ slots at every arbitration value.  Two things\n"
+           "     COMPOSITOR dry for 105+ slots at every arbitration value (2026-08-19: it\n"
+           "     read 138+ before the cadence rework, and the whole of that drop is\n"
+           "     reattribution — a fetch that eats one word per two slots empties the FIFO\n"
+           "     half as fast, so those slots are now counted as cadence holds, ~500 of them,\n"
+           "     against a FIFO that is not empty).  Two things\n"
            "     changed.  VIDCMD now carries the palette and mode SETs that used to be\n"
            "     their own descriptors, so it MUST be in the FIFO before pixel 0 or the line\n"
            "     draws with the previous line's palette — and it is 17-19 words, not 13.\n"
@@ -1422,14 +1757,17 @@ int main()
            "     14-SYSCLK overheads from ahead of the pixel deposits, which is what took\n"
            "     PIXEL's line-start margin from 2 words to 14.  The redesign paid for the\n"
            "     ordering it requires.\n");
-    printf("  7. REFINED BY THE RTL. The slot sum is still the sharpest edge, but only\n"
-           "     under the CUSHION discipline.  compositor.v holds on an empty FIFO — it\n"
-           "     keeps the current source and keeps trying — and that is first-class framing,\n"
-           "     not underrun mercy.  So there are two contracts off one hardware rule:\n"
-           "     cushion lists promise exactly %u slots per line and may not hold; JIT lists\n"
-           "     promise at most %u and must instead land every word before their line's\n"
-           "     pixel 0.  The checker asserts whichever one the list signed up to, and\n"
-           "     write_vidcmd_records reports the per-line sums either way.\n",
+    printf("  7. REFINED BY THE RTL, AND AGAIN ON 2026-08-19. The slot arithmetic is still\n"
+           "     the sharpest edge, but it is no longer a SUM.  compositor.v holds on an\n"
+           "     empty FIFO — it keeps the current source and keeps trying — and that is\n"
+           "     first-class framing, not underrun mercy.  Two contracts come off that one\n"
+           "     hardware rule: cushion lists promise exactly %u slots of OCCUPANCY per line\n"
+           "     (authored slots plus the HOLD slots the 2-clock fetch spends between\n"
+           "     records) and may not hold for want of data; JIT lists promise at most %u\n"
+           "     and must instead land every word before their line's pixel 0.  The two\n"
+           "     flavours of hold are now counted separately — a cadence hold is structural,\n"
+           "     a starvation hold is the cushion running out — and write_vidcmd_records\n"
+           "     reports occupancy, not the authored sum, because only occupancy closes.\n",
            H_ACTIVE, H_ACTIVE);
     printf("  8. OVERTURNED BY HOLD. The previous round measured a floor of one VIDCMD\n"
            "     word per line even for a line that wanted nothing, and charged the plain\n"
@@ -1439,10 +1777,16 @@ int main()
            "     first hblank — and drops back to 114 SYSCLK/line.  That is the firmware\n"
            "     console's list shape, and it is why the console does not need a per-line\n"
            "     VIDCMD descriptor at all.\n");
-    printf("  9. NEW. A multi-register mid-line change cannot be atomic: each SET owns one\n"
-           "     pixel slot, so changing both palette entries takes two pixels and the frame\n"
-           "     shows one pixel of mixed old/new state.  m2-split's checks pin exactly that\n"
-           "     — background at x=320, foreground from x=321.\n");
+    printf("  9. NEW, AND NOW CONDITIONAL (2026-08-19). A multi-register mid-line change\n"
+           "     cannot be atomic: each SET owns one pixel slot, so changing both palette\n"
+           "     entries takes two pixels and the frame shows one pixel of mixed old/new\n"
+           "     state.  m2-split still pins exactly that — background at x=320, foreground\n"
+           "     from x=321 — but at the 2-clock fetch cadence it holds only because the two\n"
+           "     SETs are a BANKED PAIR: the run ahead of them gives the fetch time to stage\n"
+           "     one and park the other, and the park moves in on the very edge the first\n"
+           "     executes.  A THIRD SET in the same burst lands two pixels later, not one\n"
+           "     (the compositor-cadence traces measure exactly that), so a mid-line restyle\n"
+           "     of more than two registers is no longer a contiguous two-pixel seam.\n");
     printf(" 10. NEW, AND IT BIT THIS SUITE TWICE. Losing the VIDEO_PALETTE and VIDEO_MODE\n"
            "     strobes did remove one aliasing hazard: those deposits sourced their value\n"
            "     from a RAM scratch word that both double-buffered lists shared, and the\n"
@@ -1469,42 +1813,56 @@ int main()
            "     held colours costs two SETs and therefore lands one pixel apart; a RUN_COLOR\n"
            "     is one word, one record, and its colour never touches held_fg/held_bg, so\n"
            "     independent objects on one line cannot clobber each other's colour.  It cost\n"
-           "     no new semantics either — it is a playback record like any other RUN, it\n"
-           "     counts its slots the same way, and being one word it satisfies the prefetch\n"
-           "     invariant unconditionally.  The price is in the fit, not the format: see\n"
-           "     FIT-RISKY ASSUMPTION 5 in descriptor.h.  Note the encoding squeeze — three\n"
-           "     colour bits come out of the count, so a RUN_COLOR spans at most %u pixels\n"
-           "     where a plain RUN spans 4095.  Nothing in these cases comes close.\n",
+           "     no new semantics either — it is a playback record like any other RUN and it\n"
+           "     counts its slots the same way.  What it does NOT do any more (2026-08-19) is\n"
+           "     satisfy the prefetch invariant for free: one word is one FETCH, and a fetch\n"
+           "     costs two slots, so a one-pixel RUN_COLOR beside a one-pixel gap is exactly\n"
+           "     the shape the cadence cannot sustain.  The price is also in the fit, not the\n"
+           "     format: FIT-RISKY ASSUMPTION 5 in descriptor.h.  Note the encoding squeeze —\n"
+           "     three colour bits come out of the count, so a RUN_COLOR spans at most %u\n"
+           "     pixels where a plain RUN spans 4095.  Nothing in these cases comes close.\n",
            RUN_COLOR_MAX_COUNT);
     printf(" 14. NEW, AND THE HEADLINE FOR VECTOR GAMES. The two FIFO consumers drain at\n"
-           "     rates that differ by 16x, and the per-line descriptor order has to respect\n"
-           "     that.  One PIXELS word feeds 16 pixel clocks; one VIDCMD word can feed a\n"
-           "     single pixel clock.  So VIDCMD has no cheap head and must arrive first,\n"
-           "     while PIXEL can be made immune for a third of a line by 12-20 words.  With\n"
-           "     the whole VIDCMD stream ahead of the pixels the well supports only 8\n"
-           "     one-pixel spans per line before PIXEL starves; interleaving — 20 pixel\n"
+           "     rates that differ by 8x, and the per-line descriptor order has to respect\n"
+           "     that.  One PIXELS word feeds 16 pixel clocks; one VIDCMD word feeds as few\n"
+           "     as two (2026-08-19: it was one before the registered-/RE fetch, so the gap\n"
+           "     halved and the conclusion did not move).  VIDCMD has no cheap head and must\n"
+           "     arrive first, while PIXEL can be made immune for a third of a line by 12-20\n"
+           "     words.  With the whole VIDCMD stream ahead of the pixels the well supports\n"
+           "     only 8 one-pixel spans per line before PIXEL starves; interleaving — 20 pixel\n"
            "     words, then all of VIDCMD, then the other 20 — supports 32, four times as\n"
            "     many, for ZERO extra descriptors, because a 40-word line already splits\n"
            "     into two 20-word descriptors.  This refines finding 6 rather than\n"
            "     overturning it: VIDCMD still goes ahead of the BULK of the pixels.\n");
-    printf(" 15. NEW. The ceiling above is a delivery-rate ceiling, not a FIFO-depth one.\n"
-           "     The engine puts one VIDCMD word on the bus every 2 SYSCLK, which is one\n"
-           "     word per ~3.6 pixel clocks, while the compositor can eat one word per pixel\n"
-           "     clock.  A line therefore sustains about one record per 3.6 pixels averaged\n"
-           "     across its width; denser BURSTS are fine only to the extent HBLANK\n"
-           "     pre-buffered them.  The stress spans are spread evenly for exactly this\n"
-           "     reason — packing the same count into 128 pixels fails far earlier, and any\n"
-           "     real object list needs its records spread the way its objects are.\n");
-    printf(" 11. OPEN, AND NOW A KNOWN BREAK RATHER THAN A GUESS. The COMPOSITOR->PIXEL SET\n"
-           "     forwarding interface does not work at one word per clock: compositor.v holds\n"
-           "     set_pix_valid/target as levels and pulses set_pix_commit, and pixel.v\n"
-           "     captures VIDCMD_Q while valid is high — but Q has moved on by then.\n"
-           "     compositor.v says so in its own header.  THIS IS THE ONE PLACE THE SUITE\n"
-           "     CANNOT MATCH A TB MEASUREMENT, because there is no correct measurement to\n"
-           "     match yet.  The model applies a PIXEL-target SET at its commit slot, exactly\n"
-           "     like a COMPOSITOR-target one, and SKEW_PIX_TARGET stays a named constant at\n"
-           "     zero.  m2-split still re-runs at 3/1 px and must produce the identical\n"
-           "     image, so the compensation path stays exercised rather than vacuous.\n");
+    printf(" 15. NEW, AND NOW TWO CEILINGS (2026-08-19). The ceiling above is a delivery-rate\n"
+           "     ceiling, not a FIFO-depth one: the engine puts one VIDCMD word on the bus\n"
+           "     every 2 SYSCLK, one word per ~3.6 pixel clocks, so a line sustains about one\n"
+           "     record per 3.6 pixels averaged across its width and denser BURSTS are fine\n"
+           "     only to the extent HBLANK pre-buffered them.  The registered-/RE fetch adds\n"
+           "     a SECOND, unconditional ceiling underneath it: the compositor itself eats\n"
+           "     one word per %u pixel clocks, so no amount of pre-buffering makes a record\n"
+           "     list denser than one record per two slots.  A one-pixel span therefore needs\n"
+           "     a %u-pixel pitch to land where it was authored (the cadence traces measure\n"
+           "     exactly that), and a burst tighter than that is not late — it is impossible.\n"
+           "     The two ceilings do not meet in these cases: the density sweep's densest\n"
+           "     point spreads 64 spans over 640 pixels, a 9-pixel pitch, so the bus is still\n"
+           "     what runs out first and the sweep's answers are unchanged.\n",
+           VIDCMD_SLOTS_PER_WORD, TEMPEST_STRESS_MIN_PITCH);
+    printf(" 11. CLOSED 2026-08-19, AND THE FIX WAS A WIRE. The COMPOSITOR->PIXEL SET\n"
+           "     conduit used to be a shadow tap of the VIDCMD Q bus, and it did not work:\n"
+           "     COMPOSITOR held set_pix_valid/target as levels and pulsed set_pix_commit,\n"
+           "     PIXEL captured VIDCMD_Q while valid was high, and Q had moved on by then.\n"
+           "     That was the one place this suite could not match a TB measurement.  Two\n"
+           "     decisions closed it.  A dedicated 12-bit registered value bus (set_pix_value,\n"
+           "     twelve point-to-point traces) carries the payload, so value/valid/target/\n"
+           "     commit share one pipeline stage and PIXEL applies the bus straight at the\n"
+           "     commit pulse; PIXEL's twelve Q taps came off the shared FIFO bus with it.\n"
+           "     And the registered-/RE fetch leaves Q high-Z between reads, so a tap was\n"
+           "     never going to work anyway.  A PIXEL-target SET now costs exactly what any\n"
+           "     other record costs — the tb measures 2 slots, the same as everything else —\n"
+           "     which is what the model always assumed, so the model is now a measurement.\n"
+           "     SKEW_PIX_TARGET stays a named zero and m2-split still re-runs at 3/1 px for\n"
+           "     the identical image, so the compensation path stays exercised.\n");
     printf(" 16. NEW, FROM THE RTL SYNC, AND IT CUTS BOTH WAYS. Dropping TILE bought back the\n"
            "     two 16-bit mask shifters and cost words instead, but whether that is a good\n"
            "     trade depends entirely on how many HOLES the art has per row.  Measured\n"
@@ -1516,18 +1874,49 @@ int main()
            "     cheaper as runs, and art with more than ~2 holes per row is what TILE was\n"
            "     actually for.\n",
            m3_sprite_words, m3_cursor_words);
-    printf(" 17. NEW, FROM THE RTL SYNC. The 1-word/clock rework retired the prefetch\n"
-           "     invariant entirely.  playback(k) >= words(k+1) was the 2-slot era's rule;\n"
-           "     with every record one word and every record at least one slot it is now\n"
-           "     satisfied by construction, and the check has been deleted rather than left\n"
-           "     to pass vacuously.  What replaced it as the real constraint is delivery\n"
-           "     rate (finding 15), which no encoding change can fix.\n");
+    printf(" 17. REINSTATED 2026-08-19, IN A CADENCE-AWARE FORM. The 1-word/clock rework\n"
+           "     retired the prefetch invariant entirely — playback(k) >= words(k+1) was\n"
+           "     satisfied by construction once every record was one word and one slot, and\n"
+           "     the check was deleted rather than left to pass vacuously.  The registered-\n"
+           "     /RE fetch brings the obligation back: one word per %u slots means a record\n"
+           "     list has to AVERAGE %u slots per record, with the two-deep on-chip bank\n"
+           "     (staged_word plus the parked Q) as the line's entire free credit.  It is no\n"
+           "     longer a closed form — whether a given record is half of a banked pair\n"
+           "     depends on the whole prefix — so the rule is a SIMULATION,\n"
+           "     descriptor.h's vidcmd_plan_line(), and the list builder runs it over every\n"
+           "     line to size that line's filler.  The check is not vacuous either way: the\n"
+           "     render model drives the same engine independently against real deposit\n"
+           "     cycles, so a planner that got the arithmetic wrong would show up as an\n"
+           "     overrun in the CUSHION assertions.\n",
+           VIDCMD_SLOTS_PER_WORD, VIDCMD_SLOTS_PER_WORD);
     printf(" 18. NEW, FROM THE RTL SYNC. PIXEL underrun is not an error condition.  pixel.v\n"
            "     has no empty-flag input and a 7200 holds Q while empty, so a short PIXELS\n"
            "     fill simply re-delivers the last word — a bandwidth compressor, not a\n"
            "     fault.  The suite counts tiled words and still requires zero on every case,\n"
            "     because none of these lists intends to be short; but the counter is a\n"
            "     measurement now, not an assertion about the hardware.\n");
+    printf(" 19. NEW 2026-08-19, AND IT COST ART. The VIDCMD read port is a registered /RE\n"
+           "     driving the 7200 pair directly: two pixel clocks per word, no shaping gate.\n"
+           "     The alternative died on the pinned worst-case table, not on a breadboard\n"
+           "     (griffin.yml interfaces, \"VIDCMD FIFO read port\", 2026-08-18), so this is\n"
+           "     an electrical verdict the format has to live with rather than a design\n"
+           "     preference.  What it buys back is +7.7 ns of margin on the data path; what\n"
+           "     it costs is one HOLD slot behind every record that is not half of a banked\n"
+           "     pair.  Three consequences, all visible above.  (a) An exact-640 line's\n"
+           "     filler is now computed, not summed: m0's tail RUN is 637 slots, not 638,\n"
+           "     and m2-split's is 317, not 318 — same images, one fewer authored slot,\n"
+           "     because the record after a SET pair lands on slot N+2 rather than N+1.\n"
+           "     (b) m2-split's whole point survives untouched: a SET pair behind a run of\n"
+           "     four or more still commits on ADJACENT pixels, because the pair law is what\n"
+           "     the parked-Q bank exists for.  (c) The cursor is a REGRESSION and is\n"
+           "     recorded as one: a 16x16 arrow whose eroded outline leaves 1-pixel fg/bg\n"
+           "     segments now paints %u pixels instead of 84, because the HOLD slots inside\n"
+           "     the art keep the art's own held colour and widen it.  The framing still\n"
+           "     closes — the builder takes the stretch out of the trailing filler — so the\n"
+           "     damage is confined to the row that authored it.  Rule for art: features and\n"
+           "     gaps of one pixel are no longer free, and anything at least two pixels wide\n"
+           "     with two-pixel gaps (every sprite, every tempest object) is unaffected.\n",
+           84 + 14);
 
     printf("\n=== summary ===\n");
     if (g_failures == 0)

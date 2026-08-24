@@ -313,10 +313,10 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
         }
     }
 
-    // Density stress, off by default: N one-pixel spans at a two-pixel pitch,
-    // i.e. span/gap/span/gap.  This is the densest arrangement the format can
-    // express — every record is one word and every playback is one slot — so it
-    // is where the object budget actually gets measured.
+    // Density stress, off by default: N one-pixel spans on a band of rows,
+    // SPREAD evenly across the line.  That measures DELIVERY, which is what
+    // this sweep is for; the compositor's own fetch cadence is a separate
+    // ceiling and the spread pitch stays well clear of it (see author.h).
     if (p.tempest_stress_spans > 0 && line >= TEMPEST_STRESS_ROW &&
         line < TEMPEST_STRESS_ROW + TEMPEST_STRESS_ROWS)
     {
@@ -328,7 +328,8 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
         const uint32_t pitch = H_ACTIVE / (want + 1);
         for (uint32_t i = 0; i < want; i++)
         {
-            insert_span(out, n, {static_cast<int32_t>(pitch * (i + 1)), 1, RUN_SRC_COLOR, TEMPEST_STRESS_COLOR});
+            insert_span(out, n, {static_cast<int32_t>(pitch * (i + 1)), 1, RUN_SRC_COLOR,
+                                 TEMPEST_STRESS_COLOR});
         }
     }
 
@@ -467,7 +468,8 @@ uint32_t pixel_words_for(PixelMode mode, uint32_t pixel_skip)
 uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
                               std::span<uint8_t> line_words,
                               std::span<uint8_t> line_records,
-                              std::span<uint16_t> line_slots)
+                              std::span<uint16_t> line_slots,
+                              std::span<uint16_t> line_stretch)
 {
     constexpr std::array<uint32_t, 4> SPRITE_X = {64, 200, 360, 500};
 
@@ -489,6 +491,42 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
             ram[rec_base + n * 2] = v;
             n++;
             records++;
+        };
+
+        // What the compositor will ACTUALLY do with the words written so far.
+        // The authored sum `slots` below is the lower bound; this is the truth,
+        // because the 2-clock fetch cadence buys a HOLD slot behind every
+        // record that is not half of a banked pair (descriptor.h,
+        // vidcmd_plan_line).
+        auto plan_now = [&]()
+        {
+            return vidcmd_plan_line(
+                std::span<const uint16_t>(&ram.words[rec_base >> 1], n), H_BLANK);
+        };
+
+        // Close an exact-640 line.  The filler RUN is emitted provisionally and
+        // then resized against the slot the fetch engine actually delivers it
+        // on, so the cadence's stretch comes out of the filler rather than
+        // overrunning into the next line and stealing its eager SETs.  A filler
+        // is the LAST record, so its own count cannot move its start slot —
+        // one pass is exact, not a fixed point.
+        auto close_exact = [&]()
+        {
+            put(vidcmd_run(RUN_SRC_PASSTHROUGH, 1));
+            const VidcmdSlotPlan plan = plan_now();
+            if (plan.last_slot < H_ACTIVE)
+            {
+                ram[rec_base + (n - 1) * 2] =
+                    vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - plan.last_slot);
+            }
+            else
+            {
+                // The list already reaches the end of the line on its own; a
+                // filler would only overrun.  (If the records BEFORE it already
+                // overran, the checker's slot-sum test is what says so.)
+                n--;
+                records--;
+            }
         };
 
         // Every span this line paints, sorted and disjoint.
@@ -625,15 +663,17 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
         // --- active-slot records ---------------------------------------------
         if (p.slot_regression)
         {
-            // compositor_tb's NORMATIVE_M0, written literally.  Slot 0 is the
-            // RUN, slot 1 is the SET (visible in its own slot), slots 2..639 the
-            // tail RUN.  1 + 1 + 638 = 640.
+            // compositor_tb's NORMATIVE_M0.  The RUN and the SET are banked as a
+            // pair in HBLANK, so slot 0 is the RUN and slot 1 is the SET
+            // (visible in its own slot).  The tail RUN is a fresh fetch and
+            // lands on slot 3 at the 2-slot cadence, with slot 2 holding the
+            // same passthrough — so it is 637 slots long, not 638, and
+            // close_exact() is what works that out.
             put(vidcmd_run(RUN_SRC_PASSTHROUGH, 1));
             slots += 1;
             put(vidcmd_set(SET_PIX_PAL_FG, p.regression_c2));
             slots += 1;
-            put(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - 2));
-            slots += H_ACTIVE - 2;
+            close_exact();
         }
         else if (p.mid_line_split)
         {
@@ -644,12 +684,15 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
                 put(vidcmd_run(RUN_SRC_PASSTHROUGH, lead));
                 slots += lead;
             }
+            // The two SETs are the leading RUN's banked pair, so they land on
+            // consecutive slots — the whole point of the case, and the property
+            // the 2-clock cadence preserves.  The record AFTER them is a fresh
+            // fetch and slips one slot behind the authored sum.
             put(vidcmd_set(SET_PIX_PAL_BG, p.split_bg));
             slots += 1;
             put(vidcmd_set(SET_PIX_PAL_FG, p.split_fg));
             slots += 1;
-            put(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - slots));
-            slots = H_ACTIVE;
+            close_exact();
         }
         else if (want_records)
         {
@@ -675,12 +718,12 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
 
             if (p.framing == FramingMode::CUSHION)
             {
-                // Exact-640 discipline: the FIFO never empties mid-line, hold
-                // never engages, so the sums have to close.
+                // Exact-640 discipline: the FIFO never empties mid-line, so the
+                // occupancy has to close — and occupancy, not the authored sum,
+                // is what close_exact() measures.
                 if (slots < H_ACTIVE)
                 {
-                    put(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - slots));
-                    slots = H_ACTIVE;
+                    close_exact();
                 }
             }
             else if (slots < H_ACTIVE)
@@ -695,9 +738,13 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
             }
         }
 
+        // Report the OCCUPANCY, not the authored sum: what the checker has to
+        // hold the list to is the number of slots the records really take.
+        const VidcmdSlotPlan plan = plan_now();
         line_words[line]   = static_cast<uint8_t>(n);
         line_records[line] = static_cast<uint8_t>(records);
-        line_slots[line]   = static_cast<uint16_t>(slots);
+        line_slots[line]   = static_cast<uint16_t>(plan.slots);
+        line_stretch[line] = static_cast<uint16_t>(plan.stretch);
         total += n;
     }
 
