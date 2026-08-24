@@ -1,3 +1,4 @@
+cd compositor && iverilog -g2012 -o compositor_tb.vvp compositor_tb.v compositor.v && vvp compositor_tb.vvp
 ================ COMPOSITOR TESTBENCH ================
 PASS  NORMATIVE_M0 pixel 0 is the pre-SET held_fg
 PASS  NORMATIVE_M0 tail is the SET value
@@ -24,7 +25,7 @@ PASS  POSITIONAL_EAGER SET executes as slot 4
 PASS  POSITIONAL_EAGER tail is the new held_bg
 PASS  PIXEL_SET_BLANK one commit pulse
 PASS  PIXEL_SET_BLANK target forwarded
-      MEASURED  pop->commit skew, blanking = 3 clocks
+      MEASURED  /RE fall -> commit skew, blanking = 2 clocks
 PASS  LOCAL_SET no PIXEL commit for targets 0/1/7
 PASS  LOCAL_SET cmp_held_fg written
 PASS  LOCAL_SET cmp_held_bg written
@@ -32,21 +33,29 @@ PASS  PIXEL_SET_ACTIVE no early commit
 PASS  PIXEL_SET_ACTIVE one commit pulse
 PASS  PIXEL_SET_ACTIVE target forwarded
 PASS  PIXEL_SET_ACTIVE commit precedes its own slot pixel
-      MEASURED  commit at cycle 3759, the SET two slots later reaches
+      MEASURED  commit at cycle 3759, the SET one slot later reaches
                 RGB_OUT at cycle 3761 -> commit leads its own slot's
                 pixel by 1 clock(s)
 PASS  BACK_TO_BACK_SETS all three values appear
 PASS  BACK_TO_BACK_SETS strictly increasing slots
 PASS  BACK_TO_BACK_SETS evenly spaced
-PASS  BACK_TO_BACK_SETS commit on SUCCESSIVE pixels
+PASS  BACK_TO_BACK_SETS commit every other pixel
 PASS  BACK_TO_BACK_SETS start at slot 1 behind a 1-slot RUN
-      MEASURED  SET slots 1, 2, 3 -> fetch cadence 1 slots/word
-PASS  ONE_PX_SPANS red is exactly pixel 0
-PASS  ONE_PX_SPANS green is exactly pixel 1
-PASS  ONE_PX_SPANS blue is exactly pixel 2
-PASS  ONE_PX_SPANS passthrough resumes at pixel 3
-PASS  SUSTAINED_1PX 640 one-slot records fill 640 pixels
-      MEASURED  0 of 640 alternating one-pixel records wrong
+      MEASURED  SET slots 1, 3, 5 -> fetch cadence 2 slots/word
+PASS  PAIR_LOCAL slots 0..3 are the old held_fg
+PASS  PAIR_LOCAL slot 4 is SET(0)'s own slot
+PASS  PAIR_LOCAL slot 5 is SET(1), consecutive
+PASS  PAIR_LOCAL slot 6 HOLDs the new held_fg
+PASS  PAIR_LOCAL RUN(bg) starts at slot 7
+PASS  PAIR_LOCAL both local registers took their values
+PASS  ONE_PX_SPANS red is pixel 0
+PASS  ONE_PX_SPANS green is pixel 1 (pair law)
+PASS  ONE_PX_SPANS pixel 2 HOLDs green
+PASS  ONE_PX_SPANS blue is pixel 3 (cadence)
+PASS  ONE_PX_SPANS pixel 4 HOLDs blue
+PASS  ONE_PX_SPANS passthrough resumes at pixel 5
+PASS  SUSTAINED_2SLOT 640 one-slot records paint the 2-slot pattern
+      MEASURED  0 of 640 pixels off the 2-slot cadence pattern
 PASS  SHORT_LINE one RUN(pt,1) paints the line
 PASS  SHORT_LINE unfilled line keeps holding passthrough
 PASS  SHORT_LINE later fill re-frames cleanly
@@ -63,17 +72,72 @@ PASS  OVERRUN leftover record is staged at the H_ACTIVE fall
 PASS  OVERRUN staged leftover blocked the eager SETs
 PASS  OVERRUN leftover plays at slot 0 of line N+1
 PASS  OVERRUN SETs land late, inside line N+1
-      MEASURED  stolen-eagerness SETs land at slot 2
+      MEASURED  stolen-eagerness SETs land at slot 3
 PASS  MERGE packet A plays slots 0..3
 PASS  MERGE packet B merged into the SAME line
       MEASURED  packet B took over at slot 4
 PASS  RLE_TRUNCATION green span
 PASS  RLE_TRUNCATION blue span
 PASS  RLE_TRUNCATION holds the last colour to the line end
-PASS  RESERVED_01 slots 0..1 are the RUN
-PASS  RESERVED_01 its own slot changes nothing
-PASS  RESERVED_01 the next record still runs
-      MEASURED  record after the reserved no-op starts at slot 3
+PASS  MASK_SPRITE header behind a RUN is not eager
+PASS  MASK_SPRITE bg SET ahead of it was eager
+PASS  MASK_SPRITE background before the record
+PASS  MASK_SPRITE header's own slot shows the background
+PASS  MASK_SPRITE d0 = 11 held_fg
+PASS  MASK_SPRITE d1 = 10 held_bg
+PASS  MASK_SPRITE d2 = 00 passthrough
+PASS  MASK_SPRITE d3 = 01 reserved plays as passthrough
+PASS  MASK_SPRITE d4 = 11 held_fg
+PASS  MASK_SPRITE d5 = 10 held_bg
+PASS  MASK_SPRITE d6 = 00 passthrough
+PASS  MASK_SPRITE d7 = 11 held_fg
+PASS  MASK_SPRITE source resumes untouched after eight slots
+PASS  MASK_SPRITE header rewrote cmp_held_fg
+PASS  MASK_SPRITE nothing was forwarded to PIXEL
+PASS  MASK_SPRITE mask starts one slot after the RUN (the header's)
+      MEASURED  RUN-to-mask gap 1 slot(s) (the header's own slot)
+PASS  MASK_CURSOR16 background before the pair
+PASS  MASK_CURSOR16 headerA's own slot shows the background
+PASS  MASK_CURSOR16 record A alternates fgA and bg
+PASS  MASK_CURSOR16 three-slot seam shows the underlying source
+PASS  MASK_CURSOR16 record B paints with fgB, in order
+PASS  MASK_CURSOR16 source resumes after the second record
+PASS  MASK_CURSOR16 both fg writes landed, B last
+PASS  MASK_CURSOR16 no data word reached the PIXEL bus
+PASS  MASK_CURSOR16 chained masks are three slots apart
+      MEASURED  mask-to-mask gap 3 slot(s) (derived 3: retire+capture,
+                header slot, fetch slot; gapless needs a 12-bit
+                deferred-fg register, which does not fit)
+PASS  MASK_BLANK_EAGER header executed in blanking
+PASS  MASK_BLANK_EAGER a data word is armed
+PASS  MASK_BLANK_EAGER the data word waits, staged
+PASS  MASK_BLANK_EAGER playback has not started
+PASS  MASK_BLANK_EAGER dibits start at pixel 0
+PASS  MASK_BLANK_EAGER slot 8 restores the pre-mask source
+PASS  MASK_BLANK_EAGER the record behind it runs from slot 9
+PASS  MASK_STARVE the RUN_COLOR before the record
+PASS  MASK_STARVE header's own slot shows the underlying source
+PASS  MASK_STARVE HOLD stretches while the data word is missing
+PASS  MASK_STARVE the dibits then play, correctly and in order
+PASS  MASK_STARVE the RUN_COLOR resumes after the mask
+PASS  MASK_STARVE the interrupted span is given back whole
+      MEASURED  withheld mask took effect at slot 204
+PASS  MASK_RESUME line A background
+PASS  MASK_RESUME line A header slot
+PASS  MASK_RESUME line A plays d0..d6
+PASS  MASK_RESUME playback is frozen, not abandoned
+PASS  MASK_RESUME the count froze one slot short
+PASS  MASK_RESUME d7 plays at slot 0 of the next line
+PASS  MASK_RESUME the mask then ends and the source holds
+PASS  MASK_NRS the mask is playing before the reset
+PASS  MASK_NRS its first four pixels are the authored dibits
+PASS  MASK_NRS playback cleared
+PASS  MASK_NRS armed data word cleared
+PASS  MASK_NRS staged word cleared
+PASS  MASK_NRS held_fg back to 0xFFF
+PASS  MASK_NRS held_bg back to 0x000
+PASS  MASK_NRS count already terminal
+PASS  MASK_NRS the next frame is clean passthrough
 PASS  NRS_RECOVERY pre-reset line shows the SET colour
 PASS  NRS_RECOVERY held_fg back to 0xFFF
 PASS  NRS_RECOVERY held_bg back to 0x000
@@ -83,7 +147,7 @@ PASS  NRS_RECOVERY unfilled frame shows the framebuffer for free
 PASS  PREAMBLE pal_fg value delivered
 PASS  PREAMBLE pal_bg value delivered
 PASS  PREAMBLE ham_held value delivered
-PASS  PREAMBLE one capture per PIXEL SET
+PASS  PREAMBLE at least one capture per PIXEL SET
 PASS  PREAMBLE one apply per PIXEL SET
 PASS  MIDLINE_PIX_SET nothing applied before its slot
 PASS  MIDLINE_PIX_SET value delivered
@@ -93,24 +157,36 @@ PASS  CONSEC_PIX four applies
 PASS  CONSEC_PIX targets in order
 PASS  CONSEC_PIX values match their targets
 PASS  CONSEC_PIX commits evenly spaced
-      MEASURED  consecutive PIXEL-target SET commits 2 clocks apart
+      MEASURED  consecutive PIXEL-target SET commits 2 clock(s) apart
+PASS  PAIR_PIX nothing applied before the run expires
+PASS  PAIR_PIX both values delivered
+PASS  PAIR_PIX two applies
+PASS  PAIR_PIX targets in stream order
+PASS  PAIR_PIX commits land on CONSECUTIVE clocks
+PASS  PAIR_PIX the run's pixels are untouched
+      MEASURED  paired PIXEL-target commits 1 clock(s) apart
 PASS  MIXED_SETS cmp_held_fg took its value
 PASS  MIXED_SETS cmp_held_bg took its value
 PASS  MIXED_SETS PIXEL values delivered
 PASS  MIXED_SETS two PIXEL applies
-      MEASURED  mixed run: cmp SET at slot 1, PIXEL commits 3 clocks apart
-      MEASURED  0 coincident commit+capture edges over the run
-PASS  SAME_EDGE apply-old/capture-new never had to arbitrate
-      MEASURED  0 want_pop cycles against an empty FIFO
-      MEASURED  719 words popped over the run
+      MEASURED  mixed run: cmp SET at slot 1, PIXEL commits 4 clocks apart
+      MEASURED  14 coincident commit+capture edges over the run
+PASS  SAME_EDGE valid and commit share a stage, applied straight off the bus
+      MEASURED  0 /RE falls against an empty FIFO
+      MEASURED  433 words popped over the run
 ------------------------------------------------------
 MEASURED CONSTANTS FOR THE SUITE
   H_ACTIVE -> RGB_OUT pipeline           : 2 clocks (by construction)
   SET value visible at slot              : 1
-  pop -> set_pix_commit, blanking        : 3 clocks
+  /RE fall -> set_pix_commit, blanking   : 2 clocks
   set_pix_commit leads its slot's RGB_OUT: 1 clock(s)
-  sustained fetch cadence                : 1 slot(s) per VIDCMD word
-  PIXEL-target SET cost                  : 2 slots (own + fetch stall)
+  sustained fetch cadence                : 2 slot(s) per VIDCMD word (expected 2)
+  banked-pair gap                        : 1 slot(s)
+  PIXEL-target SET cost                  : 2 slot(s), no fetch stall
+  MASK record                            : 8 slots per data word
+  RUN -> mask gap                        : 1 slot(s) (the header's own slot)
+  mask -> mask gap                       : 3 slot(s) (NOT gapless; see the
+                                           seam derivation in the RTL header)
 ------------------------------------------------------
 TESTBENCH RESULT: PASS (0 failures)
-compositor_tb.v:949: $finish called at 761540000 (1ps)
+compositor_tb.v:1483: $finish called at 965940000 (1ps)

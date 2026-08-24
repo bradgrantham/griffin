@@ -5,737 +5,826 @@ ATF1508 Fitter Report
 UTILIZATION SUMMARY
 ----------------------------------------
   dedicated input                 2/4 	(50%)
-  I/O pins                        53/64 	(82%)
-  Logic cells                     120/128 	(93%)
-  Flip-Flop                       82/128 	(64%)
-  Foldback logic                  6/128 	(4%)
-  Nodes+FB/MCells                 100/128 	(78%)
-  cascade                         26
+  I/O pins                        64/64 	(100%)
+  Logic cells                     121/128 	(94%)
+  Flip-Flop                       95/128 	(74%)
+  Foldback logic                  13/128 	(10%)
+  Nodes+FB/MCells                 124/128 	(96%)
+  cascade                         10
   input pins                      36
-  output pins                     19
-  Pts                             386
+  output pins                     30
+  Pts                             370
 
 PER-LAB PLACEMENT
 ------------------------------------------------------------------------
-  LAB A (MC 1-16):  18/16 used  (7 pin, 9 feedback, 2 foldback)  fan-in: 36/40
-    MC  3  pin 12  VIDCMD_Q_7
-    MC  5  pin 11  H_ACTIVE
-    MC  8  pin  9  VIDCMD_Q_2
-    MC 11  pin  8  VIDCMD_Q_1
-    MC 13  pin  6  VIDCMD_Q_0
-    MC 14  pin  5  VIDCMD_Q_15
-    MC 16  pin  4  want_pop
-    MC  1  feedback  abc:n532
-    MC  2  feedback  have_staged
-    MC  3  feedback  abc:n522
-    MC  4  feedback  abc:n293 (QN)
-    MC  6  feedback  run_count_8
-    MC  8  feedback  run_count_4
-    MC  9  feedback  q_pending
-    MC 11  feedback  run_count_9
-    MC 13  feedback  run_count_6
-    MC 15  FOLDBACK  abc:n268  [from id00056Q]
-    MC 16  FOLDBACK  abc:n282  [from id00070Q]
+  LAB A (MC 1-16):  26/16 used  (8 pin, 12 feedback, 6 foldback)  fan-in: 35/40
+    MC  3  pin 12  VIDCMD_Q_15
+    MC  5  pin 11  VIDCMD_Q_14
+    MC  6  pin 10  VIDCMD_Q_9
+    MC  8  pin  9  VIDCMD_Q_7
+    MC 11  pin  8  RGB_IN_2
+    MC 13  pin  6  RGB_IN_1
+    MC 14  pin  5  H_ACTIVE
+    MC 16  pin  4  set_pix_commit
+    MC  1  feedback  have_staged
+    MC  2  feedback  run_count_0
+    MC  3  feedback  abc:n325 (QN)
+    MC  4  feedback  abc:n644 (QN)
+    MC  5  feedback  abc:n341
+    MC  6  feedback  abc:n321
+    MC  7  feedback  abc:n653
+    MC  8  feedback  sav_src_1
+    MC  9  feedback  abc:n650
+    MC 11  feedback  abc:n308
+    MC 13  feedback  cur_src_0
+    MC 15  feedback  cur_src_1
+    MC 10  FOLDBACK  abc:n329 (QN)  [from id00106QN]
+    MC 11  FOLDBACK  abc:n293 (QN)  [from id00071QN]
+    MC 12  FOLDBACK  abc:n340  [from id00117Q]
+    MC 13  FOLDBACK  abc:n339  [from id00116Q]
+    MC 14  FOLDBACK  abc:n295 (QN)  [from id00073QN]
+    MC 15  FOLDBACK  abc:n287 (QN)  [from id00065QN]
 
-  LAB B (MC 17-32):  18/16 used  (8 pin, 8 feedback, 2 foldback)  fan-in: 32/40
-    MC 17  pin 22  VIDCMD_Q_14
-    MC 19  pin 21  VIDCMD_Q_13
-    MC 21  pin 20  VIDCMD_Q_12
-    MC 24  pin 18  VIDCMD_Q_5
-    MC 25  pin 17  nVIDCMD_EF
+  LAB B (MC 17-32):  23/16 used  (8 pin, 11 feedback, 4 foldback)  fan-in: 34/40
+    MC 17  pin 22  RGB_IN_0
+    MC 19  pin 21  RGB_IN_3
+    MC 21  pin 20  RGB_IN_4
+    MC 24  pin 18  RGB_IN_5
+    MC 25  pin 17  RGB_IN_8
     MC 27  pin 16  RGB_IN_7
-    MC 29  pin 15  RGB_IN_4
+    MC 29  pin 15  RGB_IN_9
     MC 32  pin 14  TDI
-    MC 18  feedback  run_count_7
-    MC 20  feedback  run_count_5
-    MC 22  feedback  run_count_1
+    MC 17  feedback  cur_colour_1
+    MC 18  feedback  sav_src_0
+    MC 19  feedback  cur_colour_0
+    MC 20  feedback  abc:n622
+    MC 21  feedback  cur_colour_2
+    MC 22  feedback  abc:n611
     MC 24  feedback  run_count_2
-    MC 26  feedback  run_count_0
-    MC 28  feedback  run_count_10
-    MC 30  feedback  run_count_3
-    MC 32  feedback  run_count_11
-    MC 30  FOLDBACK  abc:n268  [from id00056Q]
-    MC 31  FOLDBACK  abc:n282  [from id00070Q]
+    MC 25  feedback  abc:n609
+    MC 27  feedback  run_count_1
+    MC 29  feedback  run_count_3
+    MC 32  feedback  run_count_4
+    MC 26  FOLDBACK  abc:n293 (QN)  [from id00071QN]
+    MC 27  FOLDBACK  abc:n340  [from id00117Q]
+    MC 28  FOLDBACK  abc:n339  [from id00116Q]
+    MC 31  FOLDBACK  abc:n295 (QN)  [from id00073QN]
 
-  LAB C (MC 33-48):  24/16 used  (8 pin, 14 feedback, 2 foldback)  fan-in: 36/40
-    MC 35  pin 31  VIDCMD_Q_4
-    MC 37  pin 30  VIDCMD_Q_10
-    MC 38  pin 29  VIDCMD_Q_8
-    MC 40  pin 28  VIDCMD_Q_6
-    MC 43  pin 27  VIDCMD_Q_11
-    MC 45  pin 25  set_pix_commit
+  LAB C (MC 33-48):  22/16 used  (8 pin, 12 feedback, 2 foldback)  fan-in: 35/40
+    MC 35  pin 31  RGB_IN_11
+    MC 37  pin 30  RGB_IN_10
+    MC 38  pin 29  RGB_IN_6
+    MC 40  pin 28  nVIDCMD_RE
+    MC 43  pin 27  set_pix_value_7
+    MC 45  pin 25  set_pix_target_2
     MC 46  pin 24  set_pix_valid
     MC 48  pin 23  TMS
-    MC 33  feedback  cur_colour_2
-    MC 34  feedback  cur_colour_0
-    MC 35  feedback  abc:n272
-    MC 36  feedback  cur_src_1
-    MC 37  feedback  abc:n528
-    MC 38  feedback  abc:n508
-    MC 39  feedback  cur_colour_1
-    MC 40  feedback  abc:n518
-    MC 41  feedback  abc:n529 (QN)
-    MC 42  feedback  abc:n512 (QN)
-    MC 43  feedback  cur_src_0
-    MC 44  feedback  abc:n539
-    MC 47  feedback  abc:n550
-    MC 48  feedback  abc:n542
-    MC 47  FOLDBACK  abc:n268  [from id00056Q]
-    MC 48  FOLDBACK  abc:n282  [from id00070Q]
+    MC 33  feedback  abc:n627 (QN)
+    MC 34  feedback  abc:n634 (QN)
+    MC 35  feedback  h_active_d
+    MC 36  feedback  abc:n631 (QN)
+    MC 37  feedback  mask_active
+    MC 38  feedback  cmp_color1_7
+    MC 39  feedback  abc:n617 (QN)
+    MC 41  feedback  staged_word_7
+    MC 42  feedback  staged_word_9
+    MC 44  feedback  w_is_set
+    MC 47  feedback  staged_word_14
+    MC 48  feedback  abc:n310 (QN)
+    MC 47  FOLDBACK  abc:n340  [from id00117Q]
+    MC 48  FOLDBACK  abc:n287 (QN)  [from id00065QN]
 
-  LAB D (MC 49-64):  16/16 used  (8 pin, 8 feedback, 0 foldback)  fan-in: 21/40
-    MC 49  pin 41  RGB_IN_6
-    MC 51  pin 40  RGB_IN_5
-    MC 53  pin 39  RGB_IN_3
-    MC 56  pin 37  VIDCMD_Q_9
-    MC 57  pin 36  RGB_IN_2
-    MC 59  pin 35  RGB_IN_0
-    MC 61  pin 34  RGB_IN_1
-    MC 64  pin 33  VIDCMD_Q_3
-    MC 50  feedback  cmp_held_fg_3
-    MC 52  feedback  cmp_held_fg_2
-    MC 54  feedback  cmp_held_fg_1
-    MC 56  feedback  cmp_held_fg_0
-    MC 58  feedback  cmp_held_fg_8
-    MC 60  feedback  cmp_held_fg_6
-    MC 62  feedback  cmp_held_fg_4
-    MC 64  feedback  cmp_held_fg_9
+  LAB D (MC 49-64):  23/16 used  (8 pin, 14 feedback, 1 foldback)  fan-in: 28/40
+    MC 49  pin 41  VIDCMD_Q_4
+    MC 51  pin 40  VIDCMD_Q_2
+    MC 53  pin 39  VIDCMD_Q_3
+    MC 56  pin 37  VIDCMD_Q_6
+    MC 57  pin 36  VIDCMD_Q_1
+    MC 59  pin 35  VIDCMD_Q_5
+    MC 61  pin 34  nVIDCMD_EF
+    MC 64  pin 33  VIDCMD_Q_12
+    MC 49  feedback  cmp_color1_6
+    MC 50  feedback  $abc$1392$nVIDCMD_RE
+    MC 51  feedback  cmp_color1_3
+    MC 52  feedback  run_count_5
+    MC 53  feedback  cmp_color1_11
+    MC 54  feedback  run_count_10
+    MC 55  feedback  run_count_6
+    MC 56  feedback  cmp_color1_4
+    MC 57  feedback  cmp_color1_0
+    MC 58  feedback  run_count_11
+    MC 59  feedback  cmp_color1_1
+    MC 60  feedback  run_count_7
+    MC 62  feedback  run_count_8
+    MC 64  feedback  run_count_9
+    MC 64  FOLDBACK  abc:n645  [from id00422Q]
 
-  LAB E (MC 65-80):  15/16 used  (3 pin, 12 feedback, 0 foldback)  fan-in: 27/40
-    MC 73  pin 49  RGB_IN_10
-    MC 75  pin 50  RGB_IN_9
-    MC 77  pin 51  RGB_IN_8
-    MC 65  feedback  cmp_held_bg_4
-    MC 66  feedback  cmp_held_bg_3
-    MC 67  feedback  cmp_held_bg_2
-    MC 68  feedback  cmp_held_bg_11
-    MC 69  feedback  cmp_held_bg_8
-    MC 70  feedback  cmp_held_bg_0
-    MC 71  feedback  cmp_held_bg_7
-    MC 72  feedback  cmp_held_bg_1
-    MC 74  feedback  cmp_held_fg_7
-    MC 76  feedback  cmp_held_fg_10
-    MC 78  feedback  cmp_held_fg_11
-    MC 80  feedback  cmp_held_fg_5
+  LAB E (MC 65-80):  12/16 used  (8 pin, 4 feedback, 0 foldback)  fan-in: 35/40
+    MC 65  pin 44  RGB_OUT_7
+    MC 67  pin 45  RGB_OUT_8
+    MC 69  pin 46  RGB_OUT_5
+    MC 72  pin 48  RGB_OUT_4
+    MC 73  pin 49  RGB_OUT_3
+    MC 75  pin 50  RGB_OUT_0
+    MC 77  pin 51  RGB_OUT_1
+    MC 80  pin 52  RGB_OUT_2
+    MC 74  feedback  cmp_color0_5
+    MC 76  feedback  cmp_color0_2
+    MC 78  feedback  cmp_color1_5
+    MC 79  feedback  cmp_color1_2
 
-  LAB F (MC 81-96):  12/16 used  (8 pin, 4 feedback, 0 foldback)  fan-in: 36/40
-    MC 83  pin 54  RGB_OUT_0
-    MC 85  pin 55  RGB_OUT_2
-    MC 86  pin 56  RGB_OUT_3
-    MC 88  pin 57  RGB_OUT_5
-    MC 91  pin 58  RGB_OUT_6
-    MC 93  pin 60  RGB_OUT_4
-    MC 94  pin 61  RGB_OUT_7
+  LAB F (MC 81-96):  16/16 used  (8 pin, 8 feedback, 0 foldback)  fan-in: 35/40
+    MC 83  pin 54  set_pix_value_3
+    MC 85  pin 55  set_pix_value_1
+    MC 86  pin 56  set_pix_value_2
+    MC 88  pin 57  RGB_OUT_6
+    MC 91  pin 58  RGB_OUT_10
+    MC 93  pin 60  RGB_OUT_11
+    MC 94  pin 61  RGB_OUT_9
     MC 96  pin 62  TCK
-    MC 90  feedback  cmp_held_bg_5
-    MC 92  feedback  cmp_held_bg_10
-    MC 95  feedback  cmp_held_bg_9
-    MC 96  feedback  cmp_held_bg_6
+    MC 82  feedback  cmp_color0_6
+    MC 84  feedback  cmp_color0_9
+    MC 87  feedback  staged_word_1
+    MC 89  feedback  cmp_color1_9
+    MC 90  feedback  staged_word_6
+    MC 92  feedback  staged_word_3
+    MC 95  feedback  staged_word_2
+    MC 96  feedback  staged_word_4
 
-  LAB G (MC 97-112):  15/16 used  (8 pin, 7 feedback, 0 foldback)  fan-in: 36/40
-    MC 97  pin 63  set_pix_target_2
-    MC 99  pin 64  set_pix_capture
-    MC101  pin 65  RGB_OUT_11
-    MC104  pin 67  RGB_OUT_8
-    MC105  pin 68  RGB_OUT_9
-    MC107  pin 69  RGB_OUT_10
-    MC109  pin 70  RGB_OUT_1
+  LAB G (MC 97-112):  22/16 used  (8 pin, 14 feedback, 0 foldback)  fan-in: 35/40
+    MC 97  pin 63  VIDCMD_Q_10
+    MC 99  pin 64  VIDCMD_Q_11
+    MC101  pin 65  VIDCMD_Q_8
+    MC104  pin 67  VIDCMD_Q_13
+    MC105  pin 68  VIDCMD_Q_0
+    MC107  pin 69  set_pix_value_0
+    MC109  pin 70  set_pix_value_5
     MC112  pin 71  TDO
-    MC102  feedback  staged_word_1
-    MC103  feedback  staged_word_2
-    MC106  feedback  staged_word_3
-    MC108  feedback  staged_word_7
-    MC110  feedback  staged_word_13
-    MC111  feedback  staged_word_14
-    MC112  feedback  staged_word_12
+    MC 97  feedback  cmp_color0_8
+    MC 98  feedback  staged_word_8
+    MC 99  feedback  cmp_color0_7
+    MC100  feedback  cmp_color1_10
+    MC101  feedback  cmp_color0_0
+    MC102  feedback  staged_word_0
+    MC103  feedback  staged_word_13
+    MC104  feedback  ef_at_pop
+    MC105  feedback  cmp_color0_3
+    MC106  feedback  cmp_color1_8
+    MC108  feedback  staged_word_11
+    MC110  feedback  staged_word_10
+    MC111  feedback  staged_word_12
+    MC112  feedback  staged_word_5
 
-  LAB H (MC 113-128):  16/16 used  (3 pin, 13 feedback, 0 foldback)  fan-in: 25/40
-    MC115  pin 73  RGB_IN_11
-    MC126  pin 80  set_pix_target_0
-    MC128  pin 81  set_pix_target_1
-    MC113  feedback  staged_word_11
-    MC114  feedback  staged_word_6
-    MC116  feedback  staged_word_8
-    MC117  feedback  pop_in_flight
-    MC118  feedback  ef_meta
-    MC119  feedback  staged_word_10
-    MC120  feedback  ef_sync
-    MC121  feedback  staged_word_4
-    MC122  feedback  staged_word_5
-    MC123  feedback  h_active_d
-    MC124  feedback  staged_word_0
-    MC125  feedback  staged_word_9
-    MC127  feedback  w_is_set
+  LAB H (MC 113-128):  14/16 used  (8 pin, 6 feedback, 0 foldback)  fan-in: 16/40
+    MC115  pin 73  set_pix_value_11
+    MC117  pin 74  set_pix_value_10
+    MC118  pin 75  set_pix_value_8
+    MC120  pin 76  set_pix_value_9
+    MC123  pin 77  set_pix_value_6
+    MC125  pin 79  set_pix_value_4
+    MC126  pin 80  set_pix_target_1
+    MC128  pin 81  set_pix_target_0
+    MC116  feedback  ef_sync
+    MC119  feedback  ef_meta
+    MC121  feedback  cmp_color0_11
+    MC122  feedback  cmp_color0_10
+    MC124  feedback  cmp_color0_1
+    MC127  feedback  cmp_color0_4
 
 FOLDBACK ANALYSIS
 ------------------------------------------------------------------------
-  Total foldbacks: 6
+  Total foldbacks: 13
 
   Signals replicated as foldbacks (most replicas first):
 
-    abc:n268                                  3 copies  in LABs: A, B, C
-      consumed by: abc:n293 (QN), abc:n518, abc:n508, abc:n539, abc:n550, abc:n542, cur_colour_1.D, cur_colour_0.D ... +19 more
+    abc:n340                                  3 copies  in LABs: A, B, C
+      consumed by: abc:n617 (QN), abc:n631 (QN), abc:n634 (QN), abc:n627 (QN), abc:n650, abc:n644 (QN), abc:n653, cur_colour_2.D ... +8 more
 
-    abc:n282                                  3 copies  in LABs: A, B, C
-      consumed by: abc:n539, abc:n550, abc:n542, cur_colour_1.D, cur_colour_0.D, run_count_0.D, cur_src_0.D, cur_src_1.D ... +14 more
+    abc:n293 (QN)                             2 copies  in LABs: A, B
+      consumed by: sav_src_1.D, sav_src_0.D, abc:n341, cur_src_0.D
+
+    abc:n339                                  2 copies  in LABs: A, B
+      consumed by: abc:n609, abc:n611, run_count_1.D, abc:n622, abc:n341, run_count_2.D, run_count_3.D, run_count_4.D
+
+    abc:n295 (QN)                             2 copies  in LABs: A, B
+      consumed by: abc:n609, abc:n308, abc:n611, run_count_1.D, abc:n622, run_count_2.D, run_count_3.D
+
+    abc:n287 (QN)                             2 copies  in LABs: A, C
+      consumed by: mask_active.D, have_staged.D, abc:n341
+
+    abc:n329 (QN)                             1 copies  in LABs: A
+      consumed by: have_staged.D, cur_src_1.D, cur_src_0.D
+
+    abc:n645                                  1 copies  in LABs: D
+      consumed by: run_count_10.D, run_count_11.D
 
   Foldback imports per LAB:
 
-    LAB A: 2 foldback(s)
-      - abc:n268
-      - abc:n282
-    LAB B: 2 foldback(s)
-      - abc:n268
-      - abc:n282
+    LAB A: 6 foldback(s)
+      - abc:n329 (QN)
+      - abc:n293 (QN)
+      - abc:n340
+      - abc:n339
+      - abc:n295 (QN)
+      - abc:n287 (QN)
+    LAB B: 4 foldback(s)
+      - abc:n293 (QN)
+      - abc:n340
+      - abc:n339
+      - abc:n295 (QN)
     LAB C: 2 foldback(s)
-      - abc:n268
-      - abc:n282
+      - abc:n340
+      - abc:n287 (QN)
+    LAB D: 1 foldback(s)
+      - abc:n645
 
 FAN-IN DETAIL
 ------------------------------------------------------------------------
-  LAB A: 36/40 inputs
-    I/O pins (8): H_ACTIVE, PIXEL_CLK, VIDCMD_Q_15, VIDCMD_Q_13, VIDCMD_Q_12, VIDCMD_Q_14, nRS, nVIDCMD_EF
-    Internal (28):
-      pop_in_flight
-      abc:n532
+  LAB A: 35/40 inputs
+    I/O pins (4): H_ACTIVE, VIDCMD_Q_14, VIDCMD_Q_15, nRS
+    Internal (31):
+      sav_src_0
+      abc:n308
+      $abc$1392$nVIDCMD_RE
+      cur_src_1
+      sav_src_1
+      staged_word_9
       run_count_0
-      run_count_2
-      staged_word_4
-      run_count_4
-      staged_word_14
-      ef_sync
       run_count_11
-      run_count_8
-      run_count_7
-      q_pending
-      abc:n528
+      cur_src_0
+      staged_word_12
+      mask_active
+      abc:n609
       run_count_5
-      run_count_3
-      staged_word_5
-      ef_meta
-      run_count_9
-      run_count_1
-      run_count_10
-      abc:n518
-      staged_word_7
-      have_staged
       w_is_set
-      staged_word_8
+      staged_word_10
+      run_count_2
+      run_count_1
+      run_count_7
+      have_staged
+      run_count_8
+      staged_word_13
+      run_count_4
+      run_count_10
+      staged_word_11
       run_count_6
-      abc:n293 (QN)
-      abc:n539
+      staged_word_14
+      ef_at_pop
+      run_count_3
+      run_count_9
+      abc:n341
+      abc:n310 (QN)
 
-  LAB B: 32/40 inputs
+  LAB B: 34/40 inputs
     I/O pins (2): H_ACTIVE, nRS
-    Internal (30):
-      abc:n522
-      abc:n532
-      run_count_0
-      run_count_5
-      run_count_3
-      abc:n539
-      run_count_1
-      run_count_10
-      have_staged
-      abc:n512 (QN)
-      run_count_2
-      run_count_6
-      abc:n529 (QN)
-      run_count_4
-      w_is_set
-      staged_word_3
-      staged_word_2
-      staged_word_1
-      staged_word_5
-      staged_word_0
-      run_count_8
-      run_count_9
-      run_count_7
-      run_count_11
-      staged_word_7
-      abc:n550
-      staged_word_14
-      staged_word_8
-      abc:n508
-      abc:n542
-
-  LAB C: 36/40 inputs
-    I/O pins (1): H_ACTIVE
-    Internal (35):
-      staged_word_11
-      run_count_2
-      staged_word_9
+    Internal (32):
       cur_colour_0
-      run_count_3
-      run_count_4
-      staged_word_14
-      cur_src_1
-      staged_word_5
-      have_staged
-      run_count_11
-      abc:n508
-      cur_src_0
-      run_count_7
-      run_count_6
-      run_count_1
-      staged_word_13
-      run_count_5
-      staged_word_3
-      staged_word_2
-      staged_word_6
-      run_count_0
-      abc:n522
-      staged_word_0
       run_count_8
-      run_count_9
-      staged_word_10
-      abc:n272
+      have_staged
+      abc:n310 (QN)
+      run_count_2
+      staged_word_2
+      sav_src_0
+      run_count_4
+      staged_word_1
+      run_count_11
       run_count_10
-      cur_colour_2
-      cur_colour_1
+      cur_src_0
+      staged_word_14
+      abc:n611
+      abc:n609
+      run_count_5
       w_is_set
-      abc:n528
-      staged_word_12
-      staged_word_1
-
-  LAB D: 21/40 inputs
-    I/O pins (1): nRS
-    Internal (20):
-      cmp_held_fg_4
-      cmp_held_fg_2
-      staged_word_6
-      staged_word_4
-      staged_word_0
-      cmp_held_fg_6
-      cmp_held_fg_3
-      staged_word_12
-      cmp_held_fg_1
-      staged_word_13
-      cmp_held_fg_0
-      staged_word_3
-      cmp_held_fg_9
-      staged_word_2
-      cmp_held_fg_8
-      staged_word_8
-      abc:n272
-      staged_word_14
-      staged_word_1
-      staged_word_9
-
-  LAB E: 27/40 inputs
-    I/O pins (1): nRS
-    Internal (26):
-      staged_word_11
-      abc:n272
-      staged_word_0
-      cmp_held_bg_3
       staged_word_10
+      mask_active
       staged_word_4
-      cmp_held_bg_4
-      staged_word_5
-      cmp_held_bg_11
-      staged_word_7
-      cmp_held_bg_2
-      cmp_held_fg_7
-      cmp_held_bg_0
-      staged_word_13
-      cmp_held_bg_7
-      staged_word_2
-      cmp_held_bg_1
-      cmp_held_bg_8
-      cmp_held_fg_10
-      cmp_held_fg_5
-      staged_word_14
-      staged_word_8
-      staged_word_12
-      cmp_held_fg_11
-      staged_word_1
+      cur_colour_1
+      run_count_7
+      run_count_0
+      staged_word_11
       staged_word_3
+      staged_word_9
+      run_count_6
+      run_count_3
+      cur_colour_2
+      run_count_9
+      staged_word_0
+      run_count_1
 
-  LAB F: 36/40 inputs
-    I/O pins (7): RGB_IN_7, RGB_IN_3, RGB_IN_6, RGB_IN_5, RGB_IN_4, RGB_IN_2, RGB_IN_0
+  LAB C: 35/40 inputs
+    I/O pins (6): H_ACTIVE, VIDCMD_Q_7, VIDCMD_Q_9, VIDCMD_Q_15, VIDCMD_Q_14, nRS
     Internal (29):
-      staged_word_13
-      cmp_held_fg_2
-      cmp_held_bg_3
-      cmp_held_fg_6
-      cur_src_1
-      cur_colour_0
-      cmp_held_bg_9
-      abc:n272
-      cmp_held_fg_4
-      cmp_held_bg_5
-      cmp_held_bg_0
-      cmp_held_fg_7
-      cmp_held_fg_0
-      cmp_held_bg_2
-      staged_word_9
-      cmp_held_bg_4
-      staged_word_5
-      staged_word_6
-      cmp_held_bg_6
-      staged_word_10
-      cur_src_0
-      staged_word_14
-      cmp_held_fg_5
-      cmp_held_fg_3
-      staged_word_12
-      cur_colour_1
-      h_active_d
-      cmp_held_bg_10
-      cmp_held_bg_7
-
-  LAB G: 36/40 inputs
-    I/O pins (13): RGB_IN_10, RGB_IN_11, RGB_IN_8, RGB_IN_1, RGB_IN_9, VIDCMD_Q_2, VIDCMD_Q_1, VIDCMD_Q_7, VIDCMD_Q_15, VIDCMD_Q_13, VIDCMD_Q_3, VIDCMD_Q_12, VIDCMD_Q_14
-    Internal (23):
-      cmp_held_fg_8
-      abc:n293 (QN)
-      cur_colour_0
-      cmp_held_fg_11
-      cmp_held_fg_9
-      cur_colour_2
-      h_active_d
-      cmp_held_fg_1
-      staged_word_3
-      staged_word_13
-      staged_word_2
-      cmp_held_bg_10
-      cmp_held_bg_8
-      cmp_held_fg_10
-      cur_src_1
-      cur_src_0
-      cmp_held_bg_9
-      cmp_held_bg_1
-      cmp_held_bg_11
-      staged_word_12
-      staged_word_14
+      run_count_5
       staged_word_7
-      staged_word_1
-
-  LAB H: 25/40 inputs
-    I/O pins (12): H_ACTIVE, VIDCMD_Q_9, VIDCMD_Q_5, VIDCMD_Q_0, VIDCMD_Q_11, VIDCMD_Q_6, VIDCMD_Q_8, VIDCMD_Q_10, VIDCMD_Q_15, VIDCMD_Q_4, nVIDCMD_EF, want_pop
-    Internal (13):
-      ef_meta
-      staged_word_6
-      staged_word_4
-      staged_word_0
-      abc:n293 (QN)
-      staged_word_11
+      have_staged
+      abc:n308
+      run_count_2
+      run_count_1
+      ef_at_pop
+      run_count_0
+      staged_word_9
+      run_count_8
+      run_count_3
+      mask_active
+      $abc$1392$nVIDCMD_RE
+      w_is_set
+      run_count_10
+      abc:n310 (QN)
+      staged_word_13
+      run_count_9
+      cmp_color1_7
+      run_count_7
+      abc:n321
       staged_word_5
       staged_word_12
-      w_is_set
       staged_word_8
+      run_count_4
+      run_count_6
+      staged_word_6
+      staged_word_14
+      run_count_11
+
+  LAB D: 28/40 inputs
+    I/O pins (2): nVIDCMD_EF, nRS
+    Internal (26):
+      abc:n653
+      abc:n622
+      cmp_color1_1
+      cmp_color1_4
+      abc:n627 (QN)
+      staged_word_3
+      $abc$1392$nVIDCMD_RE
+      staged_word_6
+      abc:n321
+      staged_word_1
+      staged_word_4
+      cmp_color1_3
+      abc:n650
+      abc:n631 (QN)
+      abc:n644 (QN)
+      abc:n634 (QN)
+      cmp_color1_0
+      cmp_color1_6
+      abc:n308
+      cmp_color1_11
+      ef_sync
+      staged_word_11
+      staged_word_0
+      abc:n617 (QN)
+      ef_at_pop
+      ef_meta
+
+  LAB E: 35/40 inputs
+    I/O pins (9): RGB_IN_1, RGB_IN_2, RGB_IN_5, RGB_IN_0, RGB_IN_7, RGB_IN_3, RGB_IN_4, RGB_IN_8, nRS
+    Internal (26):
+      cmp_color1_8
+      h_active_d
+      cmp_color0_3
+      cmp_color1_4
+      cmp_color1_0
+      cmp_color0_1
+      cmp_color0_0
+      staged_word_5
+      cmp_color0_7
+      abc:n321
+      cur_src_0
+      cmp_color1_3
+      cmp_color1_5
+      abc:n325 (QN)
+      cmp_color1_2
+      cmp_color1_1
+      cur_colour_0
+      staged_word_2
+      cur_colour_1
+      cmp_color0_4
+      cmp_color0_8
+      cmp_color0_5
+      cmp_color0_2
+      cur_colour_2
+      cur_src_1
+      cmp_color1_7
+
+  LAB F: 35/40 inputs
+    I/O pins (10): RGB_IN_10, RGB_IN_11, RGB_IN_9, RGB_IN_6, VIDCMD_Q_1, VIDCMD_Q_4, VIDCMD_Q_2, VIDCMD_Q_6, VIDCMD_Q_3, nRS
+    Internal (25):
+      cmp_color0_9
+      abc:n308
+      cmp_color1_11
+      cmp_color1_9
+      staged_word_1
+      cur_colour_1
+      staged_word_9
+      abc:n321
+      mask_active
+      cmp_color0_11
+      cmp_color0_10
+      staged_word_0
+      staged_word_3
+      abc:n325 (QN)
+      cmp_color1_6
+      abc:n310 (QN)
+      cur_colour_2
+      staged_word_2
+      h_active_d
+      cur_src_0
+      cmp_color0_6
+      staged_word_6
+      cur_src_1
+      cmp_color1_10
+      staged_word_4
+
+  LAB G: 35/40 inputs
+    I/O pins (9): VIDCMD_Q_0, VIDCMD_Q_12, VIDCMD_Q_10, VIDCMD_Q_8, VIDCMD_Q_5, VIDCMD_Q_13, VIDCMD_Q_11, nVIDCMD_EF, nRS
+    Internal (26):
+      abc:n325 (QN)
+      staged_word_10
+      abc:n308
+      cmp_color0_7
+      cmp_color0_3
+      cmp_color0_0
       staged_word_13
       staged_word_9
+      staged_word_11
+      abc:n321
+      mask_active
+      $abc$1392$nVIDCMD_RE
+      abc:n310 (QN)
+      cmp_color1_10
+      staged_word_3
+      ef_at_pop
+      staged_word_7
+      ef_meta
+      staged_word_5
+      cmp_color0_8
+      staged_word_12
+      ef_sync
+      staged_word_0
+      staged_word_6
+      staged_word_8
+      cmp_color1_8
+
+  LAB H: 16/40 inputs
+    I/O pins (1): nVIDCMD_EF
+    Internal (15):
+      abc:n325 (QN)
+      cmp_color0_11
+      ef_meta
+      cmp_color0_1
+      staged_word_1
+      cmp_color0_10
+      staged_word_13
+      staged_word_9
+      staged_word_11
+      staged_word_12
+      cmp_color0_4
+      staged_word_8
       staged_word_10
+      staged_word_4
+      staged_word_6
 
 PRODUCT TERM USAGE (signals using >3 PTs)
 ------------------------------------------------------------------------
-   8 PTs  run_count_6.D
-   8 PTs  run_count_11.D
-   7 PTs  run_count_10.D
+  13 PTs  run_count_4.D
+   8 PTs  run_count_3.D
+   8 PTs  cur_src_1.D
+   7 PTs  abc:n308
+   7 PTs  run_count_1.D
+   7 PTs  cur_src_0.D
    6 PTs  run_count_9.D
-   5 PTs  run_count_0.D
-   5 PTs  run_count_4.D
-   5 PTs  run_count_1.D
-   5 PTs  cmp_held_fg_4.D
-   5 PTs  cmp_held_fg_2.D
-   5 PTs  cmp_held_fg_3.D
-   5 PTs  cmp_held_fg_5.D
-   5 PTs  cmp_held_fg_6.D
-   5 PTs  cmp_held_fg_7.D
-   5 PTs  cmp_held_fg_8.D
-   5 PTs  cmp_held_fg_9.D
-   5 PTs  cmp_held_fg_10.D
-   5 PTs  run_count_5.D
-   5 PTs  run_count_8.D
-   5 PTs  cmp_held_bg_1.D
-   5 PTs  cmp_held_bg_11.D
-   5 PTs  cmp_held_bg_0.D
-   5 PTs  cmp_held_bg_2.D
-   5 PTs  cmp_held_fg_11.D
-   5 PTs  cmp_held_bg_5.D
-   5 PTs  cmp_held_bg_3.D
-   5 PTs  cmp_held_bg_4.D
-   5 PTs  cmp_held_bg_6.D
-   5 PTs  cmp_held_bg_9.D
-   5 PTs  cmp_held_bg_7.D
-   5 PTs  cmp_held_bg_8.D
    5 PTs  run_count_2.D
-   5 PTs  cmp_held_bg_10.D
-   5 PTs  cmp_held_fg_0.D
-   5 PTs  cmp_held_fg_1.D
-   5 PTs  run_count_7.D
+   5 PTs  run_count_8.D
+   4 PTs  abc:n310 (QN)
+   4 PTs  abc:n650
+   4 PTs  abc:n644 (QN)
+   4 PTs  abc:n653
    4 PTs  RGB_OUT_2.D
    4 PTs  RGB_OUT_0.D
    4 PTs  RGB_OUT_1.D
+   4 PTs  RGB_OUT_5.D
    4 PTs  RGB_OUT_3.D
    4 PTs  RGB_OUT_4.D
-   4 PTs  RGB_OUT_7.D
-   4 PTs  RGB_OUT_5.D
-   4 PTs  RGB_OUT_6.D
    4 PTs  RGB_OUT_8.D
+   4 PTs  RGB_OUT_6.D
+   4 PTs  RGB_OUT_7.D
    4 PTs  RGB_OUT_9.D
    4 PTs  RGB_OUT_10.D
    4 PTs  RGB_OUT_11.D
-   4 PTs  abc:n293 (QN)
-   4 PTs  abc:n539
-   4 PTs  abc:n550
-   4 PTs  abc:n542
-   4 PTs  q_pending.D
+   4 PTs  w_is_set.D
+   4 PTs  abc:n611
+   4 PTs  staged_word_13.D
+   4 PTs  staged_word_14.D
+   4 PTs  staged_word_9.D
+   4 PTs  staged_word_10.D
+   4 PTs  staged_word_11.D
+   4 PTs  staged_word_12.D
+   4 PTs  staged_word_2.D
+   4 PTs  staged_word_5.D
+   4 PTs  staged_word_3.D
+   4 PTs  staged_word_4.D
+   4 PTs  staged_word_7.D
+   4 PTs  staged_word_6.D
+   4 PTs  staged_word_8.D
+   4 PTs  run_count_7.D
 
 ALL EQUATIONS
 ------------------------------------------------------------------------
+  [ 1 PTs]  nVIDCMD_RE = $abc$1392$nVIDCMD_RE
   [ 1 PTs]  set_pix_target_0.D = staged_word_12
-  [ 1 PTs]  pop_in_flight.D = want_pop.Q
+  [ 1 PTs]  set_pix_target_1.D = staged_word_13
+  [ 1 PTs]  set_pix_value_0.D = staged_word_0
+  [ 1 PTs]  set_pix_value_1.D = staged_word_1
+  [ 1 PTs]  set_pix_value_2.D = staged_word_2
+  [ 1 PTs]  set_pix_value_3.D = staged_word_3
+  [ 1 PTs]  set_pix_value_4.D = staged_word_4
+  [ 1 PTs]  set_pix_value_5.D = staged_word_5
+  [ 1 PTs]  set_pix_value_6.D = staged_word_6
+  [ 1 PTs]  set_pix_value_7.D = staged_word_7
+  [ 1 PTs]  set_pix_value_8.D = staged_word_8
+  [ 1 PTs]  set_pix_value_9.D = staged_word_9
+  [ 1 PTs]  set_pix_value_10.D = staged_word_10
+  [ 1 PTs]  h_active_d.D = H_ACTIVE
+  [ 1 PTs]  ef_meta.D = nVIDCMD_EF
   [ 1 PTs]  ef_sync.D = ef_meta
-  [ 2 PTs]  abc:n528 = ((run_count_11 & run_count_10 & run_count_7 & run_count_4 & run_count_9 & run_count_3 & run_count_5 & !staged_word_6 & run_count_8 & run_count_0 & run_count_1 & run_count_2 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set) # !run_count_6)
-  [ 3 PTs]  set_pix_valid.D = ((have_staged & w_is_set & staged_word_13 & !staged_word_12) # (have_staged & w_is_set & !staged_word_13 & staged_word_14) # (have_staged & w_is_set & staged_word_13 & !staged_word_14))
-  [ 4 PTs]  RGB_OUT_2.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_2) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_2) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_2))
-  [ 4 PTs]  RGB_OUT_0.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_0) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_0) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_0))
-  [ 4 PTs]  RGB_OUT_1.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_1) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_1) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_1))
-  [ 4 PTs]  RGB_OUT_3.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_3) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_3) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_3))
-  [ 4 PTs]  RGB_OUT_4.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_4) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_4) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_4))
-  [ 4 PTs]  RGB_OUT_7.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_7) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_7) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_7))
-  [ 4 PTs]  RGB_OUT_5.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_5) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_5) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_5))
-  [ 4 PTs]  RGB_OUT_6.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_6) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_6) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_6))
-  [ 4 PTs]  RGB_OUT_8.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_8) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_8) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_8))
-  [ 4 PTs]  RGB_OUT_9.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_9) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_9) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_9))
-  [ 4 PTs]  RGB_OUT_10.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_10) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_10) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_10))
-  [ 4 PTs]  RGB_OUT_11.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_held_fg_11) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_11) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_held_bg_11))
-  [ 2 PTs]  abc:n272 = ((w_is_set & have_staged & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (w_is_set & have_staged & !H_ACTIVE))
-  [ 4 PTs]  abc:n293 (QN) = ((have_staged & H_ACTIVE & abc:n268Q) # (!q_pending & !pop_in_flight) # (!q_pending & !ef_meta) # (have_staged & !H_ACTIVE & !w_is_set))
-  [ 2 PTs]  abc:n518 = ((run_count_2 & run_count_3 & run_count_0 & run_count_1 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & staged_word_3 & staged_word_0 & staged_word_1 & staged_word_2) # (run_count_2 & run_count_3 & run_count_0 & run_count_1 & abc:n268Q & H_ACTIVE))
-  [ 2 PTs]  abc:n508 = ((run_count_0 & H_ACTIVE & abc:n268Q) # (run_count_0 & staged_word_0 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set))
-  [ 4 PTs]  abc:n539 = ((run_count_9 & abc:n268Q) # (run_count_9 & abc:n282Q) # (run_count_9 & staged_word_9) # (run_count_9 & staged_word_12 & !staged_word_14 & !w_is_set & staged_word_13))
-  [ 4 PTs]  abc:n550 = ((run_count_11 & abc:n268Q) # (run_count_11 & abc:n282Q) # (run_count_11 & staged_word_11) # (run_count_11 & staged_word_12 & !staged_word_14 & !w_is_set & staged_word_13))
-  [ 4 PTs]  abc:n542 = ((run_count_10 & abc:n268Q) # (run_count_10 & abc:n282Q) # (run_count_10 & staged_word_10) # (run_count_10 & staged_word_12 & !staged_word_14 & !w_is_set & staged_word_13))
-  [ 3 PTs]  cur_colour_1.D = ((cur_colour_1 & abc:n282Q) # (staged_word_10 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (abc:n268Q & cur_colour_1))
-  [ 3 PTs]  cur_colour_0.D = ((cur_colour_0 & abc:n282Q) # (staged_word_9 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (abc:n268Q & cur_colour_0))
-  [ 5 PTs]  run_count_0.D = ((!run_count_0 & H_ACTIVE & have_staged & !staged_word_14 & !w_is_set) # (!run_count_0 & H_ACTIVE & abc:n268Q) # (run_count_6 & run_count_1 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7 & H_ACTIVE & have_staged & !staged_word_14 & !w_is_set & !staged_word_0) # (abc:n282Q & run_count_0 & !H_ACTIVE) # (abc:n282Q & run_count_0 & run_count_6 & run_count_1 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7))
-  [ 3 PTs]  cur_src_0.D = ((staged_word_12 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (cur_src_0 & abc:n268Q) # (cur_src_0 & abc:n282Q))
-  [ 3 PTs]  cur_src_1.D = ((staged_word_13 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (cur_src_1 & abc:n268Q) # (cur_src_1 & abc:n282Q))
-  [ 3 PTs]  cur_colour_2.D = ((cur_colour_2 & abc:n282Q) # (staged_word_11 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (abc:n268Q & cur_colour_2))
-  [ 4 PTs]  q_pending.D = ((have_staged & !H_ACTIVE & pop_in_flight & ef_meta & !w_is_set) # (have_staged & !H_ACTIVE & !w_is_set & q_pending) # (have_staged & H_ACTIVE & abc:n268Q & q_pending) # (have_staged & H_ACTIVE & abc:n268Q & pop_in_flight & ef_meta))
-  [ 3 PTs]  abc:n512 (QN) = (!abc:n508Q # !run_count_1 # (!staged_word_1 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7))
-  [ 3 PTs]  abc:n522 = ((abc:n518Q & run_count_4 & abc:n268Q) # (abc:n518Q & run_count_4 & abc:n282Q) # (abc:n518Q & run_count_4 & staged_word_4))
-  [ 3 PTs]  abc:n532 = ((abc:n518Q & run_count_4 & run_count_5 & !abc:n528Q & run_count_7 & abc:n268Q) # (abc:n518Q & run_count_4 & run_count_5 & !abc:n528Q & run_count_7 & abc:n282Q) # (abc:n518Q & run_count_4 & run_count_5 & !abc:n528Q & run_count_7 & staged_word_5 & staged_word_4 & staged_word_7))
-  [ 2 PTs]  w_is_set.D = ((!abc:n293 (QN)QN & VIDCMD_Q_15) # (abc:n293 (QN)QN & w_is_set))
-  [ 3 PTs]  set_pix_commit.D = ((abc:n272Q & w_is_set & staged_word_13 & !staged_word_12) # (abc:n272Q & w_is_set & !staged_word_13 & staged_word_14) # (abc:n272Q & w_is_set & staged_word_13 & !staged_word_14))
-  [ 3 PTs]  have_staged.D = ((have_staged & !H_ACTIVE & !w_is_set) # (have_staged & H_ACTIVE & abc:n268Q) # !abc:n293 (QN)QN)
-  [ 2 PTs]  staged_word_2.D = ((abc:n293 (QN)QN & staged_word_2) # (!abc:n293 (QN)QN & VIDCMD_Q_2))
-  [ 2 PTs]  staged_word_0.D = ((abc:n293 (QN)QN & staged_word_0) # (!abc:n293 (QN)QN & VIDCMD_Q_0))
-  [ 2 PTs]  staged_word_1.D = ((abc:n293 (QN)QN & staged_word_1) # (!abc:n293 (QN)QN & VIDCMD_Q_1))
-  [ 5 PTs]  run_count_4.D = ((abc:n518Q & !run_count_4) # (abc:n518Q & !staged_word_4 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (!abc:n518Q & run_count_4 & abc:n268Q) # (!abc:n518Q & run_count_4 & abc:n282Q) # (!abc:n518Q & run_count_4 & staged_word_4))
-  [ 2 PTs]  staged_word_3.D = ((abc:n293 (QN)QN & staged_word_3) # (!abc:n293 (QN)QN & VIDCMD_Q_3))
-  [ 2 PTs]  staged_word_6.D = ((abc:n293 (QN)QN & staged_word_6) # (!abc:n293 (QN)QN & VIDCMD_Q_6))
-  [ 2 PTs]  staged_word_4.D = ((abc:n293 (QN)QN & staged_word_4) # (!abc:n293 (QN)QN & VIDCMD_Q_4))
-  [ 2 PTs]  staged_word_5.D = ((abc:n293 (QN)QN & staged_word_5) # (!abc:n293 (QN)QN & VIDCMD_Q_5))
-  [ 2 PTs]  staged_word_7.D = ((abc:n293 (QN)QN & staged_word_7) # (!abc:n293 (QN)QN & VIDCMD_Q_7))
-  [ 2 PTs]  staged_word_8.D = ((abc:n293 (QN)QN & staged_word_8) # (!abc:n293 (QN)QN & VIDCMD_Q_8))
-  [ 2 PTs]  staged_word_11.D = ((abc:n293 (QN)QN & staged_word_11) # (!abc:n293 (QN)QN & VIDCMD_Q_11))
-  [ 2 PTs]  staged_word_9.D = ((abc:n293 (QN)QN & staged_word_9) # (!abc:n293 (QN)QN & VIDCMD_Q_9))
-  [ 2 PTs]  staged_word_10.D = ((abc:n293 (QN)QN & staged_word_10) # (!abc:n293 (QN)QN & VIDCMD_Q_10))
-  [ 2 PTs]  staged_word_12.D = ((abc:n293 (QN)QN & staged_word_12) # (!abc:n293 (QN)QN & VIDCMD_Q_12))
-  [ 2 PTs]  staged_word_13.D = ((abc:n293 (QN)QN & staged_word_13) # (!abc:n293 (QN)QN & VIDCMD_Q_13))
-  [ 2 PTs]  staged_word_14.D = ((abc:n293 (QN)QN & staged_word_14) # (!abc:n293 (QN)QN & VIDCMD_Q_14))
-  [ 5 PTs]  run_count_1.D = ((abc:n508Q & !run_count_1) # (abc:n508Q & !staged_word_1 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (!abc:n508Q & run_count_1 & abc:n282Q) # (!abc:n508Q & run_count_1 & staged_word_1) # (!abc:n508Q & run_count_1 & abc:n268Q))
-  [ 3 PTs]  set_pix_capture.D = ((VIDCMD_Q_15 & VIDCMD_Q_13 & !abc:n293 (QN)QN & !VIDCMD_Q_12) # (VIDCMD_Q_15 & VIDCMD_Q_13 & !VIDCMD_Q_14 & !abc:n293 (QN)QN) # (VIDCMD_Q_15 & !VIDCMD_Q_13 & VIDCMD_Q_14 & !abc:n293 (QN)QN))
-  [ 3 PTs]  abc:n529 (QN) = ((run_count_5 & abc:n522Q & !abc:n528Q & abc:n282Q) # (run_count_5 & abc:n522Q & !abc:n528Q & staged_word_5) # (run_count_5 & abc:n522Q & !abc:n528Q & abc:n268Q))
-  [ 5 PTs]  cmp_held_fg_4.D = ((cmp_held_fg_4 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_4) # (cmp_held_fg_4 & staged_word_13) # (cmp_held_fg_4 & staged_word_14) # (cmp_held_fg_4 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_fg_2.D = ((cmp_held_fg_2 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_2) # (cmp_held_fg_2 & staged_word_13) # (cmp_held_fg_2 & staged_word_14) # (cmp_held_fg_2 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_fg_3.D = ((cmp_held_fg_3 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_3) # (cmp_held_fg_3 & staged_word_13) # (cmp_held_fg_3 & staged_word_14) # (cmp_held_fg_3 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_fg_5.D = ((cmp_held_fg_5 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_5) # (cmp_held_fg_5 & staged_word_13) # (cmp_held_fg_5 & staged_word_14) # (cmp_held_fg_5 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_fg_6.D = ((cmp_held_fg_6 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_6) # (cmp_held_fg_6 & staged_word_13) # (cmp_held_fg_6 & staged_word_14) # (cmp_held_fg_6 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_fg_7.D = ((cmp_held_fg_7 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_7) # (cmp_held_fg_7 & staged_word_13) # (cmp_held_fg_7 & staged_word_14) # (cmp_held_fg_7 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_fg_8.D = ((cmp_held_fg_8 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_8) # (cmp_held_fg_8 & staged_word_13) # (cmp_held_fg_8 & staged_word_14) # (cmp_held_fg_8 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_fg_9.D = ((cmp_held_fg_9 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_9) # (cmp_held_fg_9 & staged_word_13) # (cmp_held_fg_9 & staged_word_14) # (cmp_held_fg_9 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_fg_10.D = ((cmp_held_fg_10 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_10) # (cmp_held_fg_10 & staged_word_13) # (cmp_held_fg_10 & staged_word_14) # (cmp_held_fg_10 & !abc:n272Q))
-  [ 8 PTs]  run_count_6.D = ((!abc:n528Q & !abc:n518Q) # (!abc:n528Q & !run_count_4) # (!abc:n528Q & !staged_word_4 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (!abc:n528Q & !run_count_5) # (!abc:n528Q & !staged_word_5 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (abc:n528Q & run_count_5 & abc:n518Q & run_count_4 & abc:n282Q) # (abc:n528Q & run_count_5 & abc:n518Q & run_count_4 & abc:n268Q) # (abc:n528Q & run_count_5 & abc:n518Q & run_count_4 & staged_word_5 & staged_word_4))
-  [ 6 PTs]  run_count_9.D = ((!abc:n539Q & run_count_8 & abc:n532Q & staged_word_8) # (abc:n539Q & !abc:n532Q) # (abc:n539Q & !run_count_8) # (abc:n539Q & !staged_word_8 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_7) # (!abc:n539Q & run_count_8 & abc:n532Q & abc:n268Q) # (!abc:n539Q & run_count_8 & abc:n532Q & abc:n282Q))
-  [ 5 PTs]  run_count_5.D = ((abc:n522Q & !run_count_5) # (abc:n522Q & !staged_word_5 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8 & run_count_7) # (!abc:n522Q & run_count_5 & abc:n268Q) # (!abc:n522Q & run_count_5 & abc:n282Q) # (!abc:n522Q & run_count_5 & staged_word_5))
-  [ 5 PTs]  run_count_8.D = ((abc:n532Q & !run_count_8) # (abc:n532Q & !staged_word_8 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_7) # (!abc:n532Q & run_count_8 & abc:n268Q) # (!abc:n532Q & run_count_8 & abc:n282Q) # (!abc:n532Q & run_count_8 & staged_word_8))
-  [ 5 PTs]  cmp_held_bg_1.D = ((cmp_held_bg_1 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_1) # (cmp_held_bg_1 & !staged_word_12) # (cmp_held_bg_1 & staged_word_13) # (cmp_held_bg_1 & staged_word_14))
-  [ 5 PTs]  cmp_held_bg_11.D = ((cmp_held_bg_11 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_11) # (cmp_held_bg_11 & !staged_word_12) # (cmp_held_bg_11 & staged_word_13) # (cmp_held_bg_11 & staged_word_14))
-  [ 5 PTs]  cmp_held_bg_0.D = ((cmp_held_bg_0 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_0) # (cmp_held_bg_0 & !staged_word_12) # (cmp_held_bg_0 & staged_word_13) # (cmp_held_bg_0 & staged_word_14))
-  [ 5 PTs]  cmp_held_bg_2.D = ((cmp_held_bg_2 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_2) # (cmp_held_bg_2 & !staged_word_12) # (cmp_held_bg_2 & staged_word_13) # (cmp_held_bg_2 & staged_word_14))
-  [ 5 PTs]  cmp_held_fg_11.D = ((cmp_held_fg_11 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_11) # (cmp_held_fg_11 & staged_word_13) # (cmp_held_fg_11 & staged_word_14) # (cmp_held_fg_11 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_bg_5.D = ((cmp_held_bg_5 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_5) # (cmp_held_bg_5 & !staged_word_12) # (cmp_held_bg_5 & staged_word_13) # (cmp_held_bg_5 & staged_word_14))
-  [ 5 PTs]  cmp_held_bg_3.D = ((cmp_held_bg_3 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_3) # (cmp_held_bg_3 & !staged_word_12) # (cmp_held_bg_3 & staged_word_13) # (cmp_held_bg_3 & staged_word_14))
-  [ 5 PTs]  cmp_held_bg_4.D = ((cmp_held_bg_4 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_4) # (cmp_held_bg_4 & !staged_word_12) # (cmp_held_bg_4 & staged_word_13) # (cmp_held_bg_4 & staged_word_14))
-  [ 5 PTs]  cmp_held_bg_6.D = ((cmp_held_bg_6 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_6) # (cmp_held_bg_6 & !staged_word_12) # (cmp_held_bg_6 & staged_word_13) # (cmp_held_bg_6 & staged_word_14))
-  [ 5 PTs]  cmp_held_bg_9.D = ((cmp_held_bg_9 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_9) # (cmp_held_bg_9 & !staged_word_12) # (cmp_held_bg_9 & staged_word_13) # (cmp_held_bg_9 & staged_word_14))
-  [ 5 PTs]  cmp_held_bg_7.D = ((cmp_held_bg_7 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_7) # (cmp_held_bg_7 & !staged_word_12) # (cmp_held_bg_7 & staged_word_13) # (cmp_held_bg_7 & staged_word_14))
-  [ 5 PTs]  cmp_held_bg_8.D = ((cmp_held_bg_8 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_8) # (cmp_held_bg_8 & !staged_word_12) # (cmp_held_bg_8 & staged_word_13) # (cmp_held_bg_8 & staged_word_14))
-  [ 5 PTs]  run_count_2.D = ((abc:n512 (QN)QN & run_count_2 & abc:n268Q) # (abc:n512 (QN)QN & run_count_2 & abc:n282Q) # (abc:n512 (QN)QN & staged_word_2 & run_count_2) # (!abc:n512 (QN)QN & !run_count_2) # (!abc:n512 (QN)QN & !staged_word_2 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_10 & run_count_9 & run_count_8 & run_count_7))
-  [ 5 PTs]  cmp_held_bg_10.D = ((cmp_held_bg_10 & !abc:n272Q) # (!staged_word_14 & abc:n272Q & !staged_word_13 & staged_word_12 & staged_word_10) # (cmp_held_bg_10 & !staged_word_12) # (cmp_held_bg_10 & staged_word_13) # (cmp_held_bg_10 & staged_word_14))
-  [ 5 PTs]  cmp_held_fg_0.D = ((cmp_held_fg_0 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_0) # (cmp_held_fg_0 & staged_word_13) # (cmp_held_fg_0 & staged_word_14) # (cmp_held_fg_0 & !abc:n272Q))
-  [ 5 PTs]  cmp_held_fg_1.D = ((cmp_held_fg_1 & staged_word_12) # (abc:n272Q & !staged_word_12 & !staged_word_14 & !staged_word_13 & staged_word_1) # (cmp_held_fg_1 & staged_word_13) # (cmp_held_fg_1 & staged_word_14) # (cmp_held_fg_1 & !abc:n272Q))
-  [ 8 PTs]  run_count_11.D = ((!abc:n550Q & run_count_8 & abc:n532Q & abc:n542Q & abc:n539Q & abc:n268Q) # (!abc:n550Q & run_count_8 & abc:n532Q & abc:n542Q & abc:n539Q & abc:n282Q) # (!abc:n550Q & run_count_8 & abc:n532Q & abc:n542Q & abc:n539Q & staged_word_8) # (abc:n550Q & !staged_word_8 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_7) # (abc:n550Q & !abc:n539Q) # (abc:n550Q & !abc:n542Q) # (abc:n550Q & !abc:n532Q) # (abc:n550Q & !run_count_8))
-  [ 7 PTs]  run_count_10.D = ((!abc:n542Q & run_count_8 & abc:n532Q & abc:n539Q & abc:n282Q) # (!abc:n542Q & run_count_8 & abc:n532Q & abc:n539Q & staged_word_8) # (abc:n542Q & !staged_word_8 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_7) # (abc:n542Q & !abc:n539Q) # (abc:n542Q & !abc:n532Q) # (abc:n542Q & !run_count_8) # (!abc:n542Q & run_count_8 & abc:n532Q & abc:n539Q & abc:n268Q))
-  [ 5 PTs]  run_count_7.D = ((!abc:n529 (QN)QN & run_count_7 & abc:n268Q) # (!abc:n529 (QN)QN & run_count_7 & abc:n282Q) # (!abc:n529 (QN)QN & staged_word_7 & run_count_7) # (abc:n529 (QN)QN & !run_count_7) # (abc:n529 (QN)QN & !staged_word_7 & have_staged & H_ACTIVE & !staged_word_14 & !w_is_set & run_count_6 & run_count_1 & run_count_0 & run_count_11 & run_count_5 & run_count_4 & run_count_3 & run_count_2 & run_count_10 & run_count_9 & run_count_8))
-  [ 1 PTs]  set_pix_target_2.C = PIXEL_CLK
-  [ 1 PTs]  set_pix_target_2.AR = !nRS
-  [ 1 PTs]  set_pix_target_1.C = PIXEL_CLK
-  [ 1 PTs]  set_pix_target_1.AR = !nRS
-  [ 1 PTs]  ef_meta.C = PIXEL_CLK
-  [ 1 PTs]  ef_meta.AR = !nRS
-  [ 1 PTs]  h_active_d.C = PIXEL_CLK
-  [ 1 PTs]  h_active_d.AR = !nRS
+  [ 1 PTs]  set_pix_target_2.D = staged_word_14
+  [ 1 PTs]  set_pix_value_11.D = staged_word_11
+  [ 2 PTs]  ef_at_pop.D = (ef_at_pop # ($abc$1392$nVIDCMD_RE & ef_meta & ef_sync & nVIDCMD_EF))
+  [ 3 PTs]  set_pix_valid.D = ((have_staged & !staged_word_14 & w_is_set & staged_word_13) # (have_staged & staged_word_14 & w_is_set & !staged_word_12) # (have_staged & staged_word_14 & w_is_set & !staged_word_13))
+  [ 4 PTs]  abc:n310 (QN) = ((run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_9 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8) # (run_count_0 & run_count_1 & run_count_2 & !run_count_3 & mask_active & !ef_at_pop) # (run_count_0 & run_count_1 & run_count_2 & !run_count_3 & mask_active & $abc$1392$nVIDCMD_RE) # !H_ACTIVE)
+  [ 2 PTs]  mask_active.D = ((mask_active & abc:n287 (QN)QN) # (H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
+  [ 2 PTs]  abc:n609 = ((run_count_0 & abc:n295 (QN)QN & staged_word_0) # (run_count_0 & abc:n295 (QN)QN & abc:n339Q))
+  [ 3 PTs]  abc:n617 (QN) = ((run_count_5 & abc:n340Q) # (H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_5) # (H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
+  [ 3 PTs]  abc:n631 (QN) = ((run_count_7 & staged_word_7 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_8) # (run_count_7 & H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_8) # (run_count_7 & abc:n340Q))
+  [ 3 PTs]  abc:n634 (QN) = ((run_count_6 & staged_word_6 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & have_staged & run_count_11 & run_count_7 & run_count_8) # (run_count_6 & H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & have_staged & run_count_11 & run_count_7 & run_count_8) # (run_count_6 & abc:n340Q))
+  [ 3 PTs]  abc:n627 (QN) = ((run_count_8 & abc:n340Q) # (H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_8) # (H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
+  [ 4 PTs]  abc:n650 = ((run_count_11 & !w_is_set & staged_word_12 & staged_word_13 & !staged_word_14) # (run_count_11 & !w_is_set & staged_word_14 & H_ACTIVE & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_7 & run_count_8) # (run_count_11 & staged_word_11) # (run_count_11 & abc:n340Q))
+  [ 4 PTs]  abc:n644 (QN) = ((run_count_9 & !w_is_set & !staged_word_14 & staged_word_12 & staged_word_13) # (run_count_9 & abc:n340Q) # (run_count_9 & staged_word_9) # (H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
+  [ 4 PTs]  abc:n653 = ((run_count_10 & !w_is_set & staged_word_12 & staged_word_13 & !staged_word_14) # (run_count_10 & !w_is_set & staged_word_14 & H_ACTIVE & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (run_count_10 & staged_word_10) # (run_count_10 & abc:n340Q))
+  [ 4 PTs]  RGB_OUT_2.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_2) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_2) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_2))
+  [ 4 PTs]  RGB_OUT_0.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_0) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_0) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_0))
+  [ 4 PTs]  RGB_OUT_1.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_1) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_1) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_1))
+  [ 4 PTs]  RGB_OUT_5.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_5) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_5) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_5))
+  [ 4 PTs]  RGB_OUT_3.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_3) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_3) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_0) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_3))
+  [ 4 PTs]  RGB_OUT_4.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_4) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_4) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_4))
+  [ 4 PTs]  RGB_OUT_8.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_8) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_8) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_8))
+  [ 4 PTs]  RGB_OUT_6.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_6) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_6) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_6))
+  [ 4 PTs]  RGB_OUT_7.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_7) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_7) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_1) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_7))
+  [ 4 PTs]  RGB_OUT_9.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_9) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_9) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_9))
+  [ 4 PTs]  RGB_OUT_10.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_10) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_10) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_10))
+  [ 4 PTs]  RGB_OUT_11.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_11) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_11) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_11))
+  [ 2 PTs]  cur_colour_2.D = ((abc:n340Q & cur_colour_2) # (staged_word_11 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
+  [ 7 PTs]  abc:n308 = ((ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & !H_ACTIVE & !mask_active & w_is_set) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8 & w_is_set) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & H_ACTIVE & run_count_0 & run_count_1 & run_count_2 & !run_count_3 & mask_active & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & H_ACTIVE & !run_count_0 & run_count_1 & run_count_2 & run_count_3 & mask_active & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & !mask_active & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8 & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & H_ACTIVE & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8))
+  [ 2 PTs]  cur_colour_0.D = ((abc:n340Q & cur_colour_0) # (staged_word_9 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
+  [ 2 PTs]  cur_colour_1.D = ((abc:n340Q & cur_colour_1) # (staged_word_10 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
+  [ 3 PTs]  sav_src_1.D = ((sav_src_1 & abc:n293 (QN)QN) # (!mask_active & cur_src_1 & H_ACTIVE & !w_is_set & staged_word_14 & have_staged & run_count_6 & run_count_5 & run_count_4 & run_count_11 & run_count_10 & run_count_9 & run_count_8 & run_count_7 & run_count_0 & run_count_2 & run_count_1 & run_count_3) # (mask_active & sav_src_1))
+  [ 3 PTs]  sav_src_0.D = ((sav_src_0 & abc:n293 (QN)QN) # (!mask_active & cur_src_0 & H_ACTIVE & !w_is_set & staged_word_14 & have_staged & run_count_6 & run_count_5 & run_count_4 & run_count_11 & run_count_10 & run_count_9 & run_count_8 & run_count_7 & run_count_0 & run_count_2 & run_count_1 & run_count_3) # (mask_active & sav_src_0))
+  [ 2 PTs]  abc:n321 = ((!staged_word_13 & !staged_word_14 & w_is_set & have_staged & !staged_word_12 & !H_ACTIVE) # (!staged_word_13 & !staged_word_14 & w_is_set & have_staged & !staged_word_12 & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8))
+  [ 2 PTs]  abc:n325 (QN) = ((w_is_set & staged_word_12 & !staged_word_13 & !staged_word_14 & have_staged & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8) # (w_is_set & staged_word_12 & !staged_word_13 & !staged_word_14 & have_staged & !H_ACTIVE))
+  [ 4 PTs]  w_is_set.D = ((!abc:n308Q & w_is_set & abc:n310 (QN)QN) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_13) # (abc:n308Q & VIDCMD_Q_15) # (!abc:n308Q & !mask_active & w_is_set))
+  [ 4 PTs]  abc:n611 = ((run_count_1 & abc:n295 (QN)QN & run_count_0 & staged_word_1 & staged_word_0 & !abc:n310 (QN)QN) # (run_count_1 & abc:n295 (QN)QN & run_count_0 & abc:n339Q & !abc:n310 (QN)QN) # (run_count_1 & abc:n295 (QN)QN & run_count_0 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_1 & staged_word_0) # (run_count_1 & abc:n295 (QN)QN & run_count_0 & abc:n339Q & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
+  [ 3 PTs]  run_count_0.D = ((!abc:n609Q & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (!abc:n609Q & !abc:n310 (QN)QN) # (abc:n609Q & abc:n310 (QN)QN & abc:n340Q))
+  [ 4 PTs]  staged_word_13.D = ((!abc:n308Q & staged_word_13 & abc:n310 (QN)QN) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_11) # (abc:n308Q & VIDCMD_Q_13) # (!abc:n308Q & !mask_active & staged_word_13))
+  [ 4 PTs]  staged_word_14.D = ((!abc:n308Q & staged_word_14 & abc:n310 (QN)QN) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_12) # (abc:n308Q & VIDCMD_Q_14) # (!abc:n308Q & !mask_active & staged_word_14))
+  [ 3 PTs]  have_staged.D = ((!abc:n308Q & have_staged & !H_ACTIVE & !w_is_set) # (!abc:n308Q & have_staged & H_ACTIVE & abc:n287 (QN)QN) # (abc:n308Q & abc:n329 (QN)QN))
+  [ 7 PTs]  run_count_1.D = ((abc:n609Q & !abc:n310 (QN)QN & H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (abc:n609Q & run_count_1 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_1) # (run_count_1 & abc:n310 (QN)QN & staged_word_1 & abc:n340Q & abc:n295 (QN)QN) # (run_count_1 & abc:n310 (QN)QN & abc:n340Q & abc:n295 (QN)QN & abc:n339Q) # (!abc:n609Q & run_count_1 & staged_word_1 & abc:n295 (QN)QN) # (!abc:n609Q & run_count_1 & abc:n295 (QN)QN & abc:n339Q) # (abc:n609Q & !run_count_1 & !abc:n310 (QN)QN))
+  [ 3 PTs]  abc:n622 = ((run_count_0 & run_count_1 & run_count_2 & run_count_3 & abc:n295 (QN)QN & run_count_4 & abc:n340Q & !abc:n310 (QN)QN & abc:n339Q) # (run_count_0 & run_count_1 & run_count_2 & run_count_3 & abc:n295 (QN)QN & staged_word_0 & staged_word_1 & staged_word_2 & staged_word_3 & run_count_4 & abc:n340Q & !abc:n310 (QN)QN) # (run_count_0 & run_count_1 & run_count_2 & run_count_3 & abc:n295 (QN)QN & staged_word_0 & staged_word_1 & staged_word_2 & staged_word_3 & run_count_4 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
+  [ 2 PTs]  abc:n341 = ((abc:n293 (QN)QN & abc:n339Q & !mask_active) # (abc:n293 (QN)QN & abc:n339Q & abc:n310 (QN)QN & abc:n287 (QN)QN))
+  [ 2 PTs]  cmp_color0_2.D = ((!abc:n325 (QN)QN & cmp_color0_2) # (abc:n325 (QN)QN & staged_word_2))
+  [ 4 PTs]  staged_word_9.D = ((abc:n308Q & VIDCMD_Q_9) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_7) # (!abc:n308Q & staged_word_9 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_9 & !mask_active))
+  [ 4 PTs]  staged_word_10.D = ((abc:n308Q & VIDCMD_Q_10) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_8) # (!abc:n308Q & staged_word_10 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_10 & !mask_active))
+  [ 2 PTs]  cmp_color0_3.D = ((!abc:n325 (QN)QN & cmp_color0_3) # (abc:n325 (QN)QN & staged_word_3))
+  [ 4 PTs]  staged_word_11.D = ((abc:n308Q & VIDCMD_Q_11) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_9) # (!abc:n308Q & staged_word_11 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_11 & !mask_active))
+  [ 4 PTs]  staged_word_12.D = ((abc:n308Q & VIDCMD_Q_12) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_10) # (!abc:n308Q & staged_word_12 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_12 & !mask_active))
+  [ 2 PTs]  cmp_color0_5.D = ((!abc:n325 (QN)QN & cmp_color0_5) # (abc:n325 (QN)QN & staged_word_5))
+  [ 5 PTs]  run_count_2.D = ((abc:n611Q & !run_count_2) # (abc:n611Q & H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (abc:n611Q & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_2) # (!abc:n611Q & abc:n295 (QN)QN & run_count_2 & staged_word_2) # (!abc:n611Q & abc:n295 (QN)QN & run_count_2 & abc:n339Q))
+  [ 2 PTs]  cmp_color0_4.D = ((!abc:n325 (QN)QN & cmp_color0_4) # (abc:n325 (QN)QN & staged_word_4))
+  [ 2 PTs]  cmp_color0_8.D = ((!abc:n325 (QN)QN & cmp_color0_8) # (abc:n325 (QN)QN & staged_word_8))
+  [ 2 PTs]  cmp_color0_6.D = ((!abc:n325 (QN)QN & cmp_color0_6) # (abc:n325 (QN)QN & staged_word_6))
+  [ 2 PTs]  cmp_color0_7.D = ((!abc:n325 (QN)QN & cmp_color0_7) # (abc:n325 (QN)QN & staged_word_7))
+  [ 2 PTs]  cmp_color0_10.D = ((!abc:n325 (QN)QN & cmp_color0_10) # (abc:n325 (QN)QN & staged_word_10))
+  [ 2 PTs]  cmp_color1_11.D = ((!abc:n321Q & cmp_color1_11) # (abc:n321Q & staged_word_11))
+  [ 2 PTs]  cmp_color0_9.D = ((!abc:n325 (QN)QN & cmp_color0_9) # (abc:n325 (QN)QN & staged_word_9))
+  [ 2 PTs]  cmp_color1_2.D = ((!abc:n321Q & cmp_color1_2) # (abc:n321Q & staged_word_2))
+  [ 2 PTs]  cmp_color1_0.D = ((!abc:n321Q & cmp_color1_0) # (abc:n321Q & staged_word_0))
+  [ 2 PTs]  cmp_color1_1.D = ((!abc:n321Q & cmp_color1_1) # (abc:n321Q & staged_word_1))
+  [ 2 PTs]  cmp_color1_5.D = ((!abc:n321Q & cmp_color1_5) # (abc:n321Q & staged_word_5))
+  [ 2 PTs]  cmp_color1_3.D = ((!abc:n321Q & cmp_color1_3) # (abc:n321Q & staged_word_3))
+  [ 2 PTs]  cmp_color1_4.D = ((!abc:n321Q & cmp_color1_4) # (abc:n321Q & staged_word_4))
+  [ 2 PTs]  cmp_color1_8.D = ((!abc:n321Q & cmp_color1_8) # (abc:n321Q & staged_word_8))
+  [ 2 PTs]  cmp_color1_6.D = ((!abc:n321Q & cmp_color1_6) # (abc:n321Q & staged_word_6))
+  [ 2 PTs]  cmp_color1_7.D = ((!abc:n321Q & cmp_color1_7) # (abc:n321Q & staged_word_7))
+  [ 2 PTs]  cmp_color1_10.D = ((!abc:n321Q & cmp_color1_10) # (abc:n321Q & staged_word_10))
+  [ 2 PTs]  cmp_color0_11.D = ((!abc:n325 (QN)QN & cmp_color0_11) # (abc:n325 (QN)QN & staged_word_11))
+  [ 2 PTs]  cmp_color1_9.D = ((!abc:n321Q & cmp_color1_9) # (abc:n321Q & staged_word_9))
+  [ 4 PTs]  staged_word_2.D = ((abc:n308Q & VIDCMD_Q_2) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_0) # (!abc:n308Q & staged_word_2 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_2 & !mask_active))
+  [ 3 PTs]  staged_word_0.D = ((!abc:n308Q & staged_word_0 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_0 & !mask_active) # (abc:n308Q & VIDCMD_Q_0))
+  [ 3 PTs]  staged_word_1.D = ((!abc:n308Q & staged_word_1 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_1 & !mask_active) # (abc:n308Q & VIDCMD_Q_1))
+  [ 4 PTs]  staged_word_5.D = ((abc:n308Q & VIDCMD_Q_5) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_3) # (!abc:n308Q & staged_word_5 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_5 & !mask_active))
+  [ 4 PTs]  staged_word_3.D = ((abc:n308Q & VIDCMD_Q_3) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_1) # (!abc:n308Q & staged_word_3 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_3 & !mask_active))
+  [ 4 PTs]  staged_word_4.D = ((abc:n308Q & VIDCMD_Q_4) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_2) # (!abc:n308Q & staged_word_4 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_4 & !mask_active))
+  [ 4 PTs]  staged_word_7.D = ((abc:n308Q & VIDCMD_Q_7) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_5) # (!abc:n308Q & staged_word_7 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_7 & !mask_active))
+  [ 4 PTs]  staged_word_6.D = ((abc:n308Q & VIDCMD_Q_6) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_4) # (!abc:n308Q & staged_word_6 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_6 & !mask_active))
+  [ 2 PTs]  cmp_color0_0.D = ((!abc:n325 (QN)QN & cmp_color0_0) # (abc:n325 (QN)QN & staged_word_0))
+  [ 4 PTs]  staged_word_8.D = ((abc:n308Q & VIDCMD_Q_8) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_6) # (!abc:n308Q & staged_word_8 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_8 & !mask_active))
+  [ 2 PTs]  cmp_color0_1.D = ((!abc:n325 (QN)QN & cmp_color0_1) # (abc:n325 (QN)QN & staged_word_1))
+  [ 8 PTs]  run_count_3.D = ((abc:n295 (QN)QN & abc:n611Q & run_count_2 & staged_word_2 & !staged_word_3 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (run_count_3 & abc:n295 (QN)QN & !run_count_2 & staged_word_3) # (run_count_3 & abc:n295 (QN)QN & !staged_word_2 & staged_word_3 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (run_count_3 & abc:n295 (QN)QN & !abc:n611Q & staged_word_3) # (run_count_3 & abc:n295 (QN)QN & !run_count_2 & abc:n339Q) # (run_count_3 & abc:n295 (QN)QN & !abc:n611Q & abc:n339Q) # (!run_count_3 & abc:n295 (QN)QN & abc:n611Q & run_count_2 & staged_word_2) # (!run_count_3 & abc:n295 (QN)QN & abc:n611Q & run_count_2 & abc:n339Q))
+  [ 8 PTs]  cur_src_1.D = ((abc:n341Q & cur_src_1) # (!abc:n341Q & H_ACTIVE & run_count_0 & run_count_1 & run_count_2 & !run_count_3 & mask_active & !abc:n310 (QN)QN & VIDCMD_Q_15 & !VIDCMD_Q_14 & ef_at_pop & !$abc$1392$nVIDCMD_RE) # (!abc:n341Q & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_14) # (!abc:n341Q & staged_word_13 & mask_active & !abc:n310 (QN)QN & abc:n329 (QN)QN & !staged_word_12) # (!abc:n341Q & abc:n310 (QN)QN & sav_src_1 & abc:n340Q) # (!abc:n341Q & !mask_active & sav_src_1 & abc:n340Q) # (!abc:n341Q & staged_word_13 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & abc:n310 (QN)QN) # (!abc:n341Q & staged_word_13 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !mask_active))
+  [13 PTs]  run_count_4.D = ((run_count_4 & abc:n340Q & !abc:n611Q) # (run_count_2 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !abc:n611Q) # (run_count_2 & !staged_word_4 & run_count_3 & !run_count_4 & staged_word_2 & abc:n611Q & staged_word_3) # (run_count_2 & run_count_3 & !run_count_4 & abc:n611Q & abc:n339Q) # (run_count_2 & !staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_2 & abc:n611Q & staged_word_3) # (run_count_2 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & abc:n611Q & abc:n339Q) # (!run_count_3 & run_count_4 & abc:n340Q) # (H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & abc:n340Q & !staged_word_3) # (run_count_2 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_3) # (run_count_2 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_14) # (!run_count_2 & run_count_4 & abc:n340Q) # (H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_2 & abc:n340Q) # (run_count_2 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_2))
+  [ 2 PTs]  run_count_5.D = ((!abc:n617 (QN)QN & abc:n622Q) # (abc:n617 (QN)QN & !abc:n622Q))
+  [ 7 PTs]  cur_src_0.D = ((!abc:n341Q & abc:n293 (QN)QN & abc:n310 (QN)QN & staged_word_12 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (!abc:n341Q & abc:n293 (QN)QN & !mask_active & staged_word_12 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (abc:n341Q & cur_src_0) # (!abc:n341Q & mask_active & !abc:n310 (QN)QN & staged_word_12 & abc:n329 (QN)QN & staged_word_13) # (!abc:n341Q & mask_active & !abc:n310 (QN)QN & H_ACTIVE & run_count_0 & run_count_1 & run_count_2 & !run_count_3 & VIDCMD_Q_15 & VIDCMD_Q_14 & ef_at_pop & !$abc$1392$nVIDCMD_RE) # (!abc:n341Q & abc:n293 (QN)QN & abc:n340Q & sav_src_0 & abc:n310 (QN)QN) # (!abc:n341Q & abc:n293 (QN)QN & abc:n340Q & sav_src_0 & !mask_active))
+  [ 2 PTs]  run_count_10.D = ((abc:n653Q & abc:n645Q) # (!abc:n653Q & abc:n617 (QN)QN & abc:n622Q & abc:n627 (QN)QN & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n644 (QN)QN))
+  [ 6 PTs]  run_count_9.D = ((abc:n644 (QN)QN & !abc:n631 (QN)QN) # (abc:n644 (QN)QN & !abc:n634 (QN)QN) # (!abc:n644 (QN)QN & abc:n622Q & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n617 (QN)QN & abc:n627 (QN)QN) # (abc:n644 (QN)QN & !abc:n627 (QN)QN) # (abc:n644 (QN)QN & !abc:n617 (QN)QN) # (abc:n644 (QN)QN & !abc:n622Q))
+  [ 4 PTs]  run_count_7.D = ((!abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n622Q & abc:n617 (QN)QN) # (abc:n631 (QN)QN & !abc:n617 (QN)QN) # (abc:n631 (QN)QN & !abc:n622Q) # (abc:n631 (QN)QN & !abc:n634 (QN)QN))
+  [ 3 PTs]  run_count_6.D = ((!abc:n634 (QN)QN & abc:n622Q & abc:n617 (QN)QN) # (abc:n634 (QN)QN & !abc:n617 (QN)QN) # (abc:n634 (QN)QN & !abc:n622Q))
+  [ 3 PTs]  run_count_11.D = ((abc:n650Q & !abc:n653Q) # (!abc:n650Q & abc:n653Q & abc:n617 (QN)QN & abc:n622Q & abc:n627 (QN)QN & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n644 (QN)QN) # (abc:n650Q & abc:n645Q))
+  [ 5 PTs]  run_count_8.D = ((abc:n627 (QN)QN & !abc:n631 (QN)QN) # (abc:n627 (QN)QN & !abc:n634 (QN)QN) # (!abc:n627 (QN)QN & abc:n622Q & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n617 (QN)QN) # (abc:n627 (QN)QN & !abc:n617 (QN)QN) # (abc:n627 (QN)QN & !abc:n622Q))
   [ 1 PTs]  set_pix_target_0.C = PIXEL_CLK
   [ 1 PTs]  set_pix_target_0.AR = !nRS
-  [ 1 PTs]  pop_in_flight.C = PIXEL_CLK
-  [ 1 PTs]  pop_in_flight.AR = !nRS
+  [ 1 PTs]  set_pix_target_1.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_target_1.AR = !nRS
+  [ 1 PTs]  set_pix_value_0.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_0.AR = !nRS
+  [ 1 PTs]  set_pix_value_1.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_1.AR = !nRS
+  [ 1 PTs]  set_pix_value_2.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_2.AR = !nRS
+  [ 1 PTs]  set_pix_value_3.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_3.AR = !nRS
+  [ 1 PTs]  set_pix_value_4.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_4.AR = !nRS
+  [ 1 PTs]  set_pix_value_5.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_5.AR = !nRS
+  [ 1 PTs]  set_pix_value_6.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_6.AR = !nRS
+  [ 1 PTs]  set_pix_value_7.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_7.AR = !nRS
+  [ 1 PTs]  set_pix_value_8.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_8.AR = !nRS
+  [ 1 PTs]  set_pix_value_9.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_9.AR = !nRS
+  [ 1 PTs]  set_pix_value_10.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_10.AR = !nRS
+  [ 1 PTs]  h_active_d.C = PIXEL_CLK
+  [ 1 PTs]  h_active_d.AR = !nRS
+  [ 1 PTs]  ef_meta.C = PIXEL_CLK
+  [ 1 PTs]  ef_meta.AR = !nRS
   [ 1 PTs]  ef_sync.C = PIXEL_CLK
   [ 1 PTs]  ef_sync.AR = !nRS
+  [ 1 PTs]  set_pix_target_2.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_target_2.AR = !nRS
+  [ 1 PTs]  set_pix_value_11.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_11.AR = !nRS
+  [ 1 PTs]  ef_at_pop.C = PIXEL_CLK
+  [ 1 PTs]  ef_at_pop.AR = !nRS
   [ 1 PTs]  set_pix_valid.C = PIXEL_CLK
   [ 1 PTs]  set_pix_valid.AR = !nRS
+  [ 1 PTs]  mask_active.C = PIXEL_CLK
+  [ 1 PTs]  mask_active.AR = !nRS
   [ 1 PTs]  RGB_OUT_2.C = PIXEL_CLK
   [ 1 PTs]  RGB_OUT_2.AR = !nRS
   [ 1 PTs]  RGB_OUT_0.C = PIXEL_CLK
   [ 1 PTs]  RGB_OUT_0.AR = !nRS
   [ 1 PTs]  RGB_OUT_1.C = PIXEL_CLK
   [ 1 PTs]  RGB_OUT_1.AR = !nRS
+  [ 1 PTs]  RGB_OUT_5.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_5.AR = !nRS
   [ 1 PTs]  RGB_OUT_3.C = PIXEL_CLK
   [ 1 PTs]  RGB_OUT_3.AR = !nRS
   [ 1 PTs]  RGB_OUT_4.C = PIXEL_CLK
   [ 1 PTs]  RGB_OUT_4.AR = !nRS
-  [ 1 PTs]  RGB_OUT_7.C = PIXEL_CLK
-  [ 1 PTs]  RGB_OUT_7.AR = !nRS
-  [ 1 PTs]  RGB_OUT_5.C = PIXEL_CLK
-  [ 1 PTs]  RGB_OUT_5.AR = !nRS
-  [ 1 PTs]  RGB_OUT_6.C = PIXEL_CLK
-  [ 1 PTs]  RGB_OUT_6.AR = !nRS
   [ 1 PTs]  RGB_OUT_8.C = PIXEL_CLK
   [ 1 PTs]  RGB_OUT_8.AR = !nRS
+  [ 1 PTs]  RGB_OUT_6.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_6.AR = !nRS
+  [ 1 PTs]  RGB_OUT_7.C = PIXEL_CLK
+  [ 1 PTs]  RGB_OUT_7.AR = !nRS
   [ 1 PTs]  RGB_OUT_9.C = PIXEL_CLK
   [ 1 PTs]  RGB_OUT_9.AR = !nRS
   [ 1 PTs]  RGB_OUT_10.C = PIXEL_CLK
   [ 1 PTs]  RGB_OUT_10.AR = !nRS
   [ 1 PTs]  RGB_OUT_11.C = PIXEL_CLK
   [ 1 PTs]  RGB_OUT_11.AR = !nRS
-  [ 1 PTs]  cur_colour_1.C = PIXEL_CLK
-  [ 1 PTs]  cur_colour_1.AR = !nRS
-  [ 1 PTs]  cur_colour_0.C = PIXEL_CLK
-  [ 1 PTs]  cur_colour_0.AR = !nRS
-  [ 1 PTs]  run_count_0.C = PIXEL_CLK
-  [ 1 PTs]  run_count_0.AP = !nRS
-  [ 1 PTs]  cur_src_0.C = PIXEL_CLK
-  [ 1 PTs]  cur_src_0.AR = !nRS
-  [ 1 PTs]  cur_src_1.C = PIXEL_CLK
-  [ 1 PTs]  cur_src_1.AR = !nRS
   [ 1 PTs]  cur_colour_2.C = PIXEL_CLK
   [ 1 PTs]  cur_colour_2.AR = !nRS
-  [ 1 PTs]  q_pending.C = PIXEL_CLK
-  [ 1 PTs]  q_pending.AR = !nRS
-  [ 1 PTs]  w_is_set.C = PIXEL_CLK
-  [ 1 PTs]  w_is_set.AR = !nRS
+  [ 1 PTs]  cur_colour_0.C = PIXEL_CLK
+  [ 1 PTs]  cur_colour_0.AR = !nRS
+  [ 1 PTs]  cur_colour_1.C = PIXEL_CLK
+  [ 1 PTs]  cur_colour_1.AR = !nRS
+  [ 1 PTs]  sav_src_1.C = PIXEL_CLK
+  [ 1 PTs]  sav_src_1.AR = !nRS
   [ 1 PTs]  set_pix_commit.C = PIXEL_CLK
   [ 1 PTs]  set_pix_commit.AR = !nRS
+  [ 1 PTs]  sav_src_0.C = PIXEL_CLK
+  [ 1 PTs]  sav_src_0.AR = !nRS
+  [ 1 PTs]  w_is_set.C = PIXEL_CLK
+  [ 1 PTs]  w_is_set.AR = !nRS
+  [ 1 PTs]  run_count_0.C = PIXEL_CLK
+  [ 1 PTs]  run_count_0.AP = !nRS
+  [ 1 PTs]  staged_word_13.C = PIXEL_CLK
+  [ 1 PTs]  staged_word_13.AR = !nRS
+  [ 1 PTs]  staged_word_14.C = PIXEL_CLK
+  [ 1 PTs]  staged_word_14.AR = !nRS
   [ 1 PTs]  have_staged.C = PIXEL_CLK
   [ 1 PTs]  have_staged.AR = !nRS
+  [ 1 PTs]  run_count_1.C = PIXEL_CLK
+  [ 1 PTs]  run_count_1.AP = !nRS
+  [ 1 PTs]  $abc$1392$nVIDCMD_RE.C = PIXEL_CLK
+  [ 1 PTs]  $abc$1392$nVIDCMD_RE.AP = !nRS
+  [ 1 PTs]  cmp_color0_2.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_2.AR = !nRS
+  [ 1 PTs]  staged_word_9.C = PIXEL_CLK
+  [ 1 PTs]  staged_word_9.AR = !nRS
+  [ 1 PTs]  staged_word_10.C = PIXEL_CLK
+  [ 1 PTs]  staged_word_10.AR = !nRS
+  [ 1 PTs]  cmp_color0_3.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_3.AR = !nRS
+  [ 1 PTs]  staged_word_11.C = PIXEL_CLK
+  [ 1 PTs]  staged_word_11.AR = !nRS
+  [ 1 PTs]  staged_word_12.C = PIXEL_CLK
+  [ 1 PTs]  staged_word_12.AR = !nRS
+  [ 1 PTs]  cmp_color0_5.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_5.AR = !nRS
+  [ 1 PTs]  run_count_2.C = PIXEL_CLK
+  [ 1 PTs]  run_count_2.AP = !nRS
+  [ 1 PTs]  cmp_color0_4.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_4.AR = !nRS
+  [ 1 PTs]  cmp_color0_8.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_8.AR = !nRS
+  [ 1 PTs]  cmp_color0_6.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_6.AR = !nRS
+  [ 1 PTs]  cmp_color0_7.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_7.AR = !nRS
+  [ 1 PTs]  cmp_color0_10.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_10.AR = !nRS
+  [ 1 PTs]  cmp_color1_11.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_11.AP = !nRS
+  [ 1 PTs]  cmp_color0_9.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_9.AR = !nRS
+  [ 1 PTs]  cmp_color1_2.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_2.AP = !nRS
+  [ 1 PTs]  cmp_color1_0.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_0.AP = !nRS
+  [ 1 PTs]  cmp_color1_1.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_1.AP = !nRS
+  [ 1 PTs]  cmp_color1_5.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_5.AP = !nRS
+  [ 1 PTs]  cmp_color1_3.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_3.AP = !nRS
+  [ 1 PTs]  cmp_color1_4.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_4.AP = !nRS
+  [ 1 PTs]  cmp_color1_8.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_8.AP = !nRS
+  [ 1 PTs]  cmp_color1_6.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_6.AP = !nRS
+  [ 1 PTs]  cmp_color1_7.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_7.AP = !nRS
+  [ 1 PTs]  cmp_color1_10.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_10.AP = !nRS
+  [ 1 PTs]  cmp_color0_11.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_11.AR = !nRS
+  [ 1 PTs]  cmp_color1_9.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color1_9.AP = !nRS
   [ 1 PTs]  staged_word_2.C = PIXEL_CLK
   [ 1 PTs]  staged_word_2.AR = !nRS
   [ 1 PTs]  staged_word_0.C = PIXEL_CLK
   [ 1 PTs]  staged_word_0.AR = !nRS
   [ 1 PTs]  staged_word_1.C = PIXEL_CLK
   [ 1 PTs]  staged_word_1.AR = !nRS
-  [ 1 PTs]  run_count_4.C = PIXEL_CLK
-  [ 1 PTs]  run_count_4.AP = !nRS
-  [ 1 PTs]  staged_word_3.C = PIXEL_CLK
-  [ 1 PTs]  staged_word_3.AR = !nRS
-  [ 1 PTs]  staged_word_6.C = PIXEL_CLK
-  [ 1 PTs]  staged_word_6.AR = !nRS
-  [ 1 PTs]  staged_word_4.C = PIXEL_CLK
-  [ 1 PTs]  staged_word_4.AR = !nRS
   [ 1 PTs]  staged_word_5.C = PIXEL_CLK
   [ 1 PTs]  staged_word_5.AR = !nRS
+  [ 1 PTs]  staged_word_3.C = PIXEL_CLK
+  [ 1 PTs]  staged_word_3.AR = !nRS
+  [ 1 PTs]  staged_word_4.C = PIXEL_CLK
+  [ 1 PTs]  staged_word_4.AR = !nRS
   [ 1 PTs]  staged_word_7.C = PIXEL_CLK
   [ 1 PTs]  staged_word_7.AR = !nRS
+  [ 1 PTs]  staged_word_6.C = PIXEL_CLK
+  [ 1 PTs]  staged_word_6.AR = !nRS
+  [ 1 PTs]  cmp_color0_0.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_0.AR = !nRS
   [ 1 PTs]  staged_word_8.C = PIXEL_CLK
   [ 1 PTs]  staged_word_8.AR = !nRS
-  [ 1 PTs]  staged_word_11.C = PIXEL_CLK
-  [ 1 PTs]  staged_word_11.AR = !nRS
-  [ 1 PTs]  staged_word_9.C = PIXEL_CLK
-  [ 1 PTs]  staged_word_9.AR = !nRS
-  [ 1 PTs]  staged_word_10.C = PIXEL_CLK
-  [ 1 PTs]  staged_word_10.AR = !nRS
-  [ 1 PTs]  staged_word_12.C = PIXEL_CLK
-  [ 1 PTs]  staged_word_12.AR = !nRS
-  [ 1 PTs]  staged_word_13.C = PIXEL_CLK
-  [ 1 PTs]  staged_word_13.AR = !nRS
-  [ 1 PTs]  staged_word_14.C = PIXEL_CLK
-  [ 1 PTs]  staged_word_14.AR = !nRS
-  [ 1 PTs]  run_count_1.C = PIXEL_CLK
-  [ 1 PTs]  run_count_1.AP = !nRS
-  [ 1 PTs]  set_pix_capture.C = PIXEL_CLK
-  [ 1 PTs]  set_pix_capture.AR = !nRS
-  [ 1 PTs]  cmp_held_fg_4.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_4.AP = !nRS
-  [ 1 PTs]  cmp_held_fg_2.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_2.AP = !nRS
-  [ 1 PTs]  cmp_held_fg_3.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_3.AP = !nRS
-  [ 1 PTs]  cmp_held_fg_5.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_5.AP = !nRS
-  [ 1 PTs]  cmp_held_fg_6.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_6.AP = !nRS
-  [ 1 PTs]  cmp_held_fg_7.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_7.AP = !nRS
-  [ 1 PTs]  cmp_held_fg_8.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_8.AP = !nRS
-  [ 1 PTs]  cmp_held_fg_9.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_9.AP = !nRS
-  [ 1 PTs]  cmp_held_fg_10.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_10.AP = !nRS
+  [ 1 PTs]  cmp_color0_1.C = PIXEL_CLK
+  [ 1 PTs]  cmp_color0_1.AR = !nRS
   [ 1 PTs]  run_count_3.C = PIXEL_CLK
   [ 1 PTs]  run_count_3.AP = !nRS
-  [ 1 PTs]  run_count_6.C = PIXEL_CLK
-  [ 1 PTs]  run_count_6.AP = !nRS
-  [ 1 PTs]  run_count_9.C = PIXEL_CLK
-  [ 1 PTs]  run_count_9.AP = !nRS
+  [ 1 PTs]  cur_src_1.C = PIXEL_CLK
+  [ 1 PTs]  cur_src_1.AR = !nRS
+  [ 1 PTs]  run_count_4.C = PIXEL_CLK
+  [ 1 PTs]  run_count_4.AP = !nRS
   [ 1 PTs]  run_count_5.C = PIXEL_CLK
   [ 1 PTs]  run_count_5.AP = !nRS
-  [ 1 PTs]  run_count_8.C = PIXEL_CLK
-  [ 1 PTs]  run_count_8.AP = !nRS
-  [ 1 PTs]  cmp_held_bg_1.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_1.AR = !nRS
-  [ 1 PTs]  cmp_held_bg_11.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_11.AR = !nRS
-  [ 1 PTs]  cmp_held_bg_0.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_0.AR = !nRS
-  [ 1 PTs]  cmp_held_bg_2.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_2.AR = !nRS
-  [ 1 PTs]  cmp_held_fg_11.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_11.AP = !nRS
-  [ 1 PTs]  cmp_held_bg_5.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_5.AR = !nRS
-  [ 1 PTs]  cmp_held_bg_3.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_3.AR = !nRS
-  [ 1 PTs]  cmp_held_bg_4.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_4.AR = !nRS
-  [ 1 PTs]  cmp_held_bg_6.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_6.AR = !nRS
-  [ 1 PTs]  want_pop.C = !PIXEL_CLK
-  [ 1 PTs]  want_pop.AR = !nRS
-  [ 1 PTs]  cmp_held_bg_9.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_9.AR = !nRS
-  [ 1 PTs]  cmp_held_bg_7.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_7.AR = !nRS
-  [ 1 PTs]  cmp_held_bg_8.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_8.AR = !nRS
-  [ 1 PTs]  run_count_2.C = PIXEL_CLK
-  [ 1 PTs]  run_count_2.AP = !nRS
-  [ 1 PTs]  cmp_held_bg_10.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_bg_10.AR = !nRS
-  [ 1 PTs]  cmp_held_fg_0.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_0.AP = !nRS
-  [ 1 PTs]  cmp_held_fg_1.C = PIXEL_CLK
-  [ 1 PTs]  cmp_held_fg_1.AP = !nRS
-  [ 1 PTs]  run_count_11.C = PIXEL_CLK
-  [ 1 PTs]  run_count_11.AP = !nRS
+  [ 1 PTs]  cur_src_0.C = PIXEL_CLK
+  [ 1 PTs]  cur_src_0.AR = !nRS
   [ 1 PTs]  run_count_10.C = PIXEL_CLK
   [ 1 PTs]  run_count_10.AP = !nRS
+  [ 1 PTs]  run_count_9.C = PIXEL_CLK
+  [ 1 PTs]  run_count_9.AP = !nRS
   [ 1 PTs]  run_count_7.C = PIXEL_CLK
   [ 1 PTs]  run_count_7.AP = !nRS
+  [ 1 PTs]  run_count_6.C = PIXEL_CLK
+  [ 1 PTs]  run_count_6.AP = !nRS
+  [ 1 PTs]  run_count_11.C = PIXEL_CLK
+  [ 1 PTs]  run_count_11.AP = !nRS
+  [ 1 PTs]  run_count_8.C = PIXEL_CLK
+  [ 1 PTs]  run_count_8.AP = !nRS
 
