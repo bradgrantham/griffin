@@ -6,9 +6,26 @@
 // which supplies the PIX_CONSUME/PIX_PRELOAD/PIX_LAST event strobes: the
 // combined PIXEL+TIMING variant (pixel_combined.v) measured ~153 logic cells
 // against the 128 budget and does not fit, so the split is the design
-// (2026-08-13).  Fits at 122/128 LC, 87 FF, fitter pass 2, no xor_synthesis.
-// There is no board yet, so there is no //PIN: block and the fitter places
-// freely.
+// (2026-08-13).  Fits at 116/128 LC, 80 FF, 460 PT, fitter pass 1, no
+// xor_synthesis.  There is no board yet, so there is no //PIN: block and the
+// fitter places freely.
+//
+// FIT LADDER, 2026-08-24, all -preassign ignore and no strategy flags beyond
+// the target's existing `-strategy debug = on`:
+//
+//   as-was                          116 LC   75 FF    398 PT   fits (pass 2)
+//   + bit_pos capture-clock fix     108 LC   75 FF    366 PT   fits (pass 1)
+//   + 2bpp indexed                  112 LC   78 FF    414 PT   fits (pass 1)
+//   + half rate                     116 LC   80 FF    460 PT   fits (pass 1)
+//
+// Both features together land back on the LC count the chip already carried,
+// because the bit_pos correction below pays for most of them: taking that one
+// register out of the byte engine's priority chain drops 8 logic cells and 32
+// product terms on its own.  Half rate's own marginal cost is 4 LC / 2 FF /
+// 46 PT.
+//
+// `make pixel-sim` runs pixel_tb.v, which is the executable statement of the
+// per-mode pixel semantics, the fetch cadence and the two declared limits.
 //
 // ---------------------------------------------------------------------------
 // Pipeline and the lead constants (derived, not tuned)
@@ -69,8 +86,59 @@
 // Modes
 // ---------------------------------------------------------------------------
 //
-// 1bpp (mode[0] == 0): 80 bytes/line, MSB first, one bit per pixel clock,
-// colour = bit ? pal_fg : pal_bg.
+// The mode register (SET target 5) is decoded bitwise, not as an enumeration:
+//
+//   mode[0]  1 = 2bpp micro-HAM
+//   mode[1]  1 = 2bpp indexed
+//   mode[2]  1 = half rate
+//   [1:0] == 2'b11 is reserved; micro-HAM wins it by construction.
+//
+// HALF RATE (mode[2]) holds every consumed bit-group for two pixel clocks:
+// 320 groups across the same 640-clock window, so a line costs half the
+// stream — 1bpp drops to 40 bytes (20 words) and indexed to 80 bytes (40
+// words) — at half the horizontal resolution.  It is a stream-side gate only:
+// RGB_OUT's window, PIXEL_OUT_LEAD and the SET path are all untouched.
+//
+// Half rate is IGNORED IN MICRO-HAM, and masked off in hardware rather than
+// merely declared undefined.  A HAM code can span two consumption clocks, and
+// ham_second is not phase-gated, so a half-rate HAM line would mis-pair every
+// 4-bit code — a whole garbage line rather than a coarse one.  One literal on
+// half_rate turns that into "the flag does nothing", which is a debuggable
+// outcome.  pixel_skip needs no extra clamp at half rate: skip is measured in
+// stream bits and a stream bit is still exactly one group.
+//
+// 1bpp (mode[1:0] == 2'b00): 80 bytes/line, MSB first, one bit per pixel
+// clock, colour = bit ? pal_fg : pal_bg.
+//
+// 2bpp indexed (mode[1:0] == 2'b10): 160 bytes/line, two stream bits per pixel
+// clock like micro-HAM — same stream rate, same fetch cadence, same odd-skip
+// clamp — but the dibit is a DIRECT palette index with no arithmetic and no
+// multi-clock codes:
+//
+//   00  pal_bg      01  pal_fg      10  ham_held      11  12'h000 (black)
+//
+// Zero new SET targets: the three colour entries are the registers 1bpp and
+// micro-HAM already own, so a display list recolours the mode per line with
+// the SETs it already emits, and black is a constant rather than a fourth
+// register.
+//
+// WHY ham_held STOPS BEING THE OUTPUT REGISTER HERE.  In the other two modes
+// ham_held IS the pixel — the stream writes it every clock and RGB_OUT is a
+// copy of it.  Index 10 has to show what SET *put* in ham_held, which cannot
+// survive a decoder that overwrites it on every 00 and 01.  So in indexed mode
+// the stream is locked out of ham_held entirely (load_pal and held_init both
+// drop out) and the dibit is pipelined instead, selecting the colour at the
+// output mux.  ham_held is then a plain third palette register whose only
+// writer is SET — which is also why the mode needs no line-start
+// reinitialisation to stay deterministic.
+//
+// SET ORDERING RULE — MODE BEFORE ham_held.  held_init is suppressed by the
+// mode bit, so ham_held only survives blanking once the mode register already
+// reads indexed.  A list that SETs ham_held and then SETs mode has its colour
+// overwritten by pal_fg on the intervening blank clocks.  This is the one
+// order-dependence in the chip and it is deliberate: the alternative is
+// peeking at the in-flight SET payload, which only fixes the adjacent-SET case
+// and silently fails for any wider gap.  SET mode first and every gap is safe.
 //
 // 2bpp micro-HAM (mode[0] == 1): 160 bytes/line, exactly TWO stream bits per
 // pixel clock — the same code space as video.v's serial decoder but a
@@ -109,10 +177,27 @@
 // and the alternative (a per-line fetched-byte counter plus a padded PIXELS
 // record) buys a correct right edge for ~8 FF if ever wanted.
 //
+// DECLARED FEATURE LIMIT — the last byte of a two-bit line.  PIX_LAST is the
+// last EIGHT consumption clocks, which is exactly one byte in 1bpp: the final
+// byte's fetch is issued at pixel 630, outside the window, and the fetch that
+// would run off the end of the line is issued at pixel 638, inside it and so
+// suppressed.  A two-bit mode covers a byte in four clocks, so the window
+// swallows one fetch too many: the final byte's own fetch is issued at pixel
+// 634, inside PIX_LAST, and the last four pixels of every micro-HAM and every
+// indexed line re-shift the previous byte instead.  This is PRE-EXISTING
+// micro-HAM behaviour, not something the indexed mode introduces, and it is
+// left alone here on purpose — correcting it means delaying fetch_last by four
+// clocks in two-bit full-rate mode (a four-stage shift register) or narrowing
+// PIX_LAST in timing.v, and both are decisions above this task's pay grade.
+// Half rate does NOT have the problem: at two clocks per group the final
+// byte's fetch moves back out of the window on its own.
+//
 // HARDWARE CLAMP — odd skip in micro-HAM.  HAM consumes exactly two stream
 // bits per pixel clock, so an odd alignment shifts every subsequent code
 // across its boundary and the whole line mis-parses (and the fetch cadence
-// double-fires).  skip bit 0 is therefore ignored in HAM mode, clamped at
+// double-fires).  The indexed mode inherits the clamp for the same reason —
+// an odd shift there splits every index across a boundary.  skip bit 0 is
+// therefore ignored in BOTH two-bit modes, clamped at
 // the point of CONSUMPTION (line-start preload), not at the SET write — so
 // a list that sets skip first and mode second cannot smuggle a stale odd
 // bit in.  A buggy list scrolls to the nearest even bit instead of
@@ -198,13 +283,26 @@ module Pixel
     reg [11:0] pal_bg;
     reg [3:0]  pixel_skip;
 
-    // Fine-alignment skip as consumed at line start: bit 0 is ignored in
-    // micro-HAM mode (see the header's HARDWARE CLAMP note).  Clamping here,
-    // at consumption, makes the result independent of SET ordering.
-    wire [2:0] skip_fine = {pixel_skip[2:1], pixel_skip[0] & ~mode_ham};
-    reg [1:0]  mode;                     // [0] 1 = micro-HAM, [1] spare
+    // mode[0] micro-HAM, mode[1] 2bpp indexed, mode[1:0] == 2'b11 reserved,
+    // mode[2] half rate.  HAM wins the reserved encoding by construction
+    // rather than by decode accident, so a buggy list gets a whole known mode
+    // and not two decoders fighting over ham_held.  Half rate is masked off in
+    // micro-HAM for the same reason — see the header.
+    reg [2:0] mode;
 
-    wire mode_ham = mode[0];
+    wire mode_ham   = mode[0];
+    wire mode_idx2  = mode[1] & ~mode[0];
+    wire half_rate  = mode[2] & ~mode_ham;
+
+    // The two modes that spend two stream bits per pixel clock share every
+    // piece of the byte engine's cadence: the shift width, the bit_pos step,
+    // the fetch trigger and the odd-skip clamp.
+    wire two_bits = mode_ham | mode_idx2;
+
+    // Fine-alignment skip as consumed at line start: bit 0 is ignored in the
+    // two-bit modes (see the header's HARDWARE CLAMP note).  Clamping here, at
+    // consumption, makes the result independent of SET ordering.
+    wire [2:0] skip_fine = {pixel_skip[2:1], pixel_skip[0] & ~two_bits};
 
     wire set_fg   = set_pix_commit & (set_pix_target == SET_PIX_PAL_FG);
     wire set_bg   = set_pix_commit & (set_pix_target == SET_PIX_PAL_BG);
@@ -219,7 +317,7 @@ module Pixel
             pal_fg      <= 12'hFFF;
             pal_bg      <= 12'h000;
             pixel_skip  <= 4'd0;
-            mode        <= 2'd0;
+            mode        <= 3'd0;
         end
         else
         begin
@@ -235,7 +333,7 @@ module Pixel
 
             if (set_mode)
             begin
-                mode <= set_pix_value[1:0];
+                mode <= set_pix_value[2:0];
             end
 
             if (set_skip)
@@ -256,24 +354,88 @@ module Pixel
     reg [7:0] shift_reg;
     reg [2:0] bit_pos;                   // stream bit position within the byte
     reg [2:0] align_cnt;
+    reg       half_phase;                // 0 = this consumption clock steps the stream
     reg       fifo_loading;              // /RE is low this cycle, capture at its end
     reg       fifo_select;               // 0 = EVEN, 1 = ODD
     reg       extra_byte;                // pixel_skip >= 8: discard one byte
 
     wire aligning = ~(&align_cnt);
 
-    // The next byte is fetched during the last consumption cycle of the
-    // current one: 1bpp consumes 8 bits over positions 0..7 and HAM consumes
-    // two per clock over 0,2,4,6, so the trigger is one consumption earlier in
-    // each case.
-    wire fetch_due = mode_ham ? (bit_pos[2:1] == 2'b10) : (bit_pos == 3'd6);
+    // Half rate is one gate, not a second cadence: half_phase splits the 640
+    // consumption clocks into pairs and `step` is the first clock of each
+    // pair, so the whole stream side — shifter, bit_pos, fetch, and the colour
+    // decoders downstream — simply skips every other clock while RGB_OUT's
+    // window stays 640 clocks wide and each group is held for two of them.
+    // Stepping on the FIRST clock of the pair rather than the second is what
+    // keeps PIXEL_OUT_LEAD at 1: pixel 0 still reaches RGB_OUT on the same
+    // clock it would at full rate.  half_phase is cleared at preload, so the
+    // pairing has the same phase on every line.
+    wire step = pix_consume & (~half_rate | ~half_phase);
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            half_phase <= 1'b0;
+        end
+        else if (preload)
+        begin
+            half_phase <= 1'b0;
+        end
+        else if (pix_consume)
+        begin
+            half_phase <= ~half_phase;
+        end
+    end
+
+    // The capture lands at the END of the clock after the trigger, so the
+    // trigger has to sit one clock before the last clock on which the current
+    // byte is still being decoded.
+    //
+    // At full rate that last clock is the byte's last pixel, so the trigger is
+    // one consumption earlier: 1bpp consumes 8 bits over positions 0..7, and a
+    // two-bit mode consumes two per clock over 0,2,4,6.
+    //
+    // At half rate the byte's last group occupies TWO clocks and only the
+    // first of them steps, so the trigger moves one consumption later — onto
+    // the step clock that already carries the byte's final position — and the
+    // capture lands on the unstepped second clock of that pair, where nothing
+    // reads the shifter.  Trigger one consumption earlier instead and the
+    // capture would land on the group's own second clock and cost the line a
+    // pixel per byte.
+    wire fetch_due = two_bits ? (bit_pos[2:1] == (half_rate ? 2'b11 : 2'b10))
+                              : (bit_pos      == (half_rate ? 3'd7  : 3'd6));
+
+    // bit_pos advances on EVERY consumption clock, including the one on which
+    // the next byte is being captured — that clock IS the current byte's last
+    // pixel (it decodes the old shift_reg; the capture only lands at its end).
+    // It therefore cannot live in the byte engine's priority chain below,
+    // where the fifo_loading branch preempts the consumption branch: leaving
+    // it there costs one increment per byte, so the byte boundary slides one
+    // position earlier every byte, fetch_due drifts with it, and from the
+    // third byte on the capture lands on the next byte's FIRST pixel and that
+    // pixel decodes an emptied shifter.  Its own block is the whole fix.
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            bit_pos <= 3'd0;
+        end
+        else if (preload)
+        begin
+            bit_pos <= skip_fine;
+        end
+        else if (step)
+        begin
+            bit_pos <= bit_pos + (two_bits ? 3'd2 : 3'd1);
+        end
+    end
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
         if (RESET)
         begin
             shift_reg       <= 8'd0;
-            bit_pos         <= 3'd0;
             align_cnt       <= 3'b111;
             fifo_loading    <= 1'b0;
             fifo_select     <= 1'b0;
@@ -289,7 +451,6 @@ module Pixel
             fifo_select     <= 1'b0;
             extra_byte      <= pixel_skip[3];
             align_cnt       <= ~skip_fine;
-            bit_pos         <= skip_fine;
         end
         else if (fifo_loading)
         begin
@@ -307,10 +468,9 @@ module Pixel
             shift_reg <= {shift_reg[6:0], 1'b0};
             align_cnt <= align_cnt + 3'd1;
         end
-        else if (pix_consume)
+        else if (step)
         begin
-            shift_reg <= mode_ham ? {shift_reg[5:0], 2'b00} : {shift_reg[6:0], 1'b0};
-            bit_pos   <= bit_pos + (mode_ham ? 3'd2 : 3'd1);
+            shift_reg <= two_bits ? {shift_reg[5:0], 2'b00} : {shift_reg[6:0], 1'b0};
 
             if (fetch_due & ~fetch_last)
             begin
@@ -339,14 +499,18 @@ module Pixel
 
     // 1bpp is a "0 p" load every clock; HAM takes the prefix branch only when
     // it is not already inside a code.
-    wire ham_prefix = mode_ham & pix_consume & ~ham_second & code_hi;
-    wire ham_chroma = mode_ham & pix_consume & ham_second;
-    wire load_pal   = pix_consume & ~ham_chroma & ~ham_prefix;
+    wire ham_prefix = mode_ham & step & ~ham_second & code_hi;
+    wire ham_chroma = mode_ham & step & ham_second;
+    wire load_pal   = step & ~ham_chroma & ~ham_prefix & ~mode_idx2;
     wire pal_bit    = mode_ham ? code_lo : code_hi;
 
     // Line start: held tracks pal_fg through blanking, so every visible line
-    // begins with held = fg with no state carried across lines.
-    wire held_init = ~pix_consume;
+    // begins with held = fg with no state carried across lines.  The indexed
+    // mode opts out of BOTH writers — the stream never touches held there and
+    // blanking must not either, because held is that mode's third palette
+    // entry and has to survive from its SET to the end of the line.  It stays
+    // deterministic for free: in indexed mode set_held is the only writer.
+    wire held_init = ~pix_consume & ~mode_idx2;
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
@@ -387,21 +551,43 @@ module Pixel
 
     // ----------------------------------------------------------------
     // Registered outputs
+    //
+    // 1bpp and micro-HAM hand RGB_OUT the held colour directly, as they always
+    // have.  The indexed mode cannot: its code 10 has to show ham_held's SET
+    // value, so ham_held must not be the thing the stream writes.  The pixel's
+    // dibit instead rides its own two-bit register — the same pipeline stage
+    // as ham_held, so PIXEL_OUT_LEAD is unchanged at 1 — and selects among the
+    // three colour registers and black here at the output.  Two flip-flops and
+    // three product terms per output bit buy the mode without a fourth 12-bit
+    // register and without disturbing the existing modes' single term.
     // ----------------------------------------------------------------
 
-    reg pix_consume_d;
+    reg [1:0] idx_code;
+    reg       pix_consume_d;
+
+    wire [11:0] idx_colour = idx_code[1] ? (idx_code[0] ? 12'h000 : ham_held)
+                                         : (idx_code[0] ? pal_fg  : pal_bg);
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
         if (RESET)
         begin
             RGB_OUT       <= 12'h000;
+            idx_code      <= 2'd0;
             pix_consume_d <= 1'b0;
         end
         else
         begin
             pix_consume_d <= pix_consume;
-            RGB_OUT       <= pix_consume_d ? ham_held : 12'h000;
+
+            if (step)
+            begin
+                idx_code <= {code_hi, code_lo};
+            end
+
+            RGB_OUT <= ~pix_consume_d ? 12'h000    :
+                        mode_idx2     ? idx_colour :
+                                        ham_held;
         end
     end
 

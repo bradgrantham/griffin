@@ -34,7 +34,7 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "adapter speed 2000" \
     -c init
 
-.PHONY: all glue video engine audio ports compositor compositor-sim pixel timing clean
+.PHONY: all glue video engine audio ports compositor compositor-sim pixel pixel-sim timing clean
 
 # The default set is the Rev 2 super-engine video path: display-list ENGINE,
 # TIMING + PIXEL + COMPOSITOR.  VIDEO is the Rev 1 in-band-header design,
@@ -204,6 +204,12 @@ pixel/pixel.edif: pixel/pixel.v
 pixel/pixel.jed: pixel/pixel.edif
 	cd pixel && $(FITTER) pixel -preassign ignore -strategy debug = on
 
+# `make pixel-sim` runs the iverilog testbench, which is the real
+# specification of the decoder's per-mode pixel semantics and of the byte
+# engine's fetch cadence; it exits nonzero if any check fails.
+pixel-sim: pixel/pixel_tb.v pixel/pixel.v
+	cd pixel && iverilog -g2012 -o pixel_tb.vvp pixel_tb.v pixel.v && vvp pixel_tb.vvp
+
 timing: pixel/timing.jed
 
 pixel/timing.edif: pixel/timing.v
@@ -285,4 +291,5 @@ clean:
 	rm -f audio/audio.edif audio/audio.fit audio/audio.jed audio/audio.vo
 	rm -f ports/ports.edif ports/ports.fit ports/ports.jed ports/ports.vo ports/ports.svf
 	rm -f compositor/compositor.edif compositor/compositor.fit compositor/compositor.jed compositor/compositor_tb.vvp
+	rm -f pixel/pixel.edif pixel/pixel.fit pixel/pixel.jed pixel/pixel.vo pixel/pixel_tb.vvp
 	rm -f glue/glue-verify.svf video/video-verify.svf
