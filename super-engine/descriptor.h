@@ -22,12 +22,15 @@
 //     complemented count and the playback machine upcounts it to an all-ones
 //     terminal.  A 10-bit counter covers every count a 640-pixel line can use;
 //     the encoding would keep 12 bits.  compositor.v currently spends the 12.
-//   FIT-RISKY ASSUMPTION 2 (RESOLVED — TILE IS GONE): the two 16-bit mask words
-//     were the biggest single lever and they have been spent.  TILE is dropped
-//     end to end; its `01` prefix now decodes as a one-slot no-op so a stray
-//     word cannot desynchronise the source registers.  Sprites and cursors are
-//     RUN/RUN_COLOR span lists instead, which cost words rather than
-//     flip-flops.  Kept in the register as a reminder of what was traded.
+//   FIT-RISKY ASSUMPTION 2 (RESOLVED TWICE — TILE IS GONE, MASK TOOK ITS
+//     PREFIX): TILE's three words and its two mask shifters were the biggest
+//     single lever and they were spent.  The `01` prefix then came back on
+//     2026-08-24 as MASK, a TWO-word, SIXTEEN-pixel per-pixel overlay with NO
+//     inline colour — it reuses staged_word as its shifter and the shared
+//     playback counter, so it costs two macrocells plus sav_src rather than
+//     two 16-bit shifters.  Sprites and cursors can now be either: RUN/RUN_COLOR
+//     span lists (cheap for contiguous art) or MASK records (cheap for art with
+//     holes).  See "MASK" below.
 //   FIT-RISKY ASSUMPTION 3: a 12-bit SET value committed atomically into
 //     whichever register the 3-bit target names.  If the register file has to
 //     be written in halves the slot semantics below change shape.
@@ -80,6 +83,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -386,13 +390,14 @@ constexpr uint32_t pixels_words_per_line(uint32_t mode, uint32_t pixel_skip)
 // VIDCMD instruction stream
 // ============================================================================
 //
-// EVERY RECORD IS ONE WORD.  16-bit, prefix coded on the top bits:
+// EVERY RECORD IS ONE WORD EXCEPT MASK, WHICH IS TWO.  16-bit, prefix coded on
+// the top bits:
 //
 //   00 ss ~count[11:0]              RUN        src 00 passthrough
-//                                                  01 held_fg
-//                                                  10 held_bg
+//                                                  01 cmp_color1 (held_fg)
+//                                                  10 cmp_color0 (held_bg)
 //   00 11 colour[2:0] ~count[8:0]   RUN_COLOR
-//   01 ..........                   reserved   one-slot no-op (ex-TILE)
+//   01 d1 d2 d3 d4 d5 d6 d7         MASK header, + one data word d8..d15
 //   1  ttt value[11:0]              SET
 //
 // Counts are stored complemented exactly as compositor.v wants them: an ATF15xx
@@ -401,16 +406,13 @@ constexpr uint32_t pixels_words_per_line(uint32_t mode, uint32_t pixel_skip)
 // shared incrementer walks it to 12'hFFF.  RUN_COLOR's 9-bit field loads with
 // the top three bits forced to 1 so the same terminal serves both widths.
 //
-// THE `01` PREFIX IS A ONE-SLOT NO-OP.  TILE is gone (user decision, and it was
-// the biggest flip-flop lever available).  compositor.v decodes `01` as a
-// record that consumes exactly one slot and changes nothing, so a stray word
-// costs a pixel instead of desynchronising the source registers.  Nothing
-// emits it.  If `01` ever returns as a limited 2-word variant it gets whatever
-// flip-flops are left over.
+// THE `01` PREFIX IS MASK (2026-08-24, "experiment B", implemented and
+// committed in cpld/compositor/compositor.v).  TILE is still gone; what came
+// back on its prefix is a much smaller record — see the MASK section below.
 //
 // FRAMING IS DURATION ARITHMETIC, WITH HOLD — AND WITH THE FETCH CADENCE.
 // Every active pixel clock is one slot.  A RUN contributes its count, a
-// RUN_COLOR its count, a SET one slot, the reserved no-op one slot.  That is
+// RUN_COLOR its count, a SET one slot, a MASK sixteen.  That is
 // what a record costs WHEN IT EXECUTES; what it costs to DELIVER is a separate
 // number, and since 2026-08-19 the two are not the same.  The fetch is one word
 // per TWO pixel clocks (registered /RE, see VIDCMD_SLOTS_PER_WORD below), so a
@@ -445,16 +447,26 @@ constexpr uint32_t pixels_words_per_line(uint32_t mode, uint32_t pixel_skip)
 
 enum class VidcmdType : uint8_t
 {
-    RUN      = 0,
-    RESERVED = 1,   // ex-TILE `01` prefix: one slot, no effect
-    SET      = 2,
+    RUN  = 0,
+    MASK = 1,   // the `01` prefix: header + one data word, sixteen pixels
+    SET  = 2,
 };
 
 // RUN's 2-bit source select.
+//
+// NAMING NOTE.  compositor.v renamed cmp_held_fg/cmp_held_bg to
+// cmp_color1/cmp_color0 on 2026-08-24, because a MASK dibit selects between
+// them by NUMBER and "fg/bg" stopped describing what they are.  The WIRE
+// ENCODINGS DID NOT MOVE, so these names are kept here (the emulator, apps/ and
+// firmware/ all use them) and the color-numbered aliases below are the ones new
+// code should read.
 inline constexpr uint32_t RUN_SRC_PASSTHROUGH = 0;   // RGB_IN from PIXEL
-inline constexpr uint32_t RUN_SRC_HELD_FG     = 1;   // cmp_held_fg
-inline constexpr uint32_t RUN_SRC_HELD_BG     = 2;   // cmp_held_bg
+inline constexpr uint32_t RUN_SRC_HELD_FG     = 1;   // cmp_color1
+inline constexpr uint32_t RUN_SRC_HELD_BG     = 2;   // cmp_color0
 inline constexpr uint32_t RUN_SRC_COLOR       = 3;   // RUN_COLOR, see below
+
+inline constexpr uint32_t RUN_SRC_COLOR1      = RUN_SRC_HELD_FG;
+inline constexpr uint32_t RUN_SRC_COLOR0      = RUN_SRC_HELD_BG;
 
 // --- RUN_COLOR ------------------------------------------------------------
 //
@@ -508,24 +520,43 @@ inline constexpr uint32_t SET_PIX_MODE       = 5;
 inline constexpr uint32_t SET_PIX_PIXEL_SKIP = 6;
 inline constexpr uint32_t SET_SPARE_7        = 7;
 
+// The color-numbered spelling of targets 0 and 1, matching compositor.v's
+// cmp_color1 / cmp_color0 and griffin.yml's VIDCMD_SET_CMP_COLOR1 /
+// VIDCMD_SET_CMP_COLOR0 (renamed 2026-08-24, numbering unchanged).
+//
+// THE NUMBER/COLOUR SWAP IS DELIBERATE AND STILL OPEN: target 0 writes
+// cmp_color1 and target 1 writes cmp_color0.  Renaming the two constants was a
+// contract change made on its own; renumbering the two TARGETS would be a wire
+// change and is a separate open question (griffin.yml issues).  Nothing here
+// may quietly "fix" it — the encoding is frozen by the RTL, the emulator, the
+// firmware and apps/.
+inline constexpr uint32_t SET_CMP_COLOR1 = SET_CMP_HELD_FG;   // target 0
+inline constexpr uint32_t SET_CMP_COLOR0 = SET_CMP_HELD_BG;   // target 1
+
 constexpr bool vidcmd_set_targets_pixel(uint32_t target)
 {
     return target >= SET_PIX_PAL_FG && target <= SET_PIX_PIXEL_SKIP;
 }
 
 // Held colours at /RS (vsync), and the playback state it resets to.  Straight
-// out of compositor.v's reset block: cmp_held_fg 0xFFF, cmp_held_bg 0x000,
-// cur_src passthrough, run_count already terminal.
+// out of compositor.v's reset block: cmp_color1 0xFFF, cmp_color0 0x000,
+// cur_src passthrough, run_count already terminal, mask playback abandoned.
 inline constexpr Rgb444 VIDCMD_RESET_HELD_FG = RGB444_WHITE;
 inline constexpr Rgb444 VIDCMD_RESET_HELD_BG = RGB444_BLACK;
 
+inline constexpr Rgb444 VIDCMD_RESET_COLOR1 = VIDCMD_RESET_HELD_FG;
+inline constexpr Rgb444 VIDCMD_RESET_COLOR0 = VIDCMD_RESET_HELD_BG;
+
+// Decodes the LEAD word of a record.  A MASK's data word is never decoded:
+// compositor.v captures it with have_staged LOW, so no bit pattern of it can
+// reach this decode, and the model reproduces that.
 constexpr VidcmdType vidcmd_type_of(uint16_t w)
 {
     if ((w & 0x8000) != 0)
     {
         return VidcmdType::SET;
     }
-    return ((w >> 14) & 1) != 0 ? VidcmdType::RESERVED : VidcmdType::RUN;
+    return ((w >> 14) & 1) != 0 ? VidcmdType::MASK : VidcmdType::RUN;
 }
 
 constexpr uint16_t vidcmd_run(uint32_t src, uint32_t count)
@@ -545,12 +576,187 @@ constexpr uint16_t vidcmd_run_color(uint32_t colour, uint32_t count)
 constexpr uint32_t vidcmd_run_color_code(uint16_t w)  { return (w >> 9) & 0x7; }
 constexpr uint32_t vidcmd_run_color_count(uint16_t w) { return static_cast<uint32_t>((~w) & 0x1FF); }
 
-// The one-slot no-op.  Provided so a test can emit it deliberately; nothing in
-// the authoring path does.
-constexpr uint16_t vidcmd_reserved()
+// ---------------------------------------------------------------------------
+// MASK — the two-word `01` record, sixteen pixels of per-pixel overlay
+// ---------------------------------------------------------------------------
+//
+// Bit-for-bit compositor.v (2026-08-24, "experiment B"), whose header is the
+// normative statement of all of this; compositor_tb.v's MASKB_* traces are the
+// measurement.
+//
+//   word 1  { 2'b01, d1, d2, d3, d4, d5, d6, d7 }   d1 in bits [13:12]
+//   word 2  { d8, d9, d10, d11, d12, d13, d14, d15 } d8 in bits [15:14]
+//   pixel 0 has NO DIBIT: it is implicitly {1,0}, opaque cmp_color0.
+//
+// A dibit is {opacity, select}: 00 passthrough, 10 cmp_color0, 11 cmp_color1,
+// 01 reserved and plays as passthrough.
+//
+// THERE IS NO INLINE COLOUR.  All fourteen payload bits of the header are
+// dibits; recolouring a mask is an ordinary SET in front of it.  That is what
+// made the record chainable — see the gap constants below.
+//
+// THE RECORD IS MODAL.  A dibit overrides the source for its own pixel only;
+// whatever RUN was in force resumes, as if untouched, at pixel 16.  RUN_COLOR's
+// colour latch is not disturbed either.  Note the corollary that catches
+// authors out: dibit 00 is PASSTHROUGH, i.e. PIXEL's RGB_IN — it is NOT "the
+// span underneath".  A mask over a RUN_COLOR background must paint that
+// background itself, out of cmp_color0.
+//
+// AUTHORING RULES, all of them consequences rather than conventions:
+//
+//   * Leading transparency is a RUN, not dibits.  Pixel 0 is implicitly OPAQUE,
+//     so a sprite with a transparent left edge starts its record at the first
+//     opaque pixel, behind a passthrough RUN.  There is no gap to pay for that:
+//     RUN-to-mask is zero slots.
+//   * Whatever pixel lands on a record's pixel 0 is cmp_color0, so art laid out
+//     in 16-pixel cells wants a blank column at each cell's left edge.  Both
+//     screen cases in main.cpp are built on that: an 8-px console cell with a
+//     blank column 0 puts two glyphs in one record, and a 16-px "one glyph per
+//     record" big font does the same for large text.
+//   * Recolouring costs slots, so recolour BETWEEN groups, not inside a run of
+//     them, and price the seam (below) into the art's geometry.
+inline constexpr uint32_t MASK_SLOTS         = 16;   // pixels per record
+inline constexpr uint32_t MASK_RECORD_WORDS  = 2;    // header + data
+inline constexpr uint32_t MASK_HEADER_DIBITS = 7;    // d1..d7
+inline constexpr uint32_t MASK_DATA_DIBITS   = 8;    // d8..d15
+inline constexpr uint32_t MASK_RELOAD_PIXEL  = 8;    // d8 comes off the park here
+
+inline constexpr uint32_t MASK_DIBIT_PASSTHROUGH = 0;   // 00
+inline constexpr uint32_t MASK_DIBIT_RESERVED    = 1;   // 01, plays as 00
+inline constexpr uint32_t MASK_DIBIT_COLOR0      = 2;   // 10
+inline constexpr uint32_t MASK_DIBIT_COLOR1      = 3;   // 11
+
+// Pixel 0's implicit dibit, as a value the authoring code can compare against.
+inline constexpr uint32_t MASK_PIXEL0_DIBIT = MASK_DIBIT_COLOR0;
+
+// Which RUN source a dibit drives.  compositor.v computes exactly this in two
+// product terms: {opacity & ~select, opacity & select}.
+constexpr uint32_t vidcmd_mask_dibit_src(uint32_t dibit)
 {
-    return static_cast<uint16_t>(1u << 14);
+    if ((dibit & 2u) == 0)
+    {
+        return RUN_SRC_PASSTHROUGH;   // 00 and the reserved 01
+    }
+    return ((dibit & 1u) != 0) ? RUN_SRC_COLOR1 : RUN_SRC_COLOR0;
 }
+
+struct VidcmdMask
+{
+    uint16_t header = 0;
+    uint16_t data   = 0;
+};
+
+// d[0] is ignored: the hardware has no bit for it.  Authoring code should keep
+// d[0] == MASK_PIXEL0_DIBIT so the array reads as the picture it draws;
+// vidcmd_mask_pixel0_ok() is the assertion for that.
+constexpr bool vidcmd_mask_pixel0_ok(const std::array<uint32_t, MASK_SLOTS> &d)
+{
+    return d[0] == MASK_PIXEL0_DIBIT;
+}
+
+constexpr VidcmdMask vidcmd_mask(const std::array<uint32_t, MASK_SLOTS> &d)
+{
+    VidcmdMask m;
+    uint32_t   h = 1u << 14;
+    for (uint32_t i = 1; i <= MASK_HEADER_DIBITS; i++)
+    {
+        h |= (d[i] & 3u) << (14u - 2u * i);
+    }
+    uint32_t w = 0;
+    for (uint32_t i = 0; i < MASK_DATA_DIBITS; i++)
+    {
+        w |= (d[MASK_HEADER_DIBITS + 1 + i] & 3u) << (14u - 2u * i);
+    }
+    m.header = static_cast<uint16_t>(h);
+    m.data   = static_cast<uint16_t>(w);
+    return m;
+}
+
+// The form art actually arrives in.  Bitmaps are PLANAR — an opacity plane and
+// a select plane, one bit per pixel, MSB leftmost so bit 15 is pixel 0 — and
+// the record wants them INTERLEAVED as dibits.  Doing the transpose here means
+// no caller has to think about which half of a dibit is which.
+constexpr VidcmdMask vidcmd_mask_from_planes(uint16_t opacity, uint16_t select)
+{
+    std::array<uint32_t, MASK_SLOTS> d{};
+    for (uint32_t i = 0; i < MASK_SLOTS; i++)
+    {
+        const uint32_t bit = 15u - i;
+        d[i] = (((opacity >> bit) & 1u) << 1) | ((select >> bit) & 1u);
+    }
+    return vidcmd_mask(d);
+}
+
+constexpr uint32_t vidcmd_mask_header_dibit(uint16_t header, uint32_t i)
+{
+    return (header >> (14u - 2u * i)) & 3u;      // i in 1..7
+}
+
+constexpr uint32_t vidcmd_mask_data_dibit(uint16_t data, uint32_t i)
+{
+    return (data >> (14u - 2u * (i - MASK_HEADER_DIBITS - 1u))) & 3u;   // i in 8..15
+}
+
+// The dibit that paints pixel i of a record, pixel 0's implicit one included.
+constexpr uint32_t vidcmd_mask_dibit(const VidcmdMask &m, uint32_t i)
+{
+    if (i == 0)
+    {
+        return MASK_PIXEL0_DIBIT;
+    }
+    return (i <= MASK_HEADER_DIBITS) ? vidcmd_mask_header_dibit(m.header, i)
+                                     : vidcmd_mask_data_dibit(m.data, i);
+}
+
+// --- MASK seam constants, DERIVED from the laws and measured by the tb -------
+//
+// All four are slot counts BETWEEN a record's last painted pixel and the next
+// mask's pixel 0, so 0 means "adjacent pixels".
+//
+//   RUN -> MASK        0.  The header paints pixel 0 in its own slot, and a RUN
+//                      long enough to cover a fetch has the header banked.
+//                      (compositor_tb MASKB_SPRITE, measured 0.)
+//   MASK -> MASK       0.  The pixel-15 edge captures the next header one slot
+//                      early, so it is staged with a terminal count during the
+//                      last pixel and fires on the very next edge.  A cursor of
+//                      any width is a plain run of records.
+//                      (compositor_tb MASKB_CHAIN32, measured 0.)
+//   MASK -> SET -> MASK
+//                      2.  The SET is the record the pixel-15 edge captured, so
+//                      it owns the slot after the mask; the next header is only
+//                      READ during that slot, captured at its end and consumed
+//                      one edge later — one HOLD slot in between.  That is the
+//                      ordinary 2-slot cadence, not a mask penalty.
+//                      (compositor_tb MASKB_RECOLOR, measured 2.)
+//   MASK -> SET,SET -> MASK
+//                      4.  DERIVED HERE, and it is NOT 3.  The two SETs cannot
+//                      be a banked pair: the mask holds staged_word, so only ONE
+//                      word is parked on Q while it plays, and the pixel-15 edge
+//                      captures that one.  SET 1 therefore executes alone, /RE
+//                      falls on its edge, SET 2 is captured one slot later and
+//                      executes one slot after that — 2 + 2.  A pair needs a
+//                      record that DOES release the buffer early, which is what
+//                      the RUN case below is.
+//   RUN -> SET,SET -> MASK
+//                      3, and the third slot is NOT obvious.  Behind a RUN the
+//                      fetch banks both SETs (one staged, one parked), so the
+//                      pair law does put them on CONSECUTIVE slots — but the
+//                      park held /RE LOW, so /RE only RISES on the edge the
+//                      first SET is consumed and cannot FALL again until the
+//                      edge after.  The header is therefore read one edge later
+//                      than a naive count expects, captured on the edge after
+//                      that, and consumed on the edge after THAT: one HOLD slot
+//                      behind the pair.  This is not a mask rule at all — it is
+//                      the same shape compositor_tb's PAIR_LOCAL already pins
+//                      (RUN(4), SETs on slots 4 and 5, HOLD on 6, the next
+//                      record on 7), and it is why recolouring in the
+//                      BACKGROUND RUN costs 3 while recolouring between two
+//                      mask groups costs 4.
+inline constexpr uint32_t MASK_GAP_AFTER_RUN          = 0;
+inline constexpr uint32_t MASK_GAP_AFTER_MASK         = 0;
+inline constexpr uint32_t MASK_GAP_AFTER_MASK_SET     = 2;
+inline constexpr uint32_t MASK_GAP_AFTER_MASK_SET_SET = 4;
+inline constexpr uint32_t MASK_GAP_AFTER_RUN_SET_SET  = 3;
 
 constexpr uint16_t vidcmd_set(uint32_t target, uint32_t value)
 {
@@ -560,20 +766,20 @@ constexpr uint16_t vidcmd_set(uint32_t target, uint32_t value)
 constexpr uint32_t vidcmd_set_target(uint16_t w) { return (w >> 12) & 0x7; }
 constexpr uint32_t vidcmd_set_value(uint16_t w)  { return w & 0xFFF; }
 
-// Every record is exactly one word now that TILE is gone.  Kept as a named
-// function because the framing arithmetic reads better with it, and because a
-// future 2-word `01` variant would change it in one place.
-constexpr uint32_t vidcmd_record_words(uint16_t)
+// Words this record occupies in the stream: one, except MASK's header + data.
+constexpr uint32_t vidcmd_record_words(uint16_t lead)
 {
-    return 1u;
+    return (vidcmd_type_of(lead) == VidcmdType::MASK) ? MASK_RECORD_WORDS : 1u;
 }
 
 // Active slots this record occupies WHEN IT EXECUTES.  A RUN contributes its
 // count exactly (compositor.v loads ~count and adds 1 for the slot the record
-// is consumed in, so the terminal is reached after `count` active slots); SET
-// and the reserved no-op are one slot each.  This is playback cost only — what
-// the record costs to fetch is the cadence's business, and a line's real
-// occupancy comes from vidcmd_plan_line() below.
+// is consumed in, so the terminal is reached after `count` active slots); a SET
+// is one slot; a MASK is sixteen, its header's own slot (pixel 0) included —
+// the header loads 12'hFF0 with no +1 and the fifteen active-slot increments
+// walk it to the terminal.  This is playback cost only — what the record costs
+// to fetch is the cadence's business, and a line's real occupancy comes from
+// vidcmd_plan_line() below.
 constexpr uint32_t vidcmd_record_slots(uint16_t lead)
 {
     switch (vidcmd_type_of(lead))
@@ -583,6 +789,7 @@ constexpr uint32_t vidcmd_record_slots(uint16_t lead)
         case VidcmdType::RUN:  return (vidcmd_run_src(lead) == RUN_SRC_COLOR)
                                           ? vidcmd_run_color_count(lead)
                                           : vidcmd_run_count(lead);
+        case VidcmdType::MASK: return MASK_SLOTS;
         default:               return 1;
     }
 }
@@ -642,6 +849,31 @@ inline constexpr uint32_t VIDCMD_BANK_DEPTH = 2;
 
 // PIXEL's own ham_held -> RGB_OUT register, from pixel.v's lead discussion.
 inline constexpr uint32_t PIXEL_OUT_LEAD = 1;
+
+// ---------------------------------------------------------------------------
+// The per-line VIDCMD word cap the suite budgets against
+// ---------------------------------------------------------------------------
+//
+// This is a DELIVERY number, not a playback one: ENGINE puts one word on the
+// bus every ENGINE_CYCLES_PER_WORD SYSCLK, so a line can only carry as many
+// words as the share of its SYSCLK the display list is allowed to spend.
+//
+// The share is 66%, and it is not a round number picked here — it is where the
+// existing cases sit.  The tempest density sweep's last CLEAN point (32
+// one-pixel stress spans, pixel stream split 20 words either side of the VIDCMD
+// group) costs 294 SYSCLK of the 445-SYSCLK line; the next point up starves
+// PIXEL.  294 / 445 = 66%, and 294 SYSCLK at 2 SYSCLK/word is 147 words.
+//
+// A PURE-VIDCMD screen — no PIXELS descriptors at all, the display list IS the
+// framebuffer — has no pixel stream to share the bus with, so the whole 66% is
+// its own and the cap is the honest one to hold it to.  (It could in principle
+// spend more, since nothing else wants the bus; holding the screen cases to the
+// same figure as everything else is what makes the numbers comparable.)
+inline constexpr uint32_t VIDCMD_BUS_BUDGET_PERCENT = 66;
+inline constexpr uint32_t VIDCMD_LINE_SYSCLK_BUDGET =
+    (LINE_SYSCLK * VIDCMD_BUS_BUDGET_PERCENT + 50) / 100;                  // 294
+inline constexpr uint32_t VIDCMD_WORDS_PER_LINE_CAP =
+    static_cast<uint32_t>(VIDCMD_LINE_SYSCLK_BUDGET / ENGINE_CYCLES_PER_WORD);   // 147
 
 // ---------------------------------------------------------------------------
 // Cross-chip SET skew — a named knob over a KNOWN-BROKEN interface
@@ -705,12 +937,14 @@ constexpr uint32_t vidcmd_set_skew(uint32_t target, uint32_t skew_pix, uint32_t 
 
 struct VidcmdSlotPlan
 {
-    uint32_t slots      = 0;   // active slots the list occupies, holds included
-    uint32_t last_slot  = 0;   // slot in which the final record executed
-    uint32_t records    = 0;   // records that executed in active video
-    uint32_t blank_sets = 0;   // records consumed eagerly in HBLANK, zero slots
-    uint32_t stretch    = 0;   // worst slots the cadence pushed any record back by
-    uint32_t starved    = 0;   // records that executed later than their authored slot
+    uint32_t slots       = 0;   // active slots the list occupies, holds included
+    uint32_t last_slot   = 0;   // slot in which the final record executed
+    uint32_t records     = 0;   // records that executed in active video
+    uint32_t blank_sets  = 0;   // records consumed eagerly in HBLANK, zero slots
+    uint32_t stretch     = 0;   // worst slots the cadence pushed any record back by
+    uint32_t starved     = 0;   // records that executed later than their authored slot
+    uint32_t masks       = 0;   // MASK records that executed
+    uint32_t mask_stalls = 0;   // slots a mask spent waiting for its data word
 };
 
 inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
@@ -726,6 +960,7 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
     uint16_t staged_word = 0;
 
     uint32_t run_remaining = 0;
+    bool     mask_active   = false;
     uint32_t slot          = 0;     // active slots elapsed
     uint32_t authored      = 0;     // where the authored sum puts the next record
 
@@ -740,12 +975,28 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
         const bool had_staged = staged;
         bool       consumed   = false;
 
+        // Mask playback, from the pre-edge count.  run_remaining is this
+        // model's form of compositor.v's run_count — remaining == 0xFFF -
+        // run_count — so the RTL's low-nibble compares become plain counts:
+        // pos 7 is the slot that paints pixel MASK_RELOAD_PIXEL and pos 14 the
+        // slot that paints the last pixel.  Both are gated by H_ACTIVE in the
+        // RTL, which is what freezes a mask across the line boundary and keeps
+        // its data word parked through HBLANK.
+        const bool terminal    = (run_remaining == 0);
+        const bool mask_pos_7  = active && mask_active &&
+                                 (run_remaining == MASK_SLOTS - MASK_RELOAD_PIXEL);
+        const bool mask_pos_14 = active && mask_active && (run_remaining == 1);
+        const bool mask_reload = mask_pos_7 && word_on_q;
+        const bool mask_stall  = mask_pos_7 && !word_on_q;
+        bool       load_mask   = false;
+
         // Playback: consume_active = H_ACTIVE & have_staged & terminal, or the
-        // eager blank-region SET.
+        // eager blank-region SET.  A MASK header PAINTS, so it is playback-class
+        // and is never eager in blanking.
         if (staged)
         {
-            const bool is_set = vidcmd_type_of(staged_word) == VidcmdType::SET;
-            if (active ? (run_remaining == 0) : is_set)
+            const VidcmdType t = vidcmd_type_of(staged_word);
+            if (active ? terminal : (t == VidcmdType::SET))
             {
                 consumed = true;
                 staged   = false;
@@ -769,6 +1020,11 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
                     plan.records++;
                     authored      += duration;
                     run_remaining  = duration;
+                    if (t == VidcmdType::MASK)
+                    {
+                        load_mask = true;
+                        plan.masks++;
+                    }
                 }
                 else
                 {
@@ -777,8 +1033,15 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
             }
         }
 
+        // mask_next is literally mask_active's next state, and mask_holds is
+        // "staged_word belongs to the mask across this edge" — the term that
+        // parks the next word on Q instead of letting the fetch overwrite the
+        // dibits.  The two borrow-back edges punch through it.
+        const bool mask_next  = load_mask || (mask_active && !terminal);
+        const bool mask_holds = mask_next && !mask_pos_7 && !mask_pos_14;
+
         // Fetch, from the registers as they stood when the cycle began.
-        const bool buffer_frees = !had_staged || consumed;
+        const bool buffer_frees = (!had_staged || consumed) && !mask_holds;
         const bool capture_now  = word_on_q && buffer_frees;
         const bool q_parked     = word_on_q && !capture_now;
         const bool re_fall      = !re_low && (next < words.size());
@@ -787,7 +1050,9 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
         if (capture_now)
         {
             staged_word = q_word;
-            staged      = true;
+            // The mask's own data word is captured with have_staged LOW: it is
+            // DATA, it feeds the shifter only, and nothing can ever decode it.
+            staged      = !mask_reload;
         }
         if (re_fall)
         {
@@ -801,16 +1066,24 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
             re_low = false;
         }
 
+        mask_active = mask_next;
+
         if (active)
         {
-            if (run_remaining > 0)
+            // count_inc = load_run | (H_ACTIVE & ~terminal & ~mask_stall): a
+            // starved mask freezes whole, so pixel 7's colour stretches.
+            if (run_remaining > 0 && !mask_stall)
             {
                 run_remaining--;
+            }
+            if (mask_stall)
+            {
+                plan.mask_stalls++;
             }
             slot++;
         }
 
-        if (next >= words.size() && !staged && !re_low)
+        if (next >= words.size() && !staged && !re_low && !mask_active)
         {
             break;
         }

@@ -142,6 +142,232 @@ inline constexpr uint32_t TEMPEST_STRESS_COLOR     = RUN_COLOR_MAGENTA;
 inline constexpr uint32_t TEMPEST_MAX_SPANS =
     TEMPEST_CLAW_PRONGS + TEMPEST_FLIPPERS + TEMPEST_SHOTS + TEMPEST_MAX_STRESS_SPANS;
 
+// ---------------------------------------------------------------------------
+// A 5x7 font, and the two PURE-VIDCMD screens built on it
+// ---------------------------------------------------------------------------
+//
+// A "pure-VIDCMD screen" authors NO PIXELS descriptors at all: the display list
+// IS the framebuffer.  Text is MASK records, background is RUNs, colour is
+// SETs, and the pixel bitmap the rest of the suite scrolls around does not
+// exist.  What makes that affordable is the MASK record's density — sixteen
+// pixels for two words — and what makes it laid out the way it is is the
+// record's implicit pixel 0: whatever falls on a record boundary is cmp_color0,
+// so BOTH screens put a blank column there.
+//
+//   console  8-px cell, glyph in columns 1..5, so ONE RECORD IS TWO GLYPHS and
+//            the implicit pixel 0 is the left glyph's inter-character gap.
+//   kiosk    16-px cell, glyph scaled x3 horizontally into columns 1..15, so
+//            ONE RECORD IS ONE BIG GLYPH.  The vertical scale is x4 (28 rows of
+//            a 32-row cell) — the aspect is not square, and that is the record
+//            talking: 16 pixels is the width a record has to spend, so a big
+//            font either takes two records per glyph (and then its middle
+//            column is forced to cmp_color0) or it is 15 pixels wide.
+//
+// Every glyph's column 0 of the FONT is free to be ink; it is the CELL's column
+// 0 that must be blank, and both cell layouts leave it so by construction.
+inline constexpr uint32_t FONT_COLS = 5;
+inline constexpr uint32_t FONT_ROWS = 7;
+
+// The character set, in glyph order.  A character outside it renders blank,
+// which is the honest behaviour for a font this small.
+inline constexpr char FONT_CHARSET[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-/>()!*+=";
+inline constexpr uint32_t FONT_GLYPHS = static_cast<uint32_t>(sizeof(FONT_CHARSET) - 1);
+
+// Seven rows of five bits, MSB (bit 4) leftmost.
+inline constexpr std::array<uint8_t, FONT_GLYPHS * FONT_ROWS> FONT5X7 = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   // ' '
+    0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11,   // A
+    0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E,   // B
+    0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E,   // C
+    0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E,   // D
+    0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F,   // E
+    0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10,   // F
+    0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F,   // G
+    0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11,   // H
+    0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E,   // I
+    0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C,   // J
+    0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11,   // K
+    0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F,   // L
+    0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11,   // M
+    0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11,   // N
+    0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E,   // O
+    0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10,   // P
+    0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D,   // Q
+    0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11,   // R
+    0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E,   // S
+    0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04,   // T
+    0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E,   // U
+    0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04,   // V
+    0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11,   // W
+    0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11,   // X
+    0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04,   // Y
+    0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F,   // Z
+    0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E,   // 0
+    0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E,   // 1
+    0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F,   // 2
+    0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E,   // 3
+    0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02,   // 4
+    0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E,   // 5
+    0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E,   // 6
+    0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08,   // 7
+    0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E,   // 8
+    0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C,   // 9
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C,   // .
+    0x00, 0x00, 0x00, 0x00, 0x0C, 0x04, 0x08,   // ,
+    0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00,   // :
+    0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00,   // -
+    0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10,   // /
+    0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08,   // >
+    0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02,   // (
+    0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08,   // )
+    0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04,   // !
+    0x00, 0x0A, 0x04, 0x1F, 0x04, 0x0A, 0x00,   // *
+    0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00,   // +
+    0x00, 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00,   // =
+};
+
+constexpr uint32_t font_glyph_index(char c)
+{
+    for (uint32_t i = 0; i < FONT_GLYPHS; i++)
+    {
+        if (FONT_CHARSET[i] == c)
+        {
+            return i;
+        }
+    }
+    return 0;   // blank
+}
+
+constexpr bool font_pixel(char c, uint32_t col, uint32_t row)
+{
+    if (col >= FONT_COLS || row >= FONT_ROWS)
+    {
+        return false;
+    }
+    const uint8_t bits = FONT5X7[font_glyph_index(c) * FONT_ROWS + row];
+    return ((bits >> (FONT_COLS - 1 - col)) & 1u) != 0;
+}
+
+// What a pixel of a screen line is made of.  The three classes are exactly the
+// three things a MASK dibit can select, which is why the screens are authored
+// in this alphabet and not in colours.
+enum class InkClass : uint8_t
+{
+    BG  = 0,   // dibit 10, cmp_color0 — and the record's implicit pixel 0
+    INK = 1,   // dibit 11, cmp_color1
+    ALT = 2,   // dibit 00, PASSTHROUGH (see the note in author.cpp)
+};
+
+constexpr uint32_t ink_class_dibit(InkClass k)
+{
+    switch (k)
+    {
+        case InkClass::INK: return MASK_DIBIT_COLOR1;
+        case InkClass::ALT: return MASK_DIBIT_PASSTHROUGH;
+        default:            return MASK_DIBIT_COLOR0;
+    }
+}
+
+// --- the console screen -----------------------------------------------------
+
+inline constexpr uint32_t CONSOLE_CELL_W = 8;
+inline constexpr uint32_t CONSOLE_CELL_H = 8;
+inline constexpr uint32_t CONSOLE_COLS   = H_ACTIVE / CONSOLE_CELL_W;   // 80
+inline constexpr uint32_t CONSOLE_ROWS   = V_ACTIVE / CONSOLE_CELL_H;   // 60
+inline constexpr uint32_t CONSOLE_GLYPHS_PER_RECORD = MASK_SLOTS / CONSOLE_CELL_W;   // 2
+
+// A full-width console line: every 16-pixel group is a record, plus the two
+// per-line SETs.  This is the screen's ceiling, quoted against
+// VIDCMD_WORDS_PER_LINE_CAP.
+inline constexpr uint32_t CONSOLE_FULL_LINE_WORDS =
+    2 + (H_ACTIVE / MASK_SLOTS) * MASK_RECORD_WORDS;                     // 82
+
+// The screen's text.  Shared by the authoring (which turns it into dibits) and
+// by the checker's reference rasterizer (which turns it into pixels), so the
+// two cannot drift on WHAT is drawn — what is under test is whether the VIDCMD
+// records reproduce it, pixel for pixel, at the right x.
+char console_char(uint32_t row, uint32_t col);
+
+// Which cmp register a console row's ink comes from.  Rows 0 and 59 and every
+// row's "NN>" prefix are ALT, i.e. dibit 00 — passthrough, the third colour.
+InkClass console_ink_class(uint32_t row, uint32_t col);
+
+// The class of every pixel on screen line `line`.  `out` must be H_ACTIVE long.
+void console_line_classes(uint32_t line, std::span<InkClass> out);
+
+// Per-row colours.  fg walks down the frame so a row whose SET went missing
+// breaks a smooth gradient, exactly like line_palette_fg does for the bitmap
+// cases.
+constexpr Rgb444 console_row_color1(uint32_t row)
+{
+    const uint32_t g = 6u + (row * 9u) / (CONSOLE_ROWS - 1);   // 6..15
+    return rgb444(g / 2u, g, 4u);
+}
+
+constexpr Rgb444 console_row_color0(uint32_t row)
+{
+    return ((row & 1u) != 0) ? rgb444(0, 0, 2) : rgb444(1, 1, 3);
+}
+
+// The third colour, set once per frame and never again: PIXEL's pal_bg, which
+// is what a passthrough dibit resolves to when no PIXELS word is ever fetched.
+inline constexpr Rgb444 CONSOLE_ALT_COLOR = rgb444(15, 10, 0);
+
+// --- the kiosk screen -------------------------------------------------------
+
+inline constexpr uint32_t KIOSK_CELL_W  = MASK_SLOTS;   // 16: one record per glyph
+inline constexpr uint32_t KIOSK_CELL_H  = 32;
+inline constexpr uint32_t KIOSK_SCALE_X = 3;            // 5 cols -> 15 px, +1 blank
+inline constexpr uint32_t KIOSK_SCALE_Y = 4;            // 7 rows -> 28 px, +4 blank
+
+inline constexpr uint32_t KIOSK_MAX_SEGMENTS = 4;
+inline constexpr uint32_t KIOSK_MAX_TEXT     = 16;
+
+// One recoloured stretch of a kiosk line: a SET pair followed by `records`
+// chained MASK records, one big glyph each.
+struct KioskSegment
+{
+    uint32_t x0      = 0;   // pixel of the first record's pixel 0
+    uint32_t records = 0;
+    Rgb444   color1  = 0;
+    Rgb444   color0  = 0;
+    char     text[KIOSK_MAX_TEXT] = {};
+    uint8_t  alt[KIOSK_MAX_TEXT]  = {};   // 1 = draw this glyph in passthrough
+};
+
+struct KioskLinePlan
+{
+    uint32_t     background_color = RUN_COLOR_BLUE;   // a RUN_COLOR code
+    uint32_t     cell_top         = 0;                // first screen line of this cell
+    uint32_t     seg_n            = 0;
+    KioskSegment seg[KIOSK_MAX_SEGMENTS] = {};
+};
+
+KioskLinePlan kiosk_plan_line(uint32_t line);
+
+// The class of every pixel of a kiosk segment's glyph row, written into `out`
+// at the segment's own x.  Pixels outside every segment stay BG, which the
+// caller paints from the line's RUN_COLOR background rather than from a cmp
+// register — the two must agree in value, and kiosk_plan_line() makes them.
+void kiosk_line_classes(const KioskLinePlan &plan, uint32_t line, std::span<InkClass> out);
+
+// The kiosk's third colour: PIXEL's pal_bg again.
+inline constexpr Rgb444 KIOSK_ALT_COLOR = rgb444(15, 15, 15);
+
+// Full-density MASK recolouring, for the budget arithmetic the case prints: a
+// SET pair plus a record for EVERY 16-pixel group.
+inline constexpr uint32_t KIOSK_FULL_DENSITY_WORDS =
+    (H_ACTIVE / MASK_SLOTS) * (2 + MASK_RECORD_WORDS);                   // 160
+inline constexpr uint32_t KIOSK_FULL_DENSITY_SLOTS =
+    (H_ACTIVE / MASK_SLOTS) * (MASK_SLOTS + MASK_GAP_AFTER_MASK_SET_SET);  // 800
+
+enum class ScreenStyle : uint8_t
+{
+    NONE    = 0,
+    CONSOLE = 1,
+    KIOSK   = 2,
+};
+
 enum class PixelMode : uint8_t
 {
     DIRECT_1BPP = 0,   // 40 words/line, 1 bit per pixel clock
@@ -226,6 +452,14 @@ struct FrameParams
 
     SpriteStyle sprites       = SpriteStyle::NONE;
     FramingMode framing       = FramingMode::CUSHION;
+
+    // A pure-VIDCMD screen: MASK/RUN/SET records only, and NO PIXELS
+    // descriptors anywhere in the list.  pure_vidcmd is what author_frame()
+    // reads; screen is what write_vidcmd_records() reads.  They are separate
+    // because "which screen" and "does this list feed PIXEL" are separate
+    // questions — a screen could in principle be composited over a bitmap.
+    ScreenStyle screen        = ScreenStyle::NONE;
+    bool        pure_vidcmd   = false;
 
     // JIT only: emit the {SET fg, SET bg, RUN(pt,1)} frame preamble on line 0
     // and nothing at all on the other 479 lines.  This is exactly what the

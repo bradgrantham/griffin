@@ -52,7 +52,8 @@ struct RenderStats
     uint32_t vidcmd_overruns     = 0;   // a record still running at the H_ACTIVE fall
     uint32_t vidcmd_late_words   = 0;   // arrived during active video, not in HBLANK
     uint32_t vidcmd_color_runs   = 0;
-    uint32_t vidcmd_reserved_ops = 0;
+    uint32_t vidcmd_mask_records = 0;   // `01` records that played their 16 slots
+    uint32_t vidcmd_mask_stalls  = 0;   // slots a mask held waiting for its data word
     uint32_t vidcmd_words_popped = 0;
 };
 
@@ -151,7 +152,8 @@ public:
 private:
     bool pop(uint16_t &w);
     bool fifo_has_data() const;
-    void fetch_edge(bool word_on_q, bool had_staged, bool consumed);
+    void fetch_edge(bool word_on_q, bool had_staged, bool consumed,
+                    bool mask_holds, bool mask_reload);
     void commit(uint32_t target, uint32_t value, PixelUnit &pix);
     void apply_pending(PixelUnit &pix);
 
@@ -162,6 +164,9 @@ private:
     Rgb444 held_fg_ = VIDCMD_RESET_HELD_FG;
     Rgb444 held_bg_ = VIDCMD_RESET_HELD_BG;
 
+    // staged_word_ is the on-chip lookahead AND the mask shifter, exactly as in
+    // compositor.v: while a mask plays, staged_valid_ is false and the record
+    // that would otherwise have been captured parks on Q behind it.
     bool     staged_valid_ = false;
     uint16_t staged_word_  = 0;
 
@@ -179,6 +184,15 @@ private:
     uint32_t run_remaining_ = 0;   // slots left; 0 == terminal
     uint32_t cur_src_       = RUN_SRC_PASSTHROUGH;
     Rgb444   cur_colour_    = RGB444_BLACK;
+
+    // MASK playback.  The record BORROWS cur_src_ for its sixteen slots and
+    // gives it back at the end (compositor.v does the same, and for the same
+    // reason: an override in front of the colour mux does not fit).  Externally
+    // that is the modal law — the span in force resumes as if untouched — and
+    // cur_colour_ is never disturbed, so a mask over a RUN_COLOR gives the
+    // colour back too.
+    bool     mask_active_   = false;
+    uint32_t sav_src_       = RUN_SRC_PASSTHROUGH;
 
     // Cross-chip SET skew (see descriptor.h): a tiny queue so the compensation
     // path stays real even while both constants are zero.

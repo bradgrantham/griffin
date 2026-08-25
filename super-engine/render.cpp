@@ -223,6 +223,8 @@ void CompositorUnit::reset()
     run_remaining_ = 0;                     // count already terminal
     cur_src_       = RUN_SRC_PASSTHROUGH;   // source back to passthrough
     cur_colour_    = RGB444_BLACK;
+    mask_active_   = false;                 // mask playback abandoned
+    sav_src_       = RUN_SRC_PASSTHROUGH;
     pending_n_     = 0;
 }
 
@@ -277,15 +279,22 @@ bool CompositorUnit::fifo_has_data() const
 //               started found a word, so Q is readable at this edge.
 //   had_staged  staged_word was occupied when the cycle began.
 //   consumed    this edge's playback freed staged_word.
+//   mask_holds  staged_word belongs to a playing MASK across this edge, so the
+//               buffer is NOT free however the first three read — that is what
+//               protects the dibits and parks the next record on Q.
+//   mask_reload this edge is the mask's pixel-8 boundary, so the word captured
+//               here is the mask's DATA and must land with have_staged LOW.
 //
 // The two laws the suite has to reproduce come straight out of these five
 // lines: a word captured here cannot execute before the NEXT slot (2 slots per
 // word sustained), and a word PARKED on Q moves into staged_word on the very
 // edge the record ahead of it is consumed, so a banked pair executes on
-// consecutive slots.
-void CompositorUnit::fetch_edge(bool word_on_q, bool had_staged, bool consumed)
+// consecutive slots.  The mask's two borrow-back edges are the third: they punch
+// through mask_holds, which is what makes mask-to-mask chaining gapless.
+void CompositorUnit::fetch_edge(bool word_on_q, bool had_staged, bool consumed,
+                                bool mask_holds, bool mask_reload)
 {
-    const bool buffer_frees = !had_staged || consumed;
+    const bool buffer_frees = (!had_staged || consumed) && !mask_holds;
     const bool capture_now  = word_on_q && buffer_frees;
     const bool q_parked     = word_on_q && !capture_now;
     const bool re_fall      = !re_low_ && fifo_has_data();
@@ -298,7 +307,7 @@ void CompositorUnit::fetch_edge(bool word_on_q, bool had_staged, bool consumed)
     if (capture_now)
     {
         staged_word_  = q_word_;
-        staged_valid_ = true;
+        staged_valid_ = !mask_reload;
     }
 
     // Fall and rise are mutually exclusive by construction: one needs /RE high,
@@ -315,6 +324,10 @@ void CompositorUnit::fetch_edge(bool word_on_q, bool had_staged, bool consumed)
     }
 }
 
+// SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  The
+// number/colour mismatch is deliberate and deferred (descriptor.h): the wire
+// encoding is frozen, and renumbering the targets is a contract change to be
+// made on its own.
 void CompositorUnit::commit(uint32_t target, uint32_t value, PixelUnit &pix)
 {
     if (target == SET_CMP_HELD_FG)
@@ -351,8 +364,10 @@ void CompositorUnit::apply_pending(PixelUnit &pix)
 
 // Playback is frozen while H_ACTIVE is low: no slots, no counting.  Fetch
 // continues, and a staged SET executes immediately at pop, in stream order, so
-// it lands before the next line's pixel 0.  A staged RUN waits for H_ACTIVE and
-// blocks everything behind it — eagerness is positional, not temporal.
+// it lands before the next line's pixel 0.  A staged RUN — or a staged MASK
+// HEADER, which paints pixel 0 and is therefore playback, not setup — waits for
+// H_ACTIVE and blocks everything behind it: eagerness is positional, not
+// temporal.
 void CompositorUnit::blank_clock(PixelUnit &pix)
 {
     const bool word_on_q  = re_low_ && ef_at_pop_;
@@ -368,11 +383,17 @@ void CompositorUnit::blank_clock(PixelUnit &pix)
         consumed      = true;
     }
 
+    // A mask caught by the H_ACTIVE fall freezes rather than being abandoned,
+    // and mask_pos_7/pos_14 are gated by H_ACTIVE in the RTL, so mask_holds is
+    // unconditionally true here: the parked data word is NOT taken during
+    // blanking.  (compositor_tb MASKB_RESUME asserts exactly that.)
+    const bool mask_holds = mask_active_ && run_remaining_ > 0;
+
     // Blanking does not exempt the fetch from the cadence: a run of eager SETs
     // still executes at one per two clocks (a pair when one is parked).  With
     // H_BLANK = 160 clocks that is invisible to a cushioned list and exactly
     // what a starved one runs out of.
-    fetch_edge(word_on_q, had_staged, consumed);
+    fetch_edge(word_on_q, had_staged, consumed, mask_holds, false);
 }
 
 Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
@@ -386,8 +407,39 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
     const bool had_staged = staged_valid_;
     bool       consumed   = false;
 
+    // MASK playback, all of it derived from the pre-edge count.  run_remaining_
+    // is this model's form of compositor.v's run_count — remaining == 0xFFF -
+    // run_count — so the RTL's two low-nibble compares become plain counts:
+    //
+    //   pos 7   the slot that paints pixel MASK_RELOAD_PIXEL.  The header is
+    //           spent (d7 was read on the previous edge), so the data word comes
+    //           out of the park HERE and d8 is read straight off Q.  Playback
+    //           does not pause.  If the data word has not arrived the record
+    //           STALLS whole: no count, no shift, no source change, so pixel 7's
+    //           colour stretches.
+    //   pos 14  the slot that paints the last pixel.  The shifter is dead
+    //           afterwards, so the NEXT RECORD is captured one slot early —
+    //           which is exactly what makes mask-to-mask chaining gapless.
+    const bool terminal    = (run_remaining_ == 0);
+    const bool mask_pos_7  = mask_active_ &&
+                             (run_remaining_ == MASK_SLOTS - MASK_RELOAD_PIXEL);
+    const bool mask_pos_14 = mask_active_ && (run_remaining_ == 1);
+    const bool mask_reload = mask_pos_7 && word_on_q;
+    const bool mask_stall  = mask_pos_7 && !word_on_q;
+    const bool mask_step   = mask_active_ && !terminal && !mask_stall;
+    const bool mask_end    = mask_active_ && terminal;
+    bool       load_mask   = false;
+
+    // WRITTEN IN compositor.v's PRIORITY ORDER, and the order is load-bearing.
+    // A mask's end edge and the next record's load edge are the SAME edge when
+    // records chain, so the restore is written first and any load overrides it.
+    if (mask_end)
+    {
+        cur_src_ = sav_src_;
+    }
+
     // consume_active = H_ACTIVE & have_staged & terminal
-    if (run_remaining_ == 0)
+    if (terminal)
     {
         if (staged_valid_)
         {
@@ -426,10 +478,22 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
                 }
                 run_remaining_ = vidcmd_record_slots(w);
             }
-            else if (counting_ && stats_ != nullptr)
+            else
             {
-                // The ex-TILE `01` prefix: consumes this slot, changes nothing.
-                stats_->vidcmd_reserved_ops++;
+                // MASK.  The header PAINTS: its own slot is the record's pixel
+                // 0, an implicit opaque cmp_color0.  sav_src_ is only taken when
+                // a mask is not already playing, so a chained mask does not
+                // overwrite the source the FIRST one borrowed.
+                if (!mask_active_)
+                {
+                    sav_src_ = cur_src_;
+                }
+                load_mask      = true;
+                run_remaining_ = MASK_SLOTS;
+                if (counting_ && stats_ != nullptr)
+                {
+                    stats_->vidcmd_mask_records++;
+                }
             }
         }
         else if (counting_ && stats_ != nullptr)
@@ -451,6 +515,36 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
         }
     }
 
+    // THE MASK DRIVES cur_src_ FOR ITS OWN SLOT, over anything a load above
+    // wrote.  ALIGNMENT, per compositor.v: both halves are read at [13:12],
+    // because the shift and the read are the same edge — the header's d1 is
+    // already there when the record loads, and after seven shifts d7 is too.
+    // d8 has to be read on the very edge that captures the data word, so it
+    // comes straight off Q.  Pixel 0 has no dibit anywhere.
+    if (load_mask || mask_step)
+    {
+        uint32_t dibit = MASK_PIXEL0_DIBIT;
+        if (!load_mask)
+        {
+            dibit = mask_reload ? ((q_word_ >> 14) & 3u)
+                                : ((staged_word_ >> 12) & 3u);
+        }
+        cur_src_ = vidcmd_mask_dibit_src(dibit);
+    }
+
+    const bool mask_next  = load_mask || (mask_active_ && !terminal);
+    const bool mask_holds = mask_next && !mask_pos_7 && !mask_pos_14;
+    mask_active_          = mask_next;
+
+    // The shifter and the fetch capture DO collide, on exactly the two
+    // borrow-back edges, and the capture must win — so the shift is written
+    // first and fetch_edge() below overwrites it.  Both reads above used the
+    // pre-edge value, so the collision is benign.
+    if (mask_step)
+    {
+        staged_word_ = static_cast<uint16_t>(staged_word_ << 2);
+    }
+
     // PIXEL advances every active clock regardless of what the compositor is
     // doing, and is sampled AFTER this slot's commit.
     const Rgb444 rgb_in = pix.next_pixel();
@@ -469,12 +563,17 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
         out = cur_colour_;
     }
 
-    if (run_remaining_ > 0)
+    // count_inc = load_run | (H_ACTIVE & ~terminal & ~mask_stall).
+    if (run_remaining_ > 0 && !mask_stall)
     {
         run_remaining_--;
     }
+    if (mask_stall && counting_ && stats_ != nullptr)
+    {
+        stats_->vidcmd_mask_stalls++;
+    }
 
-    fetch_edge(word_on_q, had_staged, consumed);
+    fetch_edge(word_on_q, had_staged, consumed, mask_holds, mask_reload);
     abs_pixel_++;
     return out;
 }

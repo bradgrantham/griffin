@@ -336,7 +336,347 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
     return n;
 }
 
+// ---------------------------------------------------------------------------
+// Pure-VIDCMD screens
+// ---------------------------------------------------------------------------
+//
+// PASSTHROUGH IS THE THIRD COLOUR — MODEL BEHAVIOUR, NOT YET HARDWARE.  These
+// screens author no PIXELS descriptors at all, so the PIXELS FIFO is never
+// written and PIXEL's shifter re-delivers its reset word forever.  That word is
+// all zeroes, and a zero bit in 1bpp direct mode selects pix_pal_bg, so
+// RGB_IN — and therefore a dibit-00 pixel and a passthrough RUN — resolves to
+// pal_bg, a register a VIDCMD SET can write.  Dibit 00 becomes a THIRD settable
+// colour per record, free of any SET between groups.
+//
+// That chain is asserted here because it is what super-engine/render.cpp
+// models, and render.cpp models pixel.v's documented behaviour (no empty flag,
+// a 7200 holds Q while empty, so an unfed stream tiles its last word).  It has
+// NOT been confirmed against the RTL or against silicon: what a 7200 pair
+// presents on Q after a /RS with no write at all, and what pixel.v's shifter
+// holds before its first fetch, are the two questions to settle.  Until then
+// the third colour is a MODEL FINDING.
+
+// The character at `i` of a NUL-terminated line, blank past its end.
+char text_char(const char *s, uint32_t i)
+{
+    for (uint32_t k = 0; k <= i; k++)
+    {
+        if (s[k] == '\0')
+        {
+            return ' ';
+        }
+        if (k == i)
+        {
+            return s[k];
+        }
+    }
+    return ' ';
+}
+
+constexpr const char *CONSOLE_TITLE =
+    "GRIFFIN VIDCMD CONSOLE - 80 COLUMNS BY 60 ROWS - THE DISPLAY LIST IS THE SCREEN";
+constexpr const char *CONSOLE_STATUS =
+    "STATUS: 40 MASK RECORDS PER FULL LINE = 80 WORDS + 2 SETS - PIXELS WORDS: 0";
+
+constexpr std::array<const char *, 12> CONSOLE_PHRASES = {
+    "GRIFFIN 68000 - VIDCMD PURE DISPLAY LIST CONSOLE",
+    "EVERY GLYPH PAIR IS ONE 16 PIXEL MASK RECORD",
+    "PIXEL 0 OF A RECORD IS IMPLICIT OPAQUE COLOR0",
+    "THE 8 PIXEL CELL LEAVES COLUMN 0 BLANK ON PURPOSE",
+    "MASK TO MASK CHAINING COSTS ZERO SLOTS",
+    "RECOLOURING BETWEEN TWO MASKS COSTS TWO SLOTS",
+    "BLANK CELLS COLLAPSE INTO ONE BACKGROUND RUN",
+    "NO PIXELS DESCRIPTORS ARE AUTHORED AT ALL",
+    "PASSTHROUGH RESOLVES TO PAL BG IN THIS MODEL",
+    "SO DIBIT 00 IS A THIRD SETTABLE COLOUR HERE",
+    "PENDING HARDWARE VERIFICATION AGAINST PIXEL V",
+    "0123456789 .,:-/>()!*+= ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+};
+
+// --- the kiosk's fixed layout ----------------------------------------------
+
+constexpr uint32_t KIOSK_TITLE_Y = 48;
+constexpr uint32_t KIOSK_TITLE_X = 216;    // 13 glyphs x 16 = 208, centred
+constexpr uint32_t KIOSK_ITEM_X  = 128;
+constexpr uint32_t KIOSK_ITEMS   = 4;
+constexpr std::array<uint32_t, KIOSK_ITEMS> KIOSK_ITEM_Y = {144, 208, 272, 336};
+constexpr uint32_t KIOSK_HIGHLIGHT_ITEM = 2;
+
+// One record per glyph, so a segment's width in pixels is records * 16.
+uint32_t kiosk_text_records(const char *s)
+{
+    uint32_t n = 0;
+    while (s[n] != '\0' && n < KIOSK_MAX_TEXT)
+    {
+        n++;
+    }
+    return n;
+}
+
+void kiosk_fill_segment(KioskSegment &seg, uint32_t x0, const char *text,
+                        Rgb444 color1, Rgb444 color0)
+{
+    seg.x0      = x0;
+    seg.records = kiosk_text_records(text);
+    seg.color1  = color1;
+    seg.color0  = color0;
+    for (uint32_t i = 0; i < seg.records; i++)
+    {
+        seg.text[i] = text[i];
+    }
+    // The hotkey: the item's first glyph is drawn in PASSTHROUGH, so a kiosk
+    // line shows three colours with no SET between the groups that carry them.
+    seg.alt[0] = 1;
+}
+
+// One MASK record's worth of a glyph row, as a dibit array.  x is the record's
+// pixel 0 on the line.
+VidcmdMask mask_from_classes(std::span<const InkClass> cls, uint32_t x)
+{
+    std::array<uint32_t, MASK_SLOTS> d{};
+    for (uint32_t i = 0; i < MASK_SLOTS; i++)
+    {
+        d[i] = ink_class_dibit(cls[x + i]);
+    }
+    return vidcmd_mask(d);
+}
+
+bool group_is_background(std::span<const InkClass> cls, uint32_t x)
+{
+    for (uint32_t i = 0; i < MASK_SLOTS; i++)
+    {
+        if (cls[x + i] != InkClass::BG)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Writes one line's records, counting words and records separately because a
+// MASK is two words and one record.
+struct RecordWriter
+{
+    Memory   ram;
+    uint32_t base    = 0;
+    uint32_t words   = 0;
+    uint32_t records = 0;
+
+    void word(uint16_t v)
+    {
+        ram[base + words * 2] = v;
+        words++;
+    }
+
+    void record(uint16_t v)
+    {
+        word(v);
+        records++;
+    }
+
+    void mask(const VidcmdMask &m)
+    {
+        record(m.header);
+        word(m.data);
+    }
+
+    // A RUN_COLOR spans at most RUN_COLOR_MAX_COUNT pixels.  A chunked span is
+    // still exact: the first chunk is long enough for the fetch to bank the
+    // second, so the pair law lands it on the very next slot.
+    void run_color_span(uint32_t colour, uint32_t n)
+    {
+        while (n > 0)
+        {
+            const uint32_t chunk = (n > RUN_COLOR_MAX_COUNT) ? RUN_COLOR_MAX_COUNT : n;
+            record(vidcmd_run_color(colour, chunk));
+            n -= chunk;
+        }
+    }
+};
+
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// The console screen
+// ---------------------------------------------------------------------------
+
+char console_char(uint32_t row, uint32_t col)
+{
+    if (col >= CONSOLE_COLS || row >= CONSOLE_ROWS)
+    {
+        return ' ';
+    }
+    if (row == 0)
+    {
+        return text_char(CONSOLE_TITLE, col);
+    }
+    if (row == CONSOLE_ROWS - 1)
+    {
+        return text_char(CONSOLE_STATUS, col);
+    }
+    // "NN> " and then the row's phrase.
+    if (col == 0)
+    {
+        return static_cast<char>('0' + (row / 10u) % 10u);
+    }
+    if (col == 1)
+    {
+        return static_cast<char>('0' + row % 10u);
+    }
+    if (col == 2)
+    {
+        return '>';
+    }
+    if (col == 3)
+    {
+        return ' ';
+    }
+    return text_char(CONSOLE_PHRASES[(row - 1) % CONSOLE_PHRASES.size()], col - 4);
+}
+
+InkClass console_ink_class(uint32_t row, uint32_t col)
+{
+    // The title, the status line and every row's "NN>" prefix are drawn in the
+    // third colour — dibit 00, passthrough — so they cost no extra SET and no
+    // extra record.  Everything else is cmp_color1.
+    if (row == 0 || row == CONSOLE_ROWS - 1 || col < 3)
+    {
+        return InkClass::ALT;
+    }
+    return InkClass::INK;
+}
+
+void console_line_classes(uint32_t line, std::span<InkClass> out)
+{
+    for (uint32_t x = 0; x < H_ACTIVE; x++)
+    {
+        out[x] = InkClass::BG;
+    }
+
+    const uint32_t row       = line / CONSOLE_CELL_H;
+    const uint32_t glyph_row = line % CONSOLE_CELL_H;
+
+    for (uint32_t col = 0; col < CONSOLE_COLS; col++)
+    {
+        const char c = console_char(row, col);
+        if (c == ' ')
+        {
+            continue;
+        }
+        const InkClass ink = console_ink_class(row, col);
+        for (uint32_t fc = 0; fc < FONT_COLS; fc++)
+        {
+            if (font_pixel(c, fc, glyph_row))
+            {
+                // Column 0 of the cell is the inter-character gap, which is
+                // what keeps every record's implicit pixel 0 on background.
+                out[col * CONSOLE_CELL_W + 1 + fc] = ink;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The kiosk screen
+// ---------------------------------------------------------------------------
+
+KioskLinePlan kiosk_plan_line(uint32_t line)
+{
+    KioskLinePlan plan;
+
+    const uint32_t hy = KIOSK_ITEM_Y[KIOSK_HIGHLIGHT_ITEM];
+    const bool     highlighted = (line >= hy && line < hy + KIOSK_CELL_H);
+    plan.background_color = highlighted ? RUN_COLOR_CYAN : RUN_COLOR_BLUE;
+
+    const Rgb444 bg = run_colour_to_rgb444(plan.background_color);
+
+    if (line >= KIOSK_TITLE_Y && line < KIOSK_TITLE_Y + KIOSK_CELL_H)
+    {
+        plan.cell_top = KIOSK_TITLE_Y;
+        kiosk_fill_segment(plan.seg[0], KIOSK_TITLE_X, "GRIFFIN KIOSK",
+                           rgb444(15, 15, 0), bg);
+        plan.seg_n = 1;
+        return plan;
+    }
+
+    for (uint32_t i = 0; i < KIOSK_ITEMS; i++)
+    {
+        if (line < KIOSK_ITEM_Y[i] || line >= KIOSK_ITEM_Y[i] + KIOSK_CELL_H)
+        {
+            continue;
+        }
+        plan.cell_top = KIOSK_ITEM_Y[i];
+        if (i == 0)
+        {
+            // The mid-item recolour, and the reason this case exists: the SET
+            // pair sits BETWEEN two mask groups, so it costs
+            // MASK_GAP_AFTER_MASK_SET_SET slots and the second word's glyphs
+            // start that many pixels later.  The geometry below is that
+            // constant; if the seam were any other number the rendered image
+            // would not match the reference.
+            // The trailing space is a real MASK record whose sixteen pixels are
+            // all background — legal, and it keeps the two words readable
+            // either side of the seam.
+            kiosk_fill_segment(plan.seg[0], KIOSK_ITEM_X, "PLAY ",
+                               rgb444(15, 15, 15), bg);
+            const uint32_t after = plan.seg[0].x0 + plan.seg[0].records * KIOSK_CELL_W;
+            kiosk_fill_segment(plan.seg[1], after + MASK_GAP_AFTER_MASK_SET_SET, "DEMO",
+                               rgb444(0, 15, 15), bg);
+            plan.seg_n = 2;
+        }
+        else if (i == 1)
+        {
+            kiosk_fill_segment(plan.seg[0], KIOSK_ITEM_X, "SETTINGS",
+                               rgb444(15, 12, 4), bg);
+            plan.seg_n = 1;
+        }
+        else if (i == 2)
+        {
+            kiosk_fill_segment(plan.seg[0], KIOSK_ITEM_X, "DIAGNOSTICS",
+                               rgb444(0, 0, 0), bg);
+            plan.seg_n = 1;
+        }
+        else
+        {
+            kiosk_fill_segment(plan.seg[0], KIOSK_ITEM_X, "ABOUT",
+                               rgb444(4, 15, 4), bg);
+            plan.seg_n = 1;
+        }
+        break;
+    }
+
+    return plan;
+}
+
+void kiosk_line_classes(const KioskLinePlan &plan, uint32_t line, std::span<InkClass> out)
+{
+    for (uint32_t x = 0; x < H_ACTIVE; x++)
+    {
+        out[x] = InkClass::BG;
+    }
+
+    const uint32_t cell_row = line - plan.cell_top;
+
+    for (uint32_t s = 0; s < plan.seg_n; s++)
+    {
+        const KioskSegment &seg = plan.seg[s];
+
+        for (uint32_t g = 0; g < seg.records; g++)
+        {
+            const InkClass ink = (seg.alt[g] != 0) ? InkClass::ALT : InkClass::INK;
+            for (uint32_t px = 1; px < KIOSK_CELL_W; px++)
+            {
+                // x3 horizontally into columns 1..15, x4 vertically into rows
+                // 0..27; column 0 and rows 28..31 are the cell's blank margin,
+                // which is what keeps the implicit pixel 0 on background.
+                if (font_pixel(seg.text[g], (px - 1) / KIOSK_SCALE_X, cell_row / KIOSK_SCALE_Y))
+                {
+                    out[seg.x0 + g * KIOSK_CELL_W + px] = ink;
+                }
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Pixel payloads
@@ -465,12 +805,176 @@ uint32_t pixel_words_for(PixelMode mode, uint32_t pixel_skip)
 // VIDCMD records
 // ---------------------------------------------------------------------------
 
+// One line of a pure-VIDCMD screen.  Returns nothing: the writer carries the
+// word and record counts out.
+//
+// CONSOLE.  Two per-line SETs in the blank region (free, zero slots), then the
+// line's forty 16-pixel groups: a MASK for every group that has ink and ONE
+// merged RUN for every stretch of groups that has none.  Chained masks are
+// gapless and a RUN-to-mask boundary is gapless too, so the authored slot sum
+// is exactly 640 by construction — 40 groups of 16 — however the groups split
+// between masks and runs.
+static void write_console_line(const FrameParams &p, RecordWriter &w, uint32_t line,
+                               uint32_t &slots)
+{
+    const uint32_t row = line / CONSOLE_CELL_H;
+
+    // Blank-region setup.  pal_bg is the third colour and is written once per
+    // FRAME, because /RS at vsync clears PIXEL's registers.
+    if (line == 0)
+    {
+        w.record(vidcmd_set(SET_PIX_PAL_BG, CONSOLE_ALT_COLOR));
+        w.record(vidcmd_set(SET_PIX_MODE, PIXEL_MODE_DIRECT_1BPP));
+    }
+    w.record(vidcmd_set(SET_CMP_COLOR1, console_row_color1(row)));
+    w.record(vidcmd_set(SET_CMP_COLOR0, console_row_color0(row)));
+    (void)p;
+
+    std::array<InkClass, H_ACTIVE> cls{};
+    console_line_classes(line, cls);
+
+    constexpr uint32_t GROUPS = H_ACTIVE / MASK_SLOTS;
+    uint32_t           g      = 0;
+    while (g < GROUPS)
+    {
+        if (group_is_background(cls, g * MASK_SLOTS))
+        {
+            uint32_t end = g;
+            while (end < GROUPS && group_is_background(cls, end * MASK_SLOTS))
+            {
+                end++;
+            }
+            const uint32_t n = (end - g) * MASK_SLOTS;
+            w.record(vidcmd_run(RUN_SRC_COLOR0, n));
+            slots += n;
+            g = end;
+        }
+        else
+        {
+            w.mask(mask_from_classes(cls, g * MASK_SLOTS));
+            slots += MASK_SLOTS;
+            g++;
+        }
+    }
+}
+
+// KIOSK.  A RUN_COLOR background, one big glyph per record, and a SET pair in
+// front of every recoloured segment.  The seam the SET pair costs depends on
+// what is in front of it and is priced from the derived constants:
+//
+//   behind a RUN   the fetch banks BOTH SETs, so the pair law lands them on
+//                  consecutive slots and the header on the next —
+//                  MASK_GAP_AFTER_RUN_SET_SET slots, absorbed by shortening
+//                  the background run.
+//   behind a MASK  only ONE word can be parked while a mask plays, so the SETs
+//                  cannot be a pair: each costs its own slot plus the cadence's
+//                  HOLD — MASK_GAP_AFTER_MASK_SET_SET slots, which the art's
+//                  geometry has to leave room for.
+static void write_kiosk_line(const FrameParams &p, RecordWriter &w, uint32_t line,
+                             uint32_t &slots)
+{
+    if (line == 0)
+    {
+        w.record(vidcmd_set(SET_PIX_PAL_BG, KIOSK_ALT_COLOR));
+        w.record(vidcmd_set(SET_PIX_MODE, PIXEL_MODE_DIRECT_1BPP));
+    }
+    (void)p;
+
+    const KioskLinePlan plan = kiosk_plan_line(line);
+
+    std::array<InkClass, H_ACTIVE> cls{};
+    kiosk_line_classes(plan, line, cls);
+
+    uint32_t x         = 0;
+    bool     after_mask = false;
+    for (uint32_t s = 0; s < plan.seg_n; s++)
+    {
+        const KioskSegment &seg = plan.seg[s];
+        const uint32_t      gap = seg.x0 - x;
+
+        // The background run in front of the SET pair, shortened by whatever
+        // seam the pair is about to cost.  Zero when the recolour sits directly
+        // between two mask groups.
+        const uint32_t run = (after_mask && gap == MASK_GAP_AFTER_MASK_SET_SET)
+                                 ? 0u
+                                 : (gap - MASK_GAP_AFTER_RUN_SET_SET);
+        if (run > 0)
+        {
+            w.run_color_span(plan.background_color, run);
+        }
+        w.record(vidcmd_set(SET_CMP_COLOR1, seg.color1));
+        w.record(vidcmd_set(SET_CMP_COLOR0, seg.color0));
+        slots += gap;   // the run plus the pair's own seam slots
+
+        for (uint32_t g = 0; g < seg.records; g++)
+        {
+            w.mask(mask_from_classes(cls, seg.x0 + g * KIOSK_CELL_W));
+            slots += MASK_SLOTS;
+        }
+        x          = seg.x0 + seg.records * KIOSK_CELL_W;
+        after_mask = true;
+    }
+
+    if (x < H_ACTIVE)
+    {
+        w.run_color_span(plan.background_color, H_ACTIVE - x);
+        slots += H_ACTIVE - x;
+    }
+}
+
+static uint32_t write_screen_records(const FrameParams &p, Memory ram,
+                                     std::span<uint8_t> line_words,
+                                     std::span<uint8_t> line_records,
+                                     std::span<uint16_t> line_slots,
+                                     std::span<uint16_t> line_stretch)
+{
+    uint32_t total = 0;
+
+    for (uint32_t line = 0; line < V_ACTIVE; line++)
+    {
+        RecordWriter w;
+        w.ram  = ram;
+        w.base = p.vidcmd_base + line * VIDCMD_LINE_STRIDE_BYTES;
+
+        uint32_t slots = 0;
+        if (p.screen == ScreenStyle::CONSOLE)
+        {
+            write_console_line(p, w, line, slots);
+        }
+        else
+        {
+            write_kiosk_line(p, w, line, slots);
+        }
+
+        // Occupancy, not the authored sum — the same rule every other case is
+        // held to.  These screens are built so the two agree (chained masks and
+        // RUN-to-mask boundaries are gapless, and the SET seams are priced into
+        // the geometry), and the CUSHION check is what proves it.
+        const VidcmdSlotPlan plan = vidcmd_plan_line(
+            std::span<const uint16_t>(&ram.words[w.base >> 1], w.words), H_BLANK);
+
+        line_words[line]   = static_cast<uint8_t>(w.words);
+        line_records[line] = static_cast<uint8_t>(w.records);
+        line_slots[line]   = static_cast<uint16_t>(plan.slots);
+        line_stretch[line] = static_cast<uint16_t>(plan.stretch);
+        total += w.words;
+    }
+
+    return total;
+}
+
 uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
                               std::span<uint8_t> line_words,
                               std::span<uint8_t> line_records,
                               std::span<uint16_t> line_slots,
                               std::span<uint16_t> line_stretch)
 {
+    if (p.screen != ScreenStyle::NONE)
+    {
+        return write_screen_records(p, ram, line_words, line_records, line_slots,
+                                    line_stretch);
+    }
+
     constexpr std::array<uint32_t, 4> SPRITE_X = {64, 200, 360, 500};
 
     const uint32_t pixel_skip = p.h_scroll_pixels % 16u;
@@ -832,29 +1336,43 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
         const uint32_t src = p.fb_base + (p.v_scroll_lines + line) * p.fb_stride_bytes +
                              word_offset * 2;
 
-        // Optional pixel head, ahead of everything: cheap immunity for PIXEL.
-        uint32_t pix_head = 0;
-        if (p.pixels_head_words > 0 && p.pixels_head_words < line_words)
+        // A pure-VIDCMD screen has no pixel stream at all: the display list IS
+        // the framebuffer, so the group is one run of VIDCMD descriptors and
+        // nothing else.  PIXEL keeps re-delivering its reset word, which is
+        // what makes a passthrough dibit a settable third colour (see the note
+        // at the top of the screen section).
+        if (p.pure_vidcmd)
         {
-            pix_head = p.pixels_head_words;
-            emit_stream(w, SIGNAL_PIXELS_FIFO_W, src, pix_head, wait, pixel_chunk);
+            emit_stream(w, SIGNAL_VIDCMD_FIFO_W, vidcmd_addr, vidcmd_words, wait,
+                        DESC_MAX_COUNT);
             wait = false;
         }
-
-        if (head > 0)
+        else
         {
-            emit_stream(w, SIGNAL_VIDCMD_FIFO_W, vidcmd_addr, head, wait, DESC_MAX_COUNT);
+            // Optional pixel head, ahead of everything: cheap immunity for PIXEL.
+            uint32_t pix_head = 0;
+            if (p.pixels_head_words > 0 && p.pixels_head_words < line_words)
+            {
+                pix_head = p.pixels_head_words;
+                emit_stream(w, SIGNAL_PIXELS_FIFO_W, src, pix_head, wait, pixel_chunk);
+                wait = false;
+            }
+
+            if (head > 0)
+            {
+                emit_stream(w, SIGNAL_VIDCMD_FIFO_W, vidcmd_addr, head, wait, DESC_MAX_COUNT);
+                wait = false;
+            }
+
+            emit_stream(w, SIGNAL_PIXELS_FIFO_W, src + pix_head * 2, line_words - pix_head,
+                        wait, pixel_chunk);
             wait = false;
-        }
 
-        emit_stream(w, SIGNAL_PIXELS_FIFO_W, src + pix_head * 2, line_words - pix_head, wait,
-                    pixel_chunk);
-        wait = false;
-
-        if (vidcmd_words > head)
-        {
-            emit_stream(w, SIGNAL_VIDCMD_FIFO_W, vidcmd_addr + head * 2, vidcmd_words - head,
-                        false, DESC_MAX_COUNT);
+            if (vidcmd_words > head)
+            {
+                emit_stream(w, SIGNAL_VIDCMD_FIFO_W, vidcmd_addr + head * 2,
+                            vidcmd_words - head, false, DESC_MAX_COUNT);
+            }
         }
 
         // Audio last in the group: the audio FIFO is 1024 pairs deep and is

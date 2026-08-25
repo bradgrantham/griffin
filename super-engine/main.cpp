@@ -361,6 +361,7 @@ struct CaseResult
     uint32_t        vidcmd_slot_max    = 0;
     uint32_t        vidcmd_stretch_max = 0;
     uint32_t        vidcmd_stretch_lines = 0;
+    std::vector<uint8_t>     line_words;   // frame 2's per-line VIDCMD word count
     std::vector<std::string> artifacts;
 };
 
@@ -431,6 +432,7 @@ CaseResult run_case(const CaseSpec &spec, Memory ram, uint64_t rearm_latency)
         }
         out.vidcmd_words_mean   = static_cast<double>(words_sum) / V_ACTIVE;
         out.vidcmd_records_mean = static_cast<double>(records_sum) / V_ACTIVE;
+        out.line_words          = line_words;
     }
 
     out.interp = interpret(ram, ip);
@@ -464,7 +466,9 @@ void print_report(const CaseSpec &spec, const CaseResult &res)
     printf("  payload words/frame %6u          of which pacing %u\n",
            a0.payload_words, a0.pacing_words);
     printf("  PIXELS words/line   %6u          VIDCMD words/line %u..%u (mean %.2f), %u/frame\n",
-           pixel_words_for(spec.base.mode, spec.base.h_scroll_pixels % 16),
+           spec.base.pure_vidcmd
+               ? 0u
+               : pixel_words_for(spec.base.mode, spec.base.h_scroll_pixels % 16),
            res.vidcmd_words_min, res.vidcmd_words_max, res.vidcmd_words_mean,
            res.vidcmd_words_total);
     printf("  VIDCMD records/line max %3u  mean %.2f\n",
@@ -509,9 +513,10 @@ void print_report(const CaseSpec &spec, const CaseResult &res)
     printf("  VIDCMD holds        cadence %u  starved %u   (cadence = the 2-clock fetch, "
            "starved = a dry FIFO)\n",
            rr.stats.vidcmd_cadence_slots, rr.stats.vidcmd_hold_slots);
-    printf("  VIDCMD framing      overruns %u  late words %u  RUN_COLOR %u  reserved no-ops %u\n",
+    printf("  VIDCMD framing      overruns %u  late words %u  RUN_COLOR %u  MASK %u "
+           "(mask stalls %u)\n",
            rr.stats.vidcmd_overruns, rr.stats.vidcmd_late_words, rr.stats.vidcmd_color_runs,
-           rr.stats.vidcmd_reserved_ops);
+           rr.stats.vidcmd_mask_records, rr.stats.vidcmd_mask_stalls);
     if (spec.base.audio)
     {
         printf("  AUDIO FIFO          high %4u low %4u underruns %u  overflows %u  (depth %u)\n",
@@ -600,19 +605,29 @@ void check_case(const CaseSpec &spec, const CaseResult &res)
     }
 
     // PIXELS tiling is legal by construction (pixel.v has no empty flag and a
-    // 7200 holds Q), so a short fill is a bandwidth compressor.  None of these
-    // cases wants one, so a nonzero count means the list is wrong, not the
-    // hardware.
-    CHECK(rr.stats.pixels_tiled_words == 0,
-          "%s: PIXEL tiled its last word %u times — the pixel stream came up short",
-          spec.name.c_str(), rr.stats.pixels_tiled_words);
+    // 7200 holds Q), so a short fill is a bandwidth compressor.  The bitmap
+    // cases do not want one, so a nonzero count means the list is wrong; the
+    // pure-VIDCMD screens never fill PIXELS at all and tile on purpose, which is
+    // exactly what makes passthrough a settable third colour there.
+    if (!spec.base.pure_vidcmd)
+    {
+        CHECK(rr.stats.pixels_tiled_words == 0,
+              "%s: PIXEL tiled its last word %u times — the pixel stream came up short",
+              spec.name.c_str(), rr.stats.pixels_tiled_words);
+    }
     CHECK(rr.stats.pixels_overflows == 0, "%s: PIXELS FIFO overflowed %u times",
           spec.name.c_str(), rr.stats.pixels_overflows);
     CHECK(rr.stats.vidcmd_overflows == 0, "%s: VIDCMD FIFO overflowed %u times",
           spec.name.c_str(), rr.stats.vidcmd_overflows);
-    CHECK(rr.stats.vidcmd_reserved_ops == 0,
-          "%s: %u reserved `01` no-ops reached the compositor — nothing should emit them",
-          spec.name.c_str(), rr.stats.vidcmd_reserved_ops);
+    CHECK(rr.stats.vidcmd_mask_stalls == 0,
+          "%s: a MASK stalled for %u slots waiting for its data word — the record's two "
+          "words were not delivered together", spec.name.c_str(), rr.stats.vidcmd_mask_stalls);
+    if (spec.base.screen == ScreenStyle::NONE)
+    {
+        CHECK(rr.stats.vidcmd_mask_records == 0,
+              "%s: %u stray `01` MASK records reached the compositor — this case emits none",
+              spec.name.c_str(), rr.stats.vidcmd_mask_records);
+    }
 
     if (spec.base.audio)
     {
@@ -984,6 +999,784 @@ void check_cadence_traces()
     }
 }
 
+// ---------------------------------------------------------------------------
+// Reference rasterizers for the two pure-VIDCMD screens
+// ---------------------------------------------------------------------------
+//
+// These draw the screens the ordinary way — straight into a pixel buffer, from
+// the same font and the same layout the authoring uses — so the comparison
+// against the rendered frame is a test of THE RECORDS AND THE COMPOSITOR, not
+// of the font or the text.  If a dibit lands on the wrong pixel, a mask chains
+// with a gap, or a SET seam is a different number of slots than the geometry
+// was priced at, the two images stop matching.
+
+FrameImage console_reference_frame()
+{
+    FrameImage img;
+    img.pixels.assign(static_cast<size_t>(H_ACTIVE) * V_ACTIVE, 0);
+
+    std::array<InkClass, H_ACTIVE> cls{};
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        console_line_classes(y, cls);
+        const uint32_t row = y / CONSOLE_CELL_H;
+        const Rgb444   c1  = console_row_color1(row);
+        const Rgb444   c0  = console_row_color0(row);
+        for (uint32_t x = 0; x < H_ACTIVE; x++)
+        {
+            const Rgb444 c = (cls[x] == InkClass::INK)   ? c1
+                             : (cls[x] == InkClass::ALT) ? CONSOLE_ALT_COLOR
+                                                         : c0;
+            img.pixels[y * H_ACTIVE + x] = c;
+        }
+    }
+    return img;
+}
+
+FrameImage kiosk_reference_frame()
+{
+    FrameImage img;
+    img.pixels.assign(static_cast<size_t>(H_ACTIVE) * V_ACTIVE, 0);
+
+    std::array<InkClass, H_ACTIVE> cls{};
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        const KioskLinePlan plan = kiosk_plan_line(y);
+        const Rgb444        bg   = run_colour_to_rgb444(plan.background_color);
+        kiosk_line_classes(plan, y, cls);
+
+        for (uint32_t x = 0; x < H_ACTIVE; x++)
+        {
+            img.pixels[y * H_ACTIVE + x] = bg;
+        }
+        for (uint32_t s = 0; s < plan.seg_n; s++)
+        {
+            const KioskSegment &seg = plan.seg[s];
+            for (uint32_t i = 0; i < seg.records * KIOSK_CELL_W; i++)
+            {
+                const uint32_t x = seg.x0 + i;
+                img.pixels[y * H_ACTIVE + x] =
+                    (cls[x] == InkClass::INK)   ? seg.color1
+                    : (cls[x] == InkClass::ALT) ? KIOSK_ALT_COLOR
+                                                : seg.color0;
+            }
+        }
+    }
+    return img;
+}
+
+// THE LAYOUT INVARIANT both screens are built on: a record's pixel 0 has no
+// dibit, so whatever lands on a 16-pixel boundary comes out cmp_color0.  Both
+// cell layouts leave a blank column there; this counts the places they do not.
+uint32_t console_pixel0_violations()
+{
+    std::array<InkClass, H_ACTIVE> cls{};
+    uint32_t bad = 0;
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        console_line_classes(y, cls);
+        for (uint32_t g = 0; g < H_ACTIVE / MASK_SLOTS; g++)
+        {
+            std::array<uint32_t, MASK_SLOTS> d{};
+            for (uint32_t i = 0; i < MASK_SLOTS; i++)
+            {
+                d[i] = ink_class_dibit(cls[g * MASK_SLOTS + i]);
+            }
+            if (!vidcmd_mask_pixel0_ok(d))
+            {
+                bad++;
+            }
+        }
+    }
+    return bad;
+}
+
+uint32_t kiosk_pixel0_violations()
+{
+    std::array<InkClass, H_ACTIVE> cls{};
+    uint32_t bad = 0;
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        const KioskLinePlan plan = kiosk_plan_line(y);
+        kiosk_line_classes(plan, y, cls);
+        for (uint32_t s = 0; s < plan.seg_n; s++)
+        {
+            for (uint32_t g = 0; g < plan.seg[s].records; g++)
+            {
+                std::array<uint32_t, MASK_SLOTS> d{};
+                for (uint32_t i = 0; i < MASK_SLOTS; i++)
+                {
+                    d[i] = ink_class_dibit(cls[plan.seg[s].x0 + g * MASK_SLOTS + i]);
+                }
+                if (!vidcmd_mask_pixel0_ok(d))
+                {
+                    bad++;
+                }
+            }
+        }
+    }
+    return bad;
+}
+
+// Compares both rendered frames against one reference and reports the worst
+// offender, because "17 pixels differ" is useless without an address.
+uint32_t compare_frames(const char *name, const CaseResult &res, const FrameImage &ref)
+{
+    uint32_t differing = 0;
+    uint32_t first_x   = 0;
+    uint32_t first_y   = 0;
+    Rgb444   got       = 0;
+    Rgb444   want      = 0;
+
+    for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+    {
+        for (uint32_t y = 0; y < V_ACTIVE; y++)
+        {
+            for (uint32_t x = 0; x < H_ACTIVE; x++)
+            {
+                const Rgb444 a = res.rendered.frames[f].pixels[y * H_ACTIVE + x];
+                const Rgb444 b = ref.pixels[y * H_ACTIVE + x];
+                if (a != b)
+                {
+                    if (differing == 0)
+                    {
+                        first_x = x;
+                        first_y = y;
+                        got     = a;
+                        want    = b;
+                    }
+                    differing++;
+                }
+            }
+        }
+    }
+
+    if (differing == 0)
+    {
+        printf("  pixel exactness     %s: all %u pixels of both frames match the reference\n",
+               name, H_ACTIVE * V_ACTIVE);
+    }
+    else
+    {
+        printf("  pixel exactness     %s: %u pixels differ, first at (%u,%u) 0x%03X vs "
+               "0x%03X\n", name, differing, first_x, first_y, got, want);
+    }
+    return differing;
+}
+
+// ---------------------------------------------------------------------------
+// MASK cadence traces — the model against compositor_tb.v's MASKB_* traces
+// ---------------------------------------------------------------------------
+//
+// compositor_tb.v's numbers are GROUND TRUTH for this model.  Any disagreement
+// here is a model bug, not an expectation to retune.  The tb derives all of
+// them from five laws on top of L1-L5, and this section re-derives each one in
+// place so the assertion is readable without the RTL open:
+//
+//   LM1 the header is PLAYBACK-class: its own slot is the record's pixel 0, an
+//       implicit opaque cmp_color0, so it waits for H_ACTIVE like a RUN and is
+//       never eager in blanking.  The header carries NO colour.
+//   LM2 the record is SIXTEEN slots — pixel 0 implicit, 1..7 the header's seven
+//       dibits, 8..15 the data word's eight — and it is MODAL: a dibit
+//       overrides the source for its own pixel only and the span in force
+//       resumes, untouched, at the end.
+//   LM3 the mask owns staged_word and the fetch parks exactly one word behind
+//       it, except on two edges: the pixel-8 edge takes the data word out of
+//       the park and reads d8 straight off Q, and the pixel-15 edge captures
+//       the NEXT RECORD one slot early.
+//   LM4 no data word at pixel 8 -> HOLD, pixel 7's source stretches.
+//   LM5 the data word is captured with have_staged LOW, so no bit pattern of it
+//       can reach the SET/RUN decode or the PIXEL bus.
+//
+// Two seam numbers below are DERIVED HERE rather than measured by the tb, and
+// both are written out cycle by cycle at their trace.
+
+VidcmdMask trace_mask(const std::array<uint32_t, MASK_SLOTS - 1> &d1_15)
+{
+    std::array<uint32_t, MASK_SLOTS> d{};
+    d[0] = MASK_PIXEL0_DIBIT;   // no bit exists for it; this is documentation
+    for (uint32_t i = 0; i < MASK_SLOTS - 1; i++)
+    {
+        d[i + 1] = d1_15[i];
+    }
+    return vidcmd_mask(d);
+}
+
+void push_mask(std::vector<uint16_t> &w, const VidcmdMask &m)
+{
+    w.push_back(m.header);
+    w.push_back(m.data);
+}
+
+void push_mask_into(CompositorUnit &cmp, const VidcmdMask &m)
+{
+    cmp.push_word(m.header);
+    cmp.push_word(m.data);
+}
+
+// The lowest slot at or after `from` whose colour is not `bg`.
+uint32_t first_ne_from(const std::vector<Rgb444> &px, uint32_t from, Rgb444 bg)
+{
+    for (uint32_t i = from; i < px.size(); i++)
+    {
+        if (px[i] != bg)
+        {
+            return i;
+        }
+    }
+    return static_cast<uint32_t>(px.size());
+}
+
+void check_mask_traces()
+{
+    printf("\n=== compositor-mask — the model against compositor_tb.v's MASKB_* traces ===\n");
+
+    constexpr uint32_t T = MASK_DIBIT_PASSTHROUGH;
+    constexpr uint32_t R = MASK_DIBIT_RESERVED;
+    constexpr uint32_t B = MASK_DIBIT_COLOR0;
+    constexpr uint32_t F = MASK_DIBIT_COLOR1;
+
+    constexpr Rgb444 C0 = 0x00F;
+    constexpr Rgb444 C1 = 0xF0F;
+    const Rgb444     PT = TRACE_PASSTHROUGH;
+
+    uint32_t mask_run_gap      = 0;
+    uint32_t mask_chain_gap    = 0;
+    uint32_t mask_set_gap      = 0;
+    uint32_t mask_set_set_gap  = 0;
+    uint32_t run_set_set_gap   = 0;
+    uint32_t starve_reload_slot = 0;
+
+    // MASKB_SPRITE.  SET(color0), SET(color1), RUN(pt,8), header, data, and
+    // NOTHING behind it, so the tail proves the modal restore by HOLD rather
+    // than by a following RUN.  L2 puts the RUN on slots 0..7; the header is
+    // playback-class so it waits (LM1) and executes on slot 8, which is the
+    // record's PIXEL 0 — hence a RUN-to-mask gap of ZERO.  The data word here
+    // is 0xC6F8: bit 15 set with target 4, so it would decode as a PIXEL-target
+    // SET if it were ever decoded (LM5).
+    {
+        std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR0, C0),
+                                   vidcmd_set(SET_CMP_COLOR1, C1),
+                                   vidcmd_run(RUN_SRC_PASSTHROUGH, 8)};
+        const VidcmdMask m = trace_mask({T, R, B, F, T, R, B, F, T, R, B, F, F, B, T});
+        push_mask(w, m);
+        const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+
+        static const Rgb444 want[MASK_SLOTS] = {C0, PT, PT, C0, C1, PT, PT, C0,
+                                                C1, PT, PT, C0, C1, C1, C0, PT};
+        uint32_t bad = 0;
+        for (uint32_t i = 0; i < MASK_SLOTS; i++)
+        {
+            if (px[8 + i] != want[i])
+            {
+                bad++;
+            }
+        }
+        uint32_t tail = 0;
+        for (uint32_t i = 8 + MASK_SLOTS; i < H_ACTIVE; i++)
+        {
+            if (px[i] != PT)
+            {
+                tail++;
+            }
+        }
+        mask_run_gap = first_ne_from(px, 0, PT) - 7 - 1;
+
+        printf("  MASKB_SPRITE        px0..px15 %03X %03X %03X %03X %03X %03X %03X %03X "
+               "%03X %03X %03X %03X %03X %03X %03X %03X\n",
+               px[8], px[9], px[10], px[11], px[12], px[13], px[14], px[15],
+               px[16], px[17], px[18], px[19], px[20], px[21], px[22], px[23]);
+        CHECK(px[8] == C0, "mask sprite: pixel 0 must be the implicit opaque color0 0x%03X, "
+              "got 0x%03X", C0, px[8]);
+        CHECK(bad == 0, "mask sprite: %u of the sixteen pixels do not match their dibits", bad);
+        CHECK(tail == 0, "mask sprite: %u tail pixels are not the passthrough the record "
+              "borrowed from — the modal restore failed", tail);
+        CHECK(mask_run_gap == MASK_GAP_AFTER_RUN,
+              "mask sprite: RUN-to-mask gap is %u slot(s), the tb measures %u",
+              mask_run_gap, MASK_GAP_AFTER_RUN);
+        CHECK(m.data == 0xC6F8,
+              "mask sprite: the data word encodes to 0x%04X, the tb pushes 0xC6F8 — the two "
+              "encoders have drifted", m.data);
+    }
+
+    // LM5, with a data word chosen to be VISIBLE if it were ever decoded.
+    // 0x9ABC is SET(target 1 = cmp_color0, 0xABC): if the shifter's word reached
+    // the decode, mask B's implicit pixel 0 would come out 0xABC.  It must stay
+    // the color0 the SET in blanking wrote.
+    {
+        const VidcmdMask a = trace_mask({F, F, F, F, F, F, F, B, R, B, B, B, F, F, T});
+        std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR0, C0),
+                                   vidcmd_set(SET_CMP_COLOR1, C1),
+                                   vidcmd_run(RUN_SRC_PASSTHROUGH, 4)};
+        push_mask(w, a);
+        push_mask(w, trace_mask({F, F, F, F, F, F, F, F, F, F, F, F, F, F, F}));
+        const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+        printf("  MASK data not decoded  data word 0x%04X would be SET(color0,0x%03X); "
+               "mask B pixel 0 is 0x%03X\n", a.data, a.data & 0xFFFu, px[20]);
+        CHECK(a.data == 0x9ABC,
+              "mask LM5: the probe data word encodes to 0x%04X, expected 0x9ABC", a.data);
+        CHECK(px[20] == C0,
+              "mask LM5: the data word reached the SET decode — mask B pixel 0 is 0x%03X, "
+              "expected the unchanged color0 0x%03X", px[20], C0);
+    }
+
+    // MASKB_BLANK.  SET, SET, header, data, RUN(color1,600).  The SETs are
+    // setup and are eager; the header PAINTS, so it waits for H_ACTIVE (LM1),
+    // which is what puts pixel 0 on slot 0.  The RUN behind it is captured on
+    // the pixel-15 edge and executes on slot 16 — gap 0 — and its load must
+    // BEAT the modal restore on that same edge, so d15 is passthrough on
+    // purpose and slot 16 must be color1, not passthrough.
+    {
+        std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR0, C0),
+                                   vidcmd_set(SET_CMP_COLOR1, C1)};
+        push_mask(w, trace_mask({F, F, B, B, T, T, F, B, T, F, B, F, B, F, T}));
+        w.push_back(vidcmd_run(RUN_SRC_COLOR1, 600));
+        const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+
+        static const Rgb444 want[MASK_SLOTS] = {C0, C1, C1, C0, C0, PT, PT, C1,
+                                                C0, PT, C1, C0, C1, C0, C1, PT};
+        uint32_t bad = 0;
+        for (uint32_t i = 0; i < MASK_SLOTS; i++)
+        {
+            if (px[i] != want[i])
+            {
+                bad++;
+            }
+        }
+        uint32_t tail = 0;
+        for (uint32_t i = MASK_SLOTS; i < H_ACTIVE; i++)
+        {
+            if (px[i] != C1)
+            {
+                tail++;
+            }
+        }
+        printf("  MASKB_BLANK         a banked header plays pixel 0 in slot 0 (%03X), the "
+               "record behind it lands at slot %u\n", px[0], MASK_SLOTS);
+        CHECK(bad == 0, "mask blank: %u of the sixteen pixels are wrong — a header banked in "
+              "blanking must not play early", bad);
+        CHECK(tail == 0, "mask blank: %u pixels after the record are not the following RUN's "
+              "colour — the load did not beat the modal restore", tail);
+    }
+
+    // MASKB_CHAIN32 — THE HEADLINE PROPERTY.  SET, SET, RUN(pt,4), hdrA, dataA,
+    // hdrB, dataB, and nothing else.  By LM3, hdrB is captured on the very edge
+    // that paints A's pixel 15, so it is staged with a terminal count during A's
+    // last slot and the ordinary consume rule fires it on the NEXT edge: B's
+    // pixel 0 is the slot immediately after A's pixel 15.  GAP = 0.
+    //
+    // Nothing follows the pair on purpose: the tail discriminates sav_src.  Mask
+    // B must NOT have re-saved cur_src at its own load edge (which was mask A's
+    // d15, cmp_color1), or the tail would be color1 instead of the passthrough
+    // the FIRST mask borrowed.
+    {
+        std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR0, C0),
+                                   vidcmd_set(SET_CMP_COLOR1, C1),
+                                   vidcmd_run(RUN_SRC_PASSTHROUGH, 4)};
+        push_mask(w, trace_mask({F, F, F, F, F, F, F, F, F, F, F, F, F, F, F}));
+        push_mask(w, trace_mask({B, F, B, F, B, F, B, F, B, F, B, F, B, F, B}));
+        const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+
+        uint32_t bad = 0;
+        for (uint32_t i = 5; i <= 19; i++)
+        {
+            if (px[i] != C1)
+            {
+                bad++;
+            }
+        }
+        // Mask B is px0 (implicit color0) followed by d1 = color0, so the pair
+        // shows TWO color0 pixels at the seam and alternates from px2 on.  That
+        // is what makes the 19/20 boundary checkable in both directions.
+        static const Rgb444 want_b[MASK_SLOTS] = {C0, C0, C1, C0, C1, C0, C1, C0,
+                                                  C1, C0, C1, C0, C1, C0, C1, C0};
+        for (uint32_t i = 0; i < MASK_SLOTS; i++)
+        {
+            if (px[20 + i] != want_b[i])
+            {
+                bad++;
+            }
+        }
+        uint32_t tail = 0;
+        for (uint32_t i = 36; i < H_ACTIVE; i++)
+        {
+            if (px[i] != PT)
+            {
+                tail++;
+            }
+        }
+        mask_chain_gap = first_ne_from(px, 20, PT) - 19 - 1;
+
+        printf("  MASKB_CHAIN32       32 contiguous sprite pixels over slots 4..35, "
+               "%u pattern exceptions, chain gap %u\n", bad, mask_chain_gap);
+        CHECK(px[4] == C0, "mask chain: mask A pixel 0 must be the implicit color0");
+        CHECK(px[20] == C0, "mask chain: mask B pixel 0 must be the implicit color0 in the "
+              "very next slot, got 0x%03X", px[20]);
+        CHECK(bad == 0, "mask chain: %u pixels of the 32-pixel pair are wrong", bad);
+        CHECK(mask_chain_gap == MASK_GAP_AFTER_MASK,
+              "mask chain: chained masks left a %u-slot seam, the tb measures %u",
+              mask_chain_gap, MASK_GAP_AFTER_MASK);
+        CHECK(tail == 0, "mask chain: %u tail pixels are not the source the FIRST mask "
+              "borrowed — a chained mask re-saved sav_src", tail);
+    }
+
+    // MASKB_RECOLOR — mask, SET(color1), mask.  DERIVED: the pixel-15 edge
+    // captures the SET (LM3), so the SET is staged with a terminal count during
+    // mask A's last slot and executes on the slot after it, showing the restored
+    // underlying source.  /RE only falls on that edge, so header B is on Q
+    // during the NEXT slot and is captured at its end — one HOLD slot — and is
+    // consumed one edge later.  GAP = 2, the ordinary L4 cadence.
+    {
+        std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR0, C0),
+                                   vidcmd_set(SET_CMP_COLOR1, C1),
+                                   vidcmd_run(RUN_SRC_PASSTHROUGH, 4)};
+        push_mask(w, trace_mask({F, F, F, F, F, F, F, F, F, F, F, F, F, F, F}));
+        w.push_back(vidcmd_set(SET_CMP_COLOR1, 0x0F0));
+        push_mask(w, trace_mask({F, F, F, F, F, F, F, F, F, F, F, F, F, F, F}));
+        const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+
+        mask_set_gap = first_ne_from(px, 20, PT) - 19 - 1;
+        uint32_t bad = 0;
+        for (uint32_t i = 23; i <= 37; i++)
+        {
+            if (px[i] != 0x0F0)
+            {
+                bad++;
+            }
+        }
+        printf("  MASKB_RECOLOR       slots 19..22 %03X %03X %03X %03X, seam %u slot(s)\n",
+               px[19], px[20], px[21], px[22], mask_set_gap);
+        CHECK(px[20] == PT && px[21] == PT,
+              "mask recolor: the SET's own slot and its HOLD slot must show the restored "
+              "source, got 0x%03X 0x%03X", px[20], px[21]);
+        CHECK(px[22] == C0, "mask recolor: mask B pixel 0 is still the implicit color0, "
+              "got 0x%03X", px[22]);
+        CHECK(bad == 0, "mask recolor: %u pixels of mask B are not the NEW color1", bad);
+        CHECK(mask_set_gap == MASK_GAP_AFTER_MASK_SET,
+              "mask recolor: a SET between two masks cost %u slot(s), the tb measures %u",
+              mask_set_gap, MASK_GAP_AFTER_MASK_SET);
+    }
+
+    // MASK -> SET, SET -> MASK.  DERIVED HERE, NOT MEASURED BY THE TB, and the
+    // derivation is what says it is 4 and not 3.  Let mask A's pixel 15 be slot
+    // P.  While A plays, mask_holds keeps the buffer shut, so exactly ONE word
+    // is parked on Q — the two SETs cannot be a banked pair.
+    //
+    //   E(P)    pos 14: SET 1 is captured, and /RE rises because nothing is
+    //           left parked.
+    //   E(P+1)  SET 1 executes (slot P+1, showing the restored source), and /RE
+    //           falls here for the first time since, so SET 2 is only on Q
+    //           during slot P+2.
+    //   E(P+2)  SET 2 is captured.  Slot P+2 is a HOLD.
+    //   E(P+3)  SET 2 executes (slot P+3); /RE falls; header B on Q at P+4.
+    //   E(P+4)  header B captured.  Slot P+4 is a HOLD.
+    //   E(P+5)  header B executes: mask B pixel 0 is slot P+5.
+    //
+    // GAP = (P+5) - P - 1 = 4 — two records at the ordinary 2-slot cadence,
+    // exactly MASK_GAP_AFTER_MASK_SET twice.
+    {
+        std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR0, C0),
+                                   vidcmd_set(SET_CMP_COLOR1, C1),
+                                   vidcmd_run(RUN_SRC_PASSTHROUGH, 4)};
+        push_mask(w, trace_mask({F, F, F, F, F, F, F, F, F, F, F, F, F, F, F}));
+        w.push_back(vidcmd_set(SET_CMP_COLOR1, 0x0F0));
+        w.push_back(vidcmd_set(SET_CMP_COLOR0, 0x0FF));
+        push_mask(w, trace_mask({F, F, F, F, F, F, F, F, F, F, F, F, F, F, F}));
+        const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+
+        mask_set_set_gap = first_ne_from(px, 20, PT) - 19 - 1;
+        printf("  MASK,SET,SET,MASK   slots 19..25 %03X %03X %03X %03X %03X %03X %03X, "
+               "seam %u slot(s)\n",
+               px[19], px[20], px[21], px[22], px[23], px[24], px[25], mask_set_set_gap);
+        CHECK(mask_set_set_gap == MASK_GAP_AFTER_MASK_SET_SET,
+              "mask SET pair seam: derived %u slot(s) from the laws, the model plays %u — "
+              "one of the two is wrong and it is not the derivation's job to move",
+              MASK_GAP_AFTER_MASK_SET_SET, mask_set_set_gap);
+        CHECK(mask_set_set_gap == 2 * MASK_GAP_AFTER_MASK_SET,
+              "mask SET pair seam: a second SET must cost exactly what the first did");
+        CHECK(px[19 + 1 + mask_set_set_gap] == 0x0FF,
+              "mask SET pair seam: mask B's implicit pixel 0 must be the NEW color0 0x0FF, "
+              "got 0x%03X", px[19 + 1 + mask_set_set_gap]);
+    }
+
+    // RUN -> SET, SET -> MASK, the arrangement the kiosk uses wherever it can.
+    // A RUN does NOT hold the buffer, so the fetch banks both SETs while it
+    // counts and the pair law puts them on CONSECUTIVE slots.  The header does
+    // NOT follow immediately, though, and the reason is the park: /RE was held
+    // low to bank SET 2, so it can only RISE on the edge that consumes SET 1
+    // and can only FALL on the edge after.  Let the RUN's last slot be X-1:
+    //
+    //   E(X)    SET 1 executes; the park moves in, so SET 2 is staged; /RE
+    //           rises (nothing is parked any more).
+    //   E(X+1)  SET 2 executes; /RE falls for the first time, so the header is
+    //           only on Q during slot X+2.
+    //   E(X+2)  the header is captured.  Slot X+2 is a HOLD.
+    //   E(X+3)  the header executes: mask pixel 0 is slot X+3.
+    //
+    // GAP = 3.  compositor_tb's PAIR_LOCAL pins the same shape with a RUN in
+    // place of the mask (SETs on 4 and 5, HOLD on 6, next record on 7), so this
+    // is a re-derivation of a measured trace rather than a new claim.
+    {
+        std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR0, C0),
+                                   vidcmd_set(SET_CMP_COLOR1, C1),
+                                   vidcmd_run_color(RUN_COLOR_GREEN, 20),
+                                   vidcmd_set(SET_CMP_COLOR1, 0x0F0),
+                                   vidcmd_set(SET_CMP_COLOR0, 0x0FF)};
+        push_mask(w, trace_mask({F, F, F, F, F, F, F, F, F, F, F, F, F, F, F}));
+        const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
+
+        run_set_set_gap = first_ne_from(px, 20, 0x0F0) - 19 - 1;
+        printf("  RUN,SET,SET,MASK    slots 19..23 %03X %03X %03X %03X %03X, seam %u slot(s)\n",
+               px[19], px[20], px[21], px[22], px[23], run_set_set_gap);
+        CHECK(run_set_set_gap == MASK_GAP_AFTER_RUN_SET_SET,
+              "run SET pair seam: derived %u slot(s), the model plays %u",
+              MASK_GAP_AFTER_RUN_SET_SET, run_set_set_gap);
+        CHECK(px[20 + run_set_set_gap] == 0x0FF,
+              "run SET pair seam: the mask's implicit pixel 0 must be the NEW color0, "
+              "got 0x%03X", px[20 + run_set_set_gap]);
+    }
+
+    // MASKB_STARVE (LM4).  RUN_COLOR(GREEN,4) then a header whose DATA WORD is
+    // withheld.  The span under the mask is a RUN_COLOR on purpose: giving it
+    // back means giving back both the source select and cur_colour.  With
+    // nothing on Q at the pixel-8 edge the record freezes whole — no count, no
+    // shift, no source change — so pixel 7's colour stretches until the word
+    // arrives, and the reload edge itself is the one that paints pixel 8.
+    {
+        PixelUnit      pix;
+        CompositorUnit cmp;
+        pix.reset();
+        cmp.reset();
+        pix.set_register(SET_PIX_PAL_FG, TRACE_PASSTHROUGH);
+        for (uint32_t i = 0; i < PIXELS_WORDS_1BPP + 1; i++)
+        {
+            pix.push_word(0xFFFF);
+        }
+        const VidcmdMask m = trace_mask({T, B, F, T, B, T, F, T, B, F, F, B, T, F, B});
+        cmp.push_word(vidcmd_set(SET_CMP_COLOR0, 0x0C0));
+        cmp.push_word(vidcmd_set(SET_CMP_COLOR1, C1));
+        cmp.push_word(vidcmd_run_color(RUN_COLOR_GREEN, 4));
+        cmp.push_word(m.header);
+        for (uint32_t i = 0; i < H_BLANK; i++)
+        {
+            cmp.blank_clock(pix);
+        }
+        pix.begin_line();
+
+        std::vector<Rgb444> px;
+        px.reserve(H_ACTIVE);
+        for (uint32_t i = 0; i < H_ACTIVE; i++)
+        {
+            if (i == 200)
+            {
+                cmp.push_word(m.data);
+            }
+            px.push_back(cmp.active_slot(pix));
+        }
+
+        // d8 is passthrough and the stretch is color1, so the first slot at or
+        // after the stall that is not color1 IS the slot d8 landed in.
+        starve_reload_slot = first_ne_from(px, 12, C1);
+
+        static const Rgb444 want_head[8] = {0x0C0, PT, 0x0C0, C1, PT, 0x0C0, PT, C1};
+        static const Rgb444 want_data[8] = {PT, 0x0C0, C1, C1, 0x0C0, PT, C1, 0x0C0};
+        uint32_t bad = 0;
+        for (uint32_t i = 0; i < 8; i++)
+        {
+            if (px[4 + i] != want_head[i])
+            {
+                bad++;
+            }
+            if (px[starve_reload_slot + i] != want_data[i])
+            {
+                bad++;
+            }
+        }
+        printf("  MASKB_STARVE        px7 held for %u slots, the withheld data half took "
+               "effect at slot %u\n", starve_reload_slot - 12, starve_reload_slot);
+        CHECK(bad == 0, "mask starve: %u pixels of the interrupted record are wrong", bad);
+        CHECK(px[12] == C1 && px[100] == C1 && px[199] == C1,
+              "mask starve: the stall must HOLD pixel 7's colour for its whole length");
+        CHECK(starve_reload_slot > 200,
+              "mask starve: the record resumed at slot %u, before the word was deposited",
+              starve_reload_slot);
+        // Modal, even across a stall, and even for a RUN_COLOR: the span must
+        // come back whole, colour latch included.
+        uint32_t tail = 0;
+        for (uint32_t i = starve_reload_slot + MASK_DATA_DIBITS; i < H_ACTIVE; i++)
+        {
+            if (px[i] != 0x0F0)
+            {
+                tail++;
+            }
+        }
+        CHECK(tail == 0, "mask starve: %u tail pixels are not the RUN_COLOR green the record "
+              "interrupted — the modal restore lost cur_colour", tail);
+    }
+
+    // A mask that straddles the H_ACTIVE fall freezes rather than being
+    // abandoned, and its parked data word is NOT taken during blanking: the two
+    // borrow-back edges are gated by H_ACTIVE.  The pixels that are left play at
+    // the start of the next line — wrong x, self-healing, exactly like every
+    // other overrun here.
+    {
+        PixelUnit      pix;
+        CompositorUnit cmp;
+        pix.reset();
+        cmp.reset();
+        pix.set_register(SET_PIX_PAL_FG, TRACE_PASSTHROUGH);
+        for (uint32_t i = 0; i < 2 * (PIXELS_WORDS_1BPP + 1); i++)
+        {
+            pix.push_word(0xFFFF);
+        }
+        cmp.push_word(vidcmd_set(SET_CMP_COLOR0, C0));
+        cmp.push_word(vidcmd_set(SET_CMP_COLOR1, C1));
+        cmp.push_word(vidcmd_run(RUN_SRC_PASSTHROUGH, 4));
+        push_mask_into(cmp, trace_mask({F, B, F, B, F, B, F, B, F, B, F, T, B, F, F}));
+        for (uint32_t i = 0; i < H_BLANK; i++)
+        {
+            cmp.blank_clock(pix);
+        }
+
+        // A 12-slot line: slots 4..11 are the record's pixels 0..7, and then
+        // H_ACTIVE falls with the whole data half unplayed.
+        pix.begin_line();
+        std::vector<Rgb444> a;
+        for (uint32_t i = 0; i < 12; i++)
+        {
+            a.push_back(cmp.active_slot(pix));
+        }
+        cmp.end_of_line();
+        for (uint32_t i = 0; i < H_BLANK; i++)
+        {
+            cmp.blank_clock(pix);
+        }
+        pix.begin_line();
+        std::vector<Rgb444> b;
+        for (uint32_t i = 0; i < 16; i++)
+        {
+            b.push_back(cmp.active_slot(pix));
+        }
+
+        // d1..d15 alternate C1/C0 through pixel 11, then d12 is passthrough.
+        static const Rgb444 want_a[8] = {C0, C1, C0, C1, C0, C1, C0, C1};
+        static const Rgb444 want_b[8] = {C0, C1, C0, C1, PT, C0, C1, C1};
+        uint32_t bad = 0;
+        for (uint32_t i = 0; i < 8; i++)
+        {
+            if (a[4 + i] != want_a[i])
+            {
+                bad++;
+            }
+            if (b[i] != want_b[i])
+            {
+                bad++;
+            }
+        }
+        for (uint32_t i = 8; i < 16; i++)
+        {
+            if (b[i] != PT)
+            {
+                bad++;
+            }
+        }
+        printf("  MASKB_RESUME        pixels 8..15 replay at slots 0..7 of the next line, "
+               "%u exceptions\n", bad);
+        CHECK(bad == 0, "mask resume: %u pixels of the straddling record are wrong — the "
+              "record must FREEZE at the line boundary, not be abandoned", bad);
+    }
+
+    // THE THIRD COLOUR — MODEL BEHAVIOUR, NOT YET HARDWARE.  With the PIXELS
+    // FIFO never written, PIXEL re-delivers its reset word forever; that word is
+    // all zeroes, and a zero bit in 1bpp direct mode selects pix_pal_bg.  So
+    // RGB_IN is pal_bg, a dibit-00 pixel resolves to pal_bg, and pal_bg is a
+    // register a VIDCMD SET can write — dibit 00 becomes a third settable colour
+    // per record with no SET between the groups that use it.
+    //
+    // The probe: two identical masks whose dibits are all 00, with a
+    // SET(pix_pal_bg) between them.  If passthrough were anything fixed the two
+    // groups would come out the same colour.
+    {
+        PixelUnit      pix;
+        CompositorUnit cmp;
+        pix.reset();
+        cmp.reset();
+        // Deliberately NO pix.push_word() anywhere: the FIFO is dry, which is
+        // exactly the pure-VIDCMD screen's condition.
+        cmp.push_word(vidcmd_set(SET_CMP_COLOR0, C0));
+        cmp.push_word(vidcmd_set(SET_PIX_MODE, PIXEL_MODE_DIRECT_1BPP));
+        cmp.push_word(vidcmd_set(SET_PIX_PAL_BG, 0x123));
+        push_mask_into(cmp, trace_mask({T, T, T, T, T, T, T, T, T, T, T, T, T, T, T}));
+        cmp.push_word(vidcmd_set(SET_PIX_PAL_BG, 0x456));
+        push_mask_into(cmp, trace_mask({T, T, T, T, T, T, T, T, T, T, T, T, T, T, T}));
+        for (uint32_t i = 0; i < H_BLANK; i++)
+        {
+            cmp.blank_clock(pix);
+        }
+        pix.begin_line();
+        std::vector<Rgb444> px;
+        for (uint32_t i = 0; i < 64; i++)
+        {
+            px.push_back(cmp.active_slot(pix));
+        }
+
+        // Mask A owns slots 0..15, the SET pays MASK_GAP_AFTER_MASK_SET, mask B
+        // starts at 16 + that.
+        const uint32_t b0 = MASK_SLOTS + MASK_GAP_AFTER_MASK_SET;
+        uint32_t bad = 0;
+        for (uint32_t i = 1; i < MASK_SLOTS; i++)
+        {
+            if (px[i] != 0x123)
+            {
+                bad++;
+            }
+            if (px[b0 + i] != 0x456)
+            {
+                bad++;
+            }
+        }
+        printf("  THIRD COLOUR probe  dibit 00 over a dry PIXELS FIFO: group A 0x%03X, "
+               "group B 0x%03X after SET(pal_bg)\n", px[1], px[b0 + 1]);
+        printf("                      *** MODEL BEHAVIOUR, NOT YET VERIFIED IN HARDWARE ***\n");
+        printf("                      render.cpp follows pixel.v's documented tiling (no\n"
+               "                      empty flag, a 7200 holds Q while empty), but what a\n"
+               "                      7200 pair presents after /RS with no write at all, and\n"
+               "                      what pixel.v's shifter holds before its first fetch,\n"
+               "                      are unverified.  Treat dibit 00 as a third colour only\n"
+               "                      after checking both against the RTL and the part.\n");
+        CHECK(px[0] == C0,
+              "third colour: the record's implicit pixel 0 is still opaque color0, got 0x%03X",
+              px[0]);
+        CHECK(bad == 0,
+              "third colour: %u dibit-00 pixels do not follow pix_pal_bg — the model's "
+              "passthrough chain has changed", bad);
+        CHECK(px[1] != px[b0 + 1],
+              "third colour: both groups came out 0x%03X, so passthrough is not settable in "
+              "the model after all", px[1]);
+    }
+
+    printf("  ------------------------------------------------------------------\n");
+    printf("  MEASURED CONSTANTS FOR THE SUITE (MASK)\n");
+    printf("    MASK record                          : %u slots per %u-word record\n",
+           MASK_SLOTS, MASK_RECORD_WORDS);
+    printf("                                           (px0 implicit opaque color0, "
+           "%u + %u dibits)\n", MASK_HEADER_DIBITS, MASK_DATA_DIBITS);
+    printf("    mid-record data reload at pixel      : %u (HOLD stretch on starvation)\n",
+           MASK_RELOAD_PIXEL);
+    printf("    RUN -> mask gap                      : %u slot(s)   [tb MASKB_SPRITE]\n",
+           mask_run_gap);
+    printf("    mask -> mask gap                     : %u slot(s)   [tb MASKB_CHAIN32, "
+           "GAPLESS]\n", mask_chain_gap);
+    printf("    mask -> SET -> mask gap              : %u slot(s)   [tb MASKB_RECOLOR]\n",
+           mask_set_gap);
+    printf("    mask -> SET,SET -> mask gap          : %u slot(s)   [DERIVED here, not 3]\n",
+           mask_set_set_gap);
+    printf("    RUN  -> SET,SET -> mask gap          : %u slot(s)   [DERIVED, banked pair]\n",
+           run_set_set_gap);
+    printf("    header is playback-class, NOT blank-eager\n");
+    printf("  ------------------------------------------------------------------\n");
+}
+
 }  // namespace
 
 int main()
@@ -1028,6 +1821,7 @@ int main()
     // The laws first, directly against the two units, before any list builder
     // gets to interpret them.
     check_cadence_traces();
+    check_mask_traces();
 
     // --- Normative slot-arithmetic regression ---------------------------------
     {
@@ -1349,6 +2143,254 @@ int main()
         // 2*(2+4+6+8+10+12+14+16) = 144, i.e. 9 per row on average.
         check_tiles_visible(s, r, 4 * 144 * (V_ACTIVE / 16));
         m3_sprite_words = r.vidcmd_words_max;
+    }
+
+    // --- M6: the console screen, entirely out of MASK records ------------------
+    {
+        CaseSpec s;
+        s.name  = "m6-console";
+        s.title = "80x60 text screen as MASK groups: pure VIDCMD, no PIXELS descriptors";
+        s.base  = common;
+        s.base.screen      = ScreenStyle::CONSOLE;
+        s.base.pure_vidcmd = true;
+        CaseResult r = run_case(s, ram, REARM_LATENCY_CYCLES);
+        write_artifacts(s, r);
+        print_report(s, r);
+        check_case(s, r);
+
+        const uint32_t px0_bad = console_pixel0_violations();
+        printf("  layout invariant    %u of %u groups want ink on a record's implicit pixel 0 "
+               "(the 8-px cell's blank column 0 is what keeps it 0)\n",
+               px0_bad, (H_ACTIVE / MASK_SLOTS) * V_ACTIVE);
+        CHECK(px0_bad == 0,
+              "m6-console: %u mask groups want ink on pixel 0, which the record cannot "
+              "express — the cell layout is wrong", px0_bad);
+
+        const FrameImage ref = console_reference_frame();
+        const uint32_t differing = compare_frames("console", r, ref);
+        CHECK(differing == 0,
+              "m6-console: %u pixels differ from the host-rasterized reference — the MASK "
+              "records do not reproduce the text screen", differing);
+
+        // Per-line delivery budget.  A full-width line is every group a record
+        // plus the two per-line SETs; the cap is the 66% bus figure the rest of
+        // the suite sits at (descriptor.h).
+        uint32_t worst   = 0;
+        uint32_t typical = 0;
+        uint32_t blank_lines = 0;
+        std::array<uint32_t, 256> hist{};
+        for (uint8_t n : r.line_words)
+        {
+            hist[n]++;
+            if (n > worst)
+            {
+                worst = n;
+            }
+            if (n <= 3)
+            {
+                blank_lines++;
+            }
+        }
+        for (uint32_t n = 0; n < hist.size(); n++)
+        {
+            if (hist[n] > hist[typical])
+            {
+                typical = n;
+            }
+        }
+        printf("  console budget      worst line %u words, most common %u words (%u lines), "
+               "%u all-background lines\n", worst, typical, hist[typical], blank_lines);
+        printf("                      full-width ceiling %u words (%u groups x %u + 2 SETs) "
+               "vs the %u-word cap\n",
+               CONSOLE_FULL_LINE_WORDS, H_ACTIVE / MASK_SLOTS, MASK_RECORD_WORDS,
+               VIDCMD_WORDS_PER_LINE_CAP);
+        printf("                      %u SYSCLK/line worst against the %llu-SYSCLK line "
+               "(%u%% budget = %u SYSCLK)\n",
+               r.budget.max_busy, static_cast<unsigned long long>(LINE_SYSCLK),
+               VIDCMD_BUS_BUDGET_PERCENT, VIDCMD_LINE_SYSCLK_BUDGET);
+        CHECK(worst <= VIDCMD_WORDS_PER_LINE_CAP,
+              "m6-console: worst line is %u VIDCMD words, over the %u-word delivery cap",
+              worst, VIDCMD_WORDS_PER_LINE_CAP);
+        CHECK(CONSOLE_FULL_LINE_WORDS <= VIDCMD_WORDS_PER_LINE_CAP,
+              "m6-console: even a full-width console line (%u words) would not fit the "
+              "%u-word cap, so the screen mode is not deliverable",
+              CONSOLE_FULL_LINE_WORDS, VIDCMD_WORDS_PER_LINE_CAP);
+        CHECK(blank_lines > 0,
+              "m6-console: no line collapsed its blank groups into RUNs, so the RUN-gap half "
+              "of the encoding is not being exercised");
+
+        // The third colour, in situ: the title row, the status row and every
+        // row's "NN>" prefix are dibit 00.
+        uint32_t alt_px = 0;
+        for (Rgb444 c : r.rendered.frames[0].pixels)
+        {
+            if (c == CONSOLE_ALT_COLOR)
+            {
+                alt_px++;
+            }
+        }
+        printf("  third colour in use %u pixels are dibit-00 passthrough at 0x%03X "
+               "(pix_pal_bg), painted with no SET between the groups that carry them\n",
+               alt_px, CONSOLE_ALT_COLOR);
+        printf("                      *** MODEL BEHAVIOUR pending verification against "
+               "pixel.v — see the THIRD COLOUR probe above ***\n");
+        CHECK(alt_px > 0,
+              "m6-console: no passthrough pixels rendered, so the third colour is not being "
+              "exercised");
+
+        // The group is bigger than HBLANK and that is fine: an 82-word deposit
+        // is 164 SYSCLK against an 89-SYSCLK HBLANK, so most lines' VIDCMD words
+        // land during the previous line's ACTIVE video.  Under CUSHION that is
+        // legal by construction — what matters is that the words are in the FIFO
+        // before the line they belong to starts, and the compositor eats a
+        // mask's two words over sixteen slots (one word per ~4.4 SYSCLK) against
+        // an engine that delivers one per 2.  Both dry counters are what say so.
+        printf("  delivery            %u words spill past HBLANK into the previous line's "
+               "active video; FIFO high %u, dry 0, cadence holds %u\n",
+               r.rendered.stats.vidcmd_late_words / RENDER_FRAMES,
+               r.rendered.stats.vidcmd_fifo_high, r.rendered.stats.vidcmd_cadence_slots);
+        CHECK(r.rendered.stats.vidcmd_hold_slots == 0,
+              "m6-console: the compositor ran dry for %u slots — the spill is not covered by "
+              "the cushion", r.rendered.stats.vidcmd_hold_slots);
+
+        printf("  headline            %u MASK records per frame paint an 80x60 text screen "
+               "with ZERO PIXELS words;\n"
+               "                      the display list IS the framebuffer, and a text cell "
+               "costs one word.\n",
+               r.rendered.stats.vidcmd_mask_records / RENDER_FRAMES);
+    }
+
+    // --- M7: the kiosk menu ----------------------------------------------------
+    {
+        CaseSpec s;
+        s.name  = "m7-kiosk";
+        s.title = "large-text menu: one MASK record per big glyph, SET pairs, RUN_COLOR bar";
+        s.base  = common;
+        s.base.screen      = ScreenStyle::KIOSK;
+        s.base.pure_vidcmd = true;
+        CaseResult r = run_case(s, ram, REARM_LATENCY_CYCLES);
+        write_artifacts(s, r);
+        print_report(s, r);
+        check_case(s, r);
+
+        const uint32_t px0_bad = kiosk_pixel0_violations();
+        printf("  layout invariant    %u mask groups want ink on their implicit pixel 0 "
+               "(the x%u font is 15 px in a 16-px cell, so column 0 is always blank)\n",
+               px0_bad, KIOSK_SCALE_X);
+        CHECK(px0_bad == 0,
+              "m7-kiosk: %u mask groups want ink on pixel 0 — a big font wider than %u px "
+              "would need two records per glyph and force its middle column to color0",
+              px0_bad, MASK_SLOTS - 1);
+
+        const FrameImage ref = kiosk_reference_frame();
+        const uint32_t differing = compare_frames("kiosk", r, ref);
+        CHECK(differing == 0,
+              "m7-kiosk: %u pixels differ from the host-rasterized reference — the mid-item "
+              "SET seam or a mask group is landing on the wrong pixel", differing);
+
+        // THE [SET,SET,MASK] SEAM, measured off the rendered frame rather than
+        // asserted from the authoring.  Item 0 is "PLAY" then a recolour then
+        // "DEMO"; the recolour sits BETWEEN two mask groups, so by the derived
+        // law it costs MASK_GAP_AFTER_MASK_SET_SET slots and "DEMO" starts that
+        // many pixels later.  "PLAY"'s last record ends at 192; "DEMO"'s first
+        // record is a 16-pixel cell whose column 0 is blank, so the first ink
+        // pixel after the seam is (seam start + gap + 1).
+        {
+            const KioskLinePlan plan = kiosk_plan_line(145);
+            const uint32_t after_play = plan.seg[0].x0 + plan.seg[0].records * KIOSK_CELL_W;
+            const Rgb444   bg = run_colour_to_rgb444(plan.background_color);
+            uint32_t first_ink = after_play;
+            while (first_ink < H_ACTIVE &&
+                   at(r.rendered.frames[0], first_ink, 145) == bg)
+            {
+                first_ink++;
+            }
+            const uint32_t seam = (first_ink - 1) - after_play;
+            printf("  SET,SET seam        \"PLAY\" ends at x=%u, \"DEMO\"'s cell starts at "
+                   "x=%u: seam %u slot(s)\n", after_play, first_ink - 1, seam);
+            printf("                      derived: the mask holds staged_word, so only ONE "
+                   "word parks on Q and the two\n"
+                   "                      SETs cannot pair — each costs its own slot plus a "
+                   "cadence HOLD, %u + %u = %u.\n",
+                   MASK_GAP_AFTER_MASK_SET, MASK_GAP_AFTER_MASK_SET,
+                   MASK_GAP_AFTER_MASK_SET_SET);
+            CHECK(seam == MASK_GAP_AFTER_MASK_SET_SET,
+                  "m7-kiosk: the [SET,SET,MASK] group seam renders as %u slot(s), the laws "
+                  "give %u", seam, MASK_GAP_AFTER_MASK_SET_SET);
+        }
+
+        uint32_t worst = 0;
+        for (uint8_t n : r.line_words)
+        {
+            if (n > worst)
+            {
+                worst = n;
+            }
+        }
+        // The reported stretch is the SET seams, not starvation: the authored
+        // slot SUM does not include the cadence's HOLD slots, so a line with a
+        // recolour reads as stretched even though it frames exactly 640 and the
+        // FIFO never runs dry.  That is what the two counters below separate.
+        printf("  kiosk cadence       stretch max %u slot(s) on %u lines = the SET seams, "
+               "not starvation (dry slots %u, occupancy %u..%u)\n",
+               r.vidcmd_stretch_max, r.vidcmd_stretch_lines / RENDER_FRAMES,
+               r.rendered.stats.vidcmd_hold_slots, r.vidcmd_slot_min, r.vidcmd_slot_max);
+        CHECK(r.vidcmd_stretch_max <= MASK_GAP_AFTER_MASK_SET_SET - 1,
+              "m7-kiosk: a line stretched %u slots, more than the %u the mid-item SET seam "
+              "accounts for", r.vidcmd_stretch_max, MASK_GAP_AFTER_MASK_SET_SET - 1);
+        printf("  kiosk budget        worst line %u words; sparse recolouring (one SET pair "
+               "per menu item, not per group) FITS the %u-word cap\n",
+               worst, VIDCMD_WORDS_PER_LINE_CAP);
+        printf("                      full-density recolouring — a SET pair in front of "
+               "EVERY 16-pixel group — costs\n"
+               "                      %u groups x (2 SETs + %u mask words) = %u words/line, "
+               "which BLOWS the %u-word cap;\n"
+               "                      and it does not even fit the LINE: %u x (%u + %u) = %u "
+               "slots against %u available.\n",
+               H_ACTIVE / MASK_SLOTS, MASK_RECORD_WORDS, KIOSK_FULL_DENSITY_WORDS,
+               VIDCMD_WORDS_PER_LINE_CAP, H_ACTIVE / MASK_SLOTS, MASK_SLOTS,
+               MASK_GAP_AFTER_MASK_SET_SET, KIOSK_FULL_DENSITY_SLOTS, H_ACTIVE);
+        CHECK(worst <= VIDCMD_WORDS_PER_LINE_CAP,
+              "m7-kiosk: worst line is %u VIDCMD words, over the %u-word delivery cap",
+              worst, VIDCMD_WORDS_PER_LINE_CAP);
+        CHECK(KIOSK_FULL_DENSITY_WORDS > VIDCMD_WORDS_PER_LINE_CAP,
+              "m7-kiosk: full-density recolouring (%u words) now fits the %u-word cap, so "
+              "the budget arithmetic this case prints needs re-deriving",
+              KIOSK_FULL_DENSITY_WORDS, VIDCMD_WORDS_PER_LINE_CAP);
+        CHECK(KIOSK_FULL_DENSITY_SLOTS > H_ACTIVE,
+              "m7-kiosk: full-density recolouring now fits in %u slots", H_ACTIVE);
+
+        // The RUN_COLOR highlight bar, and the mask backgrounds that have to
+        // match it: inside a mask, dibit 00 is PASSTHROUGH, not "the span
+        // underneath", so the bar's colour has to be re-stated as cmp_color0.
+        const Rgb444 bar = run_colour_to_rgb444(RUN_COLOR_CYAN);
+        uint32_t bar_px = 0;
+        for (Rgb444 c : r.rendered.frames[0].pixels)
+        {
+            if (c == bar)
+            {
+                bar_px++;
+            }
+        }
+        printf("  highlight bar       %u pixels at 0x%03X: a RUN_COLOR across the line plus "
+               "the selected item's cmp_color0,\n"
+               "                      which must be stated separately because a mask's "
+               "dibit 00 is passthrough, not the span under it.\n", bar_px, bar);
+        CHECK(bar_px > H_ACTIVE, "m7-kiosk: the highlight bar painted only %u pixels", bar_px);
+
+        uint32_t alt_px = 0;
+        for (Rgb444 c : r.rendered.frames[0].pixels)
+        {
+            if (c == KIOSK_ALT_COLOR)
+            {
+                alt_px++;
+            }
+        }
+        printf("  third colour in use %u hotkey pixels at 0x%03X are dibit-00 passthrough, "
+               "a third colour inside a group with no SET\n", alt_px, KIOSK_ALT_COLOR);
+        printf("                      *** MODEL BEHAVIOUR pending verification against "
+               "pixel.v — see the THIRD COLOUR probe above ***\n");
+        CHECK(alt_px > 0, "m7-kiosk: no passthrough hotkey pixels rendered");
     }
 
     // --- M4: audio woven into the line cadence --------------------------------
@@ -1872,7 +2914,7 @@ int main()
            "     outline is up to five alternating fg/bg/transparent segments and each one\n"
            "     is its own record.  Rule of thumb for the list builder: contiguous art is\n"
            "     cheaper as runs, and art with more than ~2 holes per row is what TILE was\n"
-           "     actually for.\n",
+           "     actually for.  ANSWERED 2026-08-24 by MASK — see finding 20.\n",
            m3_sprite_words, m3_cursor_words);
     printf(" 17. REINSTATED 2026-08-19, IN A CADENCE-AWARE FORM. The 1-word/clock rework\n"
            "     retired the prefetch invariant entirely — playback(k) >= words(k+1) was\n"
@@ -1917,6 +2959,48 @@ int main()
            "     gaps of one pixel are no longer free, and anything at least two pixels wide\n"
            "     with two-pixel gaps (every sprite, every tempest object) is unaffected.\n",
            84 + 14);
+
+    printf(" 20. NEW 2026-08-24, AND IT IS THE ANSWER TO FINDING 16. The `01` prefix carries\n"
+           "     MASK: two words, SIXTEEN pixels, no inline colour, no new shifters (it runs\n"
+           "     through staged_word and the shared playback counter).  That is a flat %u\n"
+           "     pixels per word for art of ANY hole density, against RUN spans' one word per\n"
+           "     contiguous segment — so the rule of thumb inverts above about two holes per\n"
+           "     16 pixels, and the cursor row that regressed to five records is one MASK.\n"
+           "     What it costs instead is RECOLOURING.  The header spends all fourteen\n"
+           "     payload bits on dibits, so changing colour is an ordinary SET, and the seams\n"
+           "     are %u slots between two mask groups (the mask holds staged_word, so the two\n"
+           "     SETs cannot be a banked pair) against %u behind a RUN.  Chaining itself is\n"
+           "     FREE: mask-to-mask and RUN-to-mask are both ZERO slots, because the\n"
+           "     pixel-15 edge captures the next record one slot early.\n",
+           MASK_SLOTS / MASK_RECORD_WORDS, MASK_GAP_AFTER_MASK_SET_SET,
+           MASK_GAP_AFTER_RUN_SET_SET);
+    printf(" 21. NEW 2026-08-24, AND IT IS A NEW SCREEN MODE. A display list can author NO\n"
+           "     PIXELS DESCRIPTORS AT ALL and still paint a full screen: the display list IS\n"
+           "     the framebuffer.  m6-console draws an 80x60 text screen at %u words on its\n"
+           "     widest line (%u groups x %u + 2 per-line SETs) against the %u-word delivery\n"
+           "     cap, pixel-exact against a host rasterization of the same font; m7-kiosk\n"
+           "     draws large text one glyph per record.  The two geometries both come out of\n"
+           "     the implicit pixel 0: whatever lands on a record boundary is cmp_color0, so\n"
+           "     an 8-px cell with a blank column 0 fits TWO glyphs in a record and a x3 font\n"
+           "     in a 16-px cell fits ONE.  What runs out is recolouring, not records: forty\n"
+           "     chained masks are exactly %u slots, but a SET pair in front of every group is\n"
+           "     %u words/line (over the cap) and %u slots (over the LINE) — impossible rather\n"
+           "     than merely late.\n",
+           CONSOLE_FULL_LINE_WORDS, H_ACTIVE / MASK_SLOTS, MASK_RECORD_WORDS,
+           VIDCMD_WORDS_PER_LINE_CAP, H_ACTIVE, KIOSK_FULL_DENSITY_WORDS,
+           KIOSK_FULL_DENSITY_SLOTS);
+    printf(" 22. NEW 2026-08-24, AND EXPLICITLY UNVERIFIED. With the PIXELS FIFO never\n"
+           "     written, the modelled PIXEL re-shifts its reset word — all zeroes, which in\n"
+           "     1bpp direct mode selects pix_pal_bg — so a passthrough dibit resolves to\n"
+           "     pal_bg, a register a VIDCMD SET can write.  Dibit 00 is then a THIRD\n"
+           "     SETTABLE COLOUR inside a record, with no SET between the groups that use it,\n"
+           "     and both screen cases spend it (console prefixes and status line, kiosk\n"
+           "     hotkey letters).  THIS IS WHAT THE MODEL DOES, NOT WHAT THE CHIP IS KNOWN TO\n"
+           "     DO.  render.cpp follows pixel.v's documented tiling (no empty flag, a 7200\n"
+           "     holds Q while empty), but what a 7200 pair presents on Q after /RS with no\n"
+           "     write at all, and what pixel.v's shifter holds before its first fetch, are\n"
+           "     both open.  Settle them against the RTL and the datasheet before any art\n"
+           "     depends on the third colour.\n");
 
     printf("\n=== summary ===\n");
     if (g_failures == 0)
