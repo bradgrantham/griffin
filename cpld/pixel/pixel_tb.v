@@ -46,19 +46,41 @@
 // arithmetic has no one-line spec form.
 //
 // ---------------------------------------------------------------------------
-// Two known limits are ASSERTED here, not worked around
+// The end-of-line fetch window, which is what the two-line cases exist for
 // ---------------------------------------------------------------------------
 //
-// * The last four pixels of a full-rate two-bit line (micro-HAM and indexed
-//   alike) re-shift an emptied register, because PIX_LAST is eight clocks —
-//   one byte in 1bpp, but TWO bytes in a two-bit mode — so it swallows the
-//   final byte's own fetch.  Pre-existing micro-HAM behaviour; see the RTL
-//   header's DECLARED FEATURE LIMIT.  The bench pins it so that a future fix
-//   shows up as a deliberate testbench edit.
+// The fetch guard exists to stop a line reading a byte it cannot consume,
+// because that byte belongs to the NEXT line and the theft would compound down
+// the frame.  PIX_LAST is eight consumption clocks, which is one byte at one
+// bit per clock but two bytes at two bits per clock, so the RTL engages the
+// cutoff four clocks late in a two-bit FULL-rate mode and uses PIX_LAST raw
+// everywhere else.  Both halves of that are asserted here:
+//
+// * Every full-rate case checks all 640 pixels against authored stream data,
+//   including the last four.  A cutoff that is still too early drains the
+//   shifter and pixels 636..639 re-shift stale bits.
+//
+// * The two-line cases (IDX2_2LINE_*, HAM_2LINE_*) run two consecutive lines
+//   with distinct byte patterns through one uninterrupted chip and check BOTH
+//   lines' 640 pixels against their own bytes.  A cutoff that is too late
+//   steals line 2's first byte, which shows up at line 2's pixel 0.  Their
+//   first bytes and their LAST bytes are deliberately different from the fill
+//   between, so the start-of-line and end-of-line failures are distinguishable.
 //
 // * The /RE count per line is checked for every case.  It is the only direct
-//   evidence that half rate halves stream consumption, and it catches a fetch
-//   cadence that drifts without the pixels visibly breaking.
+//   evidence that half rate halves stream consumption, it pins the full-rate
+//   two-bit line at exactly its 160 bytes (80 words) with no extra fetch, and
+//   it catches a fetch cadence that drifts without the pixels visibly breaking.
+//
+// ---------------------------------------------------------------------------
+// One known limit is ASSERTED here, not worked around
+// ---------------------------------------------------------------------------
+//
+// * With a nonzero pixel_skip the line needs a fraction of one more byte at its
+//   far end and the guard refuses to fetch it, so the last 1..7 pixels of a
+//   fine-scrolled line re-shift the previous byte.  See the RTL header's
+//   DECLARED FEATURE LIMIT.  The skip cases below check only the leading pixels
+//   for that reason.
 
 `timescale 1ns / 1ps
 
@@ -135,7 +157,10 @@ module PixelTb;
 
     reg [7:0] even_mem   [0:255];
     reg [7:0] odd_mem    [0:255];
-    reg [7:0] line_bytes [0:255];        // the same stream, for the reference model
+    // The same stream, for the reference model.  Deep enough for the two-line
+    // cases' 320 bytes plus their sentinel tail; the FIFO halves only ever see
+    // half of that each.
+    reg [7:0] line_bytes [0:511];
 
     integer even_rd;
     integer odd_rd;
@@ -382,6 +407,20 @@ module PixelTb;
         end
     endtask
 
+    // Start the SECOND line of a two-line case: a new set of expectations on a
+    // chip that is NOT reset and a FIFO whose read pointers are NOT rewound, so
+    // line 2 sees exactly the bytes line 1 left behind.  That is the whole
+    // point — if line 1 fetched one byte too many, line 2 starts a byte late.
+    task next_line;
+        input [8*16:1] name;
+        begin
+            case_name = name;
+            chk_idx   = 0;
+            checking  = 1'b0;
+            exp_clear;
+        end
+    endtask
+
     integer re_mark;
     integer re_line;
     integer errors_mark;
@@ -437,6 +476,7 @@ module PixelTb;
     integer    chk_skip4;
     integer    chk_skip12;
     reg [11:0] skip_ref [0:15];
+    reg [1:0]  dib;
 
     initial
     begin
@@ -551,15 +591,14 @@ module PixelTb;
         expect_px(17, 12'h111);          // d17 "0 0"
         expect_px(18, 12'h888);          // d18 "0 1"
         expect_px(19, 12'h888);          // d19 "0 1"
-        expect_span(20, 635, fg);        // bytes 5..158 are all "0 1"
-
-        // DECLARED FEATURE LIMIT.  Byte 159's fetch would be issued at pixel
-        // 634, inside PIX_LAST, so it is suppressed and the shifter runs empty
-        // for the last four pixels: dibit 00 is "0 0", held <- bg.
-        expect_span(636, 639, bg);
+        // Bytes 5..159 are all "0 1", including byte 159, whose fetch is issued
+        // at pixel 634 — inside PIX_LAST, but before the four-clock-late cutoff
+        // a two-bit full-rate mode uses — so pixels 636..639 are authored data
+        // like the rest of the line, not a re-shifted emptied register.
+        expect_span(20, 639, fg);
 
         run_line;
-        check_reads(159);                // byte 159 is never fetched
+        check_reads(160);                // all 160 bytes, 80 words, fetched
         report_case;
 
         // ---------------------------------------------------------------
@@ -602,14 +641,10 @@ module PixelTb;
             expect_px(k, idx_expect[stream_dibit(k)]);
         end
 
-        expect_span(16, 635, held);      // the whole rest of the line is "10"
-
-        // Same DECLARED FEATURE LIMIT as micro-HAM: the emptied shifter reads
-        // as dibit 00, which in this mode is pal_bg.
-        expect_span(636, 639, bg);
+        expect_span(16, 639, held);      // the whole rest of the line is "10"
 
         run_line;
-        check_reads(159);
+        check_reads(160);                // all 160 bytes, 80 words, fetched
         report_case;
 
         if (exp_rgb[3] !== 12'h000 || exp_rgb[4] !== 12'h000)
@@ -740,9 +775,10 @@ module PixelTb;
         // three clocks, or with the pair phase inverted fails immediately.
         // The /RE count is the other half of the claim: half the stream.
         //
-        // Half rate has no tail limit — at two clocks per group the final
-        // byte's fetch falls outside PIX_LAST on its own — so all 640 pixels
-        // are checked, unlike the full-rate two-bit cases above.
+        // Half rate uses PIX_LAST raw, and must — at two clocks per group the
+        // final byte's fetch already falls outside the eight-clock window, and
+        // a delayed cutoff here would fetch a 41st (or 81st) byte out of the
+        // next line.  The /RE counts below are what pins that.
         // ---------------------------------------------------------------
 
         begin_case("HALF_1BPP");
@@ -805,6 +841,115 @@ module PixelTb;
         report_case;
 
         // ---------------------------------------------------------------
+        // 6  TWO CONSECUTIVE LINES — the byte-theft regression.
+        //
+        // The fetch guard exists so that a line cannot read a byte belonging to
+        // the NEXT line.  Engaging the cutoff four clocks later in a two-bit
+        // full-rate mode is precisely the change that could break that, so both
+        // full-rate two-bit modes run two lines back to back through one chip
+        // that is never reset, with FIFO read pointers that are never rewound,
+        // and BOTH lines are checked in full against their OWN 160 bytes.
+        //
+        // Each line's first byte and last byte differ from the 158-byte fill
+        // between them, so the three failure modes are distinguishable:
+        //
+        //   line 2 pixel 0 wrong       -> line 1 stole line 2's first byte
+        //   line N pixels 636..639     -> line N lost its own last byte
+        //   /RE count != 160           -> the fetch cadence drifted
+        // ---------------------------------------------------------------
+
+        begin_case("IDX2_2LINE_A");
+        bg   = 12'h123;
+        fg   = 12'h456;
+        held = 12'h789;
+
+        idx_expect[0] = bg;
+        idx_expect[1] = fg;
+        idx_expect[2] = held;
+        idx_expect[3] = 12'h000;
+
+        push_byte(8'h1B);                // line 1 byte 0    00 01 10 11
+        push_fill(158, 8'hAA);           // line 1 fill      all "10"
+        push_byte(8'h1B);                // line 1 byte 159  00 01 10 11
+        push_byte(8'hE4);                // line 2 byte 0    11 10 01 00
+        push_fill(158, 8'h55);           // line 2 fill      all "01"
+        push_byte(8'hE4);                // line 2 byte 159  11 10 01 00
+        push_fill(16, 8'h96);
+
+        set_reg(SET_PIX_MODE,       MODE_IDX2);
+        set_reg(SET_PIX_PAL_FG,     fg);
+        set_reg(SET_PIX_PAL_BG,     bg);
+        set_reg(SET_PIX_HAM_HELD,   held);
+        set_reg(SET_PIX_PIXEL_SKIP, 12'd0);
+
+        // Line 1 is stream dibits 0..639.
+        for (k = 0; k < H_VISIBLE; k = k + 1)
+        begin
+            expect_px(k, idx_expect[stream_dibit(k)]);
+        end
+
+        run_line;
+        check_reads(160);
+        report_case;
+
+        next_line("IDX2_2LINE_B");
+
+        // Line 2 is stream dibits 640..1279, i.e. bytes 160..319 — the bytes
+        // sitting immediately behind line 1's in the same FIFO.
+        for (k = 0; k < H_VISIBLE; k = k + 1)
+        begin
+            expect_px(k, idx_expect[stream_dibit(H_VISIBLE + k)]);
+        end
+
+        run_line;
+        check_reads(160);
+        report_case;
+
+        // The micro-HAM twin.  Every dibit here is a "0 p" code (each byte's
+        // dibits all have a 0 MSB), so the expectation is the one-line form
+        // "held <- p ? fg : bg" and the case is about the byte cadence at the
+        // two line seams rather than about the chroma arithmetic, which
+        // HAM_REGRESSION already covers pixel by pixel.
+        begin_case("HAM_2LINE_A");
+        fg = 12'h888;
+        bg = 12'h111;
+
+        push_byte(8'h11);                // line 1 byte 0    00 01 00 01
+        push_fill(158, 8'h55);           // line 1 fill      all "0 1"
+        push_byte(8'h44);                // line 1 byte 159  01 00 01 00
+        push_byte(8'h44);                // line 2 byte 0    01 00 01 00
+        push_fill(158, 8'h00);           // line 2 fill      all "0 0"
+        push_byte(8'h11);                // line 2 byte 159  00 01 00 01
+        push_fill(16, 8'h96);
+
+        set_reg(SET_PIX_MODE,       MODE_HAM);
+        set_reg(SET_PIX_PAL_FG,     fg);
+        set_reg(SET_PIX_PAL_BG,     bg);
+        set_reg(SET_PIX_PIXEL_SKIP, 12'd0);
+
+        for (k = 0; k < H_VISIBLE; k = k + 1)
+        begin
+            dib = stream_dibit(k);
+            expect_px(k, dib[0] ? fg : bg);
+        end
+
+        run_line;
+        check_reads(160);
+        report_case;
+
+        next_line("HAM_2LINE_B");
+
+        for (k = 0; k < H_VISIBLE; k = k + 1)
+        begin
+            dib = stream_dibit(H_VISIBLE + k);
+            expect_px(k, dib[0] ? fg : bg);
+        end
+
+        run_line;
+        check_reads(160);
+        report_case;
+
+        // ---------------------------------------------------------------
 
         if (both_strobes != 0)
         begin
@@ -816,8 +961,10 @@ module PixelTb;
         $display("------------------------------------------------------");
         $display("MEASURED");
         $display("  RGB_OUT lags the consumption clock by 2 clocks (PIXEL_OUT_LEAD 1 + output reg)");
-        $display("  full-rate line   : 80 bytes 1bpp, 160 bytes two-bit (159 fetched)");
+        $display("  full-rate line   : 80 bytes 1bpp, 160 bytes two-bit (all fetched)");
         $display("  half-rate line   : 40 bytes 1bpp,  80 bytes indexed (all fetched)");
+        $display("  end-of-line cutoff: PIX_LAST raw, but 4 clocks late in two-bit full rate");
+        $display("  two consecutive lines each render their own 160 bytes, no theft");
         $display("  skip 5 == skip 4 and skip 13 == skip 12 (odd-skip clamp)");
         $display("------------------------------------------------------");
 

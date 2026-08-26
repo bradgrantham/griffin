@@ -6,26 +6,36 @@
 // which supplies the PIX_CONSUME/PIX_PRELOAD/PIX_LAST event strobes: the
 // combined PIXEL+TIMING variant (pixel_combined.v) measured ~153 logic cells
 // against the 128 budget and does not fit, so the split is the design
-// (2026-08-13).  Fits at 116/128 LC, 80 FF, 460 PT, fitter pass 1, no
+// (2026-08-13).  Fits at 120/128 LC, 81 FF, 445 PT, fitter pass 1, no
 // xor_synthesis.  There is no board yet, so there is no //PIN: block and the
 // fitter places freely.
 //
-// FIT LADDER, 2026-08-24, all -preassign ignore and no strategy flags beyond
-// the target's existing `-strategy debug = on`:
+// FIT LADDER, all -preassign ignore and no strategy flags beyond the target's
+// existing `-strategy debug = on`:
 //
 //   as-was                          116 LC   75 FF    398 PT   fits (pass 2)
 //   + bit_pos capture-clock fix     108 LC   75 FF    366 PT   fits (pass 1)
 //   + 2bpp indexed                  112 LC   78 FF    414 PT   fits (pass 1)
 //   + half rate                     116 LC   80 FF    460 PT   fits (pass 1)
+//     ------------------------------------------------ 2026-08-24 ----
+//   + late cutoff, 4-stage delay    126 LC     -         -     ROUTING FAIL
+//   + late cutoff, one flip-flop    120 LC   81 FF    445 PT   fits (pass 1)
 //
-// Both features together land back on the LC count the chip already carried,
-// because the bit_pos correction below pays for most of them: taking that one
-// register out of the byte engine's priority chain drops 8 logic cells and 32
-// product terms on its own.  Half rate's own marginal cost is 4 LC / 2 FF /
-// 46 PT.
+// The indexed and half-rate features together landed back on the LC count the
+// chip already carried, because the bit_pos correction below paid for most of
+// them: taking that one register out of the byte engine's priority chain drops
+// 8 logic cells and 32 product terms on its own.  Half rate's own marginal cost
+// is 4 LC / 2 FF / 46 PT.
+//
+// The end-of-line cutoff fix costs 4 LC / 1 FF and actually SAVES 15 product
+// terms, because the two /RE outputs and fifo_loading stop being gated by raw
+// PIX_LAST.  The four-stage delay line that implements the same semantics the
+// obvious way was measured first and rejected: 126 LC and a routing fail on
+// both passes.  See fetch_cutoff for why one flip-flop is exactly equivalent.
 //
 // `make pixel-sim` runs pixel_tb.v, which is the executable statement of the
-// per-mode pixel semantics, the fetch cadence and the two declared limits.
+// per-mode pixel semantics, the fetch cadence, the mode-dependent end-of-line
+// fetch window and the one declared limit.
 //
 // ---------------------------------------------------------------------------
 // Pipeline and the lead constants (derived, not tuned)
@@ -165,32 +175,41 @@
 // part).  Bit 3 discards one whole byte during the preload; bits [2:0] are
 // spent as single-bit alignment shifts before pixel 0.
 //
-// Two decided limits (2026-08-13):
+// DECLARED FEATURE LIMIT — the scrolled line's tail (2026-08-13).  With any
+// nonzero skip the line needs a fraction of one more byte at its far end, and
+// the fetch guard (fetch_due & ~fetch_cutoff below) deliberately refuses to
+// fetch a byte it cannot fully consume — an unconsumed byte would be eaten by
+// the NEXT line and the error would compound down the frame.  So the last 1..7
+// pixels of a fine-scrolled line re-shift the previous byte's pattern.
+// Decided: this is the feature's contract, not a bug — borders/overlay spans
+// hide it, and the alternative (a per-line fetched-byte counter plus a padded
+// PIXELS record) buys a correct right edge for ~8 FF if ever wanted.
 //
-// DECLARED FEATURE LIMIT — the scrolled line's tail.  With any nonzero skip
-// the line needs a fraction of one more byte at its far end, and the fetch
-// guard (fetch_due & ~fetch_last below) deliberately refuses to fetch a byte
-// it cannot fully consume — an unconsumed byte would be eaten by the NEXT
-// line and the error would compound down the frame.  So the last 1..7 pixels
-// of a fine-scrolled line re-shift the previous byte's pattern.  Decided:
-// this is the feature's contract, not a bug — borders/overlay spans hide it,
-// and the alternative (a per-line fetched-byte counter plus a padded PIXELS
-// record) buys a correct right edge for ~8 FF if ever wanted.
+// THE END-OF-LINE FETCH WINDOW IS MODE-DEPENDENT (2026-08-24).  TIMING's
+// PIX_LAST is the last EIGHT consumption clocks, and the guard's job is to
+// refuse exactly the fetch that would run off the end of the line and eat the
+// NEXT line's first byte.  Eight clocks is exactly one byte at one bit per
+// clock, so 1bpp uses PIX_LAST raw: the final byte's fetch is issued at pixel
+// 630, outside the window, and the off-the-end fetch at pixel 638 is inside it
+// and refused.  A two-bit full-rate mode covers a byte in FOUR clocks, so the
+// raw window is two bytes wide and swallows one fetch too many — the final
+// byte's own fetch, issued at pixel 634.  In that mode the cutoff therefore
+// engages four clocks late (fetch_cutoff below): the effective window is the
+// last FOUR consumption clocks, one byte at four pixels per byte, so the pixel
+// 634 fetch fires and pixels 636..639 render authored data while the pixel 638
+// fetch is still refused.  Half rate keeps the raw window and must: at two
+// clocks per group the final byte's fetch already falls outside it, and a
+// delayed cutoff there would let the next line's first byte be stolen.
 //
-// DECLARED FEATURE LIMIT — the last byte of a two-bit line.  PIX_LAST is the
-// last EIGHT consumption clocks, which is exactly one byte in 1bpp: the final
-// byte's fetch is issued at pixel 630, outside the window, and the fetch that
-// would run off the end of the line is issued at pixel 638, inside it and so
-// suppressed.  A two-bit mode covers a byte in four clocks, so the window
-// swallows one fetch too many: the final byte's own fetch is issued at pixel
-// 634, inside PIX_LAST, and the last four pixels of every micro-HAM and every
-// indexed line re-shift the previous byte instead.  This is PRE-EXISTING
-// micro-HAM behaviour, not something the indexed mode introduces, and it is
-// left alone here on purpose — correcting it means delaying fetch_last by four
-// clocks in two-bit full-rate mode (a four-stage shift register) or narrowing
-// PIX_LAST in timing.v, and both are decisions above this task's pay grade.
-// Half rate does NOT have the problem: at two clocks per group the final
-// byte's fetch moves back out of the window on its own.
+// With that cutoff an unscrolled line now reads EXACTLY its record — 80 bytes
+// in 1bpp, 160 in a two-bit full-rate mode, 40/80 at half rate, which is
+// descriptor.h's pixels_words_per_line in bytes — so the EVEN/ODD halves of
+// the FIFO pair stay in step from one line to the next.  Under the raw window a
+// two-bit line read 159, left the odd byte behind, and every following line of
+// the frame was a byte out of phase; the two-line testbench cases are what pin
+// that.  A SCROLLED two-bit line still reads one or two bytes short of its
+// (padded) record and so still drifts — that is the declared limit above, and
+// the per-line fetched-byte counter named there is what would close it.
 //
 // HARDWARE CLAMP — odd skip in micro-HAM.  HAM consumes exactly two stream
 // bits per pixel clock, so an odd alignment shifts every subsequent code
@@ -299,6 +318,11 @@ module Pixel
     // the fetch trigger and the odd-skip clamp.
     wire two_bits = mode_ham | mode_idx2;
 
+    // ...and the two-bit modes at full rate are the only ones whose byte lasts
+    // four consumption clocks rather than eight or sixteen, which is what makes
+    // PIX_LAST the wrong width for them.  See fetch_cutoff below.
+    wire two_bits_full = two_bits & ~half_rate;
+
     // Fine-alignment skip as consumed at line start: bit 0 is ignored in the
     // two-bit modes (see the header's HARDWARE CLAMP note).  Clamping here, at
     // consumption, makes the result independent of SET ordering.
@@ -406,6 +430,45 @@ module Pixel
     wire fetch_due = two_bits ? (bit_pos[2:1] == (half_rate ? 2'b11 : 2'b10))
                               : (bit_pos      == (half_rate ? 3'd7  : 3'd6));
 
+    // End-of-line fetch cutoff.  PIX_LAST is eight consumption clocks wide —
+    // one byte at one bit per clock, but TWO bytes at two bits per clock — so a
+    // two-bit full-rate mode has to engage the cutoff four clocks late or it
+    // loses the line's own final byte along with the off-the-end one.  See the
+    // header's mode-dependent-window note for the pixel numbers.
+    //
+    // PIXEL has no horizontal counter, so the four-clock delay is taken from
+    // the fetch machinery's own phase rather than from a delay line on
+    // PIX_LAST.  fetch_due recurs every four consumption clocks in a two-bit
+    // full-rate mode, so an eight-clock PIX_LAST always contains EXACTLY TWO of
+    // them, whatever phase pixel_skip started the byte on; letting the first
+    // through and refusing the second is identical to shifting the window four
+    // clocks later, and it is ONE flip-flop instead of a four-stage shift
+    // register.  (Measured: the shift register cost 10 logic cells and would
+    // not route at 126/128.  It is also the less robust of the two — this form
+    // caps the concession at one byte no matter how wide PIX_LAST ever gets.)
+    //
+    // late_fetch_done deliberately lives in its own block, outside the byte
+    // engine's priority chain: the bit_pos lesson below is that a register the
+    // engine's fifo_loading branch can preempt silently changes the cadence.
+    // Nothing preempts this one — it is set by the same step & fetch_due the
+    // engine acts on and cleared whenever PIX_LAST is low, which is every clock
+    // of the line before position 632 and all of blanking.
+    reg late_fetch_done;
+
+    always @(posedge PIXEL_CLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            late_fetch_done <= 1'b0;
+        end
+        else
+        begin
+            late_fetch_done <= fetch_last & (late_fetch_done | (step & fetch_due));
+        end
+    end
+
+    wire fetch_cutoff = fetch_last & (late_fetch_done | ~two_bits_full);
+
     // bit_pos advances on EVERY consumption clock, including the one on which
     // the next byte is being captured — that clock IS the current byte's last
     // pixel (it decodes the old shift_reg; the capture only lands at its end).
@@ -472,7 +535,7 @@ module Pixel
         begin
             shift_reg <= two_bits ? {shift_reg[5:0], 2'b00} : {shift_reg[6:0], 1'b0};
 
-            if (fetch_due & ~fetch_last)
+            if (fetch_due & ~fetch_cutoff)
             begin
                 nPIXELS_RE_EVEN <= fifo_select;
                 nPIXELS_RE_ODD  <= ~fifo_select;
