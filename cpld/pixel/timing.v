@@ -135,3 +135,19 @@ module Timing
     end
 
 endmodule
+
+// TIMING ATF15xx - Griffin board, Rev 2
+// Pin assignment FROZEN 2026-08-26: harvested from the feature-complete
+// -preassign ignore fit (production strategy flags incl. JTAG) and
+// re-verified under -preassign keep.  The board is routed from these
+// numbers; a change here is a respin, not a re-fit.
+//PIN: CHIP "timing" ASSIGNED TO AN PLCC44
+//PIN: PIX_LAST     : 9
+//PIN: VGA_VSYNC    : 8
+//PIN: nRS          : 6
+//PIN: VGA_HSYNC    : 5
+//PIN: PIX_PRELOAD  : 4
+//PIN: H_ACTIVE     : 16
+//PIN: PIX_CONSUME  : 14
+//PIN: PIXEL_CLK    : 43
+//PIN: nRESET       : 1

@@ -619,3 +619,72 @@ module Compositor
     end
 
 endmodule
+
+// COMPOSITOR ATF15xx - Griffin board, Rev 2
+// Pin assignment FROZEN 2026-08-26: harvested from the feature-complete
+// -preassign ignore fit (production strategy flags incl. JTAG) and
+// re-verified under -preassign keep.  The board is routed from these
+// numbers; a change here is a respin, not a re-fit.
+//PIN: CHIP "compositor" ASSIGNED TO AN PLCC84
+//PIN: VIDCMD_Q_15       : 12
+//PIN: VIDCMD_Q_14       : 11
+//PIN: VIDCMD_Q_9        : 10
+//PIN: VIDCMD_Q_7        : 9
+//PIN: RGB_IN_2          : 8
+//PIN: RGB_IN_1          : 6
+//PIN: H_ACTIVE          : 5
+//PIN: set_pix_commit    : 4
+//PIN: RGB_IN_0          : 22
+//PIN: RGB_IN_3          : 21
+//PIN: RGB_IN_4          : 20
+//PIN: RGB_IN_5          : 18
+//PIN: RGB_IN_8          : 17
+//PIN: RGB_IN_7          : 16
+//PIN: RGB_IN_9          : 15
+//PIN: RGB_IN_11         : 31
+//PIN: RGB_IN_10         : 30
+//PIN: RGB_IN_6          : 29
+//PIN: nVIDCMD_RE        : 28
+//PIN: set_pix_value_7   : 27
+//PIN: set_pix_target_2  : 25
+//PIN: set_pix_valid     : 24
+//PIN: VIDCMD_Q_4        : 41
+//PIN: VIDCMD_Q_2        : 40
+//PIN: VIDCMD_Q_3        : 39
+//PIN: VIDCMD_Q_6        : 37
+//PIN: VIDCMD_Q_1        : 36
+//PIN: VIDCMD_Q_5        : 35
+//PIN: nVIDCMD_EF        : 34
+//PIN: VIDCMD_Q_12       : 33
+//PIN: RGB_OUT_7         : 44
+//PIN: RGB_OUT_8         : 45
+//PIN: RGB_OUT_5         : 46
+//PIN: RGB_OUT_4         : 48
+//PIN: RGB_OUT_3         : 49
+//PIN: RGB_OUT_0         : 50
+//PIN: RGB_OUT_1         : 51
+//PIN: RGB_OUT_2         : 52
+//PIN: set_pix_value_3   : 54
+//PIN: set_pix_value_1   : 55
+//PIN: set_pix_value_2   : 56
+//PIN: RGB_OUT_6         : 57
+//PIN: RGB_OUT_10        : 58
+//PIN: RGB_OUT_11        : 60
+//PIN: RGB_OUT_9         : 61
+//PIN: VIDCMD_Q_10       : 63
+//PIN: VIDCMD_Q_11       : 64
+//PIN: VIDCMD_Q_8        : 65
+//PIN: VIDCMD_Q_13       : 67
+//PIN: VIDCMD_Q_0        : 68
+//PIN: set_pix_value_0   : 69
+//PIN: set_pix_value_5   : 70
+//PIN: set_pix_value_11  : 73
+//PIN: set_pix_value_10  : 74
+//PIN: set_pix_value_8   : 75
+//PIN: set_pix_value_9   : 76
+//PIN: set_pix_value_6   : 77
+//PIN: set_pix_value_4   : 79
+//PIN: set_pix_target_1  : 80
+//PIN: set_pix_target_0  : 81
+//PIN: PIXEL_CLK         : 83
+//PIN: nRS               : 1

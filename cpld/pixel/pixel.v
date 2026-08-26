@@ -328,11 +328,18 @@ module Pixel
     // consumption, makes the result independent of SET ordering.
     wire [2:0] skip_fine = {pixel_skip[2:1], pixel_skip[0] & ~two_bits};
 
-    wire set_fg   = set_pix_commit & (set_pix_target == SET_PIX_PAL_FG);
-    wire set_bg   = set_pix_commit & (set_pix_target == SET_PIX_PAL_BG);
-    wire set_held = set_pix_commit & (set_pix_target == SET_PIX_HAM_HELD);
-    wire set_mode = set_pix_commit & (set_pix_target == SET_PIX_MODE);
-    wire set_skip = set_pix_commit & (set_pix_target == SET_PIX_PIXEL_SKIP);
+    // Commit qualified by valid.  COMPOSITOR registers valid/target/value/
+    // commit in one pipeline stage, so valid is high for every real commit
+    // pulse and this gate is belt-and-braces against a spurious commit --
+    // but it is also what gives set_pix_valid a load at all: without it the
+    // fitter drops the unloaded input and the 17-net conduit freezes with
+    // one net unpinned (found at the 2026-08-26 pinout freeze).
+    wire set_ok   = set_pix_valid & set_pix_commit;
+    wire set_fg   = set_ok & (set_pix_target == SET_PIX_PAL_FG);
+    wire set_bg   = set_ok & (set_pix_target == SET_PIX_PAL_BG);
+    wire set_held = set_ok & (set_pix_target == SET_PIX_HAM_HELD);
+    wire set_mode = set_ok & (set_pix_target == SET_PIX_MODE);
+    wire set_skip = set_ok & (set_pix_target == SET_PIX_PIXEL_SKIP);
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
@@ -655,3 +662,54 @@ module Pixel
     end
 
 endmodule
+
+// PIXEL ATF1508AS - Griffin board, Rev 2
+// Pin assignment FROZEN 2026-08-26: harvested from the feature-complete
+// -preassign ignore fit (production strategy flags incl. JTAG) and
+// re-verified under -preassign keep.  The board is routed from these
+// numbers; a change here is a respin, not a re-fit.
+//PIN: CHIP "pixel" ASSIGNED TO AN PLCC84
+//PIN: set_pix_value_7   : 12
+//PIN: set_pix_value_6   : 11
+//PIN: PIX_LAST          : 10
+//PIN: PIXELS_Q_0        : 9
+//PIN: PIX_CONSUME       : 8
+//PIN: set_pix_target_0  : 6
+//PIN: PIXELS_Q_1        : 5
+//PIN: PIXELS_Q_6        : 4
+//PIN: PIXELS_Q_7        : 22
+//PIN: PIXELS_Q_5        : 21
+//PIN: PIXELS_Q_4        : 20
+//PIN: PIXELS_Q_3        : 18
+//PIN: set_pix_target_2  : 17
+//PIN: set_pix_valid     : 16
+//PIN: set_pix_commit    : 15
+//PIN: PIXELS_Q_2        : 31
+//PIN: set_pix_target_1  : 27
+//PIN: PIX_PRELOAD       : 25
+//PIN: nPIXELS_RE_ODD    : 51
+//PIN: nPIXELS_RE_EVEN   : 52
+//PIN: RGB_OUT_0         : 54
+//PIN: RGB_OUT_5         : 55
+//PIN: RGB_OUT_3         : 56
+//PIN: RGB_OUT_1         : 57
+//PIN: RGB_OUT_9         : 58
+//PIN: RGB_OUT_2         : 60
+//PIN: RGB_OUT_6         : 61
+//PIN: set_pix_value_0   : 63
+//PIN: set_pix_value_3   : 64
+//PIN: RGB_OUT_11        : 65
+//PIN: RGB_OUT_8         : 67
+//PIN: RGB_OUT_10        : 68
+//PIN: RGB_OUT_7         : 69
+//PIN: RGB_OUT_4         : 70
+//PIN: set_pix_value_2   : 73
+//PIN: set_pix_value_1   : 74
+//PIN: set_pix_value_8   : 75
+//PIN: set_pix_value_10  : 76
+//PIN: set_pix_value_11  : 77
+//PIN: set_pix_value_9   : 79
+//PIN: set_pix_value_4   : 80
+//PIN: set_pix_value_5   : 81
+//PIN: PIXEL_CLK         : 83
+//PIN: nRESET            : 1

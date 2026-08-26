@@ -6,18 +6,18 @@ UTILIZATION SUMMARY
 ----------------------------------------
   dedicated input                 2/4 	(50%)
   I/O pins                        64/64 	(100%)
-  Logic cells                     121/128 	(94%)
+  Logic cells                     122/128 	(95%)
   Flip-Flop                       95/128 	(74%)
-  Foldback logic                  13/128 	(10%)
-  Nodes+FB/MCells                 124/128 	(96%)
-  cascade                         10
+  Foldback logic                  21/128 	(16%)
+  Nodes+FB/MCells                 143/128 	(111%)
+  cascade                         0
   input pins                      36
   output pins                     30
-  Pts                             370
+  Pts                             389
 
 PER-LAB PLACEMENT
 ------------------------------------------------------------------------
-  LAB A (MC 1-16):  26/16 used  (8 pin, 12 feedback, 6 foldback)  fan-in: 35/40
+  LAB A (MC 1-16):  29/16 used  (8 pin, 15 feedback, 6 foldback)  fan-in: 36/40
     MC  3  pin 12  VIDCMD_Q_15
     MC  5  pin 11  VIDCMD_Q_14
     MC  6  pin 10  VIDCMD_Q_9
@@ -26,26 +26,29 @@ PER-LAB PLACEMENT
     MC 13  pin  6  RGB_IN_1
     MC 14  pin  5  H_ACTIVE
     MC 16  pin  4  set_pix_commit
-    MC  1  feedback  have_staged
-    MC  2  feedback  run_count_0
-    MC  3  feedback  abc:n325 (QN)
-    MC  4  feedback  abc:n644 (QN)
-    MC  5  feedback  abc:n341
-    MC  6  feedback  abc:n321
-    MC  7  feedback  abc:n653
-    MC  8  feedback  sav_src_1
-    MC  9  feedback  abc:n650
-    MC 11  feedback  abc:n308
-    MC 13  feedback  cur_src_0
-    MC 15  feedback  cur_src_1
-    MC 10  FOLDBACK  abc:n329 (QN)  [from id00106QN]
-    MC 11  FOLDBACK  abc:n293 (QN)  [from id00071QN]
-    MC 12  FOLDBACK  abc:n340  [from id00117Q]
-    MC 13  FOLDBACK  abc:n339  [from id00116Q]
-    MC 14  FOLDBACK  abc:n295 (QN)  [from id00073QN]
-    MC 15  FOLDBACK  abc:n287 (QN)  [from id00065QN]
+    MC  1  feedback  staged_word_14
+    MC  2  feedback  abc:n321
+    MC  3  feedback  XXL_1025
+    MC  4  feedback  abc:n341
+    MC  5  feedback  sav_src_1
+    MC  6  feedback  XXL_1021
+    MC  7  feedback  staged_word_9
+    MC  8  feedback  staged_word_11
+    MC  9  feedback  abc:n325 (QN)
+    MC 10  feedback  w_is_set
+    MC 11  feedback  abc:n310 (QN)
+    MC 12  feedback  abc:n644 (QN)
+    MC 13  feedback  XXL_1017
+    MC 14  feedback  staged_word_12
+    MC 15  feedback  mask_active
+    MC  1  FOLDBACK  abc:n340  [from id00117Q]
+    MC  7  FOLDBACK  abc:n329 (QN)  [from id00106QN]
+    MC  8  FOLDBACK  abc:n293 (QN)  [from id00071QN]
+    MC 10  FOLDBACK  abc:n339  [from id00116Q]
+    MC 11  FOLDBACK  abc:n295 (QN)  [from id00073QN]
+    MC 12  FOLDBACK  abc:n287 (QN)  [from id00065QN]
 
-  LAB B (MC 17-32):  23/16 used  (8 pin, 11 feedback, 4 foldback)  fan-in: 34/40
+  LAB B (MC 17-32):  25/16 used  (8 pin, 13 feedback, 4 foldback)  fan-in: 39/40
     MC 17  pin 22  RGB_IN_0
     MC 19  pin 21  RGB_IN_3
     MC 21  pin 20  RGB_IN_4
@@ -54,23 +57,25 @@ PER-LAB PLACEMENT
     MC 27  pin 16  RGB_IN_7
     MC 29  pin 15  RGB_IN_9
     MC 32  pin 14  TDI
-    MC 17  feedback  cur_colour_1
-    MC 18  feedback  sav_src_0
-    MC 19  feedback  cur_colour_0
-    MC 20  feedback  abc:n622
-    MC 21  feedback  cur_colour_2
-    MC 22  feedback  abc:n611
-    MC 24  feedback  run_count_2
-    MC 25  feedback  abc:n609
-    MC 27  feedback  run_count_1
-    MC 29  feedback  run_count_3
-    MC 32  feedback  run_count_4
-    MC 26  FOLDBACK  abc:n293 (QN)  [from id00071QN]
-    MC 27  FOLDBACK  abc:n340  [from id00117Q]
-    MC 28  FOLDBACK  abc:n339  [from id00116Q]
-    MC 31  FOLDBACK  abc:n295 (QN)  [from id00073QN]
+    MC 20  feedback  h_active_d
+    MC 21  feedback  staged_word_13
+    MC 22  feedback  XXL_1024
+    MC 23  feedback  staged_word_3
+    MC 24  feedback  abc:n622
+    MC 25  feedback  staged_word_5
+    MC 26  feedback  staged_word_6
+    MC 27  feedback  abc:n609
+    MC 28  feedback  cur_src_0
+    MC 29  feedback  staged_word_4
+    MC 30  feedback  staged_word_2
+    MC 31  feedback  abc:n611
+    MC 32  feedback  cur_src_1
+    MC 29  FOLDBACK  abc:n293 (QN)  [from id00071QN]
+    MC 30  FOLDBACK  abc:n340  [from id00117Q]
+    MC 31  FOLDBACK  abc:n339  [from id00116Q]
+    MC 32  FOLDBACK  abc:n295 (QN)  [from id00073QN]
 
-  LAB C (MC 33-48):  22/16 used  (8 pin, 12 feedback, 2 foldback)  fan-in: 35/40
+  LAB C (MC 33-48):  23/16 used  (8 pin, 12 feedback, 3 foldback)  fan-in: 39/40
     MC 35  pin 31  RGB_IN_11
     MC 37  pin 30  RGB_IN_10
     MC 38  pin 29  RGB_IN_6
@@ -79,22 +84,23 @@ PER-LAB PLACEMENT
     MC 45  pin 25  set_pix_target_2
     MC 46  pin 24  set_pix_valid
     MC 48  pin 23  TMS
-    MC 33  feedback  abc:n627 (QN)
-    MC 34  feedback  abc:n634 (QN)
-    MC 35  feedback  h_active_d
+    MC 33  feedback  ef_at_pop
+    MC 34  feedback  staged_word_1
+    MC 35  feedback  $abc$1392$nVIDCMD_RE
     MC 36  feedback  abc:n631 (QN)
-    MC 37  feedback  mask_active
-    MC 38  feedback  cmp_color1_7
-    MC 39  feedback  abc:n617 (QN)
-    MC 41  feedback  staged_word_7
-    MC 42  feedback  staged_word_9
-    MC 44  feedback  w_is_set
-    MC 47  feedback  staged_word_14
-    MC 48  feedback  abc:n310 (QN)
-    MC 47  FOLDBACK  abc:n340  [from id00117Q]
-    MC 48  FOLDBACK  abc:n287 (QN)  [from id00065QN]
+    MC 37  feedback  abc:n308
+    MC 38  feedback  staged_word_7
+    MC 39  feedback  staged_word_10
+    MC 41  feedback  run_count_0
+    MC 42  feedback  run_count_1
+    MC 44  feedback  abc:n650
+    MC 47  feedback  abc:n653
+    MC 48  feedback  XXL_1018
+    MC 45  FOLDBACK  abc:n340  [from id00117Q]
+    MC 46  FOLDBACK  abc:n339  [from id00116Q]
+    MC 47  FOLDBACK  abc:n295 (QN)  [from id00073QN]
 
-  LAB D (MC 49-64):  23/16 used  (8 pin, 14 feedback, 1 foldback)  fan-in: 28/40
+  LAB D (MC 49-64):  27/16 used  (8 pin, 13 feedback, 6 foldback)  fan-in: 39/40
     MC 49  pin 41  VIDCMD_Q_4
     MC 51  pin 40  VIDCMD_Q_2
     MC 53  pin 39  VIDCMD_Q_3
@@ -103,23 +109,27 @@ PER-LAB PLACEMENT
     MC 59  pin 35  VIDCMD_Q_5
     MC 61  pin 34  nVIDCMD_EF
     MC 64  pin 33  VIDCMD_Q_12
-    MC 49  feedback  cmp_color1_6
-    MC 50  feedback  $abc$1392$nVIDCMD_RE
-    MC 51  feedback  cmp_color1_3
-    MC 52  feedback  run_count_5
-    MC 53  feedback  cmp_color1_11
-    MC 54  feedback  run_count_10
-    MC 55  feedback  run_count_6
-    MC 56  feedback  cmp_color1_4
-    MC 57  feedback  cmp_color1_0
-    MC 58  feedback  run_count_11
-    MC 59  feedback  cmp_color1_1
-    MC 60  feedback  run_count_7
-    MC 62  feedback  run_count_8
-    MC 64  feedback  run_count_9
-    MC 64  FOLDBACK  abc:n645  [from id00422Q]
+    MC 50  feedback  sav_src_0
+    MC 52  feedback  cmp_color1_3
+    MC 53  feedback  cmp_color1_2
+    MC 54  feedback  cmp_color1_4
+    MC 55  feedback  staged_word_0
+    MC 56  feedback  abc:n617 (QN)
+    MC 57  feedback  have_staged
+    MC 59  feedback  staged_word_8
+    MC 60  feedback  XXL_1023
+    MC 61  feedback  XXL_1019
+    MC 62  feedback  XXL_1020
+    MC 63  feedback  run_count_3
+    MC 64  feedback  XXL_1022
+    MC 50  FOLDBACK  abc:n295 (QN)  [from id00073QN]
+    MC 54  FOLDBACK  abc:n329 (QN)  [from id00106QN]
+    MC 55  FOLDBACK  abc:n293 (QN)  [from id00071QN]
+    MC 56  FOLDBACK  abc:n340  [from id00117Q]
+    MC 57  FOLDBACK  abc:n339  [from id00116Q]
+    MC 59  FOLDBACK  abc:n287 (QN)  [from id00065QN]
 
-  LAB E (MC 65-80):  12/16 used  (8 pin, 4 feedback, 0 foldback)  fan-in: 35/40
+  LAB E (MC 65-80):  16/16 used  (8 pin, 8 feedback, 0 foldback)  fan-in: 39/40
     MC 65  pin 44  RGB_OUT_7
     MC 67  pin 45  RGB_OUT_8
     MC 69  pin 46  RGB_OUT_5
@@ -128,12 +138,16 @@ PER-LAB PLACEMENT
     MC 75  pin 50  RGB_OUT_0
     MC 77  pin 51  RGB_OUT_1
     MC 80  pin 52  RGB_OUT_2
-    MC 74  feedback  cmp_color0_5
-    MC 76  feedback  cmp_color0_2
-    MC 78  feedback  cmp_color1_5
-    MC 79  feedback  cmp_color1_2
+    MC 66  feedback  cmp_color0_1
+    MC 68  feedback  cmp_color0_5
+    MC 70  feedback  cmp_color0_2
+    MC 71  feedback  cmp_color1_8
+    MC 74  feedback  cmp_color1_0
+    MC 76  feedback  cmp_color1_7
+    MC 78  feedback  cmp_color1_1
+    MC 79  feedback  cmp_color1_5
 
-  LAB F (MC 81-96):  16/16 used  (8 pin, 8 feedback, 0 foldback)  fan-in: 35/40
+  LAB F (MC 81-96):  18/16 used  (8 pin, 9 feedback, 1 foldback)  fan-in: 32/40
     MC 83  pin 54  set_pix_value_3
     MC 85  pin 55  set_pix_value_1
     MC 86  pin 56  set_pix_value_2
@@ -142,16 +156,18 @@ PER-LAB PLACEMENT
     MC 93  pin 60  RGB_OUT_11
     MC 94  pin 61  RGB_OUT_9
     MC 96  pin 62  TCK
-    MC 82  feedback  cmp_color0_6
-    MC 84  feedback  cmp_color0_9
-    MC 87  feedback  staged_word_1
-    MC 89  feedback  cmp_color1_9
-    MC 90  feedback  staged_word_6
-    MC 92  feedback  staged_word_3
-    MC 95  feedback  staged_word_2
-    MC 96  feedback  staged_word_4
+    MC 81  feedback  cmp_color1_10
+    MC 82  feedback  run_count_5
+    MC 84  feedback  run_count_9
+    MC 87  feedback  run_count_10
+    MC 89  feedback  run_count_6
+    MC 90  feedback  run_count_11
+    MC 92  feedback  run_count_7
+    MC 95  feedback  XXL_1027
+    MC 96  feedback  XXL_1026
+    MC 94  FOLDBACK  abc:n645  [from id00422Q]
 
-  LAB G (MC 97-112):  22/16 used  (8 pin, 14 feedback, 0 foldback)  fan-in: 35/40
+  LAB G (MC 97-112):  23/16 used  (8 pin, 14 feedback, 1 foldback)  fan-in: 38/40
     MC 97  pin 63  VIDCMD_Q_10
     MC 99  pin 64  VIDCMD_Q_11
     MC101  pin 65  VIDCMD_Q_8
@@ -160,22 +176,23 @@ PER-LAB PLACEMENT
     MC107  pin 69  set_pix_value_0
     MC109  pin 70  set_pix_value_5
     MC112  pin 71  TDO
-    MC 97  feedback  cmp_color0_8
-    MC 98  feedback  staged_word_8
-    MC 99  feedback  cmp_color0_7
-    MC100  feedback  cmp_color1_10
-    MC101  feedback  cmp_color0_0
-    MC102  feedback  staged_word_0
-    MC103  feedback  staged_word_13
-    MC104  feedback  ef_at_pop
-    MC105  feedback  cmp_color0_3
-    MC106  feedback  cmp_color1_8
-    MC108  feedback  staged_word_11
-    MC110  feedback  staged_word_10
-    MC111  feedback  staged_word_12
-    MC112  feedback  staged_word_5
+    MC 97  feedback  cmp_color0_0
+    MC 98  feedback  cmp_color0_6
+    MC 99  feedback  cmp_color1_11
+    MC100  feedback  cmp_color0_9
+    MC101  feedback  abc:n634 (QN)
+    MC102  feedback  cmp_color0_10
+    MC103  feedback  cur_colour_0
+    MC104  feedback  cmp_color1_6
+    MC105  feedback  cur_colour_2
+    MC106  feedback  cmp_color1_9
+    MC108  feedback  cur_colour_1
+    MC110  feedback  cmp_color0_11
+    MC111  feedback  cmp_color0_8
+    MC112  feedback  abc:n627 (QN)
+    MC112  FOLDBACK  abc:n340  [from id00117Q]
 
-  LAB H (MC 113-128):  14/16 used  (8 pin, 6 feedback, 0 foldback)  fan-in: 16/40
+  LAB H (MC 113-128):  16/16 used  (8 pin, 8 feedback, 0 foldback)  fan-in: 22/40
     MC115  pin 73  set_pix_value_11
     MC117  pin 74  set_pix_value_10
     MC118  pin 75  set_pix_value_8
@@ -184,46 +201,48 @@ PER-LAB PLACEMENT
     MC125  pin 79  set_pix_value_4
     MC126  pin 80  set_pix_target_1
     MC128  pin 81  set_pix_target_0
-    MC116  feedback  ef_sync
-    MC119  feedback  ef_meta
-    MC121  feedback  cmp_color0_11
-    MC122  feedback  cmp_color0_10
-    MC124  feedback  cmp_color0_1
-    MC127  feedback  cmp_color0_4
+    MC113  feedback  ef_sync
+    MC114  feedback  ef_meta
+    MC116  feedback  run_count_8
+    MC119  feedback  run_count_2
+    MC121  feedback  cmp_color0_7
+    MC122  feedback  cmp_color0_3
+    MC124  feedback  cmp_color0_4
+    MC127  feedback  run_count_4
 
 FOLDBACK ANALYSIS
 ------------------------------------------------------------------------
-  Total foldbacks: 13
+  Total foldbacks: 21
 
   Signals replicated as foldbacks (most replicas first):
 
-    abc:n340                                  3 copies  in LABs: A, B, C
-      consumed by: abc:n617 (QN), abc:n631 (QN), abc:n634 (QN), abc:n627 (QN), abc:n650, abc:n644 (QN), abc:n653, cur_colour_2.D ... +8 more
+    abc:n340                                  5 copies  in LABs: A, B, C, D, G
+      consumed by: abc:n617 (QN), abc:n631 (QN), abc:n634 (QN), abc:n627 (QN), abc:n650, abc:n644 (QN), abc:n653, cur_colour_2.D ... +11 more
 
-    abc:n293 (QN)                             2 copies  in LABs: A, B
-      consumed by: sav_src_1.D, sav_src_0.D, abc:n341, cur_src_0.D
+    abc:n339                                  4 copies  in LABs: A, B, C, D
+      consumed by: abc:n609, abc:n611, run_count_1.D, abc:n622, abc:n341, run_count_3.D, XXL_1018, XXL_1019 ... +3 more
 
-    abc:n339                                  2 copies  in LABs: A, B
-      consumed by: abc:n609, abc:n611, run_count_1.D, abc:n622, abc:n341, run_count_2.D, run_count_3.D, run_count_4.D
+    abc:n295 (QN)                             4 copies  in LABs: A, B, C, D
+      consumed by: abc:n609, abc:n308, abc:n611, run_count_1.D, abc:n622, run_count_3.D, XXL_1017, XXL_1018 ... +2 more
 
-    abc:n295 (QN)                             2 copies  in LABs: A, B
-      consumed by: abc:n609, abc:n308, abc:n611, run_count_1.D, abc:n622, run_count_2.D, run_count_3.D
+    abc:n293 (QN)                             3 copies  in LABs: A, B, D
+      consumed by: sav_src_1.D, sav_src_0.D, abc:n341, cur_src_0.D, XXL_1025
 
-    abc:n287 (QN)                             2 copies  in LABs: A, C
+    abc:n329 (QN)                             2 copies  in LABs: A, D
+      consumed by: have_staged.D, XXL_1021, XXL_1025
+
+    abc:n287 (QN)                             2 copies  in LABs: A, D
       consumed by: mask_active.D, have_staged.D, abc:n341
 
-    abc:n329 (QN)                             1 copies  in LABs: A
-      consumed by: have_staged.D, cur_src_1.D, cur_src_0.D
-
-    abc:n645                                  1 copies  in LABs: D
+    abc:n645                                  1 copies  in LABs: F
       consumed by: run_count_10.D, run_count_11.D
 
   Foldback imports per LAB:
 
     LAB A: 6 foldback(s)
+      - abc:n340
       - abc:n329 (QN)
       - abc:n293 (QN)
-      - abc:n340
       - abc:n339
       - abc:n295 (QN)
       - abc:n287 (QN)
@@ -232,267 +251,311 @@ FOLDBACK ANALYSIS
       - abc:n340
       - abc:n339
       - abc:n295 (QN)
-    LAB C: 2 foldback(s)
+    LAB C: 3 foldback(s)
       - abc:n340
+      - abc:n339
+      - abc:n295 (QN)
+    LAB D: 6 foldback(s)
+      - abc:n295 (QN)
+      - abc:n329 (QN)
+      - abc:n293 (QN)
+      - abc:n340
+      - abc:n339
       - abc:n287 (QN)
-    LAB D: 1 foldback(s)
+    LAB F: 1 foldback(s)
       - abc:n645
+    LAB G: 1 foldback(s)
+      - abc:n340
 
 FAN-IN DETAIL
 ------------------------------------------------------------------------
-  LAB A: 35/40 inputs
-    I/O pins (4): H_ACTIVE, VIDCMD_Q_14, VIDCMD_Q_15, nRS
-    Internal (31):
-      sav_src_0
-      abc:n308
-      $abc$1392$nVIDCMD_RE
-      cur_src_1
+  LAB A: 36/40 inputs
+    I/O pins (6): H_ACTIVE, VIDCMD_Q_14, VIDCMD_Q_15, VIDCMD_Q_9, VIDCMD_Q_11, VIDCMD_Q_12
+    Internal (30):
+      run_count_9
+      staged_word_14
+      abc:n310 (QN)
+      staged_word_11
+      run_count_3
       sav_src_1
-      staged_word_9
-      run_count_0
-      run_count_11
-      cur_src_0
-      staged_word_12
-      mask_active
-      abc:n609
-      run_count_5
-      w_is_set
-      staged_word_10
-      run_count_2
-      run_count_1
-      run_count_7
-      have_staged
-      run_count_8
-      staged_word_13
-      run_count_4
       run_count_10
-      staged_word_11
-      run_count_6
-      staged_word_14
-      ef_at_pop
-      run_count_3
-      run_count_9
+      staged_word_12
+      staged_word_13
+      w_is_set
       abc:n341
-      abc:n310 (QN)
-
-  LAB B: 34/40 inputs
-    I/O pins (2): H_ACTIVE, nRS
-    Internal (32):
-      cur_colour_0
-      run_count_8
-      have_staged
-      abc:n310 (QN)
-      run_count_2
-      staged_word_2
-      sav_src_0
-      run_count_4
-      staged_word_1
-      run_count_11
-      run_count_10
-      cur_src_0
-      staged_word_14
-      abc:n611
-      abc:n609
-      run_count_5
-      w_is_set
-      staged_word_10
-      mask_active
-      staged_word_4
-      cur_colour_1
-      run_count_7
       run_count_0
-      staged_word_11
-      staged_word_3
+      $abc$1392$nVIDCMD_RE
+      run_count_7
       staged_word_9
       run_count_6
-      run_count_3
-      cur_colour_2
-      run_count_9
-      staged_word_0
-      run_count_1
-
-  LAB C: 35/40 inputs
-    I/O pins (6): H_ACTIVE, VIDCMD_Q_7, VIDCMD_Q_9, VIDCMD_Q_15, VIDCMD_Q_14, nRS
-    Internal (29):
-      run_count_5
+      abc:n308
       staged_word_7
-      have_staged
-      abc:n308
-      run_count_2
-      run_count_1
-      ef_at_pop
-      run_count_0
-      staged_word_9
-      run_count_8
-      run_count_3
       mask_active
+      run_count_2
+      cur_src_0
+      run_count_5
+      cur_src_1
+      have_staged
+      ef_at_pop
+      run_count_1
+      staged_word_10
+      run_count_8
+      run_count_11
+      run_count_4
+
+  LAB B: 39/40 inputs
+    I/O pins (7): H_ACTIVE, VIDCMD_Q_6, VIDCMD_Q_4, VIDCMD_Q_13, VIDCMD_Q_5, VIDCMD_Q_2, VIDCMD_Q_3
+    Internal (32):
+      XXL_1021  (unmapped)
+      XXL_1025  (unmapped)
+      staged_word_3
+      staged_word_14
+      abc:n310 (QN)
+      staged_word_11
+      sav_src_1
+      mask_active
+      run_count_3
+      staged_word_1
+      staged_word_6
+      w_is_set
+      run_count_10
+      run_count_1
+      sav_src_0
+      staged_word_2
+      abc:n341
+      run_count_0
+      abc:n308
+      have_staged
+      staged_word_5
+      run_count_5
+      run_count_6
+      staged_word_13
+      staged_word_0
+      run_count_11
+      run_count_9
+      staged_word_4
+      run_count_8
+      run_count_7
+      run_count_2
+      run_count_4
+
+  LAB C: 39/40 inputs
+    I/O pins (6): H_ACTIVE, VIDCMD_Q_7, VIDCMD_Q_10, VIDCMD_Q_1, nRS, nVIDCMD_EF
+    Internal (33):
+      XXL_1017  (unmapped)
+      XXL_1018  (unmapped)
+      ef_sync
+      run_count_6
+      staged_word_14
+      staged_word_1
+      mask_active
+      staged_word_11
+      abc:n310 (QN)
+      run_count_10
+      run_count_1
+      $abc$1392$nVIDCMD_RE
+      w_is_set
+      run_count_9
+      staged_word_8
+      run_count_3
+      abc:n308
+      run_count_7
+      staged_word_7
+      run_count_0
+      run_count_2
+      staged_word_12
+      staged_word_13
+      run_count_4
+      run_count_8
+      have_staged
+      run_count_5
+      abc:n609
+      staged_word_10
+      run_count_11
+      ef_meta
+      staged_word_5
+      ef_at_pop
+
+  LAB D: 39/40 inputs
+    I/O pins (4): H_ACTIVE, VIDCMD_Q_0, VIDCMD_Q_8, nRS
+    Internal (35):
+      XXL_1020  (unmapped)
+      run_count_9
+      run_count_0
+      abc:n310 (QN)
+      staged_word_14
+      mask_active
+      cmp_color1_2
+      run_count_3
+      sav_src_0
+      staged_word_6
       $abc$1392$nVIDCMD_RE
       w_is_set
       run_count_10
-      abc:n310 (QN)
-      staged_word_13
-      run_count_9
-      cmp_color1_7
-      run_count_7
-      abc:n321
-      staged_word_5
-      staged_word_12
-      staged_word_8
-      run_count_4
-      run_count_6
-      staged_word_6
-      staged_word_14
-      run_count_11
-
-  LAB D: 28/40 inputs
-    I/O pins (2): nVIDCMD_EF, nRS
-    Internal (26):
-      abc:n653
-      abc:n622
-      cmp_color1_1
+      run_count_1
       cmp_color1_4
-      abc:n627 (QN)
-      staged_word_3
-      $abc$1392$nVIDCMD_RE
-      staged_word_6
-      abc:n321
-      staged_word_1
-      staged_word_4
+      staged_word_5
+      staged_word_2
       cmp_color1_3
-      abc:n650
-      abc:n631 (QN)
-      abc:n644 (QN)
-      abc:n634 (QN)
-      cmp_color1_0
-      cmp_color1_6
+      staged_word_8
       abc:n308
-      cmp_color1_11
-      ef_sync
-      staged_word_11
-      staged_word_0
-      abc:n617 (QN)
+      have_staged
       ef_at_pop
-      ef_meta
-
-  LAB E: 35/40 inputs
-    I/O pins (9): RGB_IN_1, RGB_IN_2, RGB_IN_5, RGB_IN_0, RGB_IN_7, RGB_IN_3, RGB_IN_4, RGB_IN_8, nRS
-    Internal (26):
-      cmp_color1_8
-      h_active_d
-      cmp_color0_3
-      cmp_color1_4
-      cmp_color1_0
-      cmp_color0_1
-      cmp_color0_0
-      staged_word_5
-      cmp_color0_7
+      abc:n611
+      run_count_2
       abc:n321
+      run_count_6
+      run_count_8
       cur_src_0
+      run_count_5
+      run_count_11
+      staged_word_0
+      staged_word_4
+      run_count_7
+      staged_word_3
+      run_count_4
+
+  LAB E: 39/40 inputs
+    I/O pins (9): RGB_IN_1, RGB_IN_7, RGB_IN_2, RGB_IN_3, RGB_IN_0, RGB_IN_5, RGB_IN_8, RGB_IN_4, nRS
+    Internal (30):
+      cmp_color0_3
+      cmp_color0_4
+      h_active_d
+      cur_colour_2
+      cur_src_1
+      cmp_color0_1
+      cur_src_0
+      cmp_color1_8
+      cmp_color1_4
+      cmp_color0_8
+      abc:n321
+      abc:n325 (QN)
       cmp_color1_3
       cmp_color1_5
-      abc:n325 (QN)
-      cmp_color1_2
-      cmp_color1_1
       cur_colour_0
+      staged_word_8
+      staged_word_1
+      cmp_color1_2
+      cmp_color1_7
+      staged_word_7
       staged_word_2
+      cmp_color0_0
       cur_colour_1
-      cmp_color0_4
-      cmp_color0_8
+      cmp_color0_7
       cmp_color0_5
       cmp_color0_2
-      cur_colour_2
-      cur_src_1
-      cmp_color1_7
+      cmp_color1_1
+      staged_word_5
+      staged_word_0
+      cmp_color1_0
 
-  LAB F: 35/40 inputs
-    I/O pins (10): RGB_IN_10, RGB_IN_11, RGB_IN_9, RGB_IN_6, VIDCMD_Q_1, VIDCMD_Q_4, VIDCMD_Q_2, VIDCMD_Q_6, VIDCMD_Q_3, nRS
-    Internal (25):
+  LAB F: 32/40 inputs
+    I/O pins (5): RGB_IN_10, RGB_IN_11, RGB_IN_9, RGB_IN_6, nRS
+    Internal (27):
+      XXL_1026  (unmapped)
+      staged_word_3
+      cmp_color1_9
+      abc:n622
+      abc:n617 (QN)
+      staged_word_2
+      cmp_color1_6
+      cur_src_1
+      abc:n631 (QN)
+      staged_word_1
+      cmp_color1_11
+      abc:n653
+      cmp_color0_6
+      cmp_color0_11
+      h_active_d
+      cmp_color1_10
+      abc:n644 (QN)
       cmp_color0_9
-      abc:n308
+      cur_colour_2
+      abc:n321
+      cur_colour_1
+      abc:n634 (QN)
+      cur_src_0
+      cmp_color0_10
+      staged_word_10
+      abc:n627 (QN)
+      abc:n650
+
+  LAB G: 38/40 inputs
+    I/O pins (2): H_ACTIVE, nRS
+    Internal (36):
+      staged_word_9
+      staged_word_14
+      staged_word_6
+      run_count_9
+      cur_colour_2
+      staged_word_11
+      cmp_color0_8
+      run_count_1
+      run_count_10
+      abc:n325 (QN)
+      run_count_8
+      have_staged
+      run_count_5
+      run_count_3
+      abc:n321
+      staged_word_8
       cmp_color1_11
       cmp_color1_9
-      staged_word_1
-      cur_colour_1
-      staged_word_9
-      abc:n321
-      mask_active
-      cmp_color0_11
-      cmp_color0_10
-      staged_word_0
-      staged_word_3
-      abc:n325 (QN)
+      cur_colour_0
+      run_count_6
+      cmp_color0_9
+      run_count_7
       cmp_color1_6
-      abc:n310 (QN)
-      cur_colour_2
-      staged_word_2
-      h_active_d
-      cur_src_0
-      cmp_color0_6
-      staged_word_6
-      cur_src_1
-      cmp_color1_10
-      staged_word_4
-
-  LAB G: 35/40 inputs
-    I/O pins (9): VIDCMD_Q_0, VIDCMD_Q_12, VIDCMD_Q_10, VIDCMD_Q_8, VIDCMD_Q_5, VIDCMD_Q_13, VIDCMD_Q_11, nVIDCMD_EF, nRS
-    Internal (26):
-      abc:n325 (QN)
-      staged_word_10
-      abc:n308
-      cmp_color0_7
-      cmp_color0_3
+      run_count_0
+      run_count_2
+      w_is_set
       cmp_color0_0
-      staged_word_13
-      staged_word_9
-      staged_word_11
-      abc:n321
-      mask_active
-      $abc$1392$nVIDCMD_RE
-      abc:n310 (QN)
-      cmp_color1_10
-      staged_word_3
-      ef_at_pop
-      staged_word_7
-      ef_meta
-      staged_word_5
-      cmp_color0_8
-      staged_word_12
-      ef_sync
-      staged_word_0
-      staged_word_6
-      staged_word_8
-      cmp_color1_8
-
-  LAB H: 16/40 inputs
-    I/O pins (1): nVIDCMD_EF
-    Internal (15):
-      abc:n325 (QN)
+      cur_colour_1
+      cmp_color0_6
       cmp_color0_11
-      ef_meta
-      cmp_color0_1
-      staged_word_1
-      cmp_color0_10
-      staged_word_13
-      staged_word_9
-      staged_word_11
-      staged_word_12
-      cmp_color0_4
-      staged_word_8
       staged_word_10
+      run_count_11
+      staged_word_0
+      staged_word_5
+      cmp_color0_10
+      run_count_4
+
+  LAB H: 22/40 inputs
+    I/O pins (2): nVIDCMD_EF, nRS
+    Internal (20):
+      XXL_1027  (unmapped)
+      XXL_1024  (unmapped)
+      XXL_1023  (unmapped)
+      XXL_1019  (unmapped)
+      XXL_1022  (unmapped)
+      staged_word_9
+      cmp_color0_3
+      staged_word_11
+      staged_word_10
+      staged_word_12
+      staged_word_7
       staged_word_4
+      staged_word_8
+      cmp_color0_7
       staged_word_6
+      ef_meta
+      staged_word_13
+      cmp_color0_4
+      abc:n325 (QN)
+      staged_word_3
 
 PRODUCT TERM USAGE (signals using >3 PTs)
 ------------------------------------------------------------------------
-  13 PTs  run_count_4.D
-   8 PTs  run_count_3.D
-   8 PTs  cur_src_1.D
-   7 PTs  abc:n308
-   7 PTs  run_count_1.D
-   7 PTs  cur_src_0.D
-   6 PTs  run_count_9.D
-   5 PTs  run_count_2.D
-   5 PTs  run_count_8.D
+   5 PTs  XXL_1017
+   5 PTs  XXL_1018
+   5 PTs  XXL_1019
+   5 PTs  XXL_1020
+   5 PTs  XXL_1021
+   5 PTs  XXL_1022
+   5 PTs  XXL_1023
+   5 PTs  XXL_1025
+   5 PTs  XXL_1026
+   5 PTs  XXL_1027
    4 PTs  abc:n310 (QN)
    4 PTs  abc:n650
    4 PTs  abc:n644 (QN)
@@ -524,6 +587,8 @@ PRODUCT TERM USAGE (signals using >3 PTs)
    4 PTs  staged_word_7.D
    4 PTs  staged_word_6.D
    4 PTs  staged_word_8.D
+   4 PTs  run_count_3.D
+   4 PTs  cur_src_1.D
    4 PTs  run_count_7.D
 
 ALL EQUATIONS
@@ -533,8 +598,8 @@ ALL EQUATIONS
   [ 1 PTs]  set_pix_target_1.D = staged_word_13
   [ 1 PTs]  set_pix_value_0.D = staged_word_0
   [ 1 PTs]  set_pix_value_1.D = staged_word_1
-  [ 1 PTs]  set_pix_value_2.D = staged_word_2
   [ 1 PTs]  set_pix_value_3.D = staged_word_3
+  [ 1 PTs]  set_pix_value_2.D = staged_word_2
   [ 1 PTs]  set_pix_value_4.D = staged_word_4
   [ 1 PTs]  set_pix_value_5.D = staged_word_5
   [ 1 PTs]  set_pix_value_6.D = staged_word_6
@@ -572,7 +637,7 @@ ALL EQUATIONS
   [ 4 PTs]  RGB_OUT_10.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_10) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_10) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_10))
   [ 4 PTs]  RGB_OUT_11.D = ((h_active_d & cur_src_0 & !cur_src_1 & cmp_color1_11) # (h_active_d & cur_src_0 & cur_src_1 & cur_colour_2) # (h_active_d & !cur_src_0 & !cur_src_1 & RGB_IN_11) # (h_active_d & !cur_src_0 & cur_src_1 & cmp_color0_11))
   [ 2 PTs]  cur_colour_2.D = ((abc:n340Q & cur_colour_2) # (staged_word_11 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
-  [ 7 PTs]  abc:n308 = ((ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & !H_ACTIVE & !mask_active & w_is_set) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8 & w_is_set) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & H_ACTIVE & run_count_0 & run_count_1 & run_count_2 & !run_count_3 & mask_active & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & H_ACTIVE & !run_count_0 & run_count_1 & run_count_2 & run_count_3 & mask_active & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & !mask_active & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8 & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & H_ACTIVE & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8))
+  [ 3 PTs]  abc:n308 = ((ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8 & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & H_ACTIVE & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8) # XXL_1017)
   [ 2 PTs]  cur_colour_0.D = ((abc:n340Q & cur_colour_0) # (staged_word_9 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
   [ 2 PTs]  cur_colour_1.D = ((abc:n340Q & cur_colour_1) # (staged_word_10 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
   [ 3 PTs]  sav_src_1.D = ((sav_src_1 & abc:n293 (QN)QN) # (!mask_active & cur_src_1 & H_ACTIVE & !w_is_set & staged_word_14 & have_staged & run_count_6 & run_count_5 & run_count_4 & run_count_11 & run_count_10 & run_count_9 & run_count_8 & run_count_7 & run_count_0 & run_count_2 & run_count_1 & run_count_3) # (mask_active & sav_src_1))
@@ -585,7 +650,7 @@ ALL EQUATIONS
   [ 4 PTs]  staged_word_13.D = ((!abc:n308Q & staged_word_13 & abc:n310 (QN)QN) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_11) # (abc:n308Q & VIDCMD_Q_13) # (!abc:n308Q & !mask_active & staged_word_13))
   [ 4 PTs]  staged_word_14.D = ((!abc:n308Q & staged_word_14 & abc:n310 (QN)QN) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_12) # (abc:n308Q & VIDCMD_Q_14) # (!abc:n308Q & !mask_active & staged_word_14))
   [ 3 PTs]  have_staged.D = ((!abc:n308Q & have_staged & !H_ACTIVE & !w_is_set) # (!abc:n308Q & have_staged & H_ACTIVE & abc:n287 (QN)QN) # (abc:n308Q & abc:n329 (QN)QN))
-  [ 7 PTs]  run_count_1.D = ((abc:n609Q & !abc:n310 (QN)QN & H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (abc:n609Q & run_count_1 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_1) # (run_count_1 & abc:n310 (QN)QN & staged_word_1 & abc:n340Q & abc:n295 (QN)QN) # (run_count_1 & abc:n310 (QN)QN & abc:n340Q & abc:n295 (QN)QN & abc:n339Q) # (!abc:n609Q & run_count_1 & staged_word_1 & abc:n295 (QN)QN) # (!abc:n609Q & run_count_1 & abc:n295 (QN)QN & abc:n339Q) # (abc:n609Q & !run_count_1 & !abc:n310 (QN)QN))
+  [ 3 PTs]  run_count_1.D = ((!abc:n609Q & run_count_1 & abc:n295 (QN)QN & abc:n339Q) # (abc:n609Q & !run_count_1 & !abc:n310 (QN)QN) # XXL_1018)
   [ 3 PTs]  abc:n622 = ((run_count_0 & run_count_1 & run_count_2 & run_count_3 & abc:n295 (QN)QN & run_count_4 & abc:n340Q & !abc:n310 (QN)QN & abc:n339Q) # (run_count_0 & run_count_1 & run_count_2 & run_count_3 & abc:n295 (QN)QN & staged_word_0 & staged_word_1 & staged_word_2 & staged_word_3 & run_count_4 & abc:n340Q & !abc:n310 (QN)QN) # (run_count_0 & run_count_1 & run_count_2 & run_count_3 & abc:n295 (QN)QN & staged_word_0 & staged_word_1 & staged_word_2 & staged_word_3 & run_count_4 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8))
   [ 2 PTs]  abc:n341 = ((abc:n293 (QN)QN & abc:n339Q & !mask_active) # (abc:n293 (QN)QN & abc:n339Q & abc:n310 (QN)QN & abc:n287 (QN)QN))
   [ 2 PTs]  cmp_color0_2.D = ((!abc:n325 (QN)QN & cmp_color0_2) # (abc:n325 (QN)QN & staged_word_2))
@@ -595,7 +660,7 @@ ALL EQUATIONS
   [ 4 PTs]  staged_word_11.D = ((abc:n308Q & VIDCMD_Q_11) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_9) # (!abc:n308Q & staged_word_11 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_11 & !mask_active))
   [ 4 PTs]  staged_word_12.D = ((abc:n308Q & VIDCMD_Q_12) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_10) # (!abc:n308Q & staged_word_12 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_12 & !mask_active))
   [ 2 PTs]  cmp_color0_5.D = ((!abc:n325 (QN)QN & cmp_color0_5) # (abc:n325 (QN)QN & staged_word_5))
-  [ 5 PTs]  run_count_2.D = ((abc:n611Q & !run_count_2) # (abc:n611Q & H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (abc:n611Q & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_2) # (!abc:n611Q & abc:n295 (QN)QN & run_count_2 & staged_word_2) # (!abc:n611Q & abc:n295 (QN)QN & run_count_2 & abc:n339Q))
+  [ 1 PTs]  run_count_2.D = (XXL_1019)
   [ 2 PTs]  cmp_color0_4.D = ((!abc:n325 (QN)QN & cmp_color0_4) # (abc:n325 (QN)QN & staged_word_4))
   [ 2 PTs]  cmp_color0_8.D = ((!abc:n325 (QN)QN & cmp_color0_8) # (abc:n325 (QN)QN & staged_word_8))
   [ 2 PTs]  cmp_color0_6.D = ((!abc:n325 (QN)QN & cmp_color0_6) # (abc:n325 (QN)QN & staged_word_6))
@@ -626,17 +691,28 @@ ALL EQUATIONS
   [ 2 PTs]  cmp_color0_0.D = ((!abc:n325 (QN)QN & cmp_color0_0) # (abc:n325 (QN)QN & staged_word_0))
   [ 4 PTs]  staged_word_8.D = ((abc:n308Q & VIDCMD_Q_8) # (!abc:n308Q & mask_active & !abc:n310 (QN)QN & staged_word_6) # (!abc:n308Q & staged_word_8 & abc:n310 (QN)QN) # (!abc:n308Q & staged_word_8 & !mask_active))
   [ 2 PTs]  cmp_color0_1.D = ((!abc:n325 (QN)QN & cmp_color0_1) # (abc:n325 (QN)QN & staged_word_1))
-  [ 8 PTs]  run_count_3.D = ((abc:n295 (QN)QN & abc:n611Q & run_count_2 & staged_word_2 & !staged_word_3 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (run_count_3 & abc:n295 (QN)QN & !run_count_2 & staged_word_3) # (run_count_3 & abc:n295 (QN)QN & !staged_word_2 & staged_word_3 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (run_count_3 & abc:n295 (QN)QN & !abc:n611Q & staged_word_3) # (run_count_3 & abc:n295 (QN)QN & !run_count_2 & abc:n339Q) # (run_count_3 & abc:n295 (QN)QN & !abc:n611Q & abc:n339Q) # (!run_count_3 & abc:n295 (QN)QN & abc:n611Q & run_count_2 & staged_word_2) # (!run_count_3 & abc:n295 (QN)QN & abc:n611Q & run_count_2 & abc:n339Q))
-  [ 8 PTs]  cur_src_1.D = ((abc:n341Q & cur_src_1) # (!abc:n341Q & H_ACTIVE & run_count_0 & run_count_1 & run_count_2 & !run_count_3 & mask_active & !abc:n310 (QN)QN & VIDCMD_Q_15 & !VIDCMD_Q_14 & ef_at_pop & !$abc$1392$nVIDCMD_RE) # (!abc:n341Q & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_14) # (!abc:n341Q & staged_word_13 & mask_active & !abc:n310 (QN)QN & abc:n329 (QN)QN & !staged_word_12) # (!abc:n341Q & abc:n310 (QN)QN & sav_src_1 & abc:n340Q) # (!abc:n341Q & !mask_active & sav_src_1 & abc:n340Q) # (!abc:n341Q & staged_word_13 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & abc:n310 (QN)QN) # (!abc:n341Q & staged_word_13 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !mask_active))
-  [13 PTs]  run_count_4.D = ((run_count_4 & abc:n340Q & !abc:n611Q) # (run_count_2 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !abc:n611Q) # (run_count_2 & !staged_word_4 & run_count_3 & !run_count_4 & staged_word_2 & abc:n611Q & staged_word_3) # (run_count_2 & run_count_3 & !run_count_4 & abc:n611Q & abc:n339Q) # (run_count_2 & !staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_2 & abc:n611Q & staged_word_3) # (run_count_2 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & abc:n611Q & abc:n339Q) # (!run_count_3 & run_count_4 & abc:n340Q) # (H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & abc:n340Q & !staged_word_3) # (run_count_2 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_3) # (run_count_2 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_14) # (!run_count_2 & run_count_4 & abc:n340Q) # (H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_2 & abc:n340Q) # (run_count_2 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_2))
+  [ 4 PTs]  run_count_3.D = ((run_count_3 & abc:n295 (QN)QN & !abc:n611Q & abc:n339Q) # (!run_count_3 & abc:n295 (QN)QN & abc:n611Q & run_count_2 & staged_word_2) # (!run_count_3 & abc:n295 (QN)QN & abc:n611Q & run_count_2 & abc:n339Q) # XXL_1020)
+  [ 4 PTs]  cur_src_1.D = ((!abc:n341Q & !mask_active & sav_src_1 & abc:n340Q) # (!abc:n341Q & staged_word_13 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & abc:n310 (QN)QN) # (!abc:n341Q & staged_word_13 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !mask_active) # XXL_1021)
+  [ 3 PTs]  run_count_4.D = (XXL_1022 # XXL_1023 # XXL_1024)
   [ 2 PTs]  run_count_5.D = ((!abc:n617 (QN)QN & abc:n622Q) # (abc:n617 (QN)QN & !abc:n622Q))
-  [ 7 PTs]  cur_src_0.D = ((!abc:n341Q & abc:n293 (QN)QN & abc:n310 (QN)QN & staged_word_12 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (!abc:n341Q & abc:n293 (QN)QN & !mask_active & staged_word_12 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (abc:n341Q & cur_src_0) # (!abc:n341Q & mask_active & !abc:n310 (QN)QN & staged_word_12 & abc:n329 (QN)QN & staged_word_13) # (!abc:n341Q & mask_active & !abc:n310 (QN)QN & H_ACTIVE & run_count_0 & run_count_1 & run_count_2 & !run_count_3 & VIDCMD_Q_15 & VIDCMD_Q_14 & ef_at_pop & !$abc$1392$nVIDCMD_RE) # (!abc:n341Q & abc:n293 (QN)QN & abc:n340Q & sav_src_0 & abc:n310 (QN)QN) # (!abc:n341Q & abc:n293 (QN)QN & abc:n340Q & sav_src_0 & !mask_active))
+  [ 3 PTs]  cur_src_0.D = ((!abc:n341Q & abc:n293 (QN)QN & abc:n340Q & sav_src_0 & abc:n310 (QN)QN) # (!abc:n341Q & abc:n293 (QN)QN & abc:n340Q & sav_src_0 & !mask_active) # XXL_1025)
   [ 2 PTs]  run_count_10.D = ((abc:n653Q & abc:n645Q) # (!abc:n653Q & abc:n617 (QN)QN & abc:n622Q & abc:n627 (QN)QN & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n644 (QN)QN))
-  [ 6 PTs]  run_count_9.D = ((abc:n644 (QN)QN & !abc:n631 (QN)QN) # (abc:n644 (QN)QN & !abc:n634 (QN)QN) # (!abc:n644 (QN)QN & abc:n622Q & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n617 (QN)QN & abc:n627 (QN)QN) # (abc:n644 (QN)QN & !abc:n627 (QN)QN) # (abc:n644 (QN)QN & !abc:n617 (QN)QN) # (abc:n644 (QN)QN & !abc:n622Q))
+  [ 2 PTs]  run_count_9.D = ((abc:n644 (QN)QN & !abc:n622Q) # XXL_1026)
   [ 4 PTs]  run_count_7.D = ((!abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n622Q & abc:n617 (QN)QN) # (abc:n631 (QN)QN & !abc:n617 (QN)QN) # (abc:n631 (QN)QN & !abc:n622Q) # (abc:n631 (QN)QN & !abc:n634 (QN)QN))
   [ 3 PTs]  run_count_6.D = ((!abc:n634 (QN)QN & abc:n622Q & abc:n617 (QN)QN) # (abc:n634 (QN)QN & !abc:n617 (QN)QN) # (abc:n634 (QN)QN & !abc:n622Q))
   [ 3 PTs]  run_count_11.D = ((abc:n650Q & !abc:n653Q) # (!abc:n650Q & abc:n653Q & abc:n617 (QN)QN & abc:n622Q & abc:n627 (QN)QN & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n644 (QN)QN) # (abc:n650Q & abc:n645Q))
-  [ 5 PTs]  run_count_8.D = ((abc:n627 (QN)QN & !abc:n631 (QN)QN) # (abc:n627 (QN)QN & !abc:n634 (QN)QN) # (!abc:n627 (QN)QN & abc:n622Q & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n617 (QN)QN) # (abc:n627 (QN)QN & !abc:n617 (QN)QN) # (abc:n627 (QN)QN & !abc:n622Q))
+  [ 1 PTs]  run_count_8.D = (XXL_1027)
+  [ 5 PTs]  XXL_1017 = ((ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & !H_ACTIVE & !mask_active & w_is_set) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & run_count_9 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & run_count_11 & run_count_7 & run_count_8 & w_is_set) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & H_ACTIVE & run_count_0 & run_count_1 & run_count_2 & !run_count_3 & mask_active & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & H_ACTIVE & !run_count_0 & run_count_1 & run_count_2 & run_count_3 & mask_active & !have_staged) # (ef_at_pop & !$abc$1392$nVIDCMD_RE & abc:n295 (QN)QN & !mask_active & !have_staged))
+  [ 5 PTs]  XXL_1018 = ((abc:n609Q & !abc:n310 (QN)QN & H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (abc:n609Q & run_count_1 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_1) # (run_count_1 & abc:n310 (QN)QN & staged_word_1 & abc:n340Q & abc:n295 (QN)QN) # (run_count_1 & abc:n310 (QN)QN & abc:n340Q & abc:n295 (QN)QN & abc:n339Q) # (!abc:n609Q & run_count_1 & staged_word_1 & abc:n295 (QN)QN))
+  [ 5 PTs]  XXL_1019 = ((abc:n611Q & !run_count_2) # (abc:n611Q & H_ACTIVE & run_count_9 & !w_is_set & staged_word_14 & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (abc:n611Q & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_2) # (!abc:n611Q & abc:n295 (QN)QN & run_count_2 & staged_word_2) # (!abc:n611Q & abc:n295 (QN)QN & run_count_2 & abc:n339Q))
+  [ 5 PTs]  XXL_1020 = ((abc:n295 (QN)QN & abc:n611Q & run_count_2 & staged_word_2 & !staged_word_3 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (run_count_3 & abc:n295 (QN)QN & !run_count_2 & staged_word_3) # (run_count_3 & abc:n295 (QN)QN & !staged_word_2 & staged_word_3 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (run_count_3 & abc:n295 (QN)QN & !abc:n611Q & staged_word_3) # (run_count_3 & abc:n295 (QN)QN & !run_count_2 & abc:n339Q))
+  [ 5 PTs]  XXL_1021 = ((abc:n341Q & cur_src_1) # (!abc:n341Q & H_ACTIVE & run_count_0 & run_count_1 & run_count_2 & !run_count_3 & mask_active & !abc:n310 (QN)QN & VIDCMD_Q_15 & !VIDCMD_Q_14 & ef_at_pop & !$abc$1392$nVIDCMD_RE) # (!abc:n341Q & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_14) # (!abc:n341Q & staged_word_13 & mask_active & !abc:n310 (QN)QN & abc:n329 (QN)QN & !staged_word_12) # (!abc:n341Q & abc:n310 (QN)QN & sav_src_1 & abc:n340Q))
+  [ 5 PTs]  XXL_1022 = ((run_count_4 & abc:n340Q & !abc:n611Q) # (run_count_2 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !abc:n611Q) # (run_count_2 & !staged_word_4 & run_count_3 & !run_count_4 & staged_word_2 & abc:n611Q & staged_word_3) # (run_count_2 & run_count_3 & !run_count_4 & abc:n611Q & abc:n339Q) # (run_count_2 & !staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_2 & abc:n611Q & staged_word_3))
+  [ 5 PTs]  XXL_1023 = ((run_count_2 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & abc:n611Q & abc:n339Q) # (!run_count_3 & run_count_4 & abc:n340Q) # (H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & abc:n340Q & !staged_word_3) # (run_count_2 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_3) # (run_count_2 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & staged_word_14))
+  [ 3 PTs]  XXL_1024 = ((!run_count_2 & run_count_4 & abc:n340Q) # (H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_2 & abc:n340Q) # (run_count_2 & staged_word_4 & H_ACTIVE & run_count_9 & !w_is_set & run_count_0 & run_count_1 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8 & !staged_word_2))
+  [ 5 PTs]  XXL_1025 = ((!abc:n341Q & abc:n293 (QN)QN & abc:n310 (QN)QN & staged_word_12 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (!abc:n341Q & abc:n293 (QN)QN & !mask_active & staged_word_12 & H_ACTIVE & run_count_9 & !w_is_set & !staged_word_14 & run_count_0 & run_count_1 & run_count_2 & run_count_3 & run_count_4 & run_count_5 & run_count_10 & run_count_6 & have_staged & run_count_11 & run_count_7 & run_count_8) # (abc:n341Q & cur_src_0) # (!abc:n341Q & mask_active & !abc:n310 (QN)QN & staged_word_12 & abc:n329 (QN)QN & staged_word_13) # (!abc:n341Q & mask_active & !abc:n310 (QN)QN & H_ACTIVE & run_count_0 & run_count_1 & run_count_2 & !run_count_3 & VIDCMD_Q_15 & VIDCMD_Q_14 & ef_at_pop & !$abc$1392$nVIDCMD_RE))
+  [ 5 PTs]  XXL_1026 = ((abc:n644 (QN)QN & !abc:n631 (QN)QN) # (abc:n644 (QN)QN & !abc:n634 (QN)QN) # (!abc:n644 (QN)QN & abc:n622Q & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n617 (QN)QN & abc:n627 (QN)QN) # (abc:n644 (QN)QN & !abc:n627 (QN)QN) # (abc:n644 (QN)QN & !abc:n617 (QN)QN))
+  [ 5 PTs]  XXL_1027 = ((abc:n627 (QN)QN & !abc:n631 (QN)QN) # (abc:n627 (QN)QN & !abc:n634 (QN)QN) # (!abc:n627 (QN)QN & abc:n622Q & abc:n631 (QN)QN & abc:n634 (QN)QN & abc:n617 (QN)QN) # (abc:n627 (QN)QN & !abc:n617 (QN)QN) # (abc:n627 (QN)QN & !abc:n622Q))
   [ 1 PTs]  set_pix_target_0.C = PIXEL_CLK
   [ 1 PTs]  set_pix_target_0.AR = !nRS
   [ 1 PTs]  set_pix_target_1.C = PIXEL_CLK
@@ -645,10 +721,10 @@ ALL EQUATIONS
   [ 1 PTs]  set_pix_value_0.AR = !nRS
   [ 1 PTs]  set_pix_value_1.C = PIXEL_CLK
   [ 1 PTs]  set_pix_value_1.AR = !nRS
-  [ 1 PTs]  set_pix_value_2.C = PIXEL_CLK
-  [ 1 PTs]  set_pix_value_2.AR = !nRS
   [ 1 PTs]  set_pix_value_3.C = PIXEL_CLK
   [ 1 PTs]  set_pix_value_3.AR = !nRS
+  [ 1 PTs]  set_pix_value_2.C = PIXEL_CLK
+  [ 1 PTs]  set_pix_value_2.AR = !nRS
   [ 1 PTs]  set_pix_value_4.C = PIXEL_CLK
   [ 1 PTs]  set_pix_value_4.AR = !nRS
   [ 1 PTs]  set_pix_value_5.C = PIXEL_CLK

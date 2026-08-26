@@ -164,8 +164,8 @@ ports/ports.svf: ports/ports.jed
 # COMPOSITOR (ATF1508AS)
 #
 # VIDCMD display-list player for the super-engine video path.  There is no
-# board for it yet, so compositor.v carries no //PIN: block and the fitter
-# places pins freely (-preassign ignore); its placement is input to the Rev 2
+# Pinout FROZEN 2026-08-26 in the //PIN: block at the bottom of compositor.v;
+# -preassign keep re-verified identical to the harvest fit.  A netlist change
 # layout.  Self-contained — no griffin.generated.vh — until the VIDCMD
 # encoding migrates into griffin.yml.
 #
@@ -179,7 +179,7 @@ compositor/compositor.edif: compositor/compositor.v
 	cd compositor && $(YOSYS) compositor
 
 compositor/compositor.jed: compositor/compositor.edif
-	cd compositor && $(FITTER) compositor -preassign ignore -strategy debug = on
+	cd compositor && $(FITTER) compositor -preassign keep -strategy debug = on -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy power_reset on -strategy JTAG = on
 
 compositor-sim: compositor/compositor_tb.v compositor/compositor.v
 	cd compositor && iverilog -g2012 -o compositor_tb.vvp compositor_tb.v compositor.v && vvp compositor_tb.vvp
@@ -202,7 +202,7 @@ pixel/pixel.edif: pixel/pixel.v
 	cd pixel && $(YOSYS) pixel
 
 pixel/pixel.jed: pixel/pixel.edif
-	cd pixel && $(FITTER) pixel -preassign ignore -strategy debug = on
+	cd pixel && $(FITTER) pixel -preassign keep -strategy debug = on -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy power_reset on -strategy JTAG = on
 
 # `make pixel-sim` runs the iverilog testbench, which is the real
 # specification of the decoder's per-mode pixel semantics and of the byte
@@ -216,7 +216,7 @@ pixel/timing.edif: pixel/timing.v
 	cd pixel && $(YOSYS) timing
 
 pixel/timing.jed: pixel/timing.edif
-	cd pixel && $(FITTER) -d ATF1504AS -p PLCC44 timing -preassign ignore -strategy debug = on
+	cd pixel && $(FITTER) -d ATF1504AS -p PLCC44 timing -preassign keep -strategy debug = on -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy JTAG = on
 
 # ------------------------------------------------------------
 
