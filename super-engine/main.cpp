@@ -62,6 +62,13 @@ constexpr uint32_t FB_HAM_BASE        = 0x020000;
 constexpr uint32_t FB_HAM_STRIDE      = 176;   // 88 words: 80 for the line + scroll headroom
 constexpr uint32_t FB_WEB_BASE        = 0x040000;   // the Tempest wireframe, drawn once
 
+// 2bpp indexed shares micro-HAM's stream rate — 80 words a line — so it gets
+// the same 88-word stride with scroll headroom.  ONE buffer serves both rates:
+// a HALF-RATE indexed line consumes the first 40 words, which is the first 320
+// dibits, so the half-rate expectation is the full-rate one indexed by k/2.
+constexpr uint32_t FB_IDX2_BASE       = 0x080000;
+constexpr uint32_t FB_IDX2_STRIDE     = 176;
+
 // The VIDCMD records are per-frame data — they carry this frame's palette
 // ramp, its pixel_skip and its tile masks — so they need double buffering
 // exactly as much as the descriptor table does.  Only the table has to live in
@@ -622,7 +629,7 @@ void check_case(const CaseSpec &spec, const CaseResult &res)
     CHECK(rr.stats.vidcmd_mask_stalls == 0,
           "%s: a MASK stalled for %u slots waiting for its data word — the record's two "
           "words were not delivered together", spec.name.c_str(), rr.stats.vidcmd_mask_stalls);
-    if (spec.base.screen == ScreenStyle::NONE)
+    if (spec.base.screen == ScreenStyle::NONE && spec.base.sprites != SpriteStyle::MASK_SPRITES)
     {
         CHECK(rr.stats.vidcmd_mask_records == 0,
               "%s: %u stray `01` MASK records reached the compositor — this case emits none",
@@ -1000,6 +1007,436 @@ void check_cadence_traces()
 }
 
 // ---------------------------------------------------------------------------
+// PIXEL mode traces — the model against cpld/pixel/pixel_tb.v
+// ---------------------------------------------------------------------------
+//
+// These drive PixelUnit ALONE, with no compositor and no display list, the way
+// pixel_tb.v drives the DUT: SET the registers during blanking, fill the FIFO
+// with one line's stream, then take 640 pixel clocks.  Every case below is a
+// named case in that testbench and every expectation is its expectation.
+//
+// HOW THE TB'S ASSERTIONS MAP ONTO THIS MODEL.  pixel_tb.v checks two things
+// per case: the 640 per-pixel colours, and check_reads(N) — the number of /RE
+// byte strobes the line spent.  The colours map one to one.  The /RE count does
+// not: this model has no byte engine, no shift register and no /RE, it pulls
+// 16-bit WORDS out of the FIFO on demand.  Its observable for the same claim is
+// therefore WORDS CONSUMED PER LINE, and the mapping is exactly N/2 because the
+// rev-1 PIXELS pair is two byte-wide 7200s read EVEN-then-ODD for one bus word.
+// So the tb's 80/160/40/80 bytes are 40/80/20/40 words here, which is also
+// descriptor.h's pixels_words_per_line() — the number the display list deposits.
+// A model that consumed the wrong amount would drift a word per line down the
+// frame, which is what the suite cases' zero-tiled-words assertion catches.
+//
+// THE TWO-LINE CASES (IDX2_2LINE_*, HAM_2LINE_*) map onto the SUITE cases, not
+// onto these traces.  Their claim is that a line reads exactly its own record
+// and steals no byte from the next one, so line 2 starts where line 1 stopped;
+// the model's form of that claim is 480 consecutive lines rendered pixel-exact
+// against a reference in which line y comes from framebuffer row y, with zero
+// tiled words.  A line that ate one word too many or too few would slide the
+// whole rest of the frame and m8/m9 would fail on line 1.
+//
+// ONE DELIBERATE DIVERGENCE, and it is the tb's declared limit rather than a
+// disagreement: with a nonzero pixel_skip the line needs a fraction of one more
+// byte at its far end and pixel.v's fetch guard REFUSES it, so the last 1..7
+// pixels of a fine-scrolled line re-shift the previous byte.  This model has no
+// fetch guard and simply reads the extra word, so its tail is the authored
+// data.  pixel_tb.v checks only the LEADING pixels of its skip cases for that
+// reason, and so do the skip cases below.
+//
+// The stream is written as BYTES, in the tb's own order, and packed into words
+// here — so a byte list can be diffed against pixel_tb.v by eye.
+
+std::vector<uint16_t> stream_words(const std::vector<uint8_t> &bytes)
+{
+    std::vector<uint16_t> w;
+    w.reserve((bytes.size() + 1) / 2);
+    for (size_t i = 0; i < bytes.size(); i += 2)
+    {
+        const uint16_t lo = (i + 1 < bytes.size()) ? bytes[i + 1] : 0u;
+        w.push_back(static_cast<uint16_t>((bytes[i] << 8) | lo));
+    }
+    return w;
+}
+
+void push_fill(std::vector<uint8_t> &b, uint32_t count, uint8_t v)
+{
+    for (uint32_t i = 0; i < count; i++)
+    {
+        b.push_back(v);
+    }
+}
+
+// pixel_tb.v's stream_bit / stream_dibit, verbatim: "MSB first" as the mode
+// definitions state it, indexed by stream position rather than by pixel.
+uint32_t stream_bit(const std::vector<uint8_t> &b, uint32_t n)
+{
+    return (b[n / 8] >> (7 - (n % 8))) & 1u;
+}
+
+uint32_t stream_dibit(const std::vector<uint8_t> &b, uint32_t n)
+{
+    return (b[n / 4] >> (6 - 2 * (n % 4))) & 3u;
+}
+
+struct PixelLine
+{
+    std::vector<Rgb444> px;
+    uint32_t            words_consumed = 0;
+    uint32_t            tiled_words    = 0;
+};
+
+// One visible line out of a freshly reset PixelUnit.  `held_first` inverts the
+// SET(pix_mode) / SET(pix_ham_held) order so a case can prove the dependence
+// rather than only obey it.
+PixelLine pixel_line(uint32_t mode, const std::vector<uint8_t> &bytes,
+                     Rgb444 fg, Rgb444 bg, Rgb444 held, uint32_t skip,
+                     bool held_first = false)
+{
+    RenderStats stats;
+    PixelUnit   pix;
+    pix.reset();
+    pix.attach_stats(&stats);
+    pix.set_counting(true);
+
+    // Each SET is followed by a blank clock, which is where PIXEL's held_init
+    // lives: the SETs really are separated by clocks on which pal_fg can be
+    // written into ham_held, which is the whole mechanism of the ordering rule.
+    auto set_and_tick = [&](uint32_t target, uint32_t value)
+    {
+        pix.set_register(target, value);
+        pix.blank_clock();
+    };
+
+    set_and_tick(SET_PIX_PAL_FG, fg);
+    set_and_tick(SET_PIX_PAL_BG, bg);
+    if (held_first)
+    {
+        set_and_tick(SET_PIX_HAM_HELD, held);
+        set_and_tick(SET_PIX_MODE, mode);
+    }
+    else
+    {
+        set_and_tick(SET_PIX_MODE, mode);
+        set_and_tick(SET_PIX_HAM_HELD, held);
+    }
+    set_and_tick(SET_PIX_PIXEL_SKIP, skip);
+    for (uint32_t i = 0; i < 8; i++)
+    {
+        pix.blank_clock();
+    }
+
+    for (uint16_t w : stream_words(bytes))
+    {
+        pix.push_word(w);
+    }
+
+    const uint32_t before = pix.fifo_count();
+    pix.begin_line();
+
+    PixelLine out;
+    out.px.reserve(H_ACTIVE);
+    for (uint32_t i = 0; i < H_ACTIVE; i++)
+    {
+        out.px.push_back(pix.next_pixel());
+    }
+    out.words_consumed = before - pix.fifo_count();
+    out.tiled_words    = stats.pixels_tiled_words;
+    return out;
+}
+
+uint32_t pixel_mismatches(const PixelLine &line, const std::vector<Rgb444> &want,
+                          uint32_t first, uint32_t last)
+{
+    uint32_t bad = 0;
+    for (uint32_t k = first; k <= last; k++)
+    {
+        if (line.px[k] != want[k])
+        {
+            bad++;
+        }
+    }
+    return bad;
+}
+
+void report_pixel_case(const char *name, const PixelLine &line, uint32_t bad,
+                       uint32_t checked, uint32_t want_words)
+{
+    printf("  %-18s %4u pixels checked, %u wrong, %2u words consumed (want %u)\n",
+           name, checked, bad, line.words_consumed, want_words);
+    CHECK(bad == 0, "pixel trace %s: %u of %u checked pixels are wrong", name, bad, checked);
+    CHECK(line.words_consumed == want_words,
+          "pixel trace %s: the line ate %u PIXELS words, pixel_tb.v's /RE count says %u "
+          "(%u bytes)", name, line.words_consumed, want_words, want_words * 2);
+}
+
+void check_pixel_modes()
+{
+    printf("\n=== pixel-modes — the model against cpld/pixel/pixel_tb.v ===\n");
+
+    // --- 1BPP_REGRESSION: the guard that the new decode broke nothing --------
+    {
+        std::vector<uint8_t> b = {0xB2, 0x4D, 0xF0, 0x0F, 0xAA, 0x55};
+        push_fill(b, 74, 0xC3);              // 80 bytes on the line
+        const Rgb444 fg = 0xF00;
+        const Rgb444 bg = 0x00F;
+        const PixelLine line = pixel_line(PIXEL_MODE_DIRECT_1BPP, b, fg, bg, 0x789, 0);
+
+        std::vector<Rgb444> want(H_ACTIVE);
+        for (uint32_t k = 0; k < H_ACTIVE; k++)
+        {
+            want[k] = stream_bit(b, k) != 0 ? fg : bg;
+        }
+        report_pixel_case("1BPP_REGRESSION", line,
+                          pixel_mismatches(line, want, 0, H_ACTIVE - 1), H_ACTIVE,
+                          PIXELS_WORDS_1BPP);
+    }
+
+    // --- HAM_REGRESSION: micro-HAM still decodes ----------------------------
+    //
+    // The 20 hand-derived pixels are pixel_tb.v's, copied verbatim with its
+    // working: held starts the line at pal_fg, the first pixel of a 4-bit code
+    // shows the OLD held colour and the second shows both channels updated
+    // together.  Codes d15/d16 straddle a byte boundary on purpose.
+    const std::vector<Rgb444> HAM_HEAD = {
+        0x111,   // d0  "0 0"      held <- bg
+        0x888,   // d1  "0 1"      held <- fg
+        0x888,   // d2  prefix 10, shows OLD held
+        0xF08,   // d3  g=0 r=1
+        0xF08,   // d4  prefix 11, shows OLD held
+        0xFF0,   // d5  g=1 b=0
+        0x888,   // d6  "0 1"
+        0x111,   // d7  "0 0"
+        0x111,   // d8  prefix 10, shows OLD held
+        0xFF1,   // d9  g=1 r=1
+        0xFF1,   // d10 prefix 11, shows OLD held
+        0xF00,   // d11 g=0 b=0
+        0x888,   // d12 "0 1"
+        0x888,   // d13 "0 1"
+        0x111,   // d14 "0 0"
+        0x111,   // d15 prefix 10, shows OLD held
+        0x0F1,   // d16 g=1 r=0 — and d15/d16 span bytes 3/4
+        0x111,   // d17 "0 0"
+        0x888,   // d18 "0 1"
+        0x888,   // d19 "0 1"
+    };
+    std::vector<uint8_t> ham_bytes = {0x19, 0xE4, 0xBC, 0x52, 0x85};
+    push_fill(ham_bytes, 155, 0x55);         // 160 bytes on the line: all "0 1"
+
+    std::vector<Rgb444> ham_want(H_ACTIVE, 0x888);
+    for (uint32_t k = 0; k < HAM_HEAD.size(); k++)
+    {
+        ham_want[k] = HAM_HEAD[k];
+    }
+    {
+        const PixelLine line =
+            pixel_line(PIXEL_MODE_MICRO_HAM, ham_bytes, 0x888, 0x111, 0x789, 0);
+        report_pixel_case("HAM_REGRESSION", line,
+                          pixel_mismatches(line, ham_want, 0, H_ACTIVE - 1), H_ACTIVE,
+                          PIXELS_WORDS_MICROHAM);
+    }
+
+    // --- HALF RATE IS MASKED OFF IN MICRO-HAM -------------------------------
+    //
+    // pixel.v computes half_rate = mode[2] & ~mode[0], so the flag DOES NOTHING
+    // in HAM: same pixels, same 160 bytes.  Modelling the masking rather than
+    // the garbage is the point — a half-rate HAM line would mis-pair every
+    // 4-bit code, and one literal turns that into a debuggable outcome.
+    {
+        const PixelLine line = pixel_line(PIXEL_MODE_MICRO_HAM | PIXEL_MODE_HALF_RATE,
+                                          ham_bytes, 0x888, 0x111, 0x789, 0);
+        report_pixel_case("HAM_HALF_MASKED", line,
+                          pixel_mismatches(line, ham_want, 0, H_ACTIVE - 1), H_ACTIVE,
+                          PIXELS_WORDS_MICROHAM);
+    }
+
+    // --- THE RESERVED 11 ENCODING IS MICRO-HAM ------------------------------
+    {
+        const PixelLine line = pixel_line(PIXEL_MODE_MICRO_HAM | PIXEL_MODE_INDEXED_2BPP,
+                                          ham_bytes, 0x888, 0x111, 0x789, 0);
+        report_pixel_case("MODE_RESERVED_11", line,
+                          pixel_mismatches(line, ham_want, 0, H_ACTIVE - 1), H_ACTIVE,
+                          PIXELS_WORDS_MICROHAM);
+    }
+
+    // --- IDX2_ALL_FOUR: the new mode, all four codes ------------------------
+    //
+    //   00 pal_bg   01 pal_fg   10 ham_held   11 black (exactly 000)
+    //
+    // The long 10-fill after pixel 16 is the real point: it proves ham_held
+    // survives as a palette entry for the whole line instead of being
+    // overwritten by the 00s and 01s in front of it.
+    const Rgb444 IDX_BG   = 0x123;
+    const Rgb444 IDX_FG   = 0x456;
+    const Rgb444 IDX_HELD = 0x789;
+    const std::vector<Rgb444> IDX_EXPECT = {IDX_BG, IDX_FG, IDX_HELD, RGB444_BLACK};
+
+    std::vector<uint8_t> idx_bytes = {0x1B, 0xE4, 0x1B, 0xE4};
+    push_fill(idx_bytes, 156, 0xAA);         // 160 bytes: all "10" -> ham_held
+
+    std::vector<Rgb444> idx_want(H_ACTIVE, IDX_HELD);
+    for (uint32_t k = 0; k < 16; k++)
+    {
+        idx_want[k] = IDX_EXPECT[stream_dibit(idx_bytes, k)];
+    }
+    {
+        const PixelLine line = pixel_line(PIXEL_MODE_INDEXED_2BPP, idx_bytes,
+                                          IDX_FG, IDX_BG, IDX_HELD, 0);
+        report_pixel_case("IDX2_ALL_FOUR", line,
+                          pixel_mismatches(line, idx_want, 0, H_ACTIVE - 1), H_ACTIVE,
+                          PIXELS_WORDS_INDEXED2);
+        CHECK(idx_want[3] == RGB444_BLACK && idx_want[4] == RGB444_BLACK,
+              "pixel trace IDX2_ALL_FOUR did not exercise code 11 as black");
+        CHECK(line.px[H_ACTIVE - 1] == IDX_HELD,
+              "pixel trace IDX2_ALL_FOUR: the last pixel is 0x%03X, not the SET-loaded "
+              "ham_held 0x%03X — the stream is not locked out of it",
+              line.px[H_ACTIVE - 1], IDX_HELD);
+    }
+
+    // --- THE ORDER DEPENDENCE: SET mode BEFORE SET ham_held -----------------
+    //
+    // held_init is suppressed by the mode bit, so ham_held only survives
+    // blanking once the mode register already reads indexed.  A list that SETs
+    // ham_held and THEN SETs mode has its colour overwritten by pal_fg on the
+    // intervening blank clocks — and code 10 then paints pal_fg.
+    {
+        const PixelLine line = pixel_line(PIXEL_MODE_INDEXED_2BPP, idx_bytes,
+                                          IDX_FG, IDX_BG, IDX_HELD, 0, true);
+        uint32_t as_fg = 0;
+        for (Rgb444 c : line.px)
+        {
+            if (c == IDX_FG)
+            {
+                as_fg++;
+            }
+        }
+        printf("  %-18s ham_held SET BEFORE mode: code 10 paints 0x%03X on %u pixels "
+               "(0x%03X was lost)\n", "IDX2_SET_ORDER", line.px[H_ACTIVE - 1], as_fg,
+               IDX_HELD);
+        CHECK(line.px[H_ACTIVE - 1] == IDX_FG,
+              "pixel trace IDX2_SET_ORDER: SETting ham_held before mode must lose the "
+              "colour to the blanking reload — got 0x%03X, expected pal_fg 0x%03X",
+              line.px[H_ACTIVE - 1], IDX_FG);
+    }
+
+    // --- IDX2 fine scroll, and the odd clamp --------------------------------
+    //
+    // skip is in STREAM BITS, so in a two-bit mode skip 4 discards two whole
+    // dibits.  skip 5 must render identically: bit 0 is clamped away at
+    // consumption because an odd shift would split every index across a dibit
+    // boundary.  skip 12 adds the whole-byte discard on top and skip 13 clamps
+    // back onto it.  Only the LEADING pixels are compared — see the declared
+    // tail limit at the top of this section.
+    for (uint32_t skip : {4u, 12u})
+    {
+        const uint32_t dibits_gone = skip / 2;
+        std::vector<Rgb444> want(H_ACTIVE);
+        for (uint32_t k = 0; k < 10; k++)
+        {
+            want[k] = IDX_EXPECT[stream_dibit(idx_bytes, k + dibits_gone)];
+        }
+
+        const PixelLine even = pixel_line(PIXEL_MODE_INDEXED_2BPP, idx_bytes,
+                                          IDX_FG, IDX_BG, IDX_HELD, skip);
+        const PixelLine odd  = pixel_line(PIXEL_MODE_INDEXED_2BPP, idx_bytes,
+                                          IDX_FG, IDX_BG, IDX_HELD, skip + 1);
+        const uint32_t bad_even = pixel_mismatches(even, want, 0, 9);
+        uint32_t       differ   = 0;
+        for (uint32_t k = 0; k < 10; k++)
+        {
+            if (even.px[k] != odd.px[k])
+            {
+                differ++;
+            }
+        }
+        printf("  %-18s skip %2u discards %u dibits: %u wrong; skip %2u differs on %u "
+               "of 10 pixels\n", "IDX2_SKIP_CLAMP", skip, dibits_gone, bad_even,
+               skip + 1, differ);
+        CHECK(bad_even == 0,
+              "pixel trace IDX2_SKIP%u: %u of the leading 10 pixels are wrong", skip,
+              bad_even);
+        CHECK(differ == 0,
+              "pixel trace IDX2_SKIP%uODD: an odd skip must clamp to the even one, %u of "
+              "10 pixels differ", skip + 1, differ);
+    }
+
+    // --- HALF_1BPP: 320 groups across the 640-clock window ------------------
+    //
+    // The expectation is the full-rate definition with the group index k >> 1,
+    // which is precisely the claim "each group is held for exactly two clocks
+    // and there are 320 of them".  A group held for one clock, three clocks, or
+    // with the pair phase inverted fails immediately.  The word count is the
+    // other half of the claim: half the stream.
+    {
+        std::vector<uint8_t> b = {0xB2, 0x4D, 0xF0, 0x0F, 0xAA, 0x55};
+        push_fill(b, 34, 0xC3);              // 40 bytes on a half-rate 1bpp line
+        const Rgb444 fg = 0xF00;
+        const Rgb444 bg = 0x00F;
+        const PixelLine line = pixel_line(PIXEL_MODE_DIRECT_1BPP | PIXEL_MODE_HALF_RATE,
+                                          b, fg, bg, 0x789, 0);
+
+        std::vector<Rgb444> want(H_ACTIVE);
+        for (uint32_t k = 0; k < H_ACTIVE; k++)
+        {
+            want[k] = stream_bit(b, k / 2) != 0 ? fg : bg;
+        }
+        report_pixel_case("HALF_1BPP", line,
+                          pixel_mismatches(line, want, 0, H_ACTIVE - 1), H_ACTIVE,
+                          PIXELS_WORDS_HALF_1BPP);
+    }
+
+    // --- HALF_IDX2 ----------------------------------------------------------
+    {
+        std::vector<uint8_t> b = {0x1B, 0xE4, 0x1B, 0xE4};
+        push_fill(b, 76, 0x6C);              // 80 bytes: 01 10 11 00, all four codes
+        const PixelLine line = pixel_line(PIXEL_MODE_INDEXED_2BPP | PIXEL_MODE_HALF_RATE,
+                                          b, IDX_FG, IDX_BG, IDX_HELD, 0);
+
+        std::vector<Rgb444> want(H_ACTIVE);
+        for (uint32_t k = 0; k < H_ACTIVE; k++)
+        {
+            want[k] = IDX_EXPECT[stream_dibit(b, k / 2)];
+        }
+        report_pixel_case("HALF_IDX2", line,
+                          pixel_mismatches(line, want, 0, H_ACTIVE - 1), H_ACTIVE,
+                          PIXELS_WORDS_HALF_INDEXED2);
+    }
+
+    // --- INDEXED UNDERRUN, and what the model does --------------------------
+    //
+    // There is no empty flag: /RE keeps firing, a 7200 ignores a read while
+    // empty and holds Q, so the last word pattern repeats.  From reset that
+    // word is zero, every dibit reads 00, and the whole line renders pal_bg —
+    // which makes the third-colour trick the pure-VIDCMD screens spend
+    // available in indexed mode too.  Finding 22's caveat applies unchanged:
+    // THIS IS WHAT THE MODEL DOES, not what a 7200 pair is known to present on
+    // Q after /RS with no write at all.
+    {
+        const PixelLine line = pixel_line(PIXEL_MODE_INDEXED_2BPP, {},
+                                          IDX_FG, IDX_BG, IDX_HELD, 0);
+        uint32_t off = 0;
+        for (Rgb444 c : line.px)
+        {
+            if (c != IDX_BG)
+            {
+                off++;
+            }
+        }
+        printf("  %-18s empty FIFO re-shifts zeroes: %u of %u pixels are pal_bg 0x%03X, "
+               "%u tiled words\n", "IDX2_UNDERRUN", H_ACTIVE - off, H_ACTIVE, IDX_BG,
+               line.tiled_words);
+        CHECK(off == 0,
+              "pixel trace IDX2_UNDERRUN: %u pixels are not pal_bg — an empty PIXELS FIFO "
+              "must re-shift its held word", off);
+        CHECK(line.tiled_words == PIXELS_WORDS_INDEXED2,
+              "pixel trace IDX2_UNDERRUN: %u tiled words, expected the line's whole %u",
+              line.tiled_words, PIXELS_WORDS_INDEXED2);
+    }
+
+    printf("  MEASURED            full rate 40 words 1bpp / 80 words two-bit; "
+           "half rate 20 / 40; HAM ignores the flag\n");
+}
+
+// ---------------------------------------------------------------------------
 // Reference rasterizers for the two pure-VIDCMD screens
 // ---------------------------------------------------------------------------
 //
@@ -1063,6 +1500,120 @@ FrameImage kiosk_reference_frame()
         }
     }
     return img;
+}
+
+// ---------------------------------------------------------------------------
+// Reference rasterizers for the two new PIXEL modes
+// ---------------------------------------------------------------------------
+//
+// Same discipline as the screen references above: draw the picture the ordinary
+// way, straight from the mode definition and the same pattern generator the
+// authoring uses, so the comparison tests THE MODE AND THE RECORDS rather than
+// the pattern.
+
+// 2bpp indexed, with the mid-line SET pair placed by slot arithmetic.  The two
+// SETs are the leading RUN's banked pair, so pix_pal_bg commits on slot
+// split_pixel and pix_pal_fg on slot split_pixel + 1 — exactly what m2-split
+// pins in 1bpp, restated here in terms of two of the four indices.  Codes 10
+// and 11 are untouched by the recolour: ham_held has no mid-line SET and black
+// is a constant, so a two-word recolour moves two of the four colours and the
+// other two hold.
+FrameImage indexed2_reference_frame(const FrameParams &p)
+{
+    FrameImage img;
+    img.pixels.assign(static_cast<size_t>(H_ACTIVE) * V_ACTIVE, 0);
+
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        const Rgb444 line_fg = line_palette_fg(y);
+        const Rgb444 line_bg = line_palette_bg(y);
+
+        for (uint32_t x = 0; x < H_ACTIVE; x++)
+        {
+            const Rgb444 bg = (p.mid_line_split && x >= p.split_pixel) ? p.split_bg : line_bg;
+            const Rgb444 fg =
+                (p.mid_line_split && x >= p.split_pixel + 1) ? p.split_fg : line_fg;
+
+            Rgb444 c = RGB444_BLACK;
+            switch (idx2_pattern_code(x, y))
+            {
+                case IDX2_CODE_PAL_BG:   c = bg;                break;
+                case IDX2_CODE_PAL_FG:   c = fg;                break;
+                case IDX2_CODE_HAM_HELD: c = p.ham_held_color;  break;
+                default:                 c = RGB444_BLACK;      break;
+            }
+            img.pixels[y * H_ACTIVE + x] = c;
+        }
+    }
+    return img;
+}
+
+// The 1bpp test pattern's rule, restated so the reference does not have to read
+// the framebuffer back.  `b` is a STREAM BIT index, which at half rate is the
+// screen x divided by two.
+bool test_pattern_bit(uint32_t b, uint32_t y)
+{
+    if ((y % 32u) < 2u)
+    {
+        return (b % 8u) < 4u;
+    }
+    return (((b + y) / 16u) & 1u) != 0;
+}
+
+// Half-rate 1bpp with four MASK sprites over it.  THE INTEROP STATEMENT THIS
+// ENCODES: a MASK's dibits step once per PIXEL-CLOCK SLOT and COMPOSITOR has no
+// idea what rate PIXEL is running at, so the sprites keep full 640-pixel
+// horizontal resolution over a playfield whose groups are two pixels wide.
+// Half rate is a stream-side gate inside PIXEL and nothing else in the pipeline
+// sees it.
+FrameImage halfrate_reference_frame(const FrameParams &p)
+{
+    FrameImage img;
+    img.pixels.assign(static_cast<size_t>(H_ACTIVE) * V_ACTIVE, 0);
+
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        const Rgb444 fg = line_palette_fg(y);
+        const Rgb444 bg = line_palette_bg(y);
+
+        for (uint32_t x = 0; x < H_ACTIVE; x++)
+        {
+            // The playfield: one stream bit covers two pixel clocks.
+            img.pixels[y * H_ACTIVE + x] = test_pattern_bit(x / 2u, y) ? fg : bg;
+        }
+
+        for (uint32_t s = 0; s < MASK_SPRITE_COUNT; s++)
+        {
+            const uint32_t x0 = MASK_SPRITE_X[s];
+            for (uint32_t c = 0; c < MASK_SLOTS; c++)
+            {
+                const uint32_t dibit = mask_sprite_dibit(y % MASK_SPRITE_H, c);
+                if (dibit == MASK_DIBIT_COLOR0)
+                {
+                    img.pixels[y * H_ACTIVE + x0 + c] = p.held_bg;
+                }
+                else if (dibit == MASK_DIBIT_COLOR1)
+                {
+                    img.pixels[y * H_ACTIVE + x0 + c] = p.held_fg;
+                }
+                // MASK_DIBIT_PASSTHROUGH keeps the playfield underneath.
+            }
+        }
+    }
+    return img;
+}
+
+// Is this pixel inside one of the MASK sprite cells?
+bool in_mask_sprite(uint32_t x)
+{
+    for (uint32_t s = 0; s < MASK_SPRITE_COUNT; s++)
+    {
+        if (x >= MASK_SPRITE_X[s] && x < MASK_SPRITE_X[s] + MASK_SLOTS)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 // THE LAYOUT INVARIANT both screens are built on: a record's pixel 0 has no
@@ -1788,6 +2339,7 @@ int main()
     write_test_pattern_1bpp(ram, FB_BASE, FB_STRIDE_BYTES, FB_WORDS_PER_LINE, FB_LINES);
     write_solid_pattern_1bpp(ram, FB_SOLID_BASE, FB_STRIDE_BYTES, FB_WORDS_PER_LINE, FB_LINES);
     write_test_pattern_microham(ram, FB_HAM_BASE, FB_HAM_STRIDE, FB_LINES);
+    write_test_pattern_indexed2(ram, FB_IDX2_BASE, FB_IDX2_STRIDE, FB_LINES);
     write_audio_source(ram, AUDIO_BASE, AUDIO_SOURCE_PAIRS);
     draw_tempest_web(ram, FB_WEB_BASE, FB_STRIDE_BYTES);
 
@@ -1817,9 +2369,16 @@ int main()
            RENDER_FIRST_FRAME, RENDER_FIRST_FRAME + 1);
     printf("  VIDCMD fetch %u slots/word, banked pair gap %u slot, on-chip bank %u records\n",
            VIDCMD_SLOTS_PER_WORD, VIDCMD_PAIR_SLOT_GAP, VIDCMD_BANK_DEPTH);
+    printf("  PIXEL mode register is BITWISE: [0] micro-HAM  [1] 2bpp indexed  [2] half rate "
+           "([1:0]==11 reserved, HAM wins)\n");
+    printf("  PIXELS words/line   %u 1bpp, %u micro-HAM, %u indexed; at half rate %u / %u "
+           "(half rate is masked off in micro-HAM)\n",
+           PIXELS_WORDS_1BPP, PIXELS_WORDS_MICROHAM, PIXELS_WORDS_INDEXED2,
+           PIXELS_WORDS_HALF_1BPP, PIXELS_WORDS_HALF_INDEXED2);
 
     // The laws first, directly against the two units, before any list builder
     // gets to interpret them.
+    check_pixel_modes();
     check_cadence_traces();
     check_mask_traces();
 
@@ -2079,6 +2638,270 @@ int main()
         CHECK(at(f1, 321, 100) == chroma,
               "m2-microham: the second pixel of the first 4-bit code should be 0x%03X with "
               "both channels committed together, got 0x%03X", chroma, at(f1, 321, 100));
+    }
+
+    // --- M8: 2bpp indexed, four colours per line -------------------------------
+    uint32_t m8_vidcmd_words = 0;
+    {
+        CaseSpec s;
+        s.name  = "m8-indexed2";
+        s.title = "2bpp indexed: 80 words/line, four colours, ham_held as the third entry";
+        s.base  = common;
+        s.base.mode             = PixelMode::INDEXED_2BPP;
+        s.base.fb_base          = FB_IDX2_BASE;
+        s.base.fb_stride_bytes  = FB_IDX2_STRIDE;
+        s.base.per_line_palette = true;
+        s.base.per_line_mode    = true;
+        // ONE SET(pix_ham_held) for the whole frame, emitted immediately after
+        // the SET(pix_mode) that selects indexed.  Both halves of that matter:
+        // the ORDER is the chip's one order dependence, and ONCE PER FRAME is
+        // the strongest available assertion that indexed really does lock both
+        // writers out of ham_held — in any other mode blanking would have
+        // overwritten it with pal_fg long before line 1.
+        s.base.frame_ham_held   = true;
+        s.base.ham_held_color   = rgb444(15, 12, 0);
+        // A mid-line recolour of two of the four indices, placed by the same
+        // slot arithmetic m2-split uses.  Codes 10 and 11 must NOT move.
+        s.base.mid_line_split   = true;
+        s.base.split_pixel      = 320;
+        s.base.split_fg         = rgb444(15, 0, 0);
+        s.base.split_bg         = rgb444(0, 15, 0);
+        CaseResult r = run_case(s, ram, REARM_LATENCY_CYCLES);
+        write_artifacts(s, r);
+        print_report(s, r);
+        check_case(s, r);
+
+        const uint32_t words = pixel_words_for(s.base.mode, 0);
+        printf("  stream rate         %u words/line, the same as micro-HAM (%u): both spend "
+               "two stream bits per pixel clock\n", words, PIXELS_WORDS_MICROHAM);
+        CHECK(words == PIXELS_WORDS_INDEXED2 && words == PIXELS_WORDS_MICROHAM,
+              "m8-indexed2: %u words/line, expected %u", words, PIXELS_WORDS_INDEXED2);
+
+        const FrameImage ref = indexed2_reference_frame(s.base);
+        const uint32_t differing = compare_frames("indexed2", r, ref);
+        CHECK(differing == 0,
+              "m8-indexed2: %u pixels differ from the host-rasterized reference — the dibit "
+              "index, the third colour or the mid-line SET seam is wrong", differing);
+
+        // All four codes, counted off the rendered frame.
+        const FrameImage &f1 = r.rendered.frames[0];
+        uint32_t n_black = 0;
+        uint32_t n_held  = 0;
+        uint32_t n_split_fg = 0;
+        uint32_t n_split_bg = 0;
+        for (Rgb444 c : f1.pixels)
+        {
+            n_black    += (c == RGB444_BLACK) ? 1u : 0u;
+            n_held     += (c == s.base.ham_held_color) ? 1u : 0u;
+            n_split_fg += (c == s.base.split_fg) ? 1u : 0u;
+            n_split_bg += (c == s.base.split_bg) ? 1u : 0u;
+        }
+        // Each of the sixteen 40-pixel blocks carries one code and the phase
+        // walks, so every code takes exactly a quarter of the frame.
+        const uint32_t want_quarter = (H_ACTIVE / 4u) * V_ACTIVE;
+        printf("  four codes          00/01 recoloured mid-line, 10 ham_held %u px, "
+               "11 black %u px (want %u each)\n", n_held, n_black, want_quarter);
+        CHECK(n_black == want_quarter,
+              "m8-indexed2: code 11 painted %u pixels, expected %u — black is a constant, "
+              "not a register", n_black, want_quarter);
+        CHECK(n_held == want_quarter,
+              "m8-indexed2: code 10 painted %u pixels of 0x%03X, expected %u",
+              n_held, s.base.ham_held_color, want_quarter);
+        CHECK(n_split_fg > 0 && n_split_bg > 0,
+              "m8-indexed2: the mid-line recolour painted %u fg / %u bg pixels — the SET "
+              "pair did not land", n_split_fg, n_split_bg);
+
+        // The lockout, in one number: the ham_held SET happened on line 0 and
+        // its colour still paints line 479.
+        uint32_t held_last_line = 0;
+        for (uint32_t x = 0; x < H_ACTIVE; x++)
+        {
+            if (at(f1, x, V_ACTIVE - 1) == s.base.ham_held_color)
+            {
+                held_last_line++;
+            }
+        }
+        printf("  ham_held lockout    SET once on line 0; line %u still paints it on %u "
+               "pixels (blanking reload suppressed by the mode bit)\n",
+               V_ACTIVE - 1, held_last_line);
+        CHECK(held_last_line > 0,
+              "m8-indexed2: line %u shows no ham_held pixels, so the per-frame SET did not "
+              "survive %u blanking intervals", V_ACTIVE - 1, V_ACTIVE - 1);
+
+        // The mid-line seam, pixel by pixel on a line whose codes make it
+        // legible: pick the first line whose block at x=320 is code 00.
+        {
+            uint32_t probe = 0;
+            while (probe < V_ACTIVE && idx2_pattern_code(320, probe) != IDX2_CODE_PAL_BG)
+            {
+                probe++;
+            }
+            printf("  split seam          line %u: x=319 0x%03X x=320 0x%03X (want split bg "
+                   "0x%03X), x=321.. follows fg 0x%03X\n",
+                   probe, at(f1, 319, probe), at(f1, 320, probe), s.base.split_bg,
+                   s.base.split_fg);
+            CHECK(at(f1, 320, probe) == s.base.split_bg,
+                  "m8-indexed2: pixel 320 of line %u is 0x%03X, expected the split bg "
+                  "0x%03X — SET(pix_pal_bg) did not land on its own slot",
+                  probe, at(f1, 320, probe), s.base.split_bg);
+        }
+
+        // Per-line delivery budget: the pixel stream AND the line's records, in
+        // words, against the same 66%-of-the-bus cap the screen cases use.
+        m8_vidcmd_words = r.vidcmd_words_max;
+        const uint32_t line_total = words + r.vidcmd_words_max;
+        printf("  line word budget    %u PIXELS + %u VIDCMD = %u words/line against the "
+               "%u-word cap (%u%% of the %llu-SYSCLK line)\n",
+               words, r.vidcmd_words_max, line_total, VIDCMD_WORDS_PER_LINE_CAP,
+               VIDCMD_BUS_BUDGET_PERCENT, static_cast<unsigned long long>(LINE_SYSCLK));
+        CHECK(line_total <= VIDCMD_WORDS_PER_LINE_CAP,
+              "m8-indexed2: %u words/line (%u pixel + %u VIDCMD) is over the %u-word cap",
+              line_total, words, r.vidcmd_words_max, VIDCMD_WORDS_PER_LINE_CAP);
+    }
+
+    // --- M9: half rate, with MASK sprites at full pixel resolution -------------
+    {
+        CaseSpec s;
+        s.name  = "m9-halfrate";
+        s.title = "half rate: a 320-wide playfield under 640-wide MASK sprites";
+        s.base  = common;
+        s.base.mode             = PixelMode::HALF_1BPP;
+        s.base.per_line_palette = true;
+        s.base.per_line_mode    = true;
+        s.base.sprites          = SpriteStyle::MASK_SPRITES;
+        s.base.held_fg          = rgb444(15, 15, 0);
+        s.base.held_bg          = rgb444(2, 0, 8);
+        CaseResult r = run_case(s, ram, REARM_LATENCY_CYCLES);
+        write_artifacts(s, r);
+        print_report(s, r);
+        check_case(s, r);
+
+        const uint32_t m9_half_1bpp_words = pixel_words_for(s.base.mode, 0);
+        printf("  stream cost         %u words/line, half of 1bpp's %u — 320 groups across "
+               "the same 640-clock window\n", m9_half_1bpp_words, PIXELS_WORDS_1BPP);
+        CHECK(m9_half_1bpp_words == PIXELS_WORDS_HALF_1BPP,
+              "m9-halfrate: half-rate 1bpp is %u words/line, expected %u",
+              m9_half_1bpp_words, PIXELS_WORDS_HALF_1BPP);
+
+        const FrameImage ref = halfrate_reference_frame(s.base);
+        const uint32_t differing = compare_frames("halfrate", r, ref);
+        CHECK(differing == 0,
+              "m9-halfrate: %u pixels differ from the host-rasterized reference — the group "
+              "pairing or a mask dibit is landing on the wrong pixel", differing);
+
+        // THE GROUP LAW, measured off the frame rather than asserted from the
+        // authoring: outside the sprite cells every 2k / 2k+1 pair must be one
+        // colour, because one consumed group is held for exactly two pixel
+        // clocks.  A group held for one clock, three, or with the pair phase
+        // inverted breaks this immediately.
+        const FrameImage &f1 = r.rendered.frames[0];
+        uint32_t pairs_checked = 0;
+        uint32_t pairs_split   = 0;
+        uint32_t mask_splits   = 0;
+        for (uint32_t y = 0; y < V_ACTIVE; y++)
+        {
+            for (uint32_t k = 0; k < H_ACTIVE / 2; k++)
+            {
+                const uint32_t x = 2 * k;
+                const bool differs = at(f1, x, y) != at(f1, x + 1, y);
+                if (in_mask_sprite(x) || in_mask_sprite(x + 1))
+                {
+                    mask_splits += differs ? 1u : 0u;
+                    continue;
+                }
+                pairs_checked++;
+                pairs_split += differs ? 1u : 0u;
+            }
+        }
+        printf("  group law           %u playfield groups checked, %u span less than 2 "
+               "slots\n", pairs_checked, pairs_split);
+        CHECK(pairs_split == 0,
+              "m9-halfrate: %u of %u playfield groups do not span exactly 2 pixel clocks",
+              pairs_split, pairs_checked);
+
+        // AND THE INTEROP STATEMENT, as its own number: inside the sprite cells
+        // adjacent pixels DO differ, because a MASK steps one dibit per
+        // pixel-clock slot and COMPOSITOR never learns what rate PIXEL is
+        // running at.  Half rate is a stream-side gate inside PIXEL alone.
+        printf("  MASK interop        %u adjacent pairs inside the sprite cells differ: a "
+               "mask keeps full %u-pixel resolution over a %u-wide playfield\n",
+               mask_splits, H_ACTIVE, H_ACTIVE / 2);
+        CHECK(mask_splits > 0,
+              "m9-halfrate: no adjacent pair inside a sprite cell differs, so the MASK "
+              "records are being quantized to the playfield's groups");
+        CHECK(r.rendered.stats.vidcmd_mask_records / RENDER_FRAMES ==
+                  MASK_SPRITE_COUNT * V_ACTIVE,
+              "m9-halfrate: %u MASK records per frame, expected %u",
+              r.rendered.stats.vidcmd_mask_records / RENDER_FRAMES,
+              MASK_SPRITE_COUNT * V_ACTIVE);
+
+        // The same case at two bits per clock.  Same 320 groups, same sprites,
+        // twice the stream — and the group law has to hold identically, which
+        // is what says half rate is one gate and not a per-mode special case.
+        CaseSpec t = s;
+        t.name  = "m9-halfrate-idx2";
+        t.title = "half rate at 2bpp indexed: 40 words/line, four colours, same sprites";
+        t.base.mode           = PixelMode::HALF_INDEXED_2BPP;
+        t.base.fb_base        = FB_IDX2_BASE;
+        t.base.fb_stride_bytes = FB_IDX2_STRIDE;
+        t.base.frame_ham_held = true;
+        t.base.ham_held_color = rgb444(0, 15, 12);
+        CaseResult tr = run_case(t, ram, REARM_LATENCY_CYCLES);
+        write_artifacts(t, tr);
+        print_report(t, tr);
+        check_case(t, tr);
+
+        const uint32_t m9_half_idx2_words = pixel_words_for(t.base.mode, 0);
+        const FrameImage &g1 = tr.rendered.frames[0];
+        uint32_t idx_pairs_split = 0;
+        uint32_t idx_colours     = 0;
+        for (uint32_t y = 0; y < V_ACTIVE; y++)
+        {
+            for (uint32_t k = 0; k < H_ACTIVE / 2; k++)
+            {
+                const uint32_t x = 2 * k;
+                if (in_mask_sprite(x) || in_mask_sprite(x + 1))
+                {
+                    continue;
+                }
+                if (at(g1, x, y) != at(g1, x + 1, y))
+                {
+                    idx_pairs_split++;
+                }
+                // The playfield dibit for group k is the FULL-RATE pattern's
+                // dibit k, because a half-rate line consumes the first 320 of
+                // the buffer's 640.
+                if (at(g1, x, y) == t.base.ham_held_color ||
+                    at(g1, x, y) == RGB444_BLACK)
+                {
+                    idx_colours++;
+                }
+            }
+        }
+        printf("  half+indexed        %u words/line (half of %u), %u split groups, "
+               "%u groups painted by codes 10/11\n",
+               m9_half_idx2_words, PIXELS_WORDS_INDEXED2, idx_pairs_split, idx_colours);
+        CHECK(m9_half_idx2_words == PIXELS_WORDS_HALF_INDEXED2,
+              "m9-halfrate-idx2: %u words/line, expected %u",
+              m9_half_idx2_words, PIXELS_WORDS_HALF_INDEXED2);
+        CHECK(idx_pairs_split == 0,
+              "m9-halfrate-idx2: %u playfield groups do not span exactly 2 pixel clocks",
+              idx_pairs_split);
+        CHECK(idx_colours > 0,
+              "m9-halfrate-idx2: codes 10 and 11 painted nothing, so the indexed decode is "
+              "not running at half rate");
+
+        // Half rate is masked off in micro-HAM, in the helper as in the chip:
+        // a HAM code can span two consumption clocks and ham_second is not
+        // phase-gated, so a half-rate HAM line would mis-pair every 4-bit code.
+        // One literal on half_rate turns that into "the flag does nothing".
+        const uint32_t ham_half =
+            pixels_words_per_line(PIXEL_MODE_MICRO_HAM | PIXEL_MODE_HALF_RATE, 0);
+        printf("  HAM masking         mode HAM|HALF is %u words/line, unchanged from HAM's "
+               "%u — the flag does nothing there\n", ham_half, PIXELS_WORDS_MICROHAM);
+        CHECK(ham_half == PIXELS_WORDS_MICROHAM,
+              "m9-halfrate: half rate shortened a micro-HAM line to %u words; it is masked "
+              "off in HAM by construction", ham_half);
     }
 
     uint32_t m3_cursor_words = 0;
@@ -3001,6 +3824,45 @@ int main()
            "     write at all, and what pixel.v's shifter holds before its first fetch, are\n"
            "     both open.  Settle them against the RTL and the datasheet before any art\n"
            "     depends on the third colour.\n");
+
+    printf(" 23. NEW 2026-08-26, AND THE MODE REGISTER IS NOT AN ENUMERATION. pixel.v decodes\n"
+           "     SET(pix_mode) BITWISE — [0] micro-HAM, [1] 2bpp indexed, [2] half rate — with\n"
+           "     [1:0] == 11 reserved and micro-HAM winning it BY CONSTRUCTION rather than by\n"
+           "     decode accident.  Everything downstream of that is derived, not tabulated:\n"
+           "     bits per clock is \"either two-bit mode\", words per line is groups x bits, and\n"
+           "     the odd-skip clamp belongs to BOTH two-bit modes.  2bpp indexed costs the same\n"
+           "     %u words/line as micro-HAM and no new SET targets at all — 00 pal_bg, 01\n"
+           "     pal_fg, 10 ham_held, 11 a constant black — so a display list recolours four\n"
+           "     indices per line with SETs it already emits.  m8-indexed2 renders it\n"
+           "     pixel-exact against a host rasterization at %u PIXELS + %u VIDCMD words a\n"
+           "     line, against the %u-word cap.\n",
+           PIXELS_WORDS_INDEXED2, PIXELS_WORDS_INDEXED2, m8_vidcmd_words,
+           VIDCMD_WORDS_PER_LINE_CAP);
+    printf(" 24. NEW 2026-08-26, AND IT IS THE ONE ORDER DEPENDENCE IN THE CHIP. Indexed mode\n"
+           "     has to show what SET *put* in ham_held, which cannot survive a decoder that\n"
+           "     overwrites it — so pixel.v locks the stream out of ham_held there AND drops\n"
+           "     the blanking reload (held_init = ~pix_consume & ~mode_idx2).  Consequence: a\n"
+           "     list that SETs ham_held and THEN SETs mode loses the colour to pal_fg on the\n"
+           "     blank clocks in between.  SET MODE FIRST.  render.cpp models the reload clock\n"
+           "     by clock (PixelUnit::blank_clock) so this is a failing check rather than a\n"
+           "     comment: the IDX2_SET_ORDER trace proves the wrong order loses the colour,\n"
+           "     and m8-indexed2 SETs ham_held ONCE PER FRAME and still paints it on line %u.\n",
+           V_ACTIVE - 1);
+    printf(" 25. NEW 2026-08-26, AND HALF RATE COSTS NOTHING OUTSIDE PIXEL. mode[2] holds every\n"
+           "     consumed group for two pixel clocks: %u groups across the same 640-clock\n"
+           "     window, so a line costs half the stream — %u words 1bpp, %u indexed — at half\n"
+           "     the horizontal resolution.  It is a STREAM-SIDE GATE and nothing else in the\n"
+           "     pipeline learns about it: RGB_OUT's window, PIXEL_OUT_LEAD, the SET path and\n"
+           "     COMPOSITOR are untouched.  The interop that matters for a game mode is that\n"
+           "     MASK DIBITS STEP ONCE PER PIXEL-CLOCK SLOT REGARDLESS, so sprites keep full\n"
+           "     %u-pixel horizontal resolution over a %u-wide playfield — m9-halfrate measures\n"
+           "     both halves at once: zero playfield groups spanning other than 2 slots, and\n"
+           "     adjacent pixels inside the sprite cells that DO differ.  Half rate is masked\n"
+           "     off in micro-HAM in hardware, not merely declared undefined, because a HAM\n"
+           "     code can span two consumption clocks and ham_second is not phase-gated: one\n"
+           "     literal turns a whole garbage line into \"the flag does nothing\".\n",
+           H_ACTIVE / 2, PIXELS_WORDS_HALF_1BPP, PIXELS_WORDS_HALF_INDEXED2,
+           H_ACTIVE, H_ACTIVE / 2);
 
     printf("\n=== summary ===\n");
     if (g_failures == 0)

@@ -61,14 +61,24 @@ struct RenderStats
 // PIXEL
 // ---------------------------------------------------------------------------
 //
-// Pure pixel bits in, 12-bit RGB out.  Two modes share one bit-serial front
-// end; the only difference is how many bits a pixel clock eats and what they
-// mean.  Registers are written by COMPOSITOR forwarding a SET, never by a bus.
+// Pure pixel bits in, 12-bit RGB out.  Three modes share one bit-serial front
+// end, selected by the BITWISE mode register (descriptor.h) exactly as pixel.v
+// decodes it — mode_ham / mode_idx2 / half_rate, with micro-HAM winning the
+// reserved 11 encoding and masking half rate off.  Registers are written by
+// COMPOSITOR forwarding a SET, never by a bus.
+//
+// THE ONE ORDER DEPENDENCE, and it is modelled rather than merely documented:
+// in 2bpp indexed the stream is locked out of ham_held so that code 10 shows
+// what SET put there, and pixel.v achieves that by suppressing BOTH writers —
+// the per-clock stream load AND the blanking reload from pal_fg.  blank_clock()
+// below is that second writer.  A list that SETs ham_held BEFORE it SETs mode
+// therefore loses the colour on the blank clocks in between, here as on silicon.
 class PixelUnit
 {
 public:
     void reset();                                 // /RS at vsync
     bool push_word(uint16_t w);                   // PIXELS FIFO write; false on full
+    void blank_clock();                           // one clock with PIX_CONSUME low
     void begin_line();                            // line start: reload held, spend pixel_skip
     Rgb444 next_pixel();                          // one active pixel clock
     void set_register(uint32_t target, uint32_t value);
@@ -87,6 +97,15 @@ private:
     void refill(uint32_t need);
     uint32_t peek(uint32_t n) const;
     uint32_t take(uint32_t n);
+
+    // pixel.v's mode_ham / mode_idx2 / half_rate wires, and the indexed output
+    // mux.  idx_colour() is combinational off the three colour registers, like
+    // the RTL's, so a SET landing on a held half-rate clock is visible there —
+    // whereas 1bpp's RGB_OUT is a copy of the REGISTERED ham_held and is not.
+    bool mode_ham() const { return pixel_mode_ham(mode_); }
+    bool mode_idx2() const { return pixel_mode_indexed(mode_); }
+    bool half_rate() const { return pixel_mode_half_rate(mode_); }
+    Rgb444 idx_colour() const;
 
     std::vector<uint16_t> fifo_ = std::vector<uint16_t>(PIXELS_FIFO_WORDS, 0);
     uint32_t head_  = 0;
@@ -108,6 +127,16 @@ private:
     uint32_t ham_type_    = 0;   // 0 = 10_g_r, 1 = 11_g_b
     uint32_t ham_g_       = 0;
     uint32_t ham_v_       = 0;
+
+    // pixel.v's half_phase: cleared at preload, toggled on EVERY consumption
+    // clock whatever the mode, and `step` is the first clock of each pair.  It
+    // toggles unconditionally here for the same reason it does there — a mode
+    // change mid-line must not re-phase the pairing.
+    uint32_t half_phase_  = 0;
+
+    // The indexed mode's own pipeline register: the dibit, not a colour, so
+    // the output mux stays combinational (pixel.v's idx_code).
+    uint32_t idx_code_    = 0;
 
     RenderStats *stats_   = nullptr;
     bool         counting_ = false;

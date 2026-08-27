@@ -772,6 +772,22 @@ void write_test_pattern_microham(Memory ram, uint32_t base, uint32_t stride_byte
     }
 }
 
+void write_test_pattern_indexed2(Memory ram, uint32_t base, uint32_t stride_bytes,
+                                 uint32_t lines)
+{
+    for (uint32_t y = 0; y < lines; y++)
+    {
+        BitPacker bp;
+        bp.ram  = ram;
+        bp.base = base + y * stride_bytes;
+
+        for (uint32_t x = 0; x < H_ACTIVE; x++)
+        {
+            bp.put(idx2_pattern_code(x, y), 2);
+        }
+    }
+}
+
 void write_audio_source(Memory ram, uint32_t base, uint32_t pairs)
 {
     // ~437 Hz sawtooth left / ~218 Hz triangle right at 15734.375 Hz.  Integer
@@ -796,9 +812,22 @@ void write_audio_source(Memory ram, uint32_t base, uint32_t pairs)
 
 uint32_t pixel_words_for(PixelMode mode, uint32_t pixel_skip)
 {
-    const uint32_t m = (mode == PixelMode::MICRO_HAM) ? PIXEL_MODE_MICRO_HAM
-                                                      : PIXEL_MODE_DIRECT_1BPP;
-    return pixels_words_per_line(m, pixel_skip);
+    return pixels_words_per_line(pixel_mode_bits(mode), pixel_skip);
+}
+
+// A 16x16 bordered box with a diamond inside.  Column 0 and column 15 and rows
+// 0 and 15 are cmp_color0 (the border), the diamond is cmp_color1, and
+// everything else is PASSTHROUGH so the picture underneath shows through.
+// Column 0 being unconditionally opaque is what makes the record legal at all:
+// a MASK's pixel 0 is an implicit opaque cmp_color0 and there is no bit for it.
+uint32_t mask_sprite_dibit(uint32_t row, uint32_t col)
+{
+    if (row == 0 || row == MASK_SPRITE_H - 1 || col == 0 || col == MASK_SLOTS - 1)
+    {
+        return MASK_DIBIT_COLOR0;
+    }
+    return ((sprite_mask(row) >> (15u - col)) & 1u) != 0 ? MASK_DIBIT_COLOR1
+                                                         : MASK_DIBIT_PASSTHROUGH;
 }
 
 // ---------------------------------------------------------------------------
@@ -978,8 +1007,7 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
     constexpr std::array<uint32_t, 4> SPRITE_X = {64, 200, 360, 500};
 
     const uint32_t pixel_skip = p.h_scroll_pixels % 16u;
-    const uint32_t mode_value = (p.mode == PixelMode::MICRO_HAM) ? PIXEL_MODE_MICRO_HAM
-                                                                 : PIXEL_MODE_DIRECT_1BPP;
+    const uint32_t mode_value = pixel_mode_bits(p.mode);
 
     uint32_t total = 0;
 
@@ -990,11 +1018,23 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
         uint32_t records = 0;
         uint32_t slots   = 0;
 
-        auto put = [&](uint16_t v)
+        auto put_word = [&](uint16_t v)
         {
             ram[rec_base + n * 2] = v;
             n++;
+        };
+
+        auto put = [&](uint16_t v)
+        {
+            put_word(v);
             records++;
+        };
+
+        // A MASK is two words and one record.
+        auto put_mask = [&](const VidcmdMask &m)
+        {
+            put(m.header);
+            put_word(m.data);
         };
 
         // What the compositor will ACTUALLY do with the words written so far.
@@ -1086,6 +1126,17 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
             if (p.per_line_mode)
             {
                 put(vidcmd_set(SET_PIX_MODE, mode_value));
+
+                // MODE BEFORE ham_held, and it is not a style choice: pixel.v
+                // suppresses the blanking reload of ham_held on the mode bit,
+                // so a SET(pix_ham_held) emitted first is overwritten by pal_fg
+                // on the blank clocks between the two records.  This is the one
+                // order dependence in the chip (descriptor.h), and the model
+                // reproduces it, so getting it backwards fails the case.
+                if (p.frame_ham_held && line == 0)
+                {
+                    put(vidcmd_set(SET_PIX_HAM_HELD, p.ham_held_color));
+                }
                 put(vidcmd_set(SET_PIX_PIXEL_SKIP, pixel_skip));
             }
         }
@@ -1197,6 +1248,44 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
             put(vidcmd_set(SET_PIX_PAL_FG, p.split_fg));
             slots += 1;
             close_exact();
+        }
+        else if (want_records && p.sprites == SpriteStyle::MASK_SPRITES)
+        {
+            // Four 16x16 sprites as MASK records on 16-pixel cell boundaries,
+            // with passthrough RUNs between them.  RUN-to-mask and mask-to-RUN
+            // are both zero-slot boundaries, so the authored sum is exactly
+            // H_ACTIVE by construction and no filler arithmetic is needed —
+            // the same property the console screen is built on.
+            //
+            // The point of the case is the dibits' RESOLUTION.  A mask steps
+            // one dibit per PIXEL CLOCK slot, and COMPOSITOR has no idea what
+            // rate PIXEL is running at, so these sprites stay 640-wide over a
+            // 320-wide half-rate playfield showing through their holes.
+            const uint32_t row = line % MASK_SPRITE_H;
+            uint32_t       x   = 0;
+            for (uint32_t s = 0; s < MASK_SPRITE_COUNT; s++)
+            {
+                const uint32_t x0 = MASK_SPRITE_X[s];
+                if (x0 > x)
+                {
+                    put(vidcmd_run(RUN_SRC_PASSTHROUGH, x0 - x));
+                    slots += x0 - x;
+                }
+
+                std::array<uint32_t, MASK_SLOTS> d{};
+                for (uint32_t c = 0; c < MASK_SLOTS; c++)
+                {
+                    d[c] = mask_sprite_dibit(row, c);
+                }
+                put_mask(vidcmd_mask(d));
+                slots += MASK_SLOTS;
+                x = x0 + MASK_SLOTS;
+            }
+            if (x < H_ACTIVE)
+            {
+                put(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - x));
+                slots += H_ACTIVE - x;
+            }
         }
         else if (want_records)
         {

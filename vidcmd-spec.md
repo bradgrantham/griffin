@@ -78,10 +78,95 @@ LSB ≈ 47 mV at VGA levels, 1% resistors adequate).
 
 ## 2. PIXELS stream
 
-| mode | rate | words/line | meaning |
-|---|---|---|---|
-| 1bpp direct | 1 bit/clock | 40 | bit selects pal_fg / pal_bg |
-| 2bpp micro-HAM | 2 bits/clock | 80 | dibit codes, below |
+> **Addendum 2026-08-26 — two new modes, and the mode register is a BIT
+> FIELD.**  Both are implemented and committed in `cpld/pixel/pixel.v` and
+> measured by `cpld/pixel/pixel_tb.v` (cases `IDX2_ALL_FOUR`, `IDX2_SKIP*`,
+> `HALF_1BPP`, `HALF_IDX2`, plus the `*_2LINE_*` fetch-window regressions).
+> `super-engine/render.cpp`'s PixelUnit decodes them the same way and the
+> suite's `pixel-modes` traces reproduce that testbench's per-pixel
+> expectations and its per-line `/RE` counts (as words: 40 / 80 / 20 / 40).
+>
+> **SET(pix_mode) is decoded BITWISE, not as an enumeration.**
+>
+> | bit | meaning |
+> |---|---|
+> | `mode[0]` | 2bpp micro-HAM |
+> | `mode[1]` | 2bpp indexed |
+> | `mode[2]` | half rate |
+>
+> * `mode[1:0] == 2'b11` is **RESERVED**, and micro-HAM wins it **by
+>   construction**: indexed is `mode[1] & ~mode[0]`, so a buggy list gets one
+>   whole known mode rather than two decoders fighting over `ham_held`.
+> * **Half rate is masked off in micro-HAM** — `half_rate = mode[2] &
+>   ~mode[0]` — in hardware, not merely declared undefined.  A HAM code can
+>   span two consumption clocks and `ham_second` is not phase-gated, so a
+>   half-rate HAM line would mis-pair every 4-bit code: a whole garbage line
+>   rather than a coarse one.  One literal makes the flag do nothing there,
+>   which is a debuggable outcome.
+> * **The odd-skip clamp belongs to BOTH two-bit modes.**  `pixel_skip[0]` is
+>   ignored in micro-HAM *and* in indexed, clamped at the point of consumption
+>   (line-start preload) rather than at the SET write, so a list that sets
+>   skip first and mode second cannot smuggle a stale odd bit in.
+> * **ORDER DEPENDENCE — SET mode BEFORE SET ham_held.**  See below.
+
+| mode | `mode[2:0]` | rate | words/line | meaning |
+|---|---|---|---|---|
+| 1bpp direct | `000` | 1 bit/clock, 640 groups | 40 | bit selects pal_fg / pal_bg |
+| 2bpp micro-HAM | `001` | 2 bits/clock, 640 groups | 80 | dibit codes, below |
+| 2bpp indexed | `010` | 2 bits/clock, 640 groups | 80 | dibit is a direct palette index |
+| reserved | `011` | — | — | decodes as micro-HAM |
+| 1bpp half rate | `100` | 1 bit/clock, 320 groups | 20 | each group held 2 pixel clocks |
+| micro-HAM (flag ignored) | `101` | 2 bits/clock, 640 groups | 80 | half rate masked off |
+| 2bpp indexed half rate | `110` | 2 bits/clock, 320 groups | 40 | each group held 2 pixel clocks |
+| reserved | `111` | — | — | decodes as micro-HAM, flag ignored |
+
+### 2bpp indexed (`mode[1:0] == 2'b10`)
+
+Two stream bits per pixel clock, exactly like micro-HAM — same stream rate,
+same fetch cadence, same odd-skip clamp — but the dibit is a **direct palette
+index** with no arithmetic and no multi-clock codes:
+
+```
+00  pal_bg      01  pal_fg      10  ham_held      11  12'h000 (black)
+```
+
+**Zero new SET targets.**  The three colour entries are the registers 1bpp and
+micro-HAM already own, so a display list recolours four indices per line with
+the SETs it already emits, and black is a constant rather than a fourth
+register.
+
+**THE ONE ORDER DEPENDENCE IN THE CHIP: SET `pix_mode` BEFORE SET
+`pix_ham_held`.**  Index `10` has to show what SET *put* in `ham_held`, which
+cannot survive a decoder that overwrites it on every `00` and `01` — so in
+indexed mode the stream is locked out of `ham_held` entirely and the dibit is
+pipelined instead, selecting the colour at the output mux.  `ham_held` is then
+a plain third palette register whose only writer is SET.  The blanking reload
+drops out with it (`held_init = ~pix_consume & ~mode_idx2`), which is what
+makes the order matter: **a list that SETs `ham_held` and then SETs `mode` has
+its colour overwritten by `pal_fg` on the intervening blank clocks.**  SET mode
+first and every gap is safe.  The suite's `IDX2_SET_ORDER` trace asserts the
+wrong order really does lose the colour, and `m8-indexed2` SETs `ham_held`
+**once per frame** — surviving 479 blanking intervals is the assertion that the
+lockout is real.
+
+### Half rate (`mode[2]`, ignored in micro-HAM)
+
+Every consumed bit-group is held for **two pixel clocks**: 320 groups across
+the same 640-clock window, so a line costs half the stream at half the
+horizontal resolution.  It is a **stream-side gate only** — `RGB_OUT`'s window,
+`PIXEL_OUT_LEAD` and the SET path are untouched, and the pairing phase is
+cleared at preload so every line pairs alike.  `pixel_skip` needs no extra
+clamp: skip is measured in stream bits and a stream bit is still exactly one
+group.
+
+**Interop with MASK, and it is the reason half rate is usable as a game mode:**
+a MASK's dibits step **once per pixel-clock slot**, and COMPOSITOR never learns
+what rate PIXEL is running at.  Sprites, cursors and text therefore keep full
+640-pixel horizontal resolution over a 320-wide playfield, and dibit `00`
+(passthrough) shows the playfield's 2-pixel-wide groups underneath.
+`m9-halfrate` measures both halves at once: zero playfield groups spanning
+other than two slots, and adjacent pixels *inside* the sprite cells that do
+differ.
 
 Micro-HAM codes are unchanged from the 1bpp design, just consumed at
 2 bits/clock (so each op spans half as many pixels):

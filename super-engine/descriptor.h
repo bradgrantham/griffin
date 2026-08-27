@@ -323,22 +323,84 @@ constexpr uint32_t engine_wait_descriptor_cycles(uint32_t arbitration, uint32_t 
 // Pure pixel bits — no header words at all any more, because palette and mode
 // left the stream for VIDCMD.  The line length is a function of the mode:
 //
-//   direct 1bpp   1 bit per pixel clock,  640 bits  = 40 words
-//   micro-HAM     2 bits per pixel clock, 1280 bits = 80 words
+//   direct 1bpp        1 bit  per pixel clock,  640 bits = 40 words
+//   2bpp micro-HAM     2 bits per pixel clock, 1280 bits = 80 words
+//   2bpp indexed       2 bits per pixel clock, 1280 bits = 80 words
+//   + half rate        320 groups, not 640: 20 words 1bpp, 40 words indexed
 //
 // Big-endian, MSB of each word leftmost.  pixel_skip discards that many bits
 // of the line's first word at line start, which is why a nonzero skip needs
 // one more word to reach the last pixel.
 
-inline constexpr uint32_t PIXELS_WORDS_1BPP     = 40;
-inline constexpr uint32_t PIXELS_WORDS_MICROHAM = 80;
-
 // IDT7200L-15, 256x9, two in parallel: each FIFO holds 256 bus words.
 inline constexpr uint32_t PIXELS_FIFO_WORDS = 256;
 inline constexpr uint32_t VIDCMD_FIFO_WORDS = 256;
 
-inline constexpr uint32_t PIXEL_MODE_DIRECT_1BPP = 0;
-inline constexpr uint32_t PIXEL_MODE_MICRO_HAM   = 1;
+// ---------------------------------------------------------------------------
+// THE MODE REGISTER IS A BIT FIELD, NOT AN ENUMERATION (pixel.v, 2026-08-24)
+// ---------------------------------------------------------------------------
+//
+//   mode[0]  1 = 2bpp micro-HAM
+//   mode[1]  1 = 2bpp indexed
+//   mode[2]  1 = half rate
+//
+// Only three bits exist; SET(pix_mode) writes value[2:0] and drops the rest.
+//
+//   [1:0] == 2'b11 is RESERVED and micro-HAM wins it BY CONSTRUCTION —
+//   pixel.v computes indexed as mode[1] & ~mode[0], so a buggy list gets one
+//   whole known mode rather than two decoders fighting over ham_held.
+//
+//   HALF RATE IS MASKED OFF IN MICRO-HAM, in hardware, not merely declared
+//   undefined: a HAM code can span two consumption clocks and ham_second is
+//   not phase-gated, so a half-rate HAM line would mis-pair every 4-bit code.
+//   half_rate = mode[2] & ~mode[0].  The flag does nothing in HAM, which is a
+//   debuggable outcome; the model reproduces the masking, not the garbage.
+//
+// SET ORDERING RULE — MODE BEFORE ham_held, and it is the ONE order
+// dependence in this chip.  In indexed mode ham_held is the third palette
+// entry and SET is its only writer: pixel.v suppresses both the stream write
+// (load_pal) and the blanking reload (held_init = ~pix_consume & ~mode_idx2)
+// while the mode register reads indexed.  A list that SETs ham_held and THEN
+// SETs mode has its colour overwritten by pal_fg on the intervening blank
+// clocks.  SET mode first and every gap is safe.  render.cpp models the
+// blanking reload clock by clock (PixelUnit::blank_clock) precisely so this
+// ordering rule is real in the model rather than only documented.
+inline constexpr uint32_t PIXEL_MODE_DIRECT_1BPP  = 0;
+inline constexpr uint32_t PIXEL_MODE_MICRO_HAM    = 1;   // mode[0]
+inline constexpr uint32_t PIXEL_MODE_INDEXED_2BPP = 2;   // mode[1]
+inline constexpr uint32_t PIXEL_MODE_HALF_RATE    = 4;   // mode[2], an OR-able flag
+inline constexpr uint32_t PIXEL_MODE_BITS         = 7;   // what SET(pix_mode) keeps
+
+// The three decoded wires, one for one with pixel.v's mode_ham / mode_idx2 /
+// half_rate.  Every helper below and every branch in PixelUnit goes through
+// these, so "the mode register is a bit field" is stated once.
+constexpr bool pixel_mode_ham(uint32_t mode)
+{
+    return (mode & PIXEL_MODE_MICRO_HAM) != 0;
+}
+
+constexpr bool pixel_mode_indexed(uint32_t mode)
+{
+    return (mode & PIXEL_MODE_INDEXED_2BPP) != 0 && !pixel_mode_ham(mode);
+}
+
+constexpr bool pixel_mode_half_rate(uint32_t mode)
+{
+    return (mode & PIXEL_MODE_HALF_RATE) != 0 && !pixel_mode_ham(mode);
+}
+
+// 2bpp indexed: the dibit is a DIRECT palette index, no arithmetic, no
+// multi-clock codes, and no new SET targets — the three colour entries are the
+// registers 1bpp and micro-HAM already own and black is a constant.
+//
+//   00 pix_pal_bg    01 pix_pal_fg    10 pix_ham_held    11 0x000 (black)
+//
+// The odd-skip clamp is inherited from micro-HAM for the same reason: an odd
+// alignment shift splits every index across a dibit boundary.
+inline constexpr uint32_t IDX2_CODE_PAL_BG   = 0;
+inline constexpr uint32_t IDX2_CODE_PAL_FG   = 1;
+inline constexpr uint32_t IDX2_CODE_HAM_HELD = 2;
+inline constexpr uint32_t IDX2_CODE_BLACK    = 3;
 
 // pixel_skip now rides a 12-bit SET value instead of a 3-bit slice of a MODE
 // word, so it finally spans a whole 16-bit FIFO word.  That closes the
@@ -374,17 +436,63 @@ inline constexpr uint32_t PIXELS_SKIP_MAX = 15;
 inline constexpr uint32_t HAM_CODE_PALETTE_BITS = 2;
 inline constexpr uint32_t HAM_CODE_CHROMA_BITS  = 4;
 
-// Bits of the pixel stream consumed per pixel clock, by mode.
+// Bits of the pixel stream a CONSUMING clock eats.  Both two-bit modes share
+// every piece of the byte engine's cadence, which is why this is one term.
 constexpr uint32_t pixels_bits_per_clock(uint32_t mode)
 {
-    return (mode == PIXEL_MODE_MICRO_HAM) ? 2u : 1u;
+    return (pixel_mode_ham(mode) || pixel_mode_indexed(mode)) ? 2u : 1u;
+}
+
+// How many bit-groups a line consumes.  Half rate holds every consumed group
+// for two pixel clocks, so the 640-clock window carries 320 groups: half the
+// stream at half the horizontal resolution.  RGB_OUT's window, PIXEL_OUT_LEAD
+// and the SET path are all untouched — it is a stream-side gate only.
+constexpr uint32_t pixels_groups_per_line(uint32_t mode)
+{
+    return pixel_mode_half_rate(mode) ? (H_ACTIVE / 2u) : H_ACTIVE;
+}
+
+// pixel_skip as CONSUMED at line start.  Bit 0 is ignored in both two-bit
+// modes (pixel.v's HARDWARE CLAMP), applied at consumption rather than at the
+// SET write so the result cannot depend on SET ordering.  A line's word count
+// has to use the clamped value or an odd skip over-provisions the record by a
+// word and the FIFO drifts a word per line down the frame.  Half rate needs no
+// extra clamp: skip is measured in stream bits and a stream bit is still
+// exactly one group.
+constexpr uint32_t pixels_skip_effective(uint32_t mode, uint32_t pixel_skip)
+{
+    return (pixels_bits_per_clock(mode) == 2u) ? (pixel_skip & ~1u) : pixel_skip;
 }
 
 constexpr uint32_t pixels_words_per_line(uint32_t mode, uint32_t pixel_skip)
 {
-    const uint32_t bits = H_ACTIVE * pixels_bits_per_clock(mode) + pixel_skip;
+    const uint32_t bits = pixels_groups_per_line(mode) * pixels_bits_per_clock(mode) +
+                          pixels_skip_effective(mode, pixel_skip);
     return (bits + 15) / 16;
 }
+
+// The four unscrolled line lengths, derived rather than tabulated.  pixel.v's
+// end-of-line fetch cutoff makes an unscrolled line read EXACTLY its record —
+// 80 bytes in 1bpp, 160 in a two-bit full-rate mode, 40/80 at half rate — so
+// these are the byte counts pixel_tb.v's check_reads() asserts, in words.
+inline constexpr uint32_t PIXELS_WORDS_1BPP     = pixels_words_per_line(PIXEL_MODE_DIRECT_1BPP, 0);
+inline constexpr uint32_t PIXELS_WORDS_MICROHAM = pixels_words_per_line(PIXEL_MODE_MICRO_HAM, 0);
+inline constexpr uint32_t PIXELS_WORDS_INDEXED2 = pixels_words_per_line(PIXEL_MODE_INDEXED_2BPP, 0);
+inline constexpr uint32_t PIXELS_WORDS_HALF_1BPP =
+    pixels_words_per_line(PIXEL_MODE_DIRECT_1BPP | PIXEL_MODE_HALF_RATE, 0);
+inline constexpr uint32_t PIXELS_WORDS_HALF_INDEXED2 =
+    pixels_words_per_line(PIXEL_MODE_INDEXED_2BPP | PIXEL_MODE_HALF_RATE, 0);
+
+static_assert(PIXELS_WORDS_1BPP == 40);
+static_assert(PIXELS_WORDS_MICROHAM == 80);
+static_assert(PIXELS_WORDS_INDEXED2 == 80);
+static_assert(PIXELS_WORDS_HALF_1BPP == 20);
+static_assert(PIXELS_WORDS_HALF_INDEXED2 == 40);
+static_assert(pixels_words_per_line(PIXEL_MODE_MICRO_HAM | PIXEL_MODE_HALF_RATE, 0) ==
+              PIXELS_WORDS_MICROHAM,
+              "half rate is masked off in micro-HAM, so it may not shorten the line");
+static_assert(pixels_bits_per_clock(PIXEL_MODE_MICRO_HAM | PIXEL_MODE_INDEXED_2BPP) == 2,
+              "the reserved 11 encoding is micro-HAM by construction");
 
 // ============================================================================
 // VIDCMD instruction stream

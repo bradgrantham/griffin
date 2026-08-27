@@ -53,6 +53,8 @@ void PixelUnit::reset()
     bits_avail_  = 0;
     ham_pending_ = 0;
     ham_type_    = 0;
+    half_phase_  = 0;
+    idx_code_    = 0;
 }
 
 bool PixelUnit::push_word(uint16_t w)
@@ -107,19 +109,42 @@ uint32_t PixelUnit::take(uint32_t n)
     return v;
 }
 
+// held_init in pixel.v is `~pix_consume & ~mode_idx2`, i.e. a write that
+// happens on EVERY blank clock, not once at line start.  Modelling it per clock
+// is what makes the SET ORDERING RULE real here: in 1bpp and micro-HAM held
+// tracks pal_fg through blanking so every visible line begins at fg with no
+// cross-line state, while in indexed mode BOTH writers drop out and ham_held —
+// that mode's third palette entry — survives from its SET to the end of the
+// frame.  SET ham_held before SET mode and these clocks are what eat it.
+void PixelUnit::blank_clock()
+{
+    half_phase_ = 0;   // preload clears the pairing phase; every line pairs alike
+
+    if (!mode_idx2())
+    {
+        ham_held_ = pal_fg_;
+    }
+}
+
 void PixelUnit::begin_line()
 {
     bitbuf_      = 0;
     bits_avail_  = 0;
     ham_pending_ = 0;
-    ham_held_    = pal_fg_;   // held reloads from pal_fg at every line start
+    half_phase_  = 0;
 
-    // Hardware clamp (pixel.v, decided 2026-08-13): skip bit 0 is ignored in
-    // micro-HAM mode, applied at consumption so SET ordering cannot smuggle a
-    // stale odd bit in.  An odd HAM skip would shift every 2-bit code across
-    // its boundary and mis-parse the whole line.
-    const uint32_t effective_skip =
-        (mode_ == PIXEL_MODE_MICRO_HAM ? (pixel_skip_ & ~1u) : pixel_skip_);
+    if (!mode_idx2())
+    {
+        ham_held_ = pal_fg_;   // held reloads from pal_fg at every line start
+    }
+
+    // Hardware clamp (pixel.v, decided 2026-08-13, inherited by the indexed
+    // mode 2026-08-24): skip bit 0 is ignored in BOTH two-bit modes, applied at
+    // consumption so SET ordering cannot smuggle a stale odd bit in.  An odd
+    // two-bit skip would shift every code across its boundary and mis-parse the
+    // whole line.  Half rate needs no extra clamp — skip is in stream bits and
+    // a stream bit is still exactly one group.
+    const uint32_t effective_skip = pixels_skip_effective(mode_, pixel_skip_);
     if (effective_skip > 0)
     {
         refill(effective_skip);
@@ -139,9 +164,57 @@ void PixelUnit::begin_line()
     }
 }
 
+Rgb444 PixelUnit::idx_colour() const
+{
+    switch (idx_code_)
+    {
+        case IDX2_CODE_PAL_BG:   return pal_bg_;
+        case IDX2_CODE_PAL_FG:   return pal_fg_;
+        case IDX2_CODE_HAM_HELD: return ham_held_;
+        default:                 return RGB444_BLACK;   // code 11 is a constant
+    }
+}
+
 Rgb444 PixelUnit::next_pixel()
 {
-    if (mode_ != PIXEL_MODE_MICRO_HAM)
+    // HALF RATE, pixel.v's one gate rather than a second cadence.  half_phase
+    // splits the 640 consumption clocks into pairs and `step` is the FIRST
+    // clock of each pair, which is what keeps PIXEL_OUT_LEAD at 1: pixel 0
+    // still reaches RGB_OUT on the clock it would at full rate.  A held clock
+    // re-reads the output mux and consumes nothing, so a line costs half the
+    // stream at half the horizontal resolution.  In micro-HAM half_rate is
+    // masked off in hardware, so `hold` is false there by construction.
+    const bool hold = half_rate() && half_phase_ != 0;
+    half_phase_ ^= 1u;
+
+    if (hold)
+    {
+        // What the output register would show on the second clock of a group.
+        // Indexed re-evaluates the mux, because idx_colour is combinational off
+        // the three colour registers; 1bpp shows the registered ham_held, which
+        // the stream is not writing this clock.
+        return mode_idx2() ? idx_colour() : ham_held_;
+    }
+
+    // 2BPP INDEXED.  Two stream bits per clock like micro-HAM — same stream
+    // rate, same fetch cadence, same odd-skip clamp — but the dibit is a DIRECT
+    // palette index with no arithmetic and no multi-clock codes.  ham_held is
+    // NOT written here: it is this mode's third palette entry and SET is its
+    // only writer (pixel.v's load_pal and held_init both drop out), which is
+    // exactly what lets code 10 show the SET-loaded value.
+    //
+    // UNDERRUN: an exhausted FIFO re-shifts the last word.  From reset that
+    // word is zero, so every dibit reads 00 and the whole line renders pal_bg —
+    // the same substrate the pure-VIDCMD screens spend as a settable third
+    // colour, and finding 22's caveat applies here unchanged.
+    if (mode_idx2())
+    {
+        refill(2);
+        idx_code_ = take(2);
+        return idx_colour();
+    }
+
+    if (!mode_ham())
     {
         refill(1);
         ham_held_ = take(1) != 0 ? pal_fg_ : pal_bg_;
@@ -197,7 +270,7 @@ void PixelUnit::set_register(uint32_t target, uint32_t value)
         case SET_PIX_PAL_FG:     pal_fg_ = static_cast<Rgb444>(value); break;
         case SET_PIX_PAL_BG:     pal_bg_ = static_cast<Rgb444>(value); break;
         case SET_PIX_HAM_HELD:   ham_held_ = static_cast<Rgb444>(value); break;
-        case SET_PIX_MODE:       mode_ = value & 1u; break;
+        case SET_PIX_MODE:       mode_ = value & PIXEL_MODE_BITS; break;
         case SET_PIX_PIXEL_SKIP: pixel_skip_ = value & 0xF; break;
         default:                 break;
     }
@@ -373,6 +446,13 @@ void CompositorUnit::blank_clock(PixelUnit &pix)
     const bool word_on_q  = re_low_ && ef_at_pop_;
     const bool had_staged = staged_valid_;
     bool       consumed   = false;
+
+    // PIXEL's own blank-clock behaviour: held_init reloads ham_held from pal_fg
+    // on every clock PIX_CONSUME is low, unless the mode register reads
+    // indexed.  Running it BEFORE this clock's SET commit is what gives the
+    // ordering rule its teeth — a SET(ham_held) that arrives while mode is
+    // still 1bpp is overwritten on the very next blank clock.
+    pix.blank_clock();
 
     if (staged_valid_ && vidcmd_type_of(staged_word_) == VidcmdType::SET)
     {

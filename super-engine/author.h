@@ -368,18 +368,47 @@ enum class ScreenStyle : uint8_t
     KIOSK   = 2,
 };
 
+// The PIXEL mode register, as the BIT FIELD pixel.v decodes (descriptor.h):
+// bit 0 micro-HAM, bit 1 2bpp indexed, bit 2 half rate.  The named combinations
+// below are conveniences, not an enumeration — HALF_RATE is an OR-able flag and
+// the list builder may hand any of these to SET(pix_mode) verbatim.
 enum class PixelMode : uint8_t
 {
-    DIRECT_1BPP = 0,   // 40 words/line, 1 bit per pixel clock
-    MICRO_HAM   = 1,   // 80 words/line, 2 bits per pixel clock
+    DIRECT_1BPP       = PIXEL_MODE_DIRECT_1BPP,    // 40 words/line, 1 bit per clock
+    MICRO_HAM         = PIXEL_MODE_MICRO_HAM,      // 80 words/line, 2 bits per clock
+    INDEXED_2BPP      = PIXEL_MODE_INDEXED_2BPP,   // 80 words/line, 2 bits per clock
+    HALF_RATE         = PIXEL_MODE_HALF_RATE,      // the flag on its own
+    HALF_1BPP         = PIXEL_MODE_DIRECT_1BPP | PIXEL_MODE_HALF_RATE,     // 20 words/line
+    HALF_INDEXED_2BPP = PIXEL_MODE_INDEXED_2BPP | PIXEL_MODE_HALF_RATE,    // 40 words/line
 };
+
+constexpr uint32_t pixel_mode_bits(PixelMode m)
+{
+    return static_cast<uint32_t>(m);
+}
 
 enum class SpriteStyle : uint8_t
 {
     NONE         = 0,   // the line's VIDCMD stream is just its coverage RUN
     CURSOR       = 1,   // one 16x16 arrow on 16 lines, as spans
     FOUR_SPRITES = 2,   // worst case: four sprites on every line, as spans
+    MASK_SPRITES = 3,   // four 16x16 MASK records on 16-pixel cell boundaries
 };
+
+// MASK_SPRITES geometry.  The cells are 16-pixel aligned so the record
+// boundaries fall on group boundaries and the line's slot sum is exactly
+// H_ACTIVE by construction, exactly as the console screen's are.
+inline constexpr uint32_t MASK_SPRITE_COUNT = 4;
+inline constexpr std::array<uint32_t, MASK_SPRITE_COUNT> MASK_SPRITE_X = {64, 208, 352, 496};
+inline constexpr uint32_t MASK_SPRITE_H = 16;
+
+// The art: a bordered box with a diamond inside it.  Column 0 is ALWAYS the
+// border, which is what makes the record legal — a MASK's pixel 0 is an
+// implicit opaque cmp_color0 and cannot be transparent.  The holes are
+// PASSTHROUGH, so the playfield shows through them; over a half-rate
+// playfield that is the interop proof, because the mask's dibits step once per
+// PIXEL CLOCK while the playfield underneath steps once per two.
+uint32_t mask_sprite_dibit(uint32_t row, uint32_t col);
 
 // How a list frames its lines.  Both come off compositor.v's single hold rule;
 // the difference is entirely in what the list builder promises and therefore in
@@ -427,6 +456,17 @@ struct FrameParams
     // is precisely the mechanism the mid-line split uses.
     bool per_line_palette     = false;   // SET pix_pal_fg / pix_pal_bg per line
     bool per_line_mode        = false;   // SET pix_mode / pix_pixel_skip per line
+
+    // 2bpp indexed's third palette entry, dibit 10.  Emitted ONCE PER FRAME,
+    // on line 0, and IMMEDIATELY AFTER the SET(pix_mode) that puts PIXEL in
+    // indexed mode — the ordering rule in descriptor.h.  Once per frame rather
+    // than once per line is deliberate: it is the strongest available assertion
+    // that the mode really does lock the stream and the blanking reload out of
+    // ham_held, because in any other mode blanking would overwrite it with
+    // pal_fg before line 1 ever started.  /RS at vsync is why it is needed at
+    // all each frame.
+    bool   frame_ham_held     = false;
+    Rgb444 ham_held_color     = rgb444(15, 12, 0);
 
     bool     mid_line_split   = false;
     uint32_t split_pixel      = 320;
@@ -554,6 +594,26 @@ void write_solid_pattern_1bpp(Memory ram, uint32_t base, uint32_t stride_bytes,
 //                    and 0xF, giving eight flat colour blocks
 // 160*2 + 160*2 + 160*4 = 1280 bits = exactly 80 words.
 void write_test_pattern_microham(Memory ram, uint32_t base, uint32_t stride_bytes,
+                                 uint32_t lines);
+
+// A 2bpp indexed line: sixteen 40-pixel blocks cycling through all four codes,
+// with the phase stepping every 8 lines so the blocks staircase down the frame.
+//
+//   code(x, y) = ((x / IDX2_BLOCK_W) + (y / IDX2_BLOCK_PHASE)) % 4
+//
+// 640 dibits = 1280 bits = exactly 80 words, and the FIRST 40 words are the
+// first 320 dibits — which is precisely what a HALF-RATE indexed line consumes,
+// so one buffer serves both rates and the half-rate expectation is the
+// full-rate one indexed by k/2.
+inline constexpr uint32_t IDX2_BLOCK_W     = 40;
+inline constexpr uint32_t IDX2_BLOCK_PHASE = 8;
+
+constexpr uint32_t idx2_pattern_code(uint32_t x, uint32_t y)
+{
+    return ((x / IDX2_BLOCK_W) + (y / IDX2_BLOCK_PHASE)) % 4u;
+}
+
+void write_test_pattern_indexed2(Memory ram, uint32_t base, uint32_t stride_bytes,
                                  uint32_t lines);
 
 // Writes each line's VIDCMD records.  Reports the per-line word count, record
