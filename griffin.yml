@@ -369,16 +369,24 @@ peripherals:
       v_total:        525
       hsync_polarity: negative   # asserted low during the sync interval
       vsync_polarity: negative
-      # The frame IRQ is no longer generated here: TIMING's VSYNC output is
-      # tee'd to GLUE, which edge-latches it into the level-6 IRQ with W1C
-      # acknowledge (GLUE VSYNC_STATUS/VSYNC_CLEAR at 0x17).  The rev-1
-      # CLRINT/CTRL/CTRL_RB/CLRERR registers are retired with the chip.
+      # The frame IRQ is no longer generated here: TIMING's dedicated
+      # nVSYNC_IRQ output (pin 31, fixed polarity) goes to GLUE pin 65, which
+      # edge-latches it into the level-6 IRQ with W1C acknowledge (GLUE
+      # VSYNC_STATUS/VSYNC_CLEAR at 0x17).  The rev-1 CLRINT/CTRL/CTRL_RB/
+      # CLRERR registers are retired with the chip.
 
   # PORTS has no bus-timing logic of its own: GLUE decodes the region and
   # hands over ~PORTS_SELECT and answers DTACK for it, as it does for CF.
-  # The line time base is the VGA HSYNC net tapped from VIDEO 
-  # the paddle counters tick at the full 31.469 kHz line rate and the
-  # audio FIFO pop runs at half that (15.73 kS/s, AUDIO_SAMPLES_PER_SECOND)
+  # Its two time bases come from TIMING (see the "TIMING output contracts"
+  # interfaces entry): PADDLE_TICK (TIMING pin 17 -> PORTS pin 44) and
+  # AUDIO_TICK (TIMING pin 18 -> PORTS pin 45), each a square wave toggling
+  # once per VGA line whose FALLING edges PORTS counts -- 15.734 kHz events,
+  # PADDLE_TICKS_PER_SECOND for the paddle counters (the Atari 2600's
+  # scanline rate; full scale 255 counts = 16.2 ms, one frame) and
+  # AUDIO_SAMPLES_PER_SECOND for the audio FIFO pop.  PORTS has no divider
+  # of its own; if the audio rate ever changes, TIMING changes it.  (Rev 2
+  # draft tapped the HSYNC net directly at 31.469 kHz with a /2 in PORTS;
+  # retired 2026-08-26 when TIMING took over as the single time base.)
   #
   # The mouse channel deliberately mirrors GLUE's keyboard register layout at
   # the same offsets (TX_DATA 0x09, STATUS/CLEAR 0x11, CTRL 0x13, RX_DATA
@@ -441,15 +449,19 @@ peripherals:
         width: 8
         description: |
           Paddle A position, the pot on port 1 pin 9.
-          An 8-bit counter advances once per VGA line while the pot's RC ramp
-          holds the comparator sense low, and freezes when the ramp crosses,
-          so the count is proportional to pot resistance (2600-style).  It
-          saturates at 0xFF instead of wrapping, and full scale is 255 lines
-          ~= 8.1 ms, half a frame.  Values need per-unit software calibration:
-          the comparator threshold varies and the pot parallels the 1M
-          pin-5/9 pull-up.
+          An 8-bit counter advances once per PADDLE_TICK event from TIMING
+          (every second VGA line, 15.734 kHz -- the 2600's scanline rate)
+          while the pot's RC ramp holds the comparator sense low, and freezes
+          when the ramp crosses, so the count is proportional to pot
+          resistance (2600-style).  It saturates at 0xFF instead of wrapping,
+          and full scale is 255 ticks ~= 16.2 ms, one frame: the board's pot
+          and cap values must be chosen so full travel crosses in fewer than
+          ~250 ticks (the 2600's RC scaled to its own scanline count carries
+          over directly).  Values need per-unit software calibration: the
+          comparator threshold varies and the pot parallels the 1M pin-5/9
+          pull-up.
         bits:
-          - { bit: "7:0", name: COUNT, description: "Line-rate count, saturating at 0xFF" }
+          - { bit: "7:0", name: COUNT, description: "PADDLE_TICK count (15.734 kHz), saturating at 0xFF" }
       - offset: 0x07
         name: PADDLE_B_COUNT
         access: read
@@ -558,13 +570,14 @@ peripherals:
         width: 8
         description: |
           Audio FIFO pop control.  ENABLE gates the read strobe PORTS sends
-          to both 7200s on every second VGA line, so clearing it freezes the
+          to both 7200s on every AUDIO_TICK event from TIMING (every second
+          VGA line, AUDIO_SAMPLES_PER_SECOND), so clearing it freezes the
           DACs on their last sample without disturbing FIFO contents.
           CLEAR_HF_IRQ is the write-1-to-clear ack for the half-full
           interrupt reported in AUDIO_STATUS.
         bits:
           - { bit: "0", name: ENABLE, default: 0,
-              description: "1 = pop one stereo sample pair every second line (15.73 kS/s); 0 = hold" }
+              description: "1 = pop one stereo sample pair per AUDIO_TICK event (15.73 kS/s today); 0 = hold" }
           - { bit: "1", name: CLEAR_HF_IRQ,
               description: "Write 1 to clear the latched half-full IRQ (refill ISR ack)" }
       - offset: 0x1F
@@ -639,9 +652,16 @@ peripherals:
     #                                             IP2: RTC_SDA readback
     #                                             IP3: DS3231 ~INT (optional
     #                                                  change-detect 1Hz/alarm IRQ)
-    #   OP4..OP7 spare                            IP4, IP5 spare
+    #   OP4: -> TIMING pin 20 (reserved)          IP4, IP5 spare
+    #   OP5: -> TIMING pin 21 (reserved)
+    #   OP6: -> TIMING pin 24 (reserved)
+    #   OP7: -> TIMING pin 25 (reserved)
+    # OP4..OP7 are routed to TIMING as a static, firmware-settable
+    # configuration word (future alternate-raster / audio-rate select);
+    # TIMING consumes none of them yet, and the OP reset state (OPR = 0 ->
+    # pins HIGH, i.e. 1111) must remain the default behaviour when it does.
     # (OP4/OP5 drove the rev-1 paddle dump and '590 clear lines; rev 2 does
-    #  both from the PORTS PADDLE_CONTROL DUMP bit, so they are free.)
+    #  both from the PORTS PADDLE_CONTROL DUMP bit.)
     address_range:
       base: 0xF80000
       size: 0x040000
@@ -769,7 +789,7 @@ peripherals:
   # (0xFC0000, the rev-1 74HC373 AUDIO latch slot, is the PORTS CPLD.)
   AUDIO:
     part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC"
-    description: "Stereo FIFO audio output, drained at half the VGA line rate by PORTS"
+    description: "Stereo FIFO audio output, drained by PORTS at TIMING's AUDIO_TICK rate (15.734 kS/s)"
     address_range:
       base: 0xC00000
       size: 0x040000
@@ -795,9 +815,9 @@ peripherals:
           the 74HCT155 write section gated by GLUE ~IO_WR_EN, which qualifies
           on UDS & LDS & ~R/W -- only deliberate full-word writes clock
           the FIFOs (no A17 alias trick needed).  PORTS drives the FIFO
-          read strobe at half the 31.469 kHz line rate (~15.7 kS/s, see
-          AUDIO_SAMPLES_PER_SECOND) by dividing the HSYNC tap by two -- not
-          VIDEO, and not a programmable divider.  The FIFO half-full flag
+          read strobe once per AUDIO_TICK event from TIMING (~15.7 kS/s, see
+          AUDIO_SAMPLES_PER_SECOND); the rate lives in TIMING, and PORTS has
+          no divider of its own.  The FIFO half-full flag
           goes to PORTS, which latches it into ~PORTS_IRQ (autovector level
           2); the ISR refills at most AUDIO_FIFO_DEPTH/2 = 128 pairs (~8 ms
           of headroom) per service and acks with PORTS AUDIO_CONTROL.
@@ -823,13 +843,14 @@ constants:
   # pairs of occupancy in the validated use cases.  If depth is ever needed,
   # the 7200 family cascades via XI/XO.
   AUDIO_FIFO_DEPTH:          256
-  AUDIO_SAMPLES_PER_SECOND:  15734   # half the 31.469 kHz VGA line rate
+  AUDIO_SAMPLES_PER_SECOND:  15734   # TIMING AUDIO_TICK falling edges: every second 31.469 kHz line
+  PADDLE_TICKS_PER_SECOND:   15734   # TIMING PADDLE_TICK falling edges: same, the 2600 scanline rate
 
   # DUART OP/IP masks for the pin_allocation block above.  Reminder: OP pins
   # drive the COMPLEMENT of their OPR bits (OPR_SET drives the pin low), and
   # RTC_SDA_DRIVE has a second inversion through the N-FET (pin high = SDA low).
-  # OP4 and OP5 are free in rev 2: they drove the rev-1 paddle dump and clear
-  # lines, which are now the single PORTS PADDLE_CONTROL DUMP bit.
+  # OP4..OP7 are routed to TIMING's reserved pins (see pin_allocation) and
+  # have no mask constants until TIMING gives them a meaning.
   DUART_OP_RTC_SCL:        0x04   # OP2
   DUART_OP_RTC_SDA_DRIVE:  0x08   # OP3
   DUART_IP_RTC_SDA:        0x04   # IP2
@@ -1121,14 +1142,18 @@ interfaces:
     and needed 10pF band-aid caps at the FIFO pins; Rev 2 terminates
     properly at the source instead.
   - |
-    TIMING VSYNC -> GLUE level-6 frame IRQ (decided 2026-08-13).
-    Net: TIMING's VSYNC output tee'd to GLUE's pin 65 (the rev-1 ~VIDEO_IRQ
-    input, renamed nVSYNC), tapped BEFORE the 74AC541 sync buffer so GLUE
-    sees the raw 5V CPLD output.  Zero new pins on either chip.  The latch
-    and the W1C acknowledge live in GLUE (VSYNC_STATUS/VSYNC_CLEAR at
-    offset 0x17) because TIMING has no CPU bus to host an ack register —
-    a raw level would double-fire or be missed, so GLUE edge-detects the
-    synchronized assertion and holds the IRQ until the ISR clears it.
+    TIMING nVSYNC_IRQ -> GLUE level-6 frame IRQ (decided 2026-08-13,
+    revised 2026-08-26).  Net: TIMING's dedicated nVSYNC_IRQ output (pin
+    31) to GLUE's pin 65 (the rev-1 ~VIDEO_IRQ input, renamed nVSYNC).  It
+    is a separate register from VGA_VSYNC, identical to it today (negative,
+    2 lines at v = 490..491) and guaranteed to keep that polarity in any
+    future raster mode, so the connector's VSYNC polarity can change
+    without moving the IRQ edge.  (The earlier plan tee'd VGA_VSYNC
+    pre-buffer; one TIMING pin buys the decoupling.)  The latch and the W1C
+    acknowledge live in GLUE (VSYNC_STATUS/VSYNC_CLEAR at offset 0x17)
+    because TIMING has no CPU bus to host an ack register — a raw level
+    would double-fire or be missed, so GLUE edge-detects the synchronized
+    assertion and holds the IRQ until the ISR clears it.  No GLUE change.
   - |
     TIMING -> COMPOSITOR contract: H_ACTIVE (and the /RS vsync pulse) must
     LEAD the visible window by 2 pixel clocks — COMPOSITOR's consume-edge
@@ -1161,10 +1186,17 @@ interfaces:
     measure >= 4.85 V at the supervisor under full load, else move to
     DS1233D-10 (4.25-4.49 V) or trim the supply.
   - |
-    TIMING output contracts (consolidated 2026-08-26 — read before ANY
-    timing.v revision; every consumer below relies on the stated shape,
-    and timing.v has no testbench yet, so these are enforced only by the
-    consumers' testbenches until timing_tb.v exists).
+    TIMING output contracts (consolidated 2026-08-26, extended the same
+    day — read before ANY timing.v revision; every consumer below relies
+    on the stated shape).  ENFORCED by cpld/pixel/timing_tb.v (`make
+    timing-sim`): every output is checked on every clock of two frames
+    against a closed-form law in the cycle index, twelve output-to-output
+    relations are checked, and ten negative-control mutations must each
+    make the run fail.  Fit: 35/64 LC, 15/32 I/O, ATF1504AS PLCC44,
+    -preassign keep + production flags (JTAG, TDI/TMS pullups,
+    power_reset).  Ladder 2026-08-26: 31 (frozen) -> 31 (+power_reset,
+    pins unchanged) -> 36 (+4 outputs, +line-parity flop) -> 35 (ticks
+    toggle every line instead; the parity flop went away).
     - nRS: 8 pixel clocks at the top of the vsync line (rs_window =
       v_cnt==V_SYNC_START & h_cnt<8).  Consumers: COMPOSITOR machine
       reset, and /RS of the four video-stream FIFO chips — the 7200
@@ -1183,14 +1215,46 @@ interfaces:
     - Sync compares shift late by SPLIT_DAC_LEAD (derived, not tuned:
       COMPOSITOR_LEAD + PIXEL_OUT_LEAD + SPLIT_LEAD = 4); the yml
       constants block and timing.v localparams must stay equal.
-    - VGA_HSYNC (pre-buffer) is tapped to PORTS as its ONLY timebase
-      (31.469 kHz: paddles at line rate, audio pop at half); VGA_VSYNC
-      is tee'd pre-buffer to GLUE pin 65 (level-6 vsync IRQ latch).
-      Any alternate-raster mode changes both consumers' arithmetic.
-    - Pinout FROZEN 2026-08-26 (//PIN block, 9 signals, 21 spare I/O):
-      new-pin features append to the block and are bitfile-only ONLY if
-      the board routes TIMING's spares to reachable copper — a layout
-      decision to make at capture, not after.
+    - HBLANK (pin 19) -> ENGINE pin 2: registered (h_cnt >= 640), i.e.
+      high for h_cnt 640..799 on EVERY line, visible or blank, rising on
+      the very clock PIX_CONSUME falls when the line is visible.  ENGINE
+      2-FF synchronizes it and its wait_hblank descriptors wait for the
+      rising edge; that edge is the start of the 160-clock blank the
+      super-engine budgets (descriptor.h HBLANK_SYSCLK), which is why it
+      is NOT the HSYNC net (whose rise is 116 clocks later) and NOT
+      ~H_ACTIVE (which never toggles in vblank and would stall a list
+      re-armed there).  Resolves the previously unpinned Rev-2 source of
+      ENGINE's "HBLANK from VIDEO".
+    - nVSYNC_IRQ (pin 31) -> GLUE pin 65: registered ~in_vsync, identical
+      to VGA_VSYNC today, polarity fixed for all time (see the GLUE frame
+      IRQ entry).
+    - PADDLE_TICK (pin 17) -> PORTS pin 44 and AUDIO_TICK (pin 18) ->
+      PORTS pin 45: each a square wave that toggles on the clock that
+      starts every line (period 1600 clocks, free-running from reset with
+      no frame-boundary exception — 525 is odd, so a frame-locked parity
+      would slip once per frame).  PORTS 2-FF synchronizes each and counts
+      FALLING edges only: 15.734 kHz events for both
+      (PADDLE_TICKS_PER_SECOND, AUDIO_SAMPLES_PER_SECOND).  Square waves
+      because a one-clock pulse (39.7 ns) is narrower than a SYSCLK and
+      would be missed; falling-edge-only because a both-edges XOR detector
+      doubles the product terms of every PORTS paddle-counter bit and PORTS
+      fails routing (measured 2026-08-26; falling-edge fits at 122/128).
+      Two nets so the audio rate can change in TIMING alone.  Any future
+      audio-rate change is a change to AUDIO_TICK's toggle rate (event
+      rate = toggle rate / 2) and to AUDIO_SAMPLES_PER_SECOND.
+    - VGA_HSYNC and VGA_VSYNC now drive ONLY the 74AC541 buffers; nothing
+      else taps them.  Any alternate-raster mode is therefore contained in
+      TIMING plus the consumers of the contracts above.
+    - Pinout FROZEN 2026-08-26 (//PIN block): the original 9 signals plus
+      PADDLE_TICK 17, AUDIO_TICK 18, HBLANK 19, nVSYNC_IRQ 31 (appended by
+      a -preassign keep fit; none of the 9 moved).  RESERVED, not fitted:
+      pins 20, 21, 24, 25 for DUART OP4..OP7 (future mode/rate select —
+      TIMING must treat the OP reset state 1111 as today's behaviour), and
+      GCLK2 pin 44 left free for an optional second oscillator.  LAYOUT
+      REQUIREMENT: the schematic must route pins 17, 18, 19, 31 to their
+      consumers and pins 20, 21, 24, 25 to the DUART; the remaining 13
+      spare I/O are bitfile-usable later ONLY if routed to reachable
+      copper — a capture decision, not an afterthought.
   - |
     Carried forward from Rev 1 unchanged: 74HCT155 dual 2-to-4 decoder fans
     ~IO_WR_EN out by A19:18 (write section: ~AUDIO_W etc.; read section

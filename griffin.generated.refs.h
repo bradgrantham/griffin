@@ -85,7 +85,7 @@ inline volatile uint8_t &DUART_OPR_SET = *reinterpret_cast<volatile uint8_t *>(0
 inline volatile uint8_t &DUART_STOPCC = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // READ: Stop counter/timer command (read to stop; data ignored)
 inline volatile uint8_t &DUART_OPR_CLR = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // WRITE: Output port bit reset (1 bits clear corresponding OP pins)
 
-// AUDIO: Stereo FIFO audio output, drained at half the VGA line rate by PORTS
+// AUDIO: Stereo FIFO audio output, drained by PORTS at TIMING's AUDIO_TICK rate (15.734 kS/s)
 inline volatile uint16_t &AUDIO_FIFO = *reinterpret_cast<volatile uint16_t *>(0xC00000UL);  // WRITE: Write one stereo sample pair into the audio FIFOs
 
 } // namespace Griffin::reg

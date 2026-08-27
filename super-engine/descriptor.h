@@ -1205,12 +1205,13 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
 // ============================================================================
 //
 // One deposited word is a stereo pair {L[15:8], R[7:0]}, unsigned 8-bit per
-// channel.  PORTS pops one pair every second LINE_STROBE, so the sample rate
-// is exactly half the 31.46875 kHz line rate — 15734.375 Hz, which is what
-// griffin.yml rounds to AUDIO_SAMPLES_PER_SECOND.  The /2 phase is a free-
-// running counter in PORTS, so it must be carried across frames here too:
+// channel.  TIMING toggles AUDIO_TICK once per line and PORTS pops one pair
+// on each FALLING edge, so the sample rate is exactly half the 31.46875 kHz
+// line rate — 15734.375 Hz, which is what griffin.yml rounds to
+// AUDIO_SAMPLES_PER_SECOND.  The /2 phase is TIMING's free-running toggle
+// (not frame-locked), so it must be carried across frames here too:
 // V_TOTAL is odd, so a frame alternately consumes 263 and 262 pairs.
-inline constexpr uint32_t AUDIO_FIFO_PAIRS   = Griffin::AUDIO_FIFO_DEPTH;          // 1024
+inline constexpr uint32_t AUDIO_FIFO_PAIRS   = Griffin::AUDIO_FIFO_DEPTH;          // 256
 inline constexpr uint32_t AUDIO_SAMPLE_RATE  = Griffin::AUDIO_SAMPLES_PER_SECOND;  // 15734
 inline constexpr uint32_t AUDIO_LINES_PER_SAMPLE = 2;
 

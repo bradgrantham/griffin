@@ -1099,10 +1099,11 @@ struct VideoState
     uint64_t frac_accum = 0;
     int v_cnt = 0;
 
-    // Free-running count of scanlines emitted, i.e. of HSYNC pulses on the net
-    // PORTS taps as LINE_STROBE.  PORTS derives its whole timebase from the
-    // delta of this counter, so its paddle and audio rates cannot drift from
-    // VIDEO the way a private timer would.
+    // Free-running count of scanlines emitted.  TIMING toggles PADDLE_TICK and
+    // AUDIO_TICK once per scanline (at h_cnt == 0, from reset, with no
+    // frame-boundary exception), and PORTS counts their falling edges, so the
+    // delta of this counter is PORTS' entire timebase: its paddle and audio
+    // rates cannot drift from the raster the way a private timer would.
     uint64_t line_count = 0;
 
     // TIMING's vsync pulse is latched in GLUE now, not in VIDEO — there is no
@@ -1258,7 +1259,7 @@ struct VideoState
             }
 
             v_cnt++;
-            line_count++;       // one HSYNC pulse == one LINE_STROBE edge
+            line_count++;       // one scanline == one PADDLE_TICK/AUDIO_TICK toggle
 
             if (v_cnt >= V_TOTAL)
             {
@@ -1928,8 +1929,9 @@ struct PS2Mouse : PS2Device
 // AUDIO_SAMPLES_PER_SECOND and hold their value between pops, so a faithful
 // recording is "whatever the output registers hold, sampled once per pop
 // tick" — including the ticks where the FIFO was empty and the DAC simply
-// held its last sample.  That makes the sample rate a property of VIDEO's
-// line rate alone, so a capture is exactly as deterministic as the run.
+// held its last sample.  That makes the sample rate a property of the raster
+// line rate alone (TIMING's AUDIO_TICK, one pop per two lines), so a capture
+// is exactly as deterministic as the run.
 //
 // This is a sink only: nothing here is ever read back into the emulation, so
 // neither the capture nor the playback can perturb guest timing.  Playback
@@ -2114,32 +2116,38 @@ private:
 // with a shared dump control, and the audio FIFO pop strobe with its
 // half-full IRQ latch.
 //
-// PORTS has NO timebase of its own: everything periodic runs off VIDEO's
-// HSYNC net tapped over as LINE_STROBE.  The paddle counters tick at the
-// full line rate (31.469 kHz) and the audio FIFO pops on every second tick
-// (AUDIO_SAMPLES_PER_SECOND).  Here that means line_ticks() is driven from
-// VideoState's scanline counter, never from a private timer -- a private
-// timer would drift against VIDEO and destroy the design property.  The
-// mouse channel is the exception: it is in the SYSCLK domain and rides the
-// existing per-instruction timer service.
+// PORTS has NO timebase of its own: everything periodic runs off the two
+// square waves TIMING emits for it, PADDLE_TICK and AUDIO_TICK.  Each toggles
+// once per scanline and PORTS counts only their FALLING edges (a both-edges
+// detector does not fit in the CPLD), so each consumer sees one event every
+// two lines: paddle steps at 15.734 kHz -- half the old line-rate stepping,
+// deliberately, because full scale 255 counts is then 16.2 ms, one frame,
+// which is the Atari 2600's scanline-counted pot measurement window -- and
+// audio pops at 15.734 kHz, unchanged (AUDIO_SAMPLES_PER_SECOND).  The two
+// ticks are identical today, so one shared phase bit below serves both and
+// paddle steps land on the same lines as audio pops.  Here that means
+// advance_scanlines() is driven from VideoState's scanline counter, never
+// from a private timer -- a private timer would drift against the raster and
+// destroy the design property.  The mouse channel is the exception: it is in
+// the SYSCLK domain and rides the existing per-instruction timer service.
 // ---------------------------------------------------------------------------
 
-// One paddle: an 8-bit upcounter advanced by the line tick while the pot's
-// comparator sense line is still low, saturating at 0xFF and held at zero
-// while PADDLE_CONTROL.DUMP drives the discharge FET.  This models what the
-// RTL does, not RC physics: the host supplies a knob position in the same
-// units as the count, and the sense line goes high once the ramp reaches it,
-// which freezes the counter there.
+// One paddle: an 8-bit upcounter advanced by each PADDLE_TICK falling edge
+// (one per two scanlines) while the pot's comparator sense line is still low,
+// saturating at 0xFF and held at zero while PADDLE_CONTROL.DUMP drives the
+// discharge FET.  This models what the RTL does, not RC physics: the host
+// supplies a knob position in the same units as the count, and the sense line
+// goes high once the ramp reaches it, which freezes the counter there.
 struct PaddleCounter
 {
-    uint8_t position = 0;      // host knob position, 0..255 line times of ramp
+    uint8_t position = 0;      // host knob position, 0..255 tick times of ramp
     uint8_t count = 0;
 
     // The comparator output as PORTS sees it: low while the cap is still
     // charging (dump asserted, or the ramp has not reached the knob yet).
     bool sense_high(bool dump) const { return !dump && count >= position; }
 
-    void line_tick(bool dump)
+    void tick(bool dump)
     {
         if (dump)
         {
@@ -2174,7 +2182,9 @@ struct PortsState
     bool audio_enable = false;
     bool audio_hf_irq = false;          // latched, W1C via AUDIO_CONTROL
     bool audio_half_full_prev = false;  // starts empty: no edge at boot
-    bool audio_pop_phase = false;       // /2 of the line tick, as in ports.v
+    bool tick_phase = false;            // level of TIMING's ticks: they toggle
+                                        // once per line and the falling edge
+                                        // (phase 1 -> 0) is the event
     uint8_t dac_left = 0;
     uint8_t dac_right = 0;              // 7202 output registers hold last sample
 
@@ -2227,30 +2237,40 @@ struct PortsState
         dac_right = static_cast<uint8_t>(pair & 0xFF);
     }
 
-    // --- LINE_STROBE -----------------------------------------------------
+    // --- PADDLE_TICK / AUDIO_TICK ----------------------------------------
 
-    // Advance by `lines` VGA scanlines' worth of LINE_STROBE edges.
-    void line_ticks(uint32_t lines)
+    // Advance by `lines` VGA scanlines and deliver the tick events they carry.
+    // TIMING toggles both ticks at the start of every line, PORTS counts the
+    // falling edges, so an event lands at the start of every even-numbered
+    // line counted from reset: `tick_phase` carries the tick's current level
+    // between calls and the count of falling edges crossed is just the number
+    // of times that level returns to 0.  PADDLE_TICK and AUDIO_TICK are the
+    // same waveform today, so one event stream feeds both consumers; if TIMING
+    // ever divides the audio rate down, this is where the two split.
+    void advance_scanlines(uint32_t lines)
     {
         if (lines == 0)
         {
             return;
         }
-        // Paddle counters saturate, so more than a full-scale ramp of ticks
-        // can never change them further.
-        uint32_t paddle_steps = std::min<uint32_t>(lines, 256);
-        for (uint32_t i = 0; i < paddle_steps; i++)
+        uint32_t phased = lines + (tick_phase ? 1u : 0u);
+        uint32_t events = phased / 2;
+        tick_phase = (phased & 1u) != 0;
+        if (events == 0)
         {
-            paddle_a.line_tick(paddle_dump);
-            paddle_b.line_tick(paddle_dump);
+            return;
         }
 
-        // ports.v pops on every second tick: audio_pop_tick = line_tick &
-        // audio_phase, with audio_phase toggling on each tick from 0.
-        uint32_t phased = lines + (audio_pop_phase ? 1u : 0u);
-        uint32_t pops = phased / 2;
-        audio_pop_phase = (phased & 1u) != 0;
-        for (uint32_t i = 0; i < pops; i++)
+        // Paddle counters saturate, so more than a full-scale ramp of events
+        // can never change them further.
+        uint32_t paddle_steps = std::min<uint32_t>(events, 256);
+        for (uint32_t i = 0; i < paddle_steps; i++)
+        {
+            paddle_a.tick(paddle_dump);
+            paddle_b.tick(paddle_dump);
+        }
+
+        for (uint32_t i = 0; i < events; i++)
         {
             if (audio_enable)
             {
@@ -2968,7 +2988,7 @@ class GriffinEmulator : public moira::Moira
     bool keys_to_joystick = false;
     uint8_t fire_keys_held = 0;
 
-    // Scanline count already handed to PORTS as LINE_STROBE edges.
+    // Scanline count already handed to PORTS as PADDLE_TICK/AUDIO_TICK toggles.
     uint64_t ports_line_count = 0;
 
     static bool is_cf_addr(uint32_t io_offset)
@@ -4160,12 +4180,13 @@ public:
             }
         }
 
-        // LINE_STROBE: hand PORTS exactly the HSYNC edges VIDEO just emitted.
-        // PORTS has no timer of its own by design, so this is its only clock
-        // for the paddle counters and the /2 audio FIFO pop.
+        // Hand PORTS exactly the scanlines the raster just emitted; TIMING's
+        // PADDLE_TICK and AUDIO_TICK toggle on each of them and PORTS takes an
+        // event on every second one.  PORTS has no timer of its own by design,
+        // so this is its only clock for the paddle counters and the audio pop.
         if (video.line_count != ports_line_count)
         {
-            ports.line_ticks(static_cast<uint32_t>(video.line_count - ports_line_count));
+            ports.advance_scanlines(static_cast<uint32_t>(video.line_count - ports_line_count));
             ports_line_count = video.line_count;
         }
         update_ipl();

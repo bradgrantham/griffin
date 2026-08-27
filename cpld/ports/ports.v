@@ -12,13 +12,14 @@
 //   2. Two Atari-2600-style joystick ports read as bytes (this retires the
 //      rev-1 74HCT245 transceiver pair).
 //   3. Two paddle position counters: 8-bit saturating upcounters clocked by
-//      the VGA line tick while the pot comparator sense is still low, plus a
-//      CPU-controlled dump bit that drives the discharge FET and holds the
-//      counters at zero (this retires the two 74HC590s and the rev-1 DUART
-//      OP4/OP5 dump/clear dance).
+//      TIMING's PADDLE_TICK (15.734 kHz, the 2600's scanline rate) while the
+//      pot comparator sense is still low, plus a CPU-controlled dump bit that
+//      drives the discharge FET and holds the counters at zero (this retires
+//      the two 74HC590s and the rev-1 DUART OP4/OP5 dump/clear dance).
 //   4. The audio FIFO pop strobe and the latched half-full IRQ.  The pop is
-//      timed off VIDEO's HSYNC tap divided by two, so there is no divider
-//      register and no counter — one enable bit and one IRQ latch.
+//      timed off TIMING's AUDIO_TICK, so there is no divider register and no
+//      counter — one enable bit and one IRQ latch.  The rate is TIMING's to
+//      choose (15.734 kHz today); PORTS only edge-detects.
 //
 // PORTS does not write the audio FIFOs: ~AUDIO_W comes from the board-level
 // 74155 gated by GLUE's ~IO_WR_EN (griffin.yml AUDIO), so the only audio pins
@@ -50,12 +51,14 @@ module ports
     input  wire       R_nW,
     inout  wire [7:0] D,
 
-    // VGA HSYNC tapped from VIDEO.  Pixel-clock domain, ASYNCHRONOUS to
-    // SYSCLK, and it pulses once per scanline (~31.469 kHz) including through
-    // blanking, so it is a free constant-rate timebase for both the paddle
-    // counters and the audio FIFO pop.  Only the rate matters here; the edge
-    // chosen below is the falling edge of the active-low HSYNC pulse.
-    input  wire       LINE_STROBE,
+    // Time bases from TIMING.  Pixel-clock domain, ASYNCHRONOUS to SYSCLK.
+    // Both are square waves, not pulses — a one-pixel-clock pulse (39.7 ns)
+    // is narrower than a SYSCLK and the synchronizer below would miss it —
+    // and the FALLING edge is the event.  Today both toggle once per scanline
+    // (15.734 kHz falling edges); they are separate nets so TIMING can move
+    // the audio rate later without touching the paddles.
+    input  wire       PADDLE_TICK,
+    input  wire       AUDIO_TICK,
 
     inout  wire       PS2_MOUSE_CLK,     // open-drain, external pull-ups
     inout  wire       PS2_MOUSE_DATA,
@@ -188,46 +191,48 @@ module ports
                                   JOYSTICK_2_UP};
 
     // ----------------------------------------------------------------
-    // Line strobe.  VIDEO's HSYNC is a free constant-rate timebase, so PORTS
-    // needs no prescaler of its own and GLUE needs no tick generator: the
-    // paddle counters run at the full line rate (31.469 kHz — full scale
-    // 255 x 31.8 us ~= 8.1 ms, half a frame, which is how the 74HC590s were
-    // sized) and the audio FIFO pops on every second line (~15.73 kHz, the
-    // AUDIO_SAMPLES_PER_SECOND the rev-2 design already assumes).
+    // Time bases.  TIMING hands PORTS two square waves, so PORTS needs no
+    // prescaler and no phase bit: each goes through a 2-FF synchronizer and a
+    // falling-edge detector, and every falling edge is one event.
+    // Paddles: 15.734 kHz — full scale 255 x 63.6 us ~= 16.2 ms, one frame,
+    // which is the 2600's measurement window and how its pot/cap values are
+    // sized.  Audio: half of whatever rate TIMING toggles AUDIO_TICK at
+    // (15.734 kHz, AUDIO_SAMPLES_PER_SECOND, today).
     //
-    // The strobe is asynchronous to SYSCLK, so it goes through a 2-FF
-    // synchronizer before the edge detector.  HSYNC is active low; the
-    // falling edge (start of the sync pulse) is the one counted.
+    // NEGATIVE RESULT (2026-08-26): a both-edges detector (sync ^ delayed)
+    // does not fit — it doubles the product terms of every paddle-counter bit
+    // equation and the fitter fails routing in Block 5 even with AUDIO_TICK
+    // unpinned.  Falling-edge-only is one product term and fits at 122/128.
     // ----------------------------------------------------------------
-    reg line_strobe_meta;
-    reg line_strobe_sync;
-    reg line_strobe_sync_delayed;
-    reg audio_phase;
+    reg paddle_tick_meta;
+    reg paddle_tick_sync;
+    reg paddle_tick_sync_delayed;
+    reg audio_tick_meta;
+    reg audio_tick_sync;
+    reg audio_tick_sync_delayed;
 
-    wire line_tick = line_strobe_sync_delayed & ~line_strobe_sync;
-
-    // Every second line tick, so the FIFO pop rate is half the line rate.
-    wire audio_pop_tick = line_tick & audio_phase;
+    wire line_tick      = paddle_tick_sync_delayed & ~paddle_tick_sync;
+    wire audio_pop_tick = audio_tick_sync_delayed  & ~audio_tick_sync;
 
     always @(posedge SYSCLK)
     begin
         if (reset)
         begin
-            line_strobe_meta         <= 1'b1;
-            line_strobe_sync         <= 1'b1;
-            line_strobe_sync_delayed <= 1'b1;
-            audio_phase              <= 1'b0;
+            paddle_tick_meta         <= 1'b0;
+            paddle_tick_sync         <= 1'b0;
+            paddle_tick_sync_delayed <= 1'b0;
+            audio_tick_meta          <= 1'b0;
+            audio_tick_sync          <= 1'b0;
+            audio_tick_sync_delayed  <= 1'b0;
         end
         else
         begin
-            line_strobe_meta         <= LINE_STROBE;
-            line_strobe_sync         <= line_strobe_meta;
-            line_strobe_sync_delayed <= line_strobe_sync;
-
-            if (line_tick)
-            begin
-                audio_phase <= ~audio_phase;
-            end
+            paddle_tick_meta         <= PADDLE_TICK;
+            paddle_tick_sync         <= paddle_tick_meta;
+            paddle_tick_sync_delayed <= paddle_tick_sync;
+            audio_tick_meta          <= AUDIO_TICK;
+            audio_tick_sync          <= audio_tick_meta;
+            audio_tick_sync_delayed  <= audio_tick_sync;
         end
     end
 
@@ -301,9 +306,9 @@ module ports
     assign PADDLE_DUMP = paddle_dump;
 
     // ----------------------------------------------------------------
-    // Line-rate audio FIFO pop.  The pop strobe is the /2 line tick, so
-    // there is no period register and no counter — one enable bit and one
-    // IRQ latch.
+    // Audio FIFO pop.  The pop strobe is TIMING's AUDIO_TICK edge, so there
+    // is no period register and no counter — one enable bit and one IRQ
+    // latch.
     //
     // nFIFO_HF is the 7202 half-full flag, active low while the FIFO holds
     // half or more; it rises when the FIFO drains below half, which is when
@@ -638,6 +643,9 @@ endmodule
 // with `-preassign keep`.  The Rev 2 PCB is routed from these numbers, so do
 // not renumber them; a netlist change that makes the fitter want a different
 // placement is a board respin, not a re-fit.
+// 2026-08-26: LINE_STROBE (pin 44, the HSYNC tap) became PADDLE_TICK on the
+// same pin, and AUDIO_TICK was appended on spare pin 45 by a -preassign keep
+// fit; no frozen pin moved.  Both nets come from TIMING.
 //
 // Format rules (from run_fitter.sh):
 //   grep '// PIN:' ports.v | cut -d' ' -f2-  ->  ports.pin fed to fit1508.exe
@@ -667,7 +675,8 @@ endmodule
 //PIN: D_5               : 27
 //PIN: D_6               : 20
 //PIN: D_7               : 29
-//PIN: LINE_STROBE       : 44
+//PIN: PADDLE_TICK       : 44
+//PIN: AUDIO_TICK        : 45
 //PIN: PS2_MOUSE_CLK     : 81
 //PIN: PS2_MOUSE_DATA    : 80
 //PIN: JOYSTICK_1_UP     : 9

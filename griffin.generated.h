@@ -350,7 +350,7 @@ static constexpr uint32_t DUART_STOPCC = 0xF8001FUL;  // READ: Stop counter/time
 static constexpr uint32_t DUART_OPR_CLR = 0xF8001FUL;  // WRITE: Output port bit reset (1 bits clear corresponding OP pins)
 
 // ------------------------------------------------------------
-// AUDIO: Stereo FIFO audio output, drained at half the VGA line rate by PORTS
+// AUDIO: Stereo FIFO audio output, drained by PORTS at TIMING's AUDIO_TICK rate (15.734 kS/s)
 static constexpr uint32_t AUDIO_BASE = 0xC00000UL;
 static constexpr uint32_t AUDIO_SIZE = 0x040000UL;
 inline constexpr MemoryRange AUDIO(0xC00000UL, 0x040000UL);
@@ -380,6 +380,7 @@ static constexpr uint32_t CF_DH_LBA = 0xE0U;
 static constexpr uint32_t PS2_RX_QUEUE_SIZE = 0x40U;
 static constexpr uint32_t AUDIO_FIFO_DEPTH = 0x100U;
 static constexpr uint32_t AUDIO_SAMPLES_PER_SECOND = 0x3D76U;
+static constexpr uint32_t PADDLE_TICKS_PER_SECOND = 0x3D76U;
 static constexpr uint32_t DUART_OP_RTC_SCL = 0x04U;
 static constexpr uint32_t DUART_OP_RTC_SDA_DRIVE = 0x08U;
 static constexpr uint32_t DUART_IP_RTC_SDA = 0x04U;

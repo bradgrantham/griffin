@@ -292,7 +292,7 @@
 `define DUART_STOPCC 24'hF8001F  // READ
 `define DUART_OPR_CLR 24'hF8001F  // WRITE
 
-// AUDIO: Stereo FIFO audio output, drained at half the VGA line rate by PORTS
+// AUDIO: Stereo FIFO audio output, drained by PORTS at TIMING's AUDIO_TICK rate (15.734 kS/s)
 `define AUDIO_BASE 24'hC00000
 `define AUDIO_SIZE 24'h040000
 `define AUDIO_DTACK_THRESHOLD 4'd2  // 0 WS at 14000000 Hz
@@ -315,6 +315,7 @@
 `define PS2_RX_QUEUE_SIZE 8'h40
 `define AUDIO_FIFO_DEPTH 9'h100
 `define AUDIO_SAMPLES_PER_SECOND 14'h3D76
+`define PADDLE_TICKS_PER_SECOND 14'h3D76
 `define DUART_OP_RTC_SCL 8'h04
 `define DUART_OP_RTC_SDA_DRIVE 8'h08
 `define DUART_IP_RTC_SDA 8'h04

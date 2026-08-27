@@ -187,7 +187,7 @@
       <div class="sub">Two-stream display subsystem &mdash; mechanism reference and screen-mode application notes</div>
     </div>
     <div class="docmeta">
-      REV 2 &middot; DRAFT 2026-08-21<br>
+      REV 2 &middot; DRAFT 2026-08-26<br>
       sources: compositor.v / pixel.v / timing.v,<br>
       griffin.yml interfaces, vidcmd-spec.md, super-engine suite
     </div>
@@ -209,9 +209,9 @@
       <h2>Device Complement</h2>
       <ul>
         <li>ENGINE &mdash; ATF1508AS, descriptor DMA master (123/128 LC)</li>
-        <li>PIXEL &mdash; ATF1508AS, stream unpacker (122/128 LC)</li>
-        <li>COMPOSITOR &mdash; ATF1508AS, VIDCMD playback (112/128 LC)</li>
-        <li>TIMING &mdash; ATF1504AS PLCC44, raster + syncs (31/64 LC)</li>
+        <li>PIXEL &mdash; ATF1508AS, stream unpacker (105/128 LC)</li>
+        <li>COMPOSITOR &mdash; ATF1508AS, VIDCMD playback (122/128 LC)</li>
+        <li>TIMING &mdash; ATF1504AS PLCC44, raster + syncs + board time bases (35/64 LC, 15/32 I/O)</li>
         <li>2&times;2 IDT7200L15 FIFOs (256&times;9): PIXELS and VIDCMD streams</li>
         <li>2&times; 74AC541 + R4G4B4 ladder DAC to DE-15</li>
       </ul>
@@ -245,7 +245,7 @@
       <div class="bd-row" style="margin-top:8px">
         <div class="bd-box" style="border-style:dashed"><b>VIDCMD FIFO</b><span>2&times;7200 ganged 16-bit<br>Q[15:0] &rarr; COMPOSITOR only<br>/EF sync&rsquo;d, /RE registered</span></div>
         <div class="bd-arrow">set_pix_value[11:0]<br>+ target/valid/commit<br>&larr; (17 registered nets)</div>
-        <div class="bd-box" style="border-style:dashed"><b>TIMING</b><span>H_ACTIVE (+2 lead), nRS<br>PIX_CONSUME/PRELOAD/LAST<br>HSYNC/VSYNC out</span></div>
+        <div class="bd-box" style="border-style:dashed"><b>TIMING</b><span>H_ACTIVE (+2 lead), nRS<br>PIX_CONSUME/PRELOAD/LAST<br>HSYNC/VSYNC out<br>HBLANK &rarr; ENGINE, nVSYNC_IRQ &rarr; GLUE<br>PADDLE_TICK/AUDIO_TICK &rarr; PORTS</span></div>
       </div>
       <div class="bd-under">
         ENGINE fills both FIFOs by DMA (one-hot /W strobes from descriptors).
@@ -268,6 +268,7 @@
       <tr><td>Stream FIFO capacity</td><td class="num">256 words each</td><td>hblank/vblank pre-banking cushion</td></tr>
       <tr><td>VIDCMD fetch cadence</td><td class="num">2 px clk / word</td><td>registered /RE; pinned worst-case table, &sect;5</td></tr>
       <tr><td>Output pipeline</td><td class="num">4 clocks total</td><td>absorbed by TIMING leads (DAC_LEAD 4); invisible on screen</td></tr>
+      <tr><td>Board time bases</td><td class="num">15.734 kHz</td><td>TIMING PADDLE_TICK / AUDIO_TICK falling edges to PORTS (&sect;3.10); paddles and audio pop</td></tr>
     </table></div>
   </section>
 
@@ -345,8 +346,8 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
       Two words paint 16 pixels of per-pixel three-way choice (passthrough / color0 / color1).
       Played from <code>staged_word</code> shifted in place, data word reloaded from parked Q
       mid-record; <b>adjacent masks chain gapless</b> and a mask follows a RUN with zero gap
-      (px0 is the record&rsquo;s own first slot). Fitted at <b>121/128 LC</b> &mdash; 4 cells
-      <em>cheaper</em> than the rejected 8-px inline-color form, whose knife-edge color write
+      (px0 is the record&rsquo;s own first slot). Fitted at <b>121/128 LC</b> when measured (122/128 in
+      the frozen production fit) &mdash; 4 cells <em>cheaper</em> than the rejected 8-px inline-color form, whose knife-edge color write
       also provably forced a 3-slot seam. Recolor via SET: measured seams &mdash; one SET
       between masks 2 slots, SET pair 4 slots (the mask holds the bank, so pairs cannot bank),
       RUN + SET pair + mask 3 slots. Authoring rules: leading transparency = a passthrough RUN
@@ -389,6 +390,37 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
       per-line palette/mode preambles, double-buffered lists re-armed from the vsync ISR
       (frame-owned RAM rule), and audio deposits woven into the same list
       (<code>AUDIO_FIFO_W</code> strobe) are all authoring, not silicon.
+    </p>
+
+    <h3><span class="mnum">3.10</span> TIMING fan-out &mdash; the board&rsquo;s one time base <span class="st prod">PRODUCTION</span></h3>
+    <p>
+      TIMING has no CPU bus and no input but clock and reset, so every output is a closed-form
+      function of (h_cnt, v_cnt), and every one is registered &mdash; the extra pipeline stage the
+      DAC_LEAD of 4 (&sect;2) already absorbs. Besides the video outputs (VGA_HSYNC / VGA_VSYNC,
+      <code>nRS</code>, H_ACTIVE, PIX_CONSUME / PIX_PRELOAD / PIX_LAST) it now carries the four
+      off-video nets whose consumers need an edge no CPU stall can jitter:
+    </p>
+    <div class="twrap"><table>
+      <tr><th>Output</th><th class="num">Pin</th><th>Consumer</th><th>Law</th></tr>
+      <tr><td class="mono">HBLANK</td><td class="num">19</td><td>ENGINE pin 2 (<code>wait_hblank</code> pacing edge, synchronized rise)</td><td>High for h_cnt 640..799 on <em>every</em> line, blank or visible; rises on the same clock PIX_CONSUME falls on a visible line. This is the start of the 160-clock blank the super-engine budgets (<code>descriptor.h</code> HBLANK_SYSCLK), <b>not</b> the HSYNC rise 116 clocks later. Previously unpinned for rev 2.</td></tr>
+      <tr><td class="mono">nVSYNC_IRQ</td><td class="num">31</td><td>GLUE pin 65 (level-6 vsync IRQ latch)</td><td>Identical waveform to VGA_VSYNC today (negative, 2 lines at v = 490..491), but its polarity is fixed for all time regardless of any future raster mode. Replaces the earlier plan of tee&rsquo;ing VGA_VSYNC pre-buffer to GLUE.</td></tr>
+      <tr><td class="mono">PADDLE_TICK</td><td class="num">17</td><td>PORTS pin 44</td><td>Square wave toggling at the start of every line &mdash; 15.734 kHz, 31.8 &micro;s half-periods &mdash; free-running from reset with no frame-boundary exception. PORTS counts FALLING edges only, so paddles count at the Atari 2600 scanline rate (full scale 255 = 16.2 ms, about one frame).</td></tr>
+      <tr><td class="mono">AUDIO_TICK</td><td class="num">18</td><td>PORTS pin 45</td><td>Same law, separate register on a separate net so the audio rate can change later without touching the paddles. The audio FIFO pop stays at AUDIO_SAMPLES_PER_SECOND 15734.</td></tr>
+    </table></div>
+    <p class="note">
+      Square waves, not pulses: a one-pixel-clock pulse (39.7 ns) is narrower than one SYSCLK and
+      PORTS&rsquo; synchronizer would miss it. Falling-edge-only on the PORTS side is a fit result,
+      not a taste &mdash; a both-edges XOR detector doubles the product terms in every PORTS
+      paddle-counter bit and PORTS fails routing (measured negative result); falling-edge-only fits
+      at 122/128. HSYNC is <b>no longer tapped by PORTS</b>: VGA_HSYNC / VGA_VSYNC now go only to
+      the 74AC541 buffers and the connector. Fit 35/64 LC, 15/32 I/O, <code>-preassign keep</code>
+      with the production strategy flags (JTAG on, TDI/TMS pullups, power_reset on); the four new
+      pins were appended to the frozen //PIN block and the original nine did not move. Pins
+      <span class="mono">20 / 21 / 24 / 25</span> are RESERVED for DUART OP4..OP7, the intended
+      future TIMING mode/rate selector (alternate rasters, audio rate), with no logic behind them
+      yet; GCLK2 (pin 44) is left free for an optional second oscillator.
+      <b>These new pins are bitfile-usable only because the schematic routes them</b> &mdash; and the
+      schematic must route the reserved OP pins likewise.
     </p>
   </section>
 
@@ -514,7 +546,9 @@ VIDCMD_Q     ----------&lt;==word==&gt;-  valid &le; 25.0 ns after a (tCO 8.0 + 
       <tr><td>Pure-VIDCMD screens (&sect;4)</td><td>m6-console (82 w/line worst, pixel-exact) + m7-kiosk (30 w/line, measured seams)</td><td class="mono">PASS 2026-08-24</td></tr>
       <tr><td>Passthrough-as-third-color (empty PIXELS &rarr; dibit 00 = pal_bg)</td><td>model behavior only &mdash; verify pixel.v post-/RS re-shift + 7200 Q with no writes on hardware</td><td class="mono">OPEN</td></tr>
       <tr><td>2bpp indexed + half-rate (&sect;3.6&ndash;3.7)</td><td>fitted (PIXEL 105/128, pinout frozen); pixel_tb 9 cases; model + suite (m8/m9) + emulator</td><td class="mono">PASS 2026-08-26</td></tr>
-      <tr><td>Pinout freeze: COMPOSITOR / PIXEL / TIMING</td><td>//PIN blocks harvested from production-flag fits, re-verified IDENTICAL under -preassign keep</td><td class="mono">FROZEN 2026-08-26</td></tr>
+      <tr><td>TIMING testbench (timing_tb.v): closed-form laws + 12 relations + 10 negative controls</td><td>every output vs its griffin.yml-derived law on every clock of two frames (0 mismatches / 841,600 clocks); 12 relation checks between outputs; 10 mutations each required to FAIL (<code>make timing-sim</code>)</td><td class="mono">PASS 2026-08-26</td></tr>
+      <tr><td>TIMING fan-out outputs (&sect;3.10)</td><td>fitted 35/64 LC, 15/32 I/O under -preassign keep with production flags; four pins appended to the frozen //PIN block, original nine unmoved</td><td class="mono">PASS 2026-08-26</td></tr>
+      <tr><td>Pinout freeze: COMPOSITOR / PIXEL / TIMING</td><td>//PIN blocks harvested from production-flag fits, re-verified IDENTICAL under -preassign keep; TIMING&rsquo;s HBLANK / nVSYNC_IRQ / PADDLE_TICK / AUDIO_TICK appended same day, plus pins 20/21/24/25 reserved for DUART OP4..OP7</td><td class="mono">FROZEN 2026-08-26</td></tr>
       <tr><td>LITERAL record (&sect;3.8)</td><td>specify after MASK verdict</td><td class="mono">CONCEPT</td></tr>
       <tr><td>Dual-playfield delivery margin</td><td>suite case at 66% bus model</td><td class="mono">TO WRITE</td></tr>
     </table></div>
@@ -522,7 +556,7 @@ VIDCMD_Q     ----------&lt;==word==&gt;-  valid &le; 25.0 ns after a (tCO 8.0 + 
 
   <div class="footer">
     <span>Griffin rev 2 &mdash; working design record; normative sources are the RTL headers and griffin.yml.</span>
-    <span>DRAFT &middot; 2026-08-21</span>
+    <span>DRAFT &middot; 2026-08-26</span>
   </div>
 
 </div>

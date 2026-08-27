@@ -30,8 +30,8 @@ struct GriffinInput
 {
     uint8_t joy1;       // JOYSTICK_PORT_1 switches, active low (0 = closed)
     uint8_t joy2;       // JOYSTICK_PORT_2 switches, active low (0 = closed)
-    uint8_t paddle_a;   // port 1 pin 9 pot, 0..255 line counts
-    uint8_t paddle_b;   // port 1 pin 5 pot, 0..255 line counts
+    uint8_t paddle_a;   // port 1 pin 9 pot, 0..255 PADDLE_TICK counts (15.734 kHz)
+    uint8_t paddle_b;   // port 1 pin 5 pot, 0..255 PADDLE_TICK counts (15.734 kHz)
 };
 
 // Joystick bit masks, mirroring PORTS_JOYSTICK_PORT_n_*_MASK in

@@ -34,7 +34,7 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "adapter speed 2000" \
     -c init
 
-.PHONY: all glue video engine audio ports compositor compositor-sim pixel pixel-sim timing clean
+.PHONY: all glue video engine audio ports compositor compositor-sim pixel pixel-sim timing timing-sim clean
 
 # The default set is the Rev 2 super-engine video path: display-list ENGINE,
 # TIMING + PIXEL + COMPOSITOR.  VIDEO is the Rev 1 in-band-header design,
@@ -216,7 +216,23 @@ pixel/timing.edif: pixel/timing.v
 	cd pixel && $(YOSYS) timing
 
 pixel/timing.jed: pixel/timing.edif
-	cd pixel && $(FITTER) -d ATF1504AS -p PLCC44 timing -preassign keep -strategy debug = on -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy JTAG = on
+	cd pixel && $(FITTER) -d ATF1504AS -p PLCC44 timing -preassign keep -strategy debug = on -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy power_reset on -strategy JTAG = on
+
+# `make timing-sim` runs the iverilog testbench, which is the executable form
+# of the griffin.yml "TIMING output contracts" entry; it exits nonzero if any
+# check fails.  It then recompiles the bench with each -DMUTATE=n negative
+# control (one observed signal perturbed by one clock or one bit) and requires
+# every one of those runs to FAIL — a bench that cannot fail is not a spec.
+TIMING_MUTATIONS := 1 2 3 4 5 6 7 8 9 10
+timing-sim: pixel/timing_tb.v pixel/timing.v
+	cd pixel && iverilog -g2012 -o timing_tb.vvp timing_tb.v timing.v && vvp timing_tb.vvp
+	@for n in $(TIMING_MUTATIONS); do \
+	    (cd pixel && iverilog -g2012 -DMUTATE=$$n -o timing_tb_mut.vvp timing_tb.v timing.v \
+	        && vvp timing_tb_mut.vvp > timing_tb_mut$$n.log 2>&1); \
+	    if [ $$? -eq 0 ]; then echo "NEGATIVE CONTROL MUTATE=$$n DID NOT FAIL"; exit 1; \
+	    else echo "negative control MUTATE=$$n fails as required"; fi; \
+	done
+	@rm -f pixel/timing_tb_mut.vvp pixel/timing_tb_mut*.log
 
 # ------------------------------------------------------------
 

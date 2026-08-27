@@ -88,7 +88,10 @@ module Edma3
     // 4 AUDIO_FIFO_W, 5 spare, 6 spare.
     output wire [6:0]  nSIGNAL,
 
-    // Raster pacing input from VIDEO
+    // Raster pacing input from TIMING's HBLANK output (Rev 2; was VIDEO's
+    // in Rev 1): high for h_cnt 640..799 on every line, so the rising edge
+    // is the start of the 160-clock blank and it keeps coming through
+    // vblank.  See griffin.yml "TIMING output contracts".
     input  wire        HBLANK,
 
     // IRQ to GLUE
