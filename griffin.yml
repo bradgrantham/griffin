@@ -1161,6 +1161,37 @@ interfaces:
     measure >= 4.85 V at the supervisor under full load, else move to
     DS1233D-10 (4.25-4.49 V) or trim the supply.
   - |
+    TIMING output contracts (consolidated 2026-08-26 — read before ANY
+    timing.v revision; every consumer below relies on the stated shape,
+    and timing.v has no testbench yet, so these are enforced only by the
+    consumers' testbenches until timing_tb.v exists).
+    - nRS: 8 pixel clocks at the top of the vsync line (rs_window =
+      v_cnt==V_SYNC_START & h_cnt<8).  Consumers: COMPOSITOR machine
+      reset, and /RS of the four video-stream FIFO chips — the 7200
+      demands /W and /RE inactive from tRSS 15 ns before its rise to
+      tRSR 10 ns after (ENGINE video-write descriptors must finish
+      before vsync; audio strobes exempt).
+    - H_ACTIVE: leads the visible window by 2 pixel clocks
+      (COMPOSITOR_LEAD, measured by compositor_tb).  Consumer:
+      COMPOSITOR slot gating.
+    - PIX_CONSUME/PIX_PRELOAD/PIX_LAST: registered strobes to PIXEL
+      (+1 clock split lead).  PIX_LAST is the last 8 consumption clocks
+      (h_cnt[9:3]==79); pixel.v's late_fetch_done tolerates ANY width
+      >= one byte but its derivations assume 8 — changing the width
+      means re-deriving pixel_tb's end-of-line cases.  PIX_PRELOAD
+      fires at H_TOTAL - PIXEL_FETCH_LEAD (16) before visible lines.
+    - Sync compares shift late by SPLIT_DAC_LEAD (derived, not tuned:
+      COMPOSITOR_LEAD + PIXEL_OUT_LEAD + SPLIT_LEAD = 4); the yml
+      constants block and timing.v localparams must stay equal.
+    - VGA_HSYNC (pre-buffer) is tapped to PORTS as its ONLY timebase
+      (31.469 kHz: paddles at line rate, audio pop at half); VGA_VSYNC
+      is tee'd pre-buffer to GLUE pin 65 (level-6 vsync IRQ latch).
+      Any alternate-raster mode changes both consumers' arithmetic.
+    - Pinout FROZEN 2026-08-26 (//PIN block, 9 signals, 21 spare I/O):
+      new-pin features append to the block and are bitfile-only ONLY if
+      the board routes TIMING's spares to reachable copper — a layout
+      decision to make at capture, not after.
+  - |
     Carried forward from Rev 1 unchanged: 74HCT155 dual 2-to-4 decoder fans
     ~IO_WR_EN out by A19:18 (write section: ~AUDIO_W etc.; read section
     reserved), and the XR68C681 DUART on its DIP carrier with the ~CS

@@ -1,0 +1,528 @@
+<title>Griffin Video Pipeline</title>
+<style>
+  :root {
+    --paper: #FAFAF8;
+    --ink: #1B1E23;
+    --ink-soft: #4A4F57;
+    --bar: #27435E;
+    --bar-text: #F4F6F9;
+    --rule: #C9CCD2;
+    --rule-soft: #E3E5E9;
+    --mono-bg: #F1F2EF;
+    --prod: #2F6B4F;
+    --prod-bg: #E8F1EC;
+    --prelim: #8A5A18;
+    --prelim-bg: #F6EEDF;
+    --adv: #6B4A7A;
+    --adv-bg: #F0E9F4;
+    --accent: #2E5E80;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #16181D;
+      --ink: #D9DCE1;
+      --ink-soft: #9AA0A9;
+      --bar: #31517042;
+      --bar-text: #D9E2EC;
+      --rule: #3A3F47;
+      --rule-soft: #272B31;
+      --mono-bg: #1E2126;
+      --prod: #6FBA94;
+      --prod-bg: #1E2E27;
+      --prelim: #D3A45B;
+      --prelim-bg: #2E2718;
+      --adv: #B491C7;
+      --adv-bg: #29202E;
+      --accent: #6FA3C7;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #16181D;
+    --ink: #D9DCE1;
+    --ink-soft: #9AA0A9;
+    --bar: #31517042;
+    --bar-text: #D9E2EC;
+    --rule: #3A3F47;
+    --rule-soft: #272B31;
+    --mono-bg: #1E2126;
+    --prod: #6FBA94;
+    --prod-bg: #1E2E27;
+    --prelim: #D3A45B;
+    --prelim-bg: #2E2718;
+    --adv: #B491C7;
+    --adv-bg: #29202E;
+    --accent: #6FA3C7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0 16px 64px;
+  }
+  .sheet { max-width: 920px; margin: 0 auto; }
+
+  /* ---- masthead ---- */
+  .masthead {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    border-bottom: 3px solid var(--ink);
+    padding: 28px 0 10px; gap: 16px; flex-wrap: wrap;
+  }
+  .masthead h1 { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .masthead .sub { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
+  .docmeta {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11.5px; color: var(--ink-soft); text-align: right; line-height: 1.6;
+  }
+  .feat-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0 32px;
+    border-bottom: 1px solid var(--rule); padding: 14px 0 18px;
+  }
+  @media (max-width: 640px) { .feat-grid { grid-template-columns: 1fr; } }
+  .feat-grid h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--ink-soft); margin: 8px 0 6px; font-weight: 700;
+  }
+  .feat-grid ul { margin: 0; padding-left: 18px; }
+  .feat-grid li { margin: 3px 0; font-size: 13.5px; }
+
+  /* ---- section bars ---- */
+  section { margin-top: 34px; }
+  .secbar {
+    background: var(--bar); color: var(--bar-text);
+    font-weight: 700; font-size: 14px; letter-spacing: 0.04em;
+    padding: 6px 12px; display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .secbar .no { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-weight: 400; opacity: 0.75; font-size: 12px; }
+  h3 {
+    font-size: 14.5px; font-weight: 700; margin: 22px 0 6px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    text-wrap: balance;
+  }
+  h3 .mnum { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-weight: 400; color: var(--ink-soft); font-size: 12.5px; }
+  p { margin: 8px 0; max-width: 70ch; }
+  .note { color: var(--ink-soft); font-size: 13px; max-width: 70ch; }
+
+  /* ---- status stamps ---- */
+  .st {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 10px; letter-spacing: 0.08em; font-weight: 700;
+    padding: 2px 7px; border-radius: 2px; white-space: nowrap;
+  }
+  .st.prod   { color: var(--prod);   background: var(--prod-bg);   border: 1px solid var(--prod); }
+  .st.prelim { color: var(--prelim); background: var(--prelim-bg); border: 1px solid var(--prelim); }
+  .st.adv    { color: var(--adv);    background: var(--adv-bg);    border: 1px solid var(--adv); }
+
+  /* ---- tables ---- */
+  .twrap { overflow-x: auto; margin: 10px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--ink-soft); border-bottom: 2px solid var(--ink);
+    padding: 5px 10px 5px 0; font-weight: 700; white-space: nowrap;
+  }
+  td { border-bottom: 1px solid var(--rule-soft); padding: 6px 10px 6px 0; vertical-align: top; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.mono, .mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12.5px; }
+  tr.subhead td {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--ink-soft); font-weight: 700; border-bottom: 1px solid var(--rule);
+    padding-top: 14px;
+  }
+
+  /* ---- code / waveforms ---- */
+  pre {
+    background: var(--mono-bg); border: 1px solid var(--rule-soft);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 12px; line-height: 1.45; padding: 12px 14px;
+    overflow-x: auto; margin: 10px 0;
+  }
+  code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.92em; }
+
+  /* ---- block diagram ---- */
+  .bd { margin: 14px 0; }
+  .bd-row { display: flex; align-items: stretch; gap: 0; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .bd-box {
+    border: 1.5px solid var(--ink); padding: 8px 10px; min-width: 108px;
+    text-align: center; flex: 0 0 auto;
+  }
+  .bd-box b { display: block; font-size: 12.5px; }
+  .bd-box span { display: block; font-size: 10.5px; color: var(--ink-soft); margin-top: 2px; line-height: 1.35; }
+  .bd-arrow {
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    padding: 0 4px; flex: 0 0 auto; color: var(--ink-soft);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 10.5px;
+    text-align: center; line-height: 1.3;
+  }
+  .bd-under {
+    border: 1px dashed var(--rule); color: var(--ink-soft);
+    padding: 6px 10px; margin-top: 8px; font-size: 11.5px; max-width: 640px;
+  }
+
+  .recipe { border: 1px solid var(--rule); margin: 14px 0; }
+  .recipe-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+    padding: 8px 12px; border-bottom: 1px solid var(--rule); flex-wrap: wrap;
+    background: var(--mono-bg);
+  }
+  .recipe-head b { font-size: 13.5px; }
+  .recipe-head .cost { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 11.5px; color: var(--ink-soft); }
+  .recipe-body { padding: 8px 12px 10px; font-size: 13px; }
+  .recipe-body p { margin: 5px 0; }
+  .footer {
+    margin-top: 48px; border-top: 3px solid var(--ink); padding-top: 8px;
+    font-size: 11.5px; color: var(--ink-soft);
+    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+</style>
+
+<div class="sheet">
+
+  <div class="masthead">
+    <div>
+      <h1>Griffin Video Pipeline</h1>
+      <div class="sub">Two-stream display subsystem &mdash; mechanism reference and screen-mode application notes</div>
+    </div>
+    <div class="docmeta">
+      REV 2 &middot; DRAFT 2026-08-21<br>
+      sources: compositor.v / pixel.v / timing.v,<br>
+      griffin.yml interfaces, vidcmd-spec.md, super-engine suite
+    </div>
+  </div>
+
+  <div class="feat-grid">
+    <div>
+      <h2>Features</h2>
+      <ul>
+        <li>VGA 640&times;480@59.94, R4G4B4 (12-bit) color throughout</li>
+        <li>Fixed-rate indexed pixel stream + beam-locked RLE command stream</li>
+        <li>Pixel-exact mid-line register writes (SET, banked-pair law)</li>
+        <li>Per-line palettes at zero slot cost (hblank-eager SETs)</li>
+        <li>Micro-HAM 2bpp mode for high-fidelity still images</li>
+        <li>No CPU bus on PIXEL / TIMING / COMPOSITOR &mdash; all state in-band</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Device Complement</h2>
+      <ul>
+        <li>ENGINE &mdash; ATF1508AS, descriptor DMA master (123/128 LC)</li>
+        <li>PIXEL &mdash; ATF1508AS, stream unpacker (122/128 LC)</li>
+        <li>COMPOSITOR &mdash; ATF1508AS, VIDCMD playback (112/128 LC)</li>
+        <li>TIMING &mdash; ATF1504AS PLCC44, raster + syncs (31/64 LC)</li>
+        <li>2&times;2 IDT7200L15 FIFOs (256&times;9): PIXELS and VIDCMD streams</li>
+        <li>2&times; 74AC541 + R4G4B4 ladder DAC to DE-15</li>
+      </ul>
+    </div>
+  </div>
+
+  <section>
+    <div class="secbar"><span>General Description</span><span class="no">1</span></div>
+    <p>
+      The pipeline is organized around one physical fact: the CPLDs contain no RAM
+      (128 flip-flops per device), so no line buffer, tile fetch, or sprite shifter bank
+      can exist on-chip. The only line-scale memory is the FIFO pair on each stream, and a
+      FIFO&rsquo;s contract is <em>sequential delivery</em>. The architecture therefore carries
+      everything as two streams: <b>PIXELS</b>, a fixed-rate indexed data plane, and
+      <b>VIDCMD</b>, a variable-rate control plane executed in lockstep with the beam.
+      COMPOSITOR merges them per pixel slot; TIMING cancels every stage&rsquo;s fixed latency
+      by firing its comparators early (derived leads, not tuned).
+    </p>
+    <div class="bd">
+      <div class="bd-row">
+        <div class="bd-box"><b>ENGINE</b><span>descriptor DMA<br>4-word records<br>top 64K of RAM</span></div>
+        <div class="bd-arrow">D[15:0]<br>&rarr;</div>
+        <div class="bd-box"><b>PIXELS FIFO</b><span>2&times;7200 byte-interleaved<br>shared 8-bit Q</span></div>
+        <div class="bd-arrow">Q[7:0]<br>&rarr;</div>
+        <div class="bd-box"><b>PIXEL</b><span>1bpp / &micro;HAM unpack<br>pal_fg pal_bg ham_held<br>mode, pixel_skip</span></div>
+        <div class="bd-arrow">RGB[11:0]<br>&rarr;</div>
+        <div class="bd-box"><b>COMPOSITOR</b><span>VIDCMD playback<br>4 sources / slot<br>fetch: 2 clk/word</span></div>
+        <div class="bd-arrow">RGB_OUT<br>&rarr;</div>
+        <div class="bd-box"><b>DAC</b><span>2&times;74AC541<br>ladder &rarr; DE-15</span></div>
+      </div>
+      <div class="bd-row" style="margin-top:8px">
+        <div class="bd-box" style="border-style:dashed"><b>VIDCMD FIFO</b><span>2&times;7200 ganged 16-bit<br>Q[15:0] &rarr; COMPOSITOR only<br>/EF sync&rsquo;d, /RE registered</span></div>
+        <div class="bd-arrow">set_pix_value[11:0]<br>+ target/valid/commit<br>&larr; (17 registered nets)</div>
+        <div class="bd-box" style="border-style:dashed"><b>TIMING</b><span>H_ACTIVE (+2 lead), nRS<br>PIX_CONSUME/PRELOAD/LAST<br>HSYNC/VSYNC out</span></div>
+      </div>
+      <div class="bd-under">
+        ENGINE fills both FIFOs by DMA (one-hot /W strobes from descriptors).
+        The COMPOSITOR&rarr;PIXEL register path is the only upstream signal group;
+        all 17 nets are flop-to-flop, same clock, full-cycle setup.
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="secbar"><span>System Characteristics</span><span class="no">2</span></div>
+    <div class="twrap"><table>
+      <tr><th>Parameter</th><th class="num">Value</th><th>Notes</th></tr>
+      <tr><td>Pixel clock</td><td class="num">25.175 MHz</td><td>39.72 ns period; dedicated oscillator</td></tr>
+      <tr><td>Raster</td><td class="num">800&times;525 / 640&times;480</td><td>negative syncs; line 31.469 kHz, frame 59.94 Hz</td></tr>
+      <tr><td>System clock (DMA)</td><td class="num">14 MHz</td><td>ENGINE: 2 SYSCLK per word transferred</td></tr>
+      <tr><td>Peak DMA delivery</td><td class="num">222 words/line</td><td>&asymp;1 word per 3.6 pixel clocks, 100% bus</td></tr>
+      <tr><td>Delivery at 66% bus cap</td><td class="num">&asymp;147 words/line</td><td>CPU retains &ge;34% of memory bandwidth</td></tr>
+      <tr><td>Effective (burst overhead)</td><td class="num">&asymp;120&ndash;145 words/line</td><td>~10-cycle BR/BG/BGACK handshake per 20-word burst</td></tr>
+      <tr><td>Stream FIFO capacity</td><td class="num">256 words each</td><td>hblank/vblank pre-banking cushion</td></tr>
+      <tr><td>VIDCMD fetch cadence</td><td class="num">2 px clk / word</td><td>registered /RE; pinned worst-case table, &sect;5</td></tr>
+      <tr><td>Output pipeline</td><td class="num">4 clocks total</td><td>absorbed by TIMING leads (DAC_LEAD 4); invisible on screen</td></tr>
+    </table></div>
+  </section>
+
+  <section>
+    <div class="secbar"><span>Mechanisms</span><span class="no">3</span></div>
+    <p class="note">
+      Status stamps: <span class="st prod">PRODUCTION</span> = RTL built, fitted, and
+      testbench/suite verified. <span class="st prelim">PRELIMINARY</span> = design agreed,
+      fit experiment pending &mdash; logic-cell figures are estimates until the fitter rules.
+      <span class="st adv">ADVANCE</span> = concept; specification may change.
+    </p>
+
+    <h3><span class="mnum">3.1</span> PIXELS stream &mdash; indexed data plane <span class="st prod">PRODUCTION</span></h3>
+    <div class="twrap"><table>
+      <tr><th>Mode</th><th class="num">Rate</th><th class="num">Words/line</th><th>Pixel meaning</th></tr>
+      <tr><td>1bpp direct</td><td class="num">1 bit/clk</td><td class="num">40</td><td>bit selects pal_fg / pal_bg</td></tr>
+      <tr><td>2bpp micro-HAM</td><td class="num">2 bits/clk</td><td class="num">80</td><td>dibit ops: <code>0_p</code> held&larr;pal[p]; <code>10_g_r</code>, <code>11_g_b</code> modify held chroma</td></tr>
+    </table></div>
+    <p>
+      Pure pixel bits &mdash; no in-band header (retired with rev 1). Palettes, mode, and
+      pixel_skip arrive as VIDCMD SETs. On underrun PIXEL re-shifts its last word: one
+      <code>0x0000</code> word paints background to end of line or frame (a compression feature,
+      not an error path).
+    </p>
+
+    <h3><span class="mnum">3.2</span> VIDCMD playback &mdash; beam-locked control plane <span class="st prod">PRODUCTION</span></h3>
+    <pre>RUN        { 2'b00, src[1:0],  ~count[11:0] }   src: 00 passthrough  01 held_fg  10 held_bg
+RUN_COLOR  { 2'b00, 2'b11, colour[2:0], ~count[8:0] }   8 saturated corners, inline
+SET        { 1'b1,  target[2:0], value[11:0] }  0 held_fg  1 held_bg  2..6 &rarr; PIXEL regs
+reserved   { 2'b01, ... }                       1-slot no-op (mask record candidate, &sect;3.5)</pre>
+    <p>
+      Every active pixel clock is one <b>slot</b>; a record occupies exactly one slot when it
+      executes, with <b>entry-edge commit</b>: a SET&rsquo;s effect is visible in the pixel of its own
+      slot. When the count is terminal and nothing is staged, <b>HOLD</b> continues the current
+      source &mdash; first-class framing (a whole passthrough frame costs one word). During blanking,
+      staged SETs execute immediately in stream order (<b>eager</b>, and positional: a staged RUN
+      blocks everything behind it). <code>/RS</code> at vsync resets held colors and all machine state.
+    </p>
+
+    <h3><span class="mnum">3.3</span> Fetch engine &mdash; cadence and the banked pair <span class="st prod">PRODUCTION</span></h3>
+    <p>
+      The FIFO read strobe is a registered output: one word per <b>2 pixel clocks</b> sustained.
+      Two words bank ahead of playback &mdash; one in <code>staged_word</code>, one <b>parked on Q</b>
+      (/RE held low; the 7200 holds Q valid indefinitely while /RE stays low). Laws, verified by
+      102 testbench checks and mirrored in the suite model:
+    </p>
+    <div class="twrap"><table>
+      <tr><th>Law</th><th>Statement</th></tr>
+      <tr><td class="mono">L1</td><td>Playback semantics unchanged by cadence: 1 slot/record, entry-edge commit, HOLD, positional eagerness</td></tr>
+      <tr><td class="mono">L2</td><td>A RUN(N) banked before line start occupies slots 0..N&minus;1; the next banked record executes slot N</td></tr>
+      <tr><td class="mono">L4</td><td>Sustained cadence 2 slots/word; a 1-slot record in steady state paints 2 px (own slot + HOLD)</td></tr>
+      <tr><td class="mono">L5</td><td><b>Banked-pair law:</b> two banked records execute on consecutive slots; the third arrives 2 slots later</td></tr>
+    </table></div>
+    <p class="note">
+      Consequences: a SET fg + SET bg pair behind any run &ge;4 px lands on adjacent pixels
+      (both palette entries change across two pixels); 1-px spans need &ge;4-px pitch to land as
+      authored (2&ndash;3-px pitch stretches them to 2 px); a back-to-back triple lands at slots
+      N, N+2, N+4 relative&nbsp;to&nbsp;N&minus;1.
+    </p>
+
+    <h3><span class="mnum">3.4</span> SET conduit to PIXEL &mdash; the value bus <span class="st prod">PRODUCTION</span></h3>
+    <p>
+      PIXEL-target SETs cross on a dedicated 12-bit registered bus plus target/valid/commit
+      (17 nets, all flop-to-flop). Constants: a SET is visible in its own slot;
+      <code>set_pix_commit</code> leads its slot&rsquo;s RGB_OUT by 1 clock; coincident commit+capture
+      edges obey apply-old/capture-new. The K offsets are folded in by the list builder
+      automatically &mdash; authoring is pixel-exact.
+    </p>
+
+    <h3><span class="mnum">3.5</span> MASK record &mdash; per-pixel overlay <span class="st prod">PRODUCTION</span></h3>
+    <pre>MASK   { 2'b01, d1..d7 }  +  { d8..d15 }     16 px per 2-word record
+pixel 0: IMPLICIT dibit {1,0} = opaque color0
+dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &middot; 01 reserved</pre>
+    <p>
+      Two words paint 16 pixels of per-pixel three-way choice (passthrough / color0 / color1).
+      Played from <code>staged_word</code> shifted in place, data word reloaded from parked Q
+      mid-record; <b>adjacent masks chain gapless</b> and a mask follows a RUN with zero gap
+      (px0 is the record&rsquo;s own first slot). Fitted at <b>121/128 LC</b> &mdash; 4 cells
+      <em>cheaper</em> than the rejected 8-px inline-color form, whose knife-edge color write
+      also provably forced a 3-slot seam. Recolor via SET: measured seams &mdash; one SET
+      between masks 2 slots, SET pair 4 slots (the mask holds the bank, so pairs cannot bank),
+      RUN + SET pair + mask 3 slots. Authoring rules: leading transparency = a passthrough RUN
+      before the record; glyphs wider than 15 px collide with the implicit px0.
+      Full-line coverage: 80 words/line, under the delivery cap.
+    </p>
+
+    <h3><span class="mnum">3.6</span> 2bpp indexed mode <span class="st prod">PRODUCTION</span></h3>
+    <p>
+      Mode register bit 1 (bitwise decode; 11 reserved, HAM wins): PIXELS consumed 2 bits/clock
+      as a direct index &mdash; <b>zero new registers</b>: 00&rarr;pal_bg, 01&rarr;pal_fg,
+      10&rarr;ham_held, 11&rarr;constant black. Four colors, three per-line settable via free
+      hblank SETs. 80 words/line. Odd pixel_skip clamps to even (as HAM). One order rule:
+      <b>SET mode before SET ham_held</b> &mdash; indexed mode locks the stream out of ham_held so
+      code 10 shows the SET-loaded value. Fitted (PIXEL 105/128 incl. &sect;3.7); tb + suite +
+      emulator all express it (m8-indexed2 pixel-exact, 89 words/line with recolors vs the cap).
+    </p>
+
+    <h3><span class="mnum">3.7</span> Half-rate flag &mdash; 320-wide modes <span class="st prod">PRODUCTION</span></h3>
+    <p>
+      Mode register bit 2: each consumed group held 2 pixel clocks &mdash; 320 effective pixels.
+      1bpp drops to 20 words/line, 2bpp indexed to 40; hardware-masked off in micro-HAM (the
+      flag does nothing there, by one deliberate literal). <b>COMPOSITOR never learns the
+      rate</b>: MASK dibits and SET boundaries stay full 640-px resolution over the chunky
+      playfield (m9-halfrate: 0 split playfield groups, 1-px sprite detail on top). Vertical
+      analog is free via line-repeat descriptors (&sect;3.9).
+    </p>
+
+    <h3><span class="mnum">3.8</span> LITERAL record &mdash; direct-color spans <span class="st adv">ADVANCE</span></h3>
+    <p>
+      &ldquo;Next N VIDCMD words are raw R4G4B4 pixels.&rdquo; At the 2-clock cadence each literal
+      paints a 2-clock-wide pixel &mdash; which in a &sect;3.7 half-rate mode is <b>exactly one game
+      pixel</b>: full 12-bit per-pixel sprites and cursor at one word per game pixel, no palette
+      involvement. COMPOSITOR decode + counter; specify after &sect;3.5 fits.
+    </p>
+
+    <h3><span class="mnum">3.9</span> Descriptor techniques &mdash; zero hardware <span class="st prod">PRODUCTION</span></h3>
+    <p>
+      ENGINE walks 4-word descriptors; the list is the machine. Line repeat (240-line modes),
+      per-line palette/mode preambles, double-buffered lists re-armed from the vsync ISR
+      (frame-owned RAM rule), and audio deposits woven into the same list
+      (<code>AUDIO_FIFO_W</code> strobe) are all authoring, not silicon.
+    </p>
+  </section>
+
+  <section>
+    <div class="secbar"><span>Screen-Mode Application Notes</span><span class="no">4</span></div>
+    <p class="note">Words/line includes typical hblank SET preambles. Budget reference: &asymp;147 words/line at the 66% bus cap (&sect;2).</p>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Text console &mdash; 640&times;480, 2 colors/line</b><span class="cost">&asymp;43 words/line &middot; 19% bus</span><span class="st prod">PRODUCTION</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> 1bpp stream (&sect;3.1) + per-line SET pal_fg/pal_bg in hblank (&sect;3.2, free) + RUN(passthrough, 640).</p>
+        <p><b>Notes:</b> the shipping firmware console. Software font render into the framebuffer; attributes = per-line palette.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>4-color bitmap &mdash; 640&times;480</b><span class="cost">&asymp;85 words/line &middot; 38% bus</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> 2bpp indexed mode (&sect;3.6) + hblank SETs for the three live entries.</p>
+        <p><b>Notes:</b> per-line 4-color paint program / basic graphics target. Colors change per line for free.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Game mode &mdash; 320-wide, 4 colors + sprites</b><span class="cost">&asymp;60&ndash;80 words/line &middot; &le;36% bus</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> half-rate 2bpp playfield (&sect;3.7 + &sect;3.6, 40 w/line) + MASK sprites (&sect;3.5) + SET pairs for per-object color (L5 places them pixel-exact after any &ge;4-px span).</p>
+        <p><b>Notes:</b> &ldquo;a step past Colecovision&rdquo;: CV gives 4 single-color sprites/line; this gives delivery-bound sprite coverage (8 head-first / 32 interleaved spans/line measured), 12-bit color, arbitrary widths &mdash; color granularity per 16-px mask word rather than per sprite pixel. Line-repeat descriptors for 320&times;240 halve the stream again.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Cursor / sprites &mdash; 1-px-exact three-color overlay</b><span class="cost">2 words per 16-px row</span><span class="st prod">PRODUCTION</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> one MASK record per row (&sect;3.5): fill=color1, outline=color0, transparent surround; leading transparency via a passthrough RUN; wider sprites chain gapless.</p>
+        <p><b>Notes:</b> spans-as-cursor is retired for 1-px art (4-px pitch floor, L4). Per-object recolor: SET seam 2&ndash;4 slots (&sect;3.5) or place SETs in hblank for free.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Pure-VIDCMD screens &mdash; the display list is the framebuffer</b><span class="cost">console 82 w/line worst, 51 typical &middot; kiosk 30</span><span class="st prod">PRODUCTION (modeled)</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> no PIXELS fills at all &mdash; text and UI as MASK groups + RUN gaps + hblank SETs. m6-console: 80&times;60 text, two glyphs per record, pixel-exact vs reference. m7-kiosk: large text (15&times;28 glyphs in 16&times;32 cells &mdash; the implicit px0 dictates &le;15-px art), per-item colors, RUN_COLOR highlight bar.</p>
+        <p><b>Notes:</b> with PIXELS empty, dibit-00 resolves to pal_bg in the model &mdash; a third settable color (hardware verification OPEN, &sect;7). Every-group recoloring is impossible by construction (160 w/line &gt; cap AND 800 slots &gt; 640); sparse recoloring fits easily. Also the staged bring-up path: a working display before PIXEL is ever socketed.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Dual playfield &mdash; 2bpp under + 1bpp over</b><span class="cost">&asymp;125 words/line &middot; 56% bus (worst case)</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> 2bpp playfield in PIXELS + sustained full-line MASKs in VIDCMD (40 w/line, cadence-immune per &sect;3.5).</p>
+        <p><b>Notes:</b> exceeds the 66% cap only with every line dense; drop either plane to 320-wide to halve its cost.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Image viewer &mdash; high-fidelity stills</b><span class="cost">&asymp;80 words/line &middot; 36% bus</span><span class="st prod">PRODUCTION</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> micro-HAM stream (&sect;3.1) + per-line palette SETs. Suite-exact encoder in image-tools (ordered dither default, FS for photos).</p>
+        <p><b>Notes:</b> chroma saturates (2 colors/line + 8 corners); infrequent update by design.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Vector / wireframe &mdash; RLE span lists</b><span class="cost">delivery-bound: &asymp;32 spans/line</span><span class="st prod">PRODUCTION</span> </div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> per-line sorted span lists of RUN/RUN_COLOR (&sect;3.2); <code>vidcmd_plan_line()</code> is the feasibility oracle at authoring time.</p>
+        <p><b>Notes:</b> the Tempest case. 1-px features obey the 4-px pitch floor or ride MASKs. If cumulative gap-run authoring becomes painful, an absolute-X skip record (&asymp;12&ndash;15 LC, COMPOSITOR) is the named upgrade &mdash; deferred.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="secbar"><span>VIDCMD Read-Port Timing</span><span class="no">5</span></div>
+    <p>
+      Registered /RE against the 39.72 ns pixel clock. Worst-case parameters pinned 2026-08-18
+      from the IDT7200L15 and ATF1508AS-10 datasheets (griffin.yml <span class="mono">interfaces:</span>).
+    </p>
+<pre>PIXEL_CLK    ‾\__/‾‾\__/‾‾\__/‾‾    edge a: /RE register clocks low
+nVIDCMD_RE   ‾‾‾\________/‾‾‾‾‾‾    tCO &le; 8.0 ns after a; pointer advances on this fall
+VIDCMD_Q     ----------&lt;==word==&gt;-  valid &le; 25.0 ns after a (tCO 8.0 + tA 15 + flight)
+                        capture ^   one full clock later: needs 32.7 ns &mdash; margin +7.7 ns
+                                    parked: /RE stays LOW, Q holds indefinitely</pre>
+    <div class="twrap"><table>
+      <tr><th>Path</th><th class="num">Requirement</th><th class="num">Delivered</th><th class="num">Margin</th></tr>
+      <tr><td>Data: /RE fall &rarr; capture setup</td><td class="num">&le; 32.7 ns</td><td class="num">25.0 ns</td><td class="num">+7.7 ns</td></tr>
+      <tr><td>Empty flag: tREF &rarr; capture guard</td><td class="num">&le; 32.7 ns</td><td class="num">25.0 ns</td><td class="num">+7.7 ns</td></tr>
+      <tr><td>Read pulse width (tRPW 15 min)</td><td class="num">&ge; 15 ns</td><td class="num">39.7 ns</td><td class="num">+24.7 ns</td></tr>
+      <tr><td>Read recovery (tRR 10 min)</td><td class="num">&ge; 10 ns</td><td class="num">39.7 ns</td><td class="num">+29.7 ns</td></tr>
+      <tr><td>Read cycle (tRC 25 min)</td><td class="num">&ge; 25 ns</td><td class="num">79.4 ns</td><td class="num">+54.4 ns</td></tr>
+    </table></div>
+    <p class="note">
+      One read per pixel clock was evaluated and <b>rejected structurally</b>: with a gate-shaped
+      half-period /RE, the guaranteed-valid window on Q ([tPD+tA, T/2+tDV] &asymp; [23, 27] ns)
+      overlaps neither capture edge &mdash; it misses the falling-edge requirement (12.9 ns) by
+      ~10 ns and dies 6&ndash;13 ns before the rising-edge window (32.7 ns) opens. All alternate
+      rescues (external &rsquo;574 latch, 2&times; fetch clock) stack unspecified &plusmn;2 ns quantities
+      against 2&ndash;5 ns margins; and 1 word/clock would not solve per-pixel economics anyway
+      (640 words/line = 2.5 FIFO fills). Per-pixel work belongs to MASK words, &sect;3.5.
+    </p>
+  </section>
+
+  <section>
+    <div class="secbar"><span>Programming Notes</span><span class="no">6</span></div>
+    <div class="twrap"><table>
+      <tr><th>#</th><th>Rule</th></tr>
+      <tr><td class="mono">PN1</td><td>Each CUSHION line&rsquo;s records must occupy exactly 640 slots as <em>executed</em> (the builder&rsquo;s <code>vidcmd_plan_line()</code> simulation sizes trailing fillers; occupancy &ne; authored sum under cadence).</td></tr>
+      <tr><td class="mono">PN2</td><td>Place a SET pair behind &ge;4 px of playback (or in hblank) for consecutive-pixel commit; order the pair so the target needed first commits first.</td></tr>
+      <tr><td class="mono">PN3</td><td>An overrunning record (&gt;640 slots) plays at the start of the next line and blocks that line&rsquo;s eager SETs &mdash; overrun steals eagerness.</td></tr>
+      <tr><td class="mono">PN4</td><td>Any RAM a display list points at is frame-owned: double-buffer lists and data; re-arm from the vsync ISR (DESC write also acks the level-3 IRQ). <b>The list must be idle before the ISR&rsquo;s re-arm write</b> &mdash; a DESC write mid-walk clobbers the walk; CTRL=0 abort is the safety net but forfeits the list&rsquo;s remaining deposits.</td></tr>
+      <tr><td class="mono">PN5</td><td>Two /RS deadlines, split by stream. <b>Video-writing descriptors</b> (PIXELS/VIDCMD /W) must complete before vsync: no video write strobe may overlap TIMING&rsquo;s 318 ns nRS pulse (+15 ns setup / +10 ns after its rise). <b>Audio-writing descriptors are exempt</b> &mdash; AUDIO is not on the nRS net; its drain and both fill paths run straight through vblank. The re-armed list may open with audio-only descriptors immediately: ISR latency (&asymp;3 &micro;s minimum) outlasts the pulse. Do not stream video FIFOs before the first vsync (their first /RS).</td></tr>
+      <tr><td class="mono">PN6</td><td>1-px spans below 4-px pitch render 2 px wide (L4); use MASK words for sub-floor art.</td></tr>
+    </table></div>
+  </section>
+
+  <section>
+    <div class="secbar"><span>Qualification Status</span><span class="no">7</span></div>
+    <div class="twrap"><table>
+      <tr><th>Item</th><th>Gate</th><th>Status</th></tr>
+      <tr><td>Fetch cadence + banked pair (&sect;3.3)</td><td>compositor_tb 102 checks; suite model equation-identical</td><td class="mono">PASS 2026-08-19</td></tr>
+      <tr><td>Read-port electricals (&sect;5)</td><td>pinned datasheet table, worst case</td><td class="mono">CLOSED 2026-08-18</td></tr>
+      <tr><td>MASK record (&sect;3.5)</td><td>fitted 121/128; tb + suite model + plan sim + author + 2 pure-VIDCMD screen cases</td><td class="mono">PASS 2026-08-24</td></tr>
+      <tr><td>Pure-VIDCMD screens (&sect;4)</td><td>m6-console (82 w/line worst, pixel-exact) + m7-kiosk (30 w/line, measured seams)</td><td class="mono">PASS 2026-08-24</td></tr>
+      <tr><td>Passthrough-as-third-color (empty PIXELS &rarr; dibit 00 = pal_bg)</td><td>model behavior only &mdash; verify pixel.v post-/RS re-shift + 7200 Q with no writes on hardware</td><td class="mono">OPEN</td></tr>
+      <tr><td>2bpp indexed + half-rate (&sect;3.6&ndash;3.7)</td><td>fitted (PIXEL 105/128, pinout frozen); pixel_tb 9 cases; model + suite (m8/m9) + emulator</td><td class="mono">PASS 2026-08-26</td></tr>
+      <tr><td>Pinout freeze: COMPOSITOR / PIXEL / TIMING</td><td>//PIN blocks harvested from production-flag fits, re-verified IDENTICAL under -preassign keep</td><td class="mono">FROZEN 2026-08-26</td></tr>
+      <tr><td>LITERAL record (&sect;3.8)</td><td>specify after MASK verdict</td><td class="mono">CONCEPT</td></tr>
+      <tr><td>Dual-playfield delivery margin</td><td>suite case at 66% bus model</td><td class="mono">TO WRITE</td></tr>
+    </table></div>
+  </section>
+
+  <div class="footer">
+    <span>Griffin rev 2 &mdash; working design record; normative sources are the RTL headers and griffin.yml.</span>
+    <span>DRAFT &middot; 2026-08-21</span>
+  </div>
+
+</div>
