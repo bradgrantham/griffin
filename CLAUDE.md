@@ -81,4 +81,4 @@
 
 * In general prefer facilities don't cross-communicate except absolutely necessary.  E.g. a CF card facility can fill in a string with identity, but wouldn't call the UART to print it.  A higher function would call to get the identity, and then call whatever routine it prefers to print the identity or store it in NVRAM or whatever.
 
-* if nothing is decoded at a region, delete the decode and release the CPLD pin or pins.
+* If nothing is decoded at a region, delete the decode and release the CPLD pin or pins.
