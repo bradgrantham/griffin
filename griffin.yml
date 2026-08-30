@@ -1,13 +1,21 @@
+# Griffin hardware definition -- the source for (1) CPU interaction: memory
+# map, register bitfields and their legal values, constants CPU code writes to
+# and between components; (2) bitfile creation: the same bitfields and the
+# structural rules the CPLDs implement; (3) high-level schematic validation:
+# which chip drives which net.  Machine-readable fields feed codegen.py
+# (C/C++, GAS, ld, Verilog headers); comments state only the contracts no
+# implementation states.  Rationale, history and measurements: griffin.log.
+
 project:
   name: Griffin
-  cpu: MC68010    # primary CPU for Rev 2 (68000 is a drop-in); VBR available to firmware
+  cpu: MC68010    # 68000 is a drop-in
   clock_hz: 14000000
   interrupt_mode: autovector
 
 peripherals:
   GLUE:
     part: ATF1508AS
-    description: "System glue logic (also hosts PS/2 keyboard RX/TX)"
+    description: "System glue logic and PS/2 keyboard"
     address_range:
       base: 0xF00000
       size: 0x040000
@@ -47,17 +55,13 @@ peripherals:
         width: 8
         description: |
           Byte to transmit host->device; the write itself starts the frame.
-          GLUE presents the start bit on DATA, releases PS2_CLK (the CPU
-          must have inhibited it >=100 us first via PS2_CTRL.CLK), then
-          shifts start/8-data-LSB-first/parity/stop out on each device
-          PS2_CLK falling edge and samples the device ACK into TX_ACK,
-          raising TX_DONE (level-4 IRQ) on completion.
-
-          This register spans two word slots: address bit 1 carries the
-          firmware-computed odd-parity bit (no hardware XOR), so write
-          to PS2_TX_DATA for parity 0 or PS2_TX_DATA+PS2_TX_DATA_PARITY
-          (offset 0x0B) for parity 1.  Ignored while a TX or RX frame
-          is already in progress.
+          Precondition: CPU has held PS2_CLK low >= 100 us via PS2_CTRL.CLK.
+          Frame is start/8-data-LSB-first/parity/stop shifted on device
+          PS2_CLK falling edges; device ACK lands in TX_ACK and TX_DONE
+          raises the level-4 IRQ.  Parity is not computed in hardware:
+          address bit 1 carries it, so write PS2_TX_DATA for parity 0 or
+          PS2_TX_DATA + PS2_TX_DATA_PARITY (0x0B) for parity 1.  Ignored
+          while a TX or RX frame is in progress.
         bits:
           - { bit: "7:0", name: DATA, description: "Data byte to send (write triggers TX)" }
       - offset: 0x11
@@ -65,11 +69,10 @@ peripherals:
         access: read
         width: 8
         description: |
-          PS/2 frame-engine status.  GLUE assembles a full 11-bit RX
-          frame (start/8-data-LSB-first/parity/stop) and raises one IRQ
-          per byte via RX_READY; the data byte is read from PS2_RX_DATA.
-          TX completion is signalled by TX_DONE.  Both are W1C via
-          PS2_CLEAR.  Firmware validates RX parity from RX_PARITY.
+          PS/2 frame-engine status.
+          One IRQ per assembled 11-bit RX frame (RX_READY) or completed TX
+          (TX_DONE); both W1C via PS2_CLEAR.  Firmware checks odd parity
+          from RX_PARITY.
         bits:
           - { bit: "0", name: RX_READY,
               description: "1 = a received byte is in PS2_RX_DATA; asserts level-4 IRQ; W1C via PS2_CLEAR" }
@@ -91,8 +94,8 @@ peripherals:
         width: 8
         description: |
           Write-1-to-clear for PS2_STATUS latched flags / IRQ ack.
-          The GLUE level-4 IRQ de-asserts on the same cycle once both
-          RX_READY and TX_DONE are clear.
+          The level-4 IRQ de-asserts on the same cycle once both RX_READY
+          and TX_DONE are clear.
         bits:
           - { bit: "0", name: RX_READY, description: "Write 1 to clear RX_READY (RX byte ISR ack)" }
           - { bit: "1", name: TX_DONE,  description: "Write 1 to clear TX_DONE (TX completion ISR ack)" }
@@ -102,9 +105,8 @@ peripherals:
         width: 8
         description: |
           Open-drain drive control for PS2_CLK and PS2_DATA for the TX inhibit handshake.
-          Each bit drives the pin low when set and tri-states to the
-          external pull-up otherwise.  While a TX frame is in progress
-          the engine owns both pins and ignores CLK here.
+          Set = drive low; clear = tri-state to the external pull-up.  CLK is
+          ignored while a TX frame is in progress (the engine owns the pins).
         bits:
           - { bit: "0", name: CLK,
               description: "1 = drive PS2_CLK low (inhibit device / request-to-send); 0 = tri-state" }
@@ -123,17 +125,10 @@ peripherals:
         width: 8
         description: |
           Latched vsync frame interrupt status.
-          TIMING has no CPU bus, so it cannot host an interrupt-acknowledge
-          register; GLUE therefore latches the assertion edge of TIMING's
-          VSYNC output (the same net that feeds the VGA connector, tapped
-          before the 74AC541 buffer, 2-FF synchronized into the SYSCLK
-          domain) and, while CONFIG bit VSYNC_IRQ_EN is set, asserts the
-          level-6 IRQ until the CPU clears it via VSYNC_CLEAR.  The latch
-          and this readback are unconditional: with VSYNC_IRQ_EN clear
-          (the reset state) only the IPL term is suppressed, so firmware
-          may poll here and acknowledge via VSYNC_CLEAR with no ISR.
-          Replaces rev 1's ~VIDEO_IRQ from the retired VIDEO CPLD on the
-          same GLUE pin.
+          GLUE 2-FF synchronizes TIMING's nVSYNC_IRQ and latches its
+          assertion edge; while CONFIG.VSYNC_IRQ_EN is set the latch asserts
+          the level-6 IRQ until cleared via VSYNC_CLEAR.  Latch and readback
+          are unconditional, so firmware may poll and acknowledge with no ISR.
         bits:
           - { bit: "0", name: VSYNC_PENDING,
               description: "1 = a vsync edge has been latched; asserts the level-6 IRQ when CONFIG bit VSYNC_IRQ_EN is set; W1C via VSYNC_CLEAR" }
@@ -145,57 +140,21 @@ peripherals:
         bits:
           - { bit: "0", name: VSYNC_PENDING, description: "Write 1 to clear VSYNC_PENDING (vsync ISR ack)" }
 
-  # Rev 2 ROM (see griffin.md "Rev 2 components"): 2x SST39SF040 (512Kx8,
-  # DIP-32, socketed), one per byte lane = 1MB on the 16-bit bus.  These are
-  # 5V-only NOR flash: 4.5-5.5V for read AND program/erase, Vpp generated
-  # on-chip, so the bench programmer (TL866II+, device "SST39SF040", DIP-32)
-  # needs no adapter and no high-voltage supply.  Decode is unchanged from the
-  # W27C512 build it replaces -- just A23 & ~A22 (2 literals): the 1MB image
-  # mirrors 4x through the 4MB window at 0x800000-0xBFFFFF.  At reset the ROM
-  # is also overlaid over RAM bank 1 until GLUE CONFIG bit ROM_OVERLAY_DISABLE
-  # is set.  (All peripherals live in the other upper region, A23 & A22.)
-  #
-  # In-circuit reflash: GLUE drives ~ROM_WE to both chips' WE#, asserted only
-  # for (A23 & ~A22) & ~R/W & AS & UDS & LDS & CONFIG.FLASH_WE_EN.  Three
-  # things fall out of that qualification, all deliberate.  Requiring BOTH data
-  # strobes means only word writes make a strobe, so a stray byte write cannot
-  # feed a command to one x8 chip and desync the pair.  Qualifying on the raw
-  # ROM region rather than nROM_SELECT means writes through the boot overlay at
-  # 0x000000 never reach the flash, whatever the overlay bit says.  And
-  # FLASH_WE_EN resets to 0, so firmware must deliberately unlock GLUE before
-  # any write can get through at all.
-  #
-  # The two chips are driven as a pair and each runs its own byte-program on
-  # its own lane, so every JEDEC command byte is duplicated into both halves of
-  # a word: the unlock pair is word 0xAAAA to 0x80AAAA then 0x5555 to 0x805554.
-  # Byte program is unlock + 0xA0A0 to 0x80AAAA + the data word at its address.
-  # Sector erase is unlock + 0x8080 + unlock again + 0x3030 at any address in
-  # the target sector; chip erase is the same but 0x1010 to 0x80AAAA last --
-  # note both erases need the unlock pair twice, six write cycles total.
-  # The parts decode only chip A14:0 for the command sequence, so
-  # the upper address bits are don't-care and the ROM base drops out of the
-  # arithmetic; chip 0x5555/0x2AAA land at CPU 0x80AAAA/0x805554 because chip
-  # A0 is CPU A1.  A single word write then programs both bytes in parallel;
-  # poll DQ7 (Data# polling) or DQ6 (toggle bit) in each lane independently
-  # until both agree.  Sector erase is 4KB per chip = 8KB of CPU address space,
-  # 8KB aligned.  Software Data Protection is permanently enabled on these
-  # parts, so no write can take effect without the full unlock sequence.
-  #
-  # The flasher must run from RAM (linker section .ramtext) with the overlay
-  # already disabled: during an embedded program or erase the flash returns
-  # status rather than instructions, so an instruction or vector fetch out of
-  # the ROM window mid-operation reads garbage.  Interrupts may stay enabled
-  # only because the vector table and the hot ISRs are already in RAM and video
-  # DMA only touches the framebuffer -- no handler may touch the ROM window.
-  # Endurance is 10,000 cycles minimum (100,000 typical), and because the parts
-  # are socketed a bricked image is recovered by pulling them and reprogramming
-  # on the bench -- there is no bus-master bootstrap path in Rev 2.
+  # Decode: A23 & ~A22; the 1MB image mirrors 4x through the 4MB window.
+  # At reset ROM is also overlaid over RAM bank 1 until CONFIG.ROM_OVERLAY_DISABLE.
+  # In-circuit reflash: GLUE asserts ~ROM_WE to both chips' WE# only for
+  # (A23 & ~A22) & ~R/W & AS & UDS & LDS & CONFIG.FLASH_WE_EN -- word writes
+  # only (keeps the x8 pair in lockstep), raw region only (overlay writes
+  # never reach flash), locked at reset.  Both chips see the same command
+  # byte in each lane; chip A0 is CPU A1, so JEDEC chip addresses
+  # 0x5555/0x2AAA are CPU 0x80AAAA/0x805554.  Sector = 4KB/chip = 8KB CPU,
+  # 8KB aligned.  Flasher must run from RAM (.ramtext) with the overlay off.
   ROM:
     part: "2x SST39SF040-70 (512Kx8 DIP-32 5V NOR flash, socketed; 1MB total)"
     address_range:
       base: 0x800000
-      size: 0x100000    # 1MB of actual ROM (2x 512KB, one per byte lane)
-      window: 0x400000  # 4MB decode window; the image mirrors 4x within it
+      size: 0x100000
+      window: 0x400000
       width: 16
     dtack:
       - 12000000: 1
@@ -206,12 +165,9 @@ peripherals:
     linker:
       section: rom
 
-  # Rev 2 RAM (see griffin.md "Rev 2 components"): 4MB as 4 banks x 1MB,
-  # each bank a pair of AS6C4008 (512Kx8, DIP-32, socketed bin parts), one
-  # chip per byte lane.  GLUE decodes nRAM_[1-4]_SEL from A21:20 (within
-  # A23:22 == 00) and drives the WRITE_LO/WRITE_HI byte write strobes;
-  # /OE from nR_W.  All four banks are always populated -- no partial
-  # population, no RAM-sizing probe.
+  # 4 banks x 1MB, each a pair of AS6C4008 (one per byte lane).  GLUE decodes
+  # nRAM_[1-4]_SEL from A21:20 within A23:22 == 00, drives WRITE_LO/WRITE_HI
+  # byte strobes, /OE from nR_W.  All four banks are always populated.
   RAM_BANK_1:
     part: "2x AS6C4008"
     address_range:
@@ -272,20 +228,19 @@ peripherals:
     linker:
       section: ram
 
-  # ENGINE takes nENGINE_SELECT from GLUE.  Self-decoding was considered for
-  # Rev 2 (as bus master ENGINE already owns A, D, AS and R/W, so it could
-  # watch the bus for its own region and free a GLUE pin) but was never built,
-  # and the 2026-07-30 pinout freeze settled it: GLUE drives nENGINE_SELECT on
-  # its pin 39 and ENGINE consumes it on pin 84, both in frozen //PIN: blocks,
-  # so the net is committed for Rev 2.  Revisiting it is a board respin.
+  # nENGINE_SELECT comes from GLUE
+  # Write-only MMIO decoded on A[2:1] with LDS; reads see the open bus.
+  # ENGINE is a bus master (BR/BG/BGACK): each 4-word descriptor reads
+  # count words from any address and pulses one active-low deposit strobe
+  # (ENGINE_SIGNAL_*) per word -- PIXELS / VIDCMD / AUDIO FIFO /W -- so the
+  # consumers' data pins sit directly on D[15:0] and need no address decode.
+  # Descriptors themselves are read only from the top 64K of RAM.
+  # wait_hblank descriptors wait for the rising edge of TIMING's HBLANK.
+  # Descriptor format and strobe semantics: super-engine/descriptor.h and
+  # vidcmd-spec.md.
   ENGINE:
     part: ATF1508AS
     description: "Display-list DMA engine walking 4-word descriptors from the top 64K of RAM"
-    # Registers match the promoted engine.v (module Edma3): write-only MMIO
-    # decoded on A[2:1] with LDS; there is NO read path — reads of this
-    # region see the open bus.  Descriptor format, timing costs, and the
-    # deposit-strobe semantics live in super-engine/descriptor.h and
-    # vidcmd-spec.md until the encoding migrates into codegen.
     address_range:
       base: 0xD00000
       size: 0x100000
@@ -306,10 +261,9 @@ peripherals:
         width: 16
         description: |
           Descriptor word address within RAM's top 64K; writing arms DMA.
-          D[14:0] is the word address of the first 4-word descriptor
-          ({0x3F, addr} on the bus, so byte address 0x3F0000 + 2*addr);
-          descriptors must be 4-word aligned.  The write also clears a
-          pending ~ENGINE_IRQ (atomic re-arm from the vsync ISR).
+          D[14:0] is the word address of the first 4-word descriptor (byte
+          address 0x3F0000 + 2*addr); descriptors are 4-word aligned.  The
+          write also clears a pending ~ENGINE_IRQ.
         bits:
           - { bit: "14:0", name: ADDR,
               description: "Word address of the first descriptor within the top 64K of RAM" }
@@ -319,44 +273,66 @@ peripherals:
         width: 8
         description: |
           DMA enable and abort; any write clears a pending ~ENGINE_IRQ.
-          The stop_after descriptor flag clears ENABLE by itself at list
-          end, so the usual IRQ ack is CTRL=0 from the level-3 ISR.
+          A stop_after descriptor clears ENABLE itself at list end, so the
+          usual IRQ ack is CTRL=0 from the level-3 ISR.
         bits:
           - { bit: "0", name: ENABLE, default: 0,
               description: "1 = run the armed list; 0 = abort and release the bus" }
 
-  # Retired in Rev 2 (2026-08): the rev-1 VIDEO CPLD is replaced by the
-  # busless TIMING + PIXEL + COMPOSITOR chain — no registers, no interrupt
-  # (the vsync frame IRQ is TIMING's VSYNC latched in GLUE, see
-  # GLUE VSYNC_STATUS/VSYNC_CLEAR and the interfaces: entry).  The
-  # peripheral entry survives only because GLUE's frozen pinout still
-  # decodes the region (nVIDEO_SELECT, pin 40 — unconnected in Rev 2) and
-  # glue.v answers 0-WS DTACK for it via VIDEO_DTACK_THRESHOLD; the
-  # video_timing block below remains the raster spec TIMING implements.
-  VIDEO:
-    part: "(retired; region decoded by GLUE, no chip in Rev 2)"
-    description: "Freed region; rev-1 VIDEO retired in favor of TIMING+PIXEL+COMPOSITOR"
-    dtack:
-      - 12000000: 0
-      - 14000000: 0
-      - 14318181: 0
-      - 16000000: 0
-      - 20000000: 0
-    address_range:
-      base: 0xE00000
-      size: 0x100000
-      width: [8, 16]
-    # VESA 640x480@60 raster: 640x480 visible in an 800x525 scan, negative
-    # sync polarity on both HSYNC and VSYNC.  Horizontal counts are in pixel
-    # clocks, vertical counts in lines; each interval is active -> front
-    # porch -> sync -> back porch, summing to the total.  These values must
-    # match the H_*/V_* localparams in cpld/video/video.v (verified
-    # 2026-07-28).  Derived rates: line = 25175000 / 800 = 31468.75 Hz (the
-    # HSYNC tap PORTS uses), frame = 31468.75 / 525 ~= 59.94 Hz.
-    # codegen.py currently ignores this block; it is emulator spec and a
-    # cross-check against video.v, not yet an emitted-constants source.
+  # None of TIMING -> PIXEL -> COMPOSITOR -> DAC is on the CPU bus.
+  # the CPU # reaches them only through ENGINE's PIXELS/VIDCMD FIFO streams.
+  # frame IRQ is TIMING's nVSYNC_IRQ latched in GLUE (VSYNC_STATUS/VSYNC_CLEAR).
+
+  # TIMING (cpld/pixel/timing.v, ATF1504AS PLCC44) owns the VGA raster timing
+  # and derived signals. No inputs but PIXEL_CLK and nRESET.  Output
+  # contracts, enforced by cpld/pixel/timing_tb.v (`make timing-sim`):
+  # - nRS: 8 pixel clocks at the top of the vsync line (v_cnt==V_SYNC_START
+  #   & h_cnt<8).  Consumers: COMPOSITOR machine reset (GCLR) and /RS of the
+  #   four video-stream FIFO chips; the 7200 needs /W and /RE inactive from
+  #   tRSS 15 ns before its rise to tRSR 10 ns after, so ENGINE video-write
+  #   descriptors must finish before vsync (audio strobes exempt).
+  # - H_ACTIVE: leads the visible window by COMPOSITOR_LEAD (2) pixel clocks.
+  #   Consumer: COMPOSITOR slot gating.
+  # - PIX_CONSUME / PIX_PRELOAD / PIX_LAST: registered strobes to PIXEL, one
+  #   clock late (TIMING_SPLIT_LEAD).  PIX_CONSUME = the 640 consumption
+  #   clocks of a visible line; PIX_LAST = its last 8 (h_cnt[9:3]==79), a
+  #   width pixel_tb's end-of-line cases assume; PIX_PRELOAD = one clock at
+  #   H_TOTAL - PIXEL_PRELOAD_LEAD before a visible line.
+  # - Sync compares shift late by DAC_LEAD (4); timing.v localparams must
+  #   equal the lead constants below.
+  # - HBLANK (pin 19) -> ENGINE pin 2: registered h_cnt >= 640, high for
+  #   640..799 on EVERY line, visible or blank, rising on the clock
+  #   PIX_CONSUME falls.  ENGINE 2-FF synchronizes it and wait_hblank
+  #   descriptors wait for the rising edge, the start of the 160-clock
+  #   blank budgeted in descriptor.h HBLANK_SYSCLK.  Not the HSYNC net
+  #   (rises 116 clocks later), not ~H_ACTIVE (never toggles in vblank).
+  # - nVSYNC_IRQ (pin 31) -> GLUE pin 65: registered ~in_vsync, identical to
+  #   VGA_VSYNC today (negative, 2 lines at v = 490..491); polarity fixed for
+  #   every future raster mode, so the connector's VSYNC polarity can change
+  #   without moving the IRQ edge.  GLUE edge-latches it (VSYNC_STATUS).
+  # - PADDLE_TICK (pin 17) -> PORTS pin 44 and AUDIO_TICK (pin 18) -> PORTS
+  #   pin 45: square waves toggling on the clock that starts every line
+  #   (period 1600 clocks, free-running from reset, no frame-boundary
+  #   exception).  PORTS 2-FF synchronizes each and counts FALLING edges
+  #   only: 15.734 kHz events (PADDLE_TICKS_PER_SECOND,
+  #   AUDIO_SAMPLES_PER_SECOND).  Two nets so the audio rate can change in
+  #   TIMING alone: event rate = toggle rate / 2.
+  # - VGA_HSYNC and VGA_VSYNC drive ONLY the 74AC541 buffers.
+  # - DUART OP4..OP7 -> TIMING pins 20, 21, 24, 25: reserved static
+  #   configuration inputs (future raster/audio-rate select), not fitted;
+  #   TIMING must treat the OP reset state 1111 as today's behaviour.
+  #   GCLK2 (pin 44) is left free for an optional second oscillator.
+  TIMING:
+    part: "ATF1504AS (PLCC44)"
+    description: "Raster time base: VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, PIXEL strobes, ENGINE HBLANK, GLUE vsync IRQ, PORTS paddle/audio ticks"
+    clock: 25175000    # dedicated pixel oscillator, not SYSCLK; shared by PIXEL and COMPOSITOR
+    # VESA 640x480@60: 800x525 scan, negative sync polarity on both.  Counts:
+    # horizontal in pixel clocks, vertical in lines; active -> front porch ->
+    # sync -> back porch, summing to the total (codegen checks the sums).
+    # timing.v's H_*/V_* localparams must equal these values; the generated
+    # TIMING_H_*/TIMING_V_* defines are the checkable form.
     video_timing:
-      pixel_clock_hz: 25175000   # dedicated pixel oscillator, not SYSCLK
+      pixel_clock_hz: 25175000
       h_active:       640
       h_front_porch:  16
       h_sync:         96
@@ -369,28 +345,83 @@ peripherals:
       v_total:        525
       hsync_polarity: negative   # asserted low during the sync interval
       vsync_polarity: negative
-      # The frame IRQ is no longer generated here: TIMING's dedicated
-      # nVSYNC_IRQ output (pin 31, fixed polarity) goes to GLUE pin 65, which
-      # edge-latches it into the level-6 IRQ with W1C acknowledge (GLUE
-      # VSYNC_STATUS/VSYNC_CLEAR at 0x17).  The rev-1 CLRINT/CTRL/CTRL_RB/
-      # CLRERR registers are retired with the chip.
 
-  # PORTS has no bus-timing logic of its own: GLUE decodes the region and
-  # hands over ~PORTS_SELECT and answers DTACK for it, as it does for CF.
-  # Its two time bases come from TIMING (see the "TIMING output contracts"
-  # interfaces entry): PADDLE_TICK (TIMING pin 17 -> PORTS pin 44) and
-  # AUDIO_TICK (TIMING pin 18 -> PORTS pin 45), each a square wave toggling
-  # once per VGA line whose FALLING edges PORTS counts -- 15.734 kHz events,
-  # PADDLE_TICKS_PER_SECOND for the paddle counters (the Atari 2600's
-  # scanline rate; full scale 255 counts = 16.2 ms, one frame) and
-  # AUDIO_SAMPLES_PER_SECOND for the audio FIFO pop.  PORTS has no divider
-  # of its own; if the audio rate ever changes, TIMING changes it.  (Rev 2
-  # draft tapped the HSYNC net directly at 31.469 kHz with a /2 in PORTS;
-  # retired 2026-08-26 when TIMING took over as the single time base.)
-  #
-  # The mouse channel deliberately mirrors GLUE's keyboard register layout at
-  # the same offsets (TX_DATA 0x09, STATUS/CLEAR 0x11, CTRL 0x13, RX_DATA
-  # 0x15) 
+  # PIXEL (cpld/pixel/pixel.v) unpacks the PIXELS FIFO byte stream into R4G4B4
+  # for COMPOSITOR and hosts the SET-target registers COMPOSITOR forwards.
+  # - PIXELS FIFO read port: 2x IDT7200 as a byte-interleaved shared-Q pair,
+  #   PIXELS_Q[7:0] in, nPIXELS_RE_EVEN / nPIXELS_RE_ODD out.  A byte is
+  #   consumed every >= 8 pixel clocks (2bpp modes) or 16 (1bpp), so the port
+  #   needs no read-timing analysis beyond COMPOSITOR's VIDCMD one at 8x the
+  #   period.  /RS of the pair is TIMING's nRS.
+  # - Raster events come only from TIMING (PIX_CONSUME / PIX_PRELOAD /
+  #   PIX_LAST, see TIMING).  nRESET is the power-on GCLR, not the frame /RS.
+  # - SET registers, applied directly at COMPOSITOR's set_pix_commit from the
+  #   12-bit set_pix_value bus (targets VIDCMD_SET_PIX_*): PAL_FG, PAL_BG,
+  #   HAM_HELD, MODE, PIXEL_SKIP.  MODE is decoded bitwise, not as an
+  #   enumeration: mode[0] = 2bpp micro-HAM, mode[1] = 2bpp indexed,
+  #   mode[2] = half rate (ignored in micro-HAM).  1bpp (mode[1:0] == 00) is
+  #   80 bytes/line MSB first (PIXELS_WORDS_PER_LINE_1BPP); micro-HAM and
+  #   indexed are two stream bits per pixel clock, 160 bytes/line
+  #   (PIXELS_WORDS_PER_LINE_HAM); half rate holds each bit-group for two
+  #   clocks and halves the stream (40 / 80 bytes) at half the horizontal
+  #   resolution.  PIXEL_SKIP >= 8 discards whole bytes; [2:0] shifts bits.
+  # - RGB_OUT[11:0] -> COMPOSITOR RGB_IN, one register after the decoder's
+  #   held colour (PIXEL_OUT_LEAD).
+  # - No empty-flag input and no half-full pacing: underrun repeats the last
+  #   word (ENGINE must keep the stream ahead; see vidcmd-spec.md).
+  # - `make pixel-sim` (pixel_tb.v) is the executable per-mode semantics.
+  PIXEL:
+    part: "ATF1508AS (PLCC84)"
+    description: "PIXELS stream unpacker: 1bpp direct, 2bpp micro-HAM, 2bpp indexed, half rate; R4G4B4 to COMPOSITOR"
+    clock: 25175000
+
+  # COMPOSITOR (cpld/compositor/compositor.v) sits between PIXEL and the DAC.
+  # It plays the per-line VIDCMD instruction stream out of the VIDCMD FIFO
+  # (2x IDT7200 ganged 16-bit, filled by ENGINE) and for every active pixel
+  # slot selects one of passthrough (RGB_IN from PIXEL), cmp_color1,
+  # cmp_color0, or a RUN_COLOR's saturated colour.  Records: RUN, RUN_COLOR,
+  # SET (targets VIDCMD_SET_*: 0..1 local, 2..6 forwarded to PIXEL), MASK
+  # (two-word 16-pixel overlay).  Bit-level encodings are in
+  # super-engine/descriptor.h and semantics in vidcmd-spec.md.  Everything is
+  # in the PIXEL_CLK domain except nVIDCMD_EF (2-FF synchronized); H_ACTIVE,
+  # nRS and RGB_IN arrive on the same clock unsynchronized.  Machine reset is
+  # TIMING's nRS (GCLR), once per frame.  RGB_OUT[11:0] -> the 74AC541
+  # buffers and DAC (see interfaces).
+  # - VIDCMD FIFO read port (2x IDT7200L15, shared /RE): registered /RE
+  #   from COMPOSITOR, 2 pixel clocks per word, no shaping gate; all edges
+  #   are GCLK rising edges, so there is no duty-cycle dependence.  Pinned
+  #   parameters: IDT7200L15 tRC 25 min / tA 15 max / tRPW 15 min / tRR 10
+  #   min / tDV 5 min / tRHZ 15 max / tREF 15 max (REN_7200-7202_DST
+  #   20171127, 30 pF); ATF1508AS-10 GCLK tSU 7 / tH 0, clock-pin-to-output
+  #   8.0 ns max at 35 pF (DS20006682A Table 1-4); T = 39.72 ns.  Worst-case
+  #   margins incl. ~2 ns flight and series termination: pulse +24.7 ns,
+  #   recovery +29.7, cycle +54.4, data setup +7.7, hold +6.  Consequence:
+  #   VIDCMD cadence is uniformly 2 slots per word (1-px spans render 2 px
+  #   wide); compositor_tb, vidcmd-spec.md and the super-engine model encode
+  #   it.
+  # - VIDCMD FIFO /EF -> COMPOSITOR input, synchronized on-chip with an
+  #   asymmetric guard (2-FF sync governs the asynchronous rise from
+  #   ENGINE-domain writes; the raw flag governs the fall caused by
+  #   COMPOSITOR's own clock-aligned read).  Requirement: tCO 8.0 + tREF 15
+  #   + ~2 ns flight = 25.0 ns vs T - tSU = 32.7 ns (+7.7 ns worst case).
+  # - COMPOSITOR -> PIXEL SET path: a dedicated 12-bit registered value bus
+  #   set_pix_value[11:0] alongside the valid/target/commit handshake; the
+  #   bus is registered from COMPOSITOR's staged word and PIXEL applies it
+  #   at the commit pulse with no capture register.  Twelve point-to-point
+  #   traces, same clock, full-cycle setup: ordinary synchronous routing.
+  COMPOSITOR:
+    part: "ATF1508AS (PLCC84)"
+    description: "VIDCMD stream player: per-slot source select over PIXEL's R4G4B4, SET forwarding to PIXEL, MASK overlays"
+    clock: 25175000
+
+  # GLUE decodes the region, hands over ~PORTS_SELECT and answers DTACK.
+  # Time bases come from TIMING: PADDLE_TICK (TIMING 17 -> PORTS 44) and
+  # AUDIO_TICK (TIMING 18 -> PORTS 45), square waves toggling once per line;
+  # PORTS 2-FF synchronizes each and counts FALLING edges only
+  # (PADDLE_TICKS_PER_SECOND / AUDIO_SAMPLES_PER_SECOND).  PORTS has no
+  # divider; a rate change is a TIMING change.
+  # The mouse channel mirrors GLUE's keyboard register layout and offsets
+  # (TX_DATA 0x09, STATUS/CLEAR 0x11, CTRL 0x13, RX_DATA 0x15).
   PORTS:
     part: ATF1508AS
     description: "PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe"
@@ -406,7 +437,7 @@ peripherals:
       - 20000000: 0
     interrupt:
       level: 2
-      signal: ~PORTS_IRQ
+      signal: ~PORTS_IRQ    # wire-OR of mouse RX_READY/TX_DONE and audio HF_IRQ
     registers:
       - offset: 0x01
         name: JOYSTICK_PORT_1
@@ -414,11 +445,10 @@ peripherals:
         width: 8
         description: |
           Joystick port 1 switches, active low (0 = closed).
-          This is the port that also hosts the paddles: PIN9/PIN5 double as
-          SMS-pad button 2 and the raw paddle pot comparator levels, and the
-          paddle fire buttons appear on LEFT/RIGHT (DE-9 pins 3/4) per the
-          2600 convention.  Poll from the vsync ISR; there is no interrupt.
-          Bit 7 reads 1.
+          This port also hosts the paddles: PIN9/PIN5 double as SMS button 2
+          and the raw pot comparator levels; paddle fire buttons appear on
+          LEFT/RIGHT (2600 convention).  No interrupt; poll from the vsync
+          ISR.  Bit 7 reads 1.
         bits:
           - { bit: "0", name: UP,    description: "Port 1 up, DE-9 pin 1 (0 = pressed)" }
           - { bit: "1", name: DOWN,  description: "Port 1 down, DE-9 pin 2" }
@@ -433,8 +463,7 @@ peripherals:
         width: 8
         description: |
           Joystick port 2 switches, active low (0 = closed).
-          Same bit order as JOYSTICK_PORT_1, with no paddles on this port.
-          Bit 7 reads 1.
+          Same bit order as JOYSTICK_PORT_1; no paddles.  Bit 7 reads 1.
         bits:
           - { bit: "0", name: UP,    description: "Port 2 up, DE-9 pin 1 (0 = pressed)" }
           - { bit: "1", name: DOWN,  description: "Port 2 down, DE-9 pin 2" }
@@ -449,17 +478,11 @@ peripherals:
         width: 8
         description: |
           Paddle A position, the pot on port 1 pin 9.
-          An 8-bit counter advances once per PADDLE_TICK event from TIMING
-          (every second VGA line, 15.734 kHz -- the 2600's scanline rate)
-          while the pot's RC ramp holds the comparator sense low, and freezes
-          when the ramp crosses, so the count is proportional to pot
-          resistance (2600-style).  It saturates at 0xFF instead of wrapping,
-          and full scale is 255 ticks ~= 16.2 ms, one frame: the board's pot
-          and cap values must be chosen so full travel crosses in fewer than
-          ~250 ticks (the 2600's RC scaled to its own scanline count carries
-          over directly).  Values need per-unit software calibration: the
-          comparator threshold varies and the pot parallels the 1M pin-5/9
-          pull-up.
+          Counts PADDLE_TICK events while the pot's RC ramp holds the
+          comparator low, freezes when it crosses, saturates at 0xFF (255
+          ticks ~= 16.2 ms, one frame).  Board RC must cross full travel in
+          < ~250 ticks.  Needs per-unit software calibration (comparator
+          threshold; pot parallels the 1M pin-5/9 pull-up).
         bits:
           - { bit: "7:0", name: COUNT, description: "PADDLE_TICK count (15.734 kHz), saturating at 0xFF" }
       - offset: 0x07
@@ -468,8 +491,7 @@ peripherals:
         width: 8
         description: |
           Paddle B position, the pot on port 1 pin 5.
-          Identical in behaviour to PADDLE_A_COUNT and cleared by the same
-          PADDLE_CONTROL DUMP bit.
+          Behaves as PADDLE_A_COUNT; cleared by the same PADDLE_CONTROL.DUMP.
         bits:
           - { bit: "7:0", name: COUNT, description: "Line-rate count, saturating at 0xFF" }
       - offset: 0x09
@@ -478,18 +500,9 @@ peripherals:
         width: 8
         description: |
           Byte to transmit host->mouse; the write itself starts the frame.
-          PORTS presents the start bit on DATA, releases PS2_MOUSE_CLK (the
-          CPU must have inhibited it >=100 us first via PS2_MOUSE_CTRL.CLK),
-          then shifts start/8-data-LSB-first/parity/stop out on each device
-          clock falling edge and samples the device ACK into TX_ACK, raising
-          TX_DONE (level-2 IRQ) on completion.
-
-          This register spans two word slots: address bit 1 carries the
-          firmware-computed odd-parity bit (no hardware XOR), so write
-          to PS2_MOUSE_TX_DATA for parity 0 or PS2_MOUSE_TX_DATA +
-          PS2_TX_DATA_PARITY (offset 0x0B) for parity 1 -- the same constant
-          the GLUE keyboard channel uses.  Ignored while a TX or RX frame is
-          already in progress.
+          Same protocol as GLUE PS2_TX_DATA, including parity in address
+          bit 1 (write +PS2_TX_DATA_PARITY for parity 1) and TX_DONE on the
+          level-2 IRQ.  Ignored while a TX or RX frame is in progress.
         bits:
           - { bit: "7:0", name: DATA, description: "Data byte to send (write triggers TX)" }
       - offset: 0x0F
@@ -498,10 +511,8 @@ peripherals:
         width: 8
         description: |
           Paddle measurement control, written once per vsync ISR.
-          Setting DUMP drives the discharge-FET line and holds both counters
-          at zero; clearing it releases the caps and starts the next
-          measurement.  This replaces the rev-1 two-pin DUART OP4/OP5 dance,
-          which needed the dump and clear lines driven in opposite states.
+          DUMP set drives the discharge-FET line and holds both counters at
+          zero; clearing it releases the caps and starts the next measurement.
         bits:
           - { bit: "0", name: DUMP, default: 0,
               description: "1 = drain the paddle caps and hold both counters at zero; 0 = measure" }
@@ -510,12 +521,9 @@ peripherals:
         access: read
         width: 8
         description: |
-          PS/2 mouse frame-engine status.  PORTS assembles a full 11-bit RX
-          frame (start/8-data-LSB-first/parity/stop) and raises one IRQ
-          per byte via RX_READY; the data byte is read from
-          PS2_MOUSE_RX_DATA.  TX completion is signalled by TX_DONE.  Both
-          are W1C via PS2_MOUSE_CLEAR.  Bit layout is identical to GLUE's
-          keyboard PS2_STATUS.
+          PS/2 mouse frame-engine status.
+          Same semantics and bit layout as GLUE PS2_STATUS; W1C via
+          PS2_MOUSE_CLEAR.
         bits:
           - { bit: "0", name: RX_READY,
               description: "1 = a received byte is in PS2_MOUSE_RX_DATA; asserts level-2 IRQ; W1C via PS2_MOUSE_CLEAR" }
@@ -537,9 +545,8 @@ peripherals:
         width: 8
         description: |
           Write-1-to-clear for PS2_MOUSE_STATUS latched flags / IRQ ack.
-          The level-2 IRQ de-asserts on the same cycle once both RX_READY
-          and TX_DONE are clear and the audio half-full latch is also clear
-          (PORTS wire-ORs its interrupt sources onto one pin).
+          The level-2 IRQ de-asserts once RX_READY, TX_DONE and the audio
+          HF_IRQ latch are all clear.
         bits:
           - { bit: "0", name: RX_READY, description: "Write 1 to clear RX_READY (RX byte ISR ack)" }
           - { bit: "1", name: TX_DONE,  description: "Write 1 to clear TX_DONE (TX completion ISR ack)" }
@@ -549,9 +556,7 @@ peripherals:
         width: 8
         description: |
           Open-drain drive control for PS2_MOUSE_CLK and PS2_MOUSE_DATA for the TX inhibit handshake.
-          Each bit drives the pin low when set and tri-states to the
-          external pull-up otherwise.  While a TX frame is in progress
-          the engine owns both pins and ignores CLK here.
+          Same semantics as GLUE PS2_CTRL.
         bits:
           - { bit: "0", name: CLK,
               description: "1 = drive PS2_MOUSE_CLK low (inhibit device / request-to-send); 0 = tri-state" }
@@ -569,12 +574,10 @@ peripherals:
         access: write
         width: 8
         description: |
-          Audio FIFO pop control.  ENABLE gates the read strobe PORTS sends
-          to both 7200s on every AUDIO_TICK event from TIMING (every second
-          VGA line, AUDIO_SAMPLES_PER_SECOND), so clearing it freezes the
-          DACs on their last sample without disturbing FIFO contents.
-          CLEAR_HF_IRQ is the write-1-to-clear ack for the half-full
-          interrupt reported in AUDIO_STATUS.
+          Audio FIFO pop control.
+          ENABLE gates the read strobe PORTS sends to both 7200s on every
+          AUDIO_TICK event; clearing it freezes the DACs on their last sample
+          without disturbing FIFO contents.
         bits:
           - { bit: "0", name: ENABLE, default: 0,
               description: "1 = pop one stereo sample pair per AUDIO_TICK event (15.73 kS/s today); 0 = hold" }
@@ -585,11 +588,10 @@ peripherals:
         access: read
         width: 8
         description: |
-          Audio FIFO pop status.  HF_IRQ latches when the 7200 half-full
-          flag rises, meaning the FIFO drained below half and firmware
-          should refill; it asserts the shared level-2 IRQ until cleared
-          with AUDIO_CONTROL.CLEAR_HF_IRQ.  HALF_FULL is the live
-          synchronized flag for polling instead.
+          Audio FIFO pop status.
+          HF_IRQ latches the rising 7200 half-full flag (FIFO drained below
+          half: refill) and asserts the shared level-2 IRQ until cleared with
+          AUDIO_CONTROL.CLEAR_HF_IRQ; HALF_FULL is the live flag for polling.
         bits:
           - { bit: "0", name: HF_IRQ,
               description: "1 = FIFO dropped below half full since the last ack; asserts level-2 IRQ" }
@@ -598,10 +600,8 @@ peripherals:
           - { bit: "2", name: ENABLE,
               description: "Current AUDIO_CONTROL ENABLE state" }
 
-  # Rev 2: 16-bit True IDE PIO (rev 1 ran 8-bit via SET_FEATURES).  The
-  # 16-bit DATA port is word offset 0x00; task-file registers remain
-  # byte-wide on D7-D0 at the odd offsets.  GLUE gates IOWR with AS
-  # (rev-1 carryover fix: R/~W alone left IOWR rising after AS was gone).
+  # 16-bit True IDE PIO: DATA is word offset 0x00; task-file registers are
+  # byte-wide on D7-D0 at the odd offsets.  GLUE gates IOWR with AS.
   CF:
     part: "Compact Flash (True IDE)"
     description: "Storage via CF card in True IDE 16-bit PIO mode"
@@ -641,27 +641,20 @@ peripherals:
     part: "XR68C681"
     description: "Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C"
     clock: 3686400
-    # pin_allocation -- hardware wiring of the general-purpose OP/IP pins.
-    # NOTE the 68681 OP pins drive the COMPLEMENT of their OPR bits: setting
-    # an OPR bit (via OPR_SET) drives the pin LOW.  Comments below describe
-    # PIN levels; see the DUART_OP_*/DUART_IP_* mask constants.
-    #   OP0: ~RTS_A (channel A request-to-send)   IP0: ~CTS_A
-    #   OP1: ~RTS_B                               IP1: ~CTS_B
-    #   OP2: RTC_SCL (DS3231 I2C clock, push-pull; DS3231 never stretches)
+    # OP/IP pin wiring.  OP pins drive the COMPLEMENT of their OPR bits
+    # (OPR_SET drives the pin LOW); levels below are PIN levels.
+    #   OP0: ~RTS_A                              IP0: ~CTS_A
+    #   OP1: ~RTS_B                              IP1: ~CTS_B
+    #   OP2: RTC_SCL (DS3231 I2C clock, push-pull)
     #   OP3: RTC_SDA_DRIVE (N-FET gate: pin high pulls SDA low)
-    #                                             IP2: RTC_SDA readback
-    #                                             IP3: DS3231 ~INT (optional
-    #                                                  change-detect 1Hz/alarm IRQ)
-    #   OP4: -> TIMING pin 20 (reserved)          IP4, IP5 spare
-    #   OP5: -> TIMING pin 21 (reserved)
-    #   OP6: -> TIMING pin 24 (reserved)
-    #   OP7: -> TIMING pin 25 (reserved)
-    # OP4..OP7 are routed to TIMING as a static, firmware-settable
-    # configuration word (future alternate-raster / audio-rate select);
-    # TIMING consumes none of them yet, and the OP reset state (OPR = 0 ->
-    # pins HIGH, i.e. 1111) must remain the default behaviour when it does.
-    # (OP4/OP5 drove the rev-1 paddle dump and '590 clear lines; rev 2 does
-    #  both from the PORTS PADDLE_CONTROL DUMP bit.)
+    #                                            IP2: RTC_SDA readback
+    #                                            IP3: DS3231 ~INT
+    #   OP4..OP7: -> TIMING pins 20, 21, 24, 25  IP4, IP5: spare
+    # OP4..OP7 are a static firmware-settable configuration word for TIMING
+    # (future raster/audio-rate select); unused today, and the OP reset state
+    # (OPR = 0 -> pins HIGH, 1111) must remain today's behaviour.
+    # Bus: ~CS from GLUE (nDUART_SELECT), DTACKN back to GLUE (nDUART_DTACK),
+    # ~IACK tied high (autovectors), ~RESET from GLUE nDUART_RESET.
     address_range:
       base: 0xF80000
       size: 0x040000
@@ -669,7 +662,7 @@ peripherals:
     interrupt:
       level: 5
       signal: ~DUART_IRQ
-    dtack: ~DUART_DTACK  # handshake: 68681 drives this signal to assert DTACK
+    dtack: ~DUART_DTACK  # handshake: 68681 DTACKN
     berr_timeout: 256
     registers:
       - { offset: 0x01, name: MR1A,   access: rw,    width: 8,
@@ -772,56 +765,14 @@ peripherals:
       - { offset: 0x1F, name: OPR_CLR, access: write, width: 8,
           description: "Output port bit reset (1 bits clear corresponding OP pins)" }
 
-  # Direct-bus peripheral region, 0xC00000-0xCFFFFF (see griffin.md "Rev 2
-  # components"): one 1MB region split into four 256KB quadrants by A19:18,
-  # holding "dumb" peripherals whose data pins sit directly on the bus.
-  # GLUE emits two fully-timed region strobes -- ~IO_RD_EN (region & AS &
-  # R/W) and ~IO_WR_EN (region & UDS & LDS & ~R/W, so only deliberate
-  # full-word writes qualify) -- and a 74HCT155 dual 2-to-4 decoder fans them
-  # out by A19:18 (section 1: 1C high, 1G = ~IO_RD_EN -> read strobes;
-  # section 2: 2C low, 2G = ~IO_WR_EN -> write strobes).  GLUE never
-  # touches the data path, and future direct peripherals cost zero GLUE
-  # pins -- one spare read strobe and two spare write strobes remain.
-  #   0xC00000  AUDIO     (7200 FIFO pair, ~AUDIO_W = write Y0)
-  #   0xC40000  reserved  (was JOYSTICK '245 pair; joysticks are PORTS registers now)
-  #   0xC80000  reserved  (was PADDLE '590 pair; paddle counters are in PORTS now)
-  #   0xCC0000  reserved  (candidate: ENGINE COPY-FIFO read + write ports)
-  # (0xFC0000, the rev-1 74HC373 AUDIO latch slot, is the PORTS CPLD.)
+  # AUDIO has no CPU path.  The FIFO pair's data pins sit on D[15:0] and the
+  # only /W is ENGINE's AUDIO_FIFO_W deposit strobe (ENGINE_SIGNAL_AUDIO_FIFO_W):
+  # one word per stereo pair, L = D15-D8, R = D7-D0, unsigned 8-bit
+  # /R comes from PORTS once per AUDIO_TICK event
+  # (AUDIO_SAMPLES_PER_SECOND) while PORTS AUDIO_CONTROL.ENABLE is set
   AUDIO:
     part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC"
-    description: "Stereo FIFO audio output, drained by PORTS at TIMING's AUDIO_TICK rate (15.734 kS/s)"
-    address_range:
-      base: 0xC00000
-      size: 0x040000
-      width: 16
-    dtack:
-      - 12000000: 0
-      - 14000000: 0
-      - 14318181: 0
-      - 16000000: 0
-      - 20000000: 0
-    # No interrupt entry: the 7200 half-full flag is wired to the PORTS CPLD,
-    # which latches it and reports it through ~PORTS_IRQ at level 2 (see
-    # PORTS AUDIO_STATUS.HF_IRQ).  There is no separate ~AUDIO_IRQ line.
-    registers:
-      - offset: 0x00
-        name: FIFO
-        access: write
-        width: 16
-        description: |
-          Write one stereo sample pair into the audio FIFOs.
-          Left channel is D15-D8, right channel is D7-D0, each an unsigned
-          8-bit sample landing directly in its 7200.  ~AUDIO_W comes from
-          the 74HCT155 write section gated by GLUE ~IO_WR_EN, which qualifies
-          on UDS & LDS & ~R/W -- only deliberate full-word writes clock
-          the FIFOs (no A17 alias trick needed).  PORTS drives the FIFO
-          read strobe once per AUDIO_TICK event from TIMING (~15.7 kS/s, see
-          AUDIO_SAMPLES_PER_SECOND); the rate lives in TIMING, and PORTS has
-          no divider of its own.  The FIFO half-full flag
-          goes to PORTS, which latches it into ~PORTS_IRQ (autovector level
-          2); the ISR refills at most AUDIO_FIFO_DEPTH/2 = 128 pairs (~8 ms
-          of headroom) per service and acks with PORTS AUDIO_CONTROL.
-
+    description: "Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate"
 
 constants:
   CF_STATUS_BSY:   0x80
@@ -832,79 +783,48 @@ constants:
   CF_CMD_WRITE_SECTORS: 0x30
   CF_CMD_IDENTIFY:      0xEC
   CF_CMD_SET_FEATURES:  0xEF
-  CF_CMD_SET_8BIT:      0x01   # rev-1 8-bit PIO only; unused with rev-2 16-bit DATA port
+  CF_CMD_SET_8BIT:      0x01   # rev-1 8-bit PIO only; unused with the 16-bit DATA port
   CF_DH_LBA:            0xE0
   PS2_RX_QUEUE_SIZE:    64
 
-  # Audio FIFO geometry (2x IDT7200: 256 x 9 each; one per channel).
-  # Was 2x IDT7202 (1024 deep); 7202s are hard to source (2026-08-13), and
-  # the 7200 depth is sufficient: half-full = 128 pairs = 8.1 ms of runway,
-  # refill IRQ ~123 Hz, and the display-list AUDIO_FIFO_W path held 49..93
-  # pairs of occupancy in the validated use cases.  If depth is ever needed,
-  # the 7200 family cascades via XI/XO.
+  # Audio FIFO geometry (2x IDT7200, 256 x 9, one per channel); half-full =
+  # 128 pairs = 8.1 ms of refill runway at ~123 Hz IRQ.
   AUDIO_FIFO_DEPTH:          256
   AUDIO_SAMPLES_PER_SECOND:  15734   # TIMING AUDIO_TICK falling edges: every second 31.469 kHz line
   PADDLE_TICKS_PER_SECOND:   15734   # TIMING PADDLE_TICK falling edges: same, the 2600 scanline rate
 
-  # DUART OP/IP masks for the pin_allocation block above.  Reminder: OP pins
-  # drive the COMPLEMENT of their OPR bits (OPR_SET drives the pin low), and
-  # RTC_SDA_DRIVE has a second inversion through the N-FET (pin high = SDA low).
-  # OP4..OP7 are routed to TIMING's reserved pins (see pin_allocation) and
-  # have no mask constants until TIMING gives them a meaning.
+  # DUART OP/IP masks (see the DUART pin wiring).  OP pins drive the
+  # COMPLEMENT of their OPR bits; RTC_SDA_DRIVE inverts again through the
+  # N-FET (pin high = SDA low).  OP4..OP7 have no masks until TIMING uses them.
   DUART_OP_RTC_SCL:        0x04   # OP2
   DUART_OP_RTC_SDA_DRIVE:  0x08   # OP3
   DUART_IP_RTC_SDA:        0x04   # IP2
   DUART_IP_RTC_NINT:       0x08   # IP3
   RTC_I2C_ADDR:            0x68   # DS3231 7-bit I2C address
 
-  # PS/2 TX parity is carried in address bit 1 of PS2_TX_DATA:
-  #   write GLUE_PS2_TX_DATA + (parity ? PS2_TX_DATA_PARITY : 0)
+  # PS/2 TX parity is carried in address bit 1 of the TX_DATA registers.
   PS2_TX_DATA_PARITY:   0x02
 
-  # ENGINE bus-arbitration burst chunk: words transferred per BR/BGACK cycle
-  # before releasing the bus.  Deliberately shorter than a scanline so a single
-  # burst (~2.86 us at 2 CPUCLK cycles/word) cannot occupy the whole hblank
-  # (~6.35 us), and long enough to amortize the ~10-cycle BR/BG/BGACK
-  # handshake that starts each burst.
+  # ENGINE bus-arbitration burst: words per BR/BGACK cycle.  Shorter than a
+  # scanline so one burst (~2.86 us at 2 CPUCLK/word) cannot fill an hblank
+  # (~6.35 us); long enough to amortize the ~10-cycle handshake.
   ENGINE_WORDS_PER_BURST: 20
 
-  # LEGACY IMAGE FORMAT ONLY (not hardware): the rev-1 in-band-header
-  # framebuffer layout — 4-byte header (palette word {fg,bg} R3G3B2 +
-  # reserved word) then 80 pixel bytes, 84-byte stride.  The rev-2 pipeline
-  # has no in-band header (PIXELS is pure pixel bits; palette travels as
-  # VIDCMD SETs), but CF images produced by image-tools still use this
-  # 84-stride container, and the firmware viewer splits it on load.  Retire
-  # these once image-tools grow a native format.
-  VIDEO_PIXEL_BYTES_PER_LINE: 80
-  VIDEO_LINE_PIXEL_OFFSET:     4      # byte offset of pixel data within a line
-  VIDEO_LINE_STRIDE_BYTES:     84     # 4-byte header + 80 pixel bytes
-
-  # Frame interrupt level (TIMING's VSYNC latched in GLUE; replaces the
-  # generated VIDEO_IRQ_LEVEL that retired with the VIDEO peripheral).
+  # Frame interrupt level (TIMING nVSYNC_IRQ latched in GLUE).
   VSYNC_IRQ_LEVEL: 6
 
-  # --- Rev 2 super-engine video path: shared numeric contracts ------------
-  # Sources of truth today: super-engine/descriptor.h (encodings and their
-  # rationale), cpld/{engine/engine.v,compositor/compositor.v,pixel/*.v}
-  # (implementations), vidcmd-spec.md (semantics).  These constants are the
-  # numbers more than one component must agree on; the full bit-level VIDCMD
-  # encoders stay in descriptor.h until the format is frozen enough to teach
-  # codegen.
+  # --- Video path: numbers more than one component must agree on.  Bit-level
+  # VIDCMD/descriptor encodings stay in super-engine/descriptor.h; semantics
+  # in vidcmd-spec.md; implementations in cpld/{engine,compositor,pixel}.
 
-  # ENGINE descriptor word0 one-hot strobe mask bits (3 assigned + 1 spare;
-  # bits [6:4] of the field were reclaimed when the strobes shrank from 7).
+  # ENGINE descriptor word0 one-hot deposit strobe mask bits (3 assigned + 1 spare).
   ENGINE_SIGNAL_PIXELS_FIFO_W:  0x01
   ENGINE_SIGNAL_VIDCMD_FIFO_W:  0x02
   ENGINE_SIGNAL_AUDIO_FIFO_W:   0x04
 
-  # VIDCMD SET instruction target numbering {1, ttt, value[11:0]}.
-  # 0..1 are COMPOSITOR-local; 2..6 are forwarded to PIXEL over the
-  # valid/target/commit handshake; 7 is spare.
-  # Renamed 2026-08-24 from ..._CMP_HELD_FG/..._CMP_HELD_BG: a MASK dibit picks
-  # between the two COMPOSITOR-local colours by NUMBER, so "fg/bg" stopped
-  # describing them.  The NUMBERING IS UNCHANGED and the wire encoding did not
-  # move -- note that target 0 is colour 1 and target 1 is colour 0, which is a
-  # swap left deliberately alone (see issues:).
+  # VIDCMD SET target numbering {1, ttt, value[11:0]}: 0..1 COMPOSITOR-local,
+  # 2..6 forwarded to PIXEL over the valid/target/commit handshake, 7 spare.
+  # Target 0 writes cmp_color1 and target 1 writes cmp_color0 (see issues).
   VIDCMD_SET_CMP_COLOR1:     0
   VIDCMD_SET_CMP_COLOR0:     1
   VIDCMD_SET_PIX_PAL_FG:     2
@@ -913,34 +833,30 @@ constants:
   VIDCMD_SET_PIX_MODE:       5
   VIDCMD_SET_PIX_PIXEL_SKIP: 6
 
-  # Stream FIFOs (2x IDT7200 256x9 per stream, 16-bit word per pair for
-  # VIDCMD; byte-interleaved shared-Q pair for PIXELS).
+  # Stream FIFOs: 2x IDT7200 256x9 per stream (VIDCMD ganged 16-bit;
+  # PIXELS byte-interleaved shared-Q pair).
   PIXELS_FIFO_WORDS: 256
   VIDCMD_FIFO_WORDS: 256
 
-  # Out-of-band pixel stream lengths (no in-band header in the Rev 2 path):
-  # 1bpp direct = 1 bit/px, 2bpp micro-HAM = exactly 2 stream bits/px clock.
+  # Pixel stream lengths (no in-band header): 1bpp = 1 bit/px, 2bpp
+  # micro-HAM / indexed = 2 stream bits per px clock.
   PIXELS_WORDS_PER_LINE_1BPP: 40
   PIXELS_WORDS_PER_LINE_HAM:  80
 
-  # Pipeline lead constants — DERIVED, NOT TUNED (rev2_interfaces contract).
-  # Every stage's fixed latency is absorbed by firing TIMING's comparators
-  # early by exactly that amount.
-  COMPOSITOR_LEAD:    2    # consume edge + registered RGB_OUT, measured by compositor_tb
+  # Pipeline lead constants -- DERIVED from measured stage latencies, not
+  # tuned; TIMING fires its comparators early by exactly these amounts and
+  # timing.v localparams must stay equal to them.
+  COMPOSITOR_LEAD:    2    # consume edge + registered RGB_OUT (compositor_tb)
   PIXEL_OUT_LEAD:     1    # ham_held -> registered RGB_OUT inside PIXEL
-  TIMING_SPLIT_LEAD:  1    # TIMING->PIXEL registered strobe hop (two-chip split)
+  TIMING_SPLIT_LEAD:  1    # TIMING->PIXEL registered strobe hop
   DAC_LEAD:           4    # sum of the above: sync compares shift by this
-  PIXEL_PRELOAD_LEAD: 16   # hblank fetch lead: first byte 2 + skip-discard 2
-                           # + 7 alignment shifts = 11, rounded up (was 35 in
-                           # rev-1 VIDEO, which had 32 clocks of in-band header)
+  PIXEL_PRELOAD_LEAD: 16   # hblank fetch lead: 2 first byte + 2 skip-discard
+                           # + 7 alignment shifts = 11, rounded up
 
-# Firmware<->application syscall ABI.  Apps are independent flat binaries linked
-# at _app_base; they reach firmware services with TRAP #15: call number in d0,
-# up to three args in d1/d2/d3 (pointers passed as longs), return value in d0.
-# d0 >= 0 is the result; d0 < 0 is -errno (Linux convention).  d0-d3 are
-# clobbered.  These numbers are the contract shared by the firmware dispatch
-# (sys_dispatch) and the app-side stubs (apps/lib/syscalls.c), which mirror the
-# newlib libgloss functions of the same name in firmware/syscalls.c.
+# Firmware<->application syscall ABI: TRAP #15, call number in d0, up to
+# three args in d1/d2/d3 (pointers as longs), result in d0; d0 < 0 is -errno.
+# d0-d3 are clobbered.  Shared by sys_dispatch (firmware) and
+# apps/lib/syscalls.c (app stubs).
 syscalls:
   trap: 15
   calls:
@@ -983,10 +899,7 @@ syscalls:
     - name: GETTIME
       number: 12
       description: "Return seconds since the Unix epoch derived from the boot epoch plus milliseconds since boot."
-    # Direct video access.  The full ownership contract -- what may live in the
-    # descriptor carve, what may not, and the poll-the-vsync-latch pacing model
-    # -- is in griffin_abi.h, which also defines GriffinVideoDirectInfo and the
-    # GRIFFIN_APP_DESC_* carve constants shared by firmware and applications.
+    # Direct video ownership contract and GriffinVideoDirectInfo: griffin_abi.h.
     - name: VIDEO_DIRECT_START
       number: 13
       description: "Take direct control of the video ENGINE: d1 points to a GriffinVideoDirectInfo the firmware fills with the app descriptor-table region."
@@ -994,271 +907,74 @@ syscalls:
       number: 14
       description: "Return the video ENGINE to the firmware console."
 
+# Rev 1 board reworks (applied to board/board-pcb-rev-1.distilled.txt).
 bodges:
   - "Reroute A6 pad on U12 to A18"
   - "Route freed GLUE pin 75 to CPU ~VPA"
   - "Pull up CPU HALT with 4.7K to nearby CPU +5V"
 
+# Open items only.
 issues:
-  - "RESOLVED 2026-08-13 (kept for the record; see the interfaces: entry): PIXEL's SET value path at the 1-word/clock cadence is the dedicated 12-bit value bus. The strobe+stall alternative was fully built and measured (both fit; COMPOSITOR 120 LC vs the bus's 116; PIXEL-target SETs would have cost 2 slots) before the bus won on size, uniform slot arithmetic, and unloading the FIFO Q bus."
-  - "Rev-2 FIFO desync telemetry is TBD: the display-list ENGINE no longer drives the 7200s' 9th-bit toggle, so VIDEO's Q8 detector has no signal and PIXEL dropped it. Decide whether rev 2 wants any desync observability (a status the CPU can poll?) or whether frame-bounded /RS recovery is enough."
-  - "RESOLVED 2026-08-13 (kept for the record): pixel_skip decisions. (1) The scrolled line's tail is a DECLARED FEATURE LIMIT — with nonzero skip the last <=7 px re-shift the previous byte's pattern (borders/overlay hide it); the correct-right-edge alternative (per-line fetched-byte counter + padded record, ~8 FF) stays affordable if ever wanted. (2) Odd skip in micro-HAM is CLAMPED IN HARDWARE — skip bit 0 is ignored in HAM mode at the line-start consumption point (SET-order independent), so a buggy list rounds to the nearest even bit instead of mis-parsing the whole line. Both documented in pixel.v's header; suite PixelUnit models the clamp."
-  - "need to address *what* raises nIRQ on ENGINE; it's reserved and routed but always 1."
-  - "need to finalize micro-HAM; not in the YAML, disagreement between encoder and implementation"
-  - "2026-08-19: VIDCMD 2-clock cadence rework — compositor.v + testbench DONE (registered /RE with park-on-Q banking; 102 checks pass incl the PAIR_LOCAL/PAIR_PIX banked-pair tests; fits 112/128 LC, down 4 from the value-bus baseline; Q is X-poisoned after /RE rises in the tb so stale-Q use fails visibly).  Measured constants for the suite: sustained cadence 2 slots/word, banked-pair gap 1 slot, PIXEL-target SET cost 2 slots, commit still leads its slot's RGB_OUT by 1 clock, pipeline still 2 clocks.  DONE 2026-08-19 (all layers): vidcmd-spec.md carries a dated addendum (fetch engine, pair law, value bus replacing the stale Q-tap conduit, TILE annotated dropped); super-engine render.cpp implements the RTL fetch engine equation-for-equation; the author sizes CUSHION fillers from a vidcmd_plan_line() fetch simulation (the reinstated cadence-aware prefetch invariant) and reports occupancy + stretch; suite all-PASS with only one visible-pixel expectation change (m3-cursor 84->98: HOLD widens 1-px outline segments), m0/m2-split pixel-identical.  Measured cadence floor: 1-px spans need >=4-px pitch to land as authored (2/3-px pitch stretches to 2 px wide); the ENGINE delivery ceiling (~1 word/3.6 px clocks) still binds before the fetch cadence at realistic densities, so the tempest density budgets are unchanged.  2026-08-24 MASK (experiment B) IS IMPLEMENTED AND COMMITTED in compositor.v + tb: the `01` prefix is a two-word, sixteen-pixel per-pixel overlay with NO inline colour (header {2'b01,d1..d7} + one data word d8..d15, pixel 0 implicit opaque cmp_color0, dibit 00 passthrough / 10 color0 / 11 color1), the data word reloads out of the park at pixel 8 with a HOLD stretch on starvation, and the header is playback-class rather than blank-eager.  Measured seams: RUN->mask 0, mask->mask 0 (GAPLESS -- the pixel-15 edge captures the next header one slot early), mask->SET->mask 2; derived on top of those, mask->SET,SET->mask 4 and RUN->SET,SET->mask 3.  cmp_held_fg/bg are renamed cmp_color1/cmp_color0 in the RTL and VIDCMD_SET_CMP_HELD_FG/BG are renamed VIDCMD_SET_CMP_COLOR1/COLOR0 here, numbering untouched.  STILL OPEN: SET target 0 writes cmp_color1 and target 1 writes cmp_color0 -- whether to swap the target NUMBERS to match the colour numbers is a wire-contract change and is deliberately not bundled with the rename.  Propagated 2026-08-24 to super-engine (render.cpp models the record slot by slot, descriptor.h has the encoders and the seam constants, vidcmd_plan_line is mask-aware) and to vidcmd-spec.md; two new pure-VIDCMD screen cases (m6-console, m7-kiosk) render pixel-exact against host-rasterized references."
-  - "want a 'video_timing:' constants block; is 640x480(800x525)@60 enough?"
-  - "want to formalize 7200 FIFOs from ENGINE to VIDEO"
-  - "AUDIO FIFO /RS source is unpinned (found 2026-08-21): the 7200 requires a reset after power-up before the first write; PIXELS/VIDCMD get TIMING's nRS (8 px clocks at the top of the vsync line) but the audio pair is on no reset net.  Proposed: wire system ~RESET directly to both audio /RS pins — polarity matches, asserts once at power-on when nothing streams, and a reset-button press dumping buffered audio is correct behavior.  Decide at schematic capture."
-  - "need to specify to BERR in 0x400000-0x7fffff?"
-  - "need to specify to BERR in unassigned IO spaces?"
-  - "what do writes to bank 1 do during overlay?"
-  - "what happens to other RAM areas during overlay? Probably go through except for ROM space.  Then should ROM be limited to 128K too and berr outside that?"
-  - "need to state IO ports repeat within their range"
-  - "who owns DTACK?  For ENGINE it's unstated; probably would need to route back through GLUE so maybe GLUE should continue to own DTACK."
-  - "The YAML has per-peripheral interrupt.level but never states that GLUE encodes IPL2:0 and asserts ~VPA on IACK, nor which IRQ signals are physical nets (VIDEO, ENGINE, DUART, PORTS → GLUE) versus internal (~PS2_IRQ never leaves GLUE — listing it as a signal: alongside real nets will produce a false netlist expectation"
-  - "PARTIALLY RESOLVED 2026-08-16: power entry + DS1233D-5 reset supervision now captured as an interfaces: entry below.  Still MD-only: the two oscillators, 'SYSCLK into a GCLK on each CPLD', and the ~HALT open-drain contract — a small clocks: section (or one more interfaces entry) would make those checkable too."
-  - "DUART bus interface. The Rev 2 board bullet (griffin.md:427) lists A1-A4, D0-7, R/~W, ~RESET, ~IACK, crystal — but not the ~CS routing from GLUE nor where DTACKN goes (the YAML's dtack: ~DUART_DTACK handshake at griffin.yml:612, plus berr_timeout: 256). That's the one net set on the DUART that isn't a straight pin-to-bus wire, and it's the one the checklist omits."
+  - "FIFO desync observability: the display-list ENGINE does not drive the 7200 9th-bit toggle, so there is no desync detector in rev 2.  Decide whether a CPU-pollable status is wanted or frame-bounded /RS recovery is enough."
+  - "What raises ~ENGINE_IRQ is unspecified; the pin is routed but always 1."
+  - "Micro-HAM stream encoding is not captured in the YAML."
+  - "VIDCMD SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  Swapping the target NUMBERS to match the colour numbers is a wire-contract change, not yet decided."
+  - "Only one raster mode (640x480 in 800x525 @ 60) is specified.  Alternate rasters (the DUART OP4..OP7 selector into TIMING) have no video_timing entry and no consumer contract."
+  - "The PIXELS and VIDCMD stream FIFOs (ENGINE -> PIXEL / COMPOSITOR) are described in comments and constants, not as first-class entries."
+  - "AUDIO FIFO /RS source is unpinned: the 7200 needs a reset before its first write; PIXELS/VIDCMD get TIMING's nRS but the audio pair is on no reset net.  Proposed: system ~RESET directly to both audio /RS pins.  Decide at schematic capture."
+  - "BERR in 0x400000-0x7FFFFF, 0xC00000-0xCFFFFF and 0xE00000-0xEFFFFF is by DTACK timeout (no decode); state whether that is the intended contract."
+  - "BERR in unassigned IO spaces is unspecified."
+  - "Writes to bank 1 during ROM overlay are unspecified."
+  - "Other RAM areas during overlay: probably pass through except ROM space; should ROM then be limited to the image size with BERR outside it?"
+  - "IO ports repeating (mirroring) within their range is not stated."
+  - "DTACK ownership for ENGINE is unstated; probably GLUE should continue to own DTACK."
+  - "Per-peripheral interrupt.level is given but the YAML never states that GLUE encodes IPL2:0 and asserts ~VPA on IACK, nor which IRQ signals are physical nets (ENGINE, DUART, PORTS -> GLUE) versus internal (~PS2_IRQ never leaves GLUE); a netlist diff will expect a ~PS2_IRQ net."
+  - "Not captured here: the two oscillators, SYSCLK into a GCLK on each CPLD, and the ~HALT open-drain contract.  A clocks: section or one more interfaces entry would make them checkable."
+  - "ENGINE's nSIGNAL strobe width and bit naming in engine.v (7 bits, rev-1 names) disagree with the ENGINE_SIGNAL_* constants (3 assigned + 1 spare); reconcile before the ENGINE pinout is used for the audio /W net."
 
-# chip-to-chip interface contracts.  Each entry is one interface with
-# its support parts and the reason each part exists, recorded when the
-# decision was made rather than reconstructed at schematic time.  KiCad
-# remains the connectivity authority; this section is the intent layer.
-# Capture ritual: read as a parts checklist BEFORE schematic entry; diff
-# kicad_netlist_summary_2.py output against these annotations AFTER.
+# Chip-to-chip interface contracts: parts, nets, and pinned numbers.  KiCad
+# is the connectivity authority; this is the intent layer.  Read as a parts
+# checklist before schematic entry; diff kicad_netlist_summary_2.py output
+# against it after.  The per-chip contracts of the video chain are under
+# their peripheral entries above.
 interfaces:
   - |
-    VGA R4G4B4 output stage (design handoff 2026-08-12).
-    Signal chain: ATF1508AS (5V AS part) -> 2x 74AC541 -> weighted-resistor
-    DAC -> DE-15.  14 signals from CPLD: R[3:0], G[3:0], B[3:0], HSYNC, VSYNC.
-    - U-a (74AC541): R[3:0] + G[3:0].  U-b (74AC541): B[3:0] + HSYNC + VSYNC
-      (2 sections spare).  Both /OE pins grounded; 100nF X7R at each VCC;
-      VCC = +5V.
-    - Buffers are MANDATORY, not optional: ATF1508AS VOH is only specified to
-      -2mA and the MSB sources ~8.6mA in this network; direct drive produces
-      code-dependent nonlinearity.  Do not remove them to save a chip.
-    DAC topology (per channel, x3): binary-weighted ladder + shunt to ground;
-    the shunt is what lets a 5V CMOS rail hit both 0.7V full-scale and ~75R
-    back-termination simultaneously.  Ideal values 500/1k/2k/4k weights,
-    105R shunt.  Chosen E12-only implementation (precision spent proportional
-    to bit weight):
-    - bit3: 2x 1k in parallel (= 500R exact ratio)
-    - bit2: 1x 1k
-    - bit1: 2x 1k in series (= 2k exact ratio)
-    - bit0: 1x 3.9k single (2.6% weight error = 0.03 LSB; do not double up)
-    - shunt: 1x 100R
-    All 1k are 1% metal film, ideally same batch/reel (tolerance tracking);
-    3.9k may be 5%.  Resulting electricals: FS ~= 0.693V loaded, Zth ~= 72.7R,
-    worst-case systematic error ~= 0.03 LSB.  74AC541 Rout (~10-15R) folds
-    into series values; optionally trim bit3 toward 487R equivalent if
-    measured FS matters, otherwise ignore.
-    Syncs: buffer output -> 100R series -> DE-15 pins 13/14.  No DAC, no
-    termination.  Connector: DE-15 R=1, G=2, B=3, HS=13, VS=14; pins
-    5,6,7,8,10 + shell -> GND.
-    Resistor BOM: 21x 1k 1% (ladders), 3x 3.9k (bit0), 3x 100R (shunts),
-    2x 100R (syncs) = 29 resistors, 3 stocked values.  Plus 2x 74AC541.
-    Layout: ladders + shunts placed at the DE-15, not at the buffers; 12 DAC
-    traces short and roughly matched length (bit skew smears edges); solid
-    ground return between shunt grounds and connector shell.  CPLD pin
-    assignment unconstrained by this design; assign per fitter/board
-    convenience.
+    VGA R4G4B4 output stage: COMPOSITOR -> 2x 74AC541 -> weighted-resistor
+    DAC -> DE-15.  14 CPLD signals: R[3:0], G[3:0], B[3:0] from COMPOSITOR,
+    HSYNC, VSYNC from TIMING.  U-a: R[3:0] + G[3:0]; U-b: B[3:0] + HSYNC +
+    VSYNC.  Both /OE grounded.  Buffers are mandatory (ATF1508AS VOH is
+    specified only to -2 mA; the MSB sources ~8.6 mA).
+    DAC per channel (x3): binary-weighted ladder + shunt to ground.  bit3 =
+    2x 1k parallel, bit2 = 1k, bit1 = 2x 1k series, bit0 = 3.9k, shunt =
+    100R; 1k are 1% metal film (same batch), 3.9k may be 5%.  FS ~= 0.693 V
+    loaded, Zth ~= 72.7R, worst-case systematic error ~= 0.03 LSB.
+    Syncs: buffer -> 100R series -> DE-15 pins 13/14; no termination.
+    DE-15: R=1, G=2, B=3, HS=13, VS=14; 5,6,7,8,10 + shell -> GND.
+    BOM: 21x 1k 1%, 3x 3.9k, 5x 100R, 2x 74AC541.
+    Layout: ladders + shunts at the DE-15, not at the buffers; 12 DAC traces
+    short and roughly matched; solid ground return from shunts to shell.
   - |
-    VIDCMD FIFO read port (COMPOSITOR <- 2x IDT7200L15, shared /RE).
-    RESOLVED 2026-08-18: registered /RE from COMPOSITOR, 2 pixel clocks
-    per word, NO shaping gate — the 2026-08-10 74AC00 NAND scheme is
-    rejected by the pinned worst-case table (feedback_timing_discipline).
-    Pinned parameters: IDT7200L15 tRC 25 min / tA 15 max / tRPW 15 min /
-    tRR 10 min / tDV 5 min / tRHZ 15 max / tREF 15 max (REN_7200-7202_DST
-    20171127, com'l+ind'l column, 30 pF test load); ATF1508AS-10 GCLK
-    tSU 7 / tH 0, clock-pin-to-output-pin tIN 0.5 + tCOP 5 + tOD1 2.5 =
-    8.0 ns max at 35 pF (DS20006682A Table 1-4); 74AC00 tPD 7-8 ns max;
-    T = 39.72 ns at 25.175 MHz.
-    Why the gate scheme dies (structural, not marginal): a captured word
-    must be valid from T - tSU = 32.7 ns through the capture edge at T,
-    so /RE must FALL by 32.7 - tA = 17.7 ns and RISE at or after
-    T - tDV = 34.7 ns.  A half-period /RE rises near T/2 and data dies
-    tDV = 5 ns later, so the guaranteed-valid window is [tPD + 15,
-    T/2 + ~6] — it misses every capture edge by ~8-15 ns in every phasing
-    (either clock phase, either capture edge), even with a zero-delay
-    gate.  Manufacturing the required ~87%-phase rising edge needs a
-    ~15 ns delay element whose tolerance stack (74AC00 tPD spread
-    2-8 ns, or an RC into non-Schmitt AC inputs) exceeds the placement
-    window.  Rejected without a breadboard.
-    Registered-/RE margins (worst case, incl ~2 ns flight + series
-    termination): pulse T = 39.7 vs tRPW 15 (+24.7); recovery T vs
-    tRR 10 (+29.7); cycle 2T = 79.4 vs tRC 25 (+54.4); data
-    tCO 8.0 + tA 15 + 2 = 25.0 vs T - tSU = 32.7 (+7.7); hold: valid to
-    /RE-rise + tDV ≈ T + 6 vs tH 0 (+6).  No duty-cycle dependence — all
-    edges are GCLK rising edges (oscillator only owes tCH/tCL >= 4 ns).
-    74AC00/74F00 purchase dropped.  PIXELS FIFO never needed shaping:
-    >= 8 clocks/word (2bpp micro-HAM) or 16 (1bpp), same arithmetic at
-    8x the period.
-    CONSEQUENCE (pending work, see issues): VIDCMD cadence is uniformly
-    2 slots per word — 1-px spans render 2 px wide; compositor.v, its
-    testbench, vidcmd-spec.md, and the super-engine models/slot budgets
-    encode 1 word/clock and must be updated, then COMPOSITOR refit.
+    Stream FIFO parts: all three streams use 2x IDT7200 (256x9) -- PIXELS
+    byte-interleaved shared-Q pair (/RE from PIXEL), VIDCMD ganged 16-bit
+    (/RE from COMPOSITOR), AUDIO one per channel (/RE from PORTS).  All /W
+    strobes come from ENGINE's deposit outputs; data pins on D[15:0].
+    PIXELS and VIDCMD /RS from TIMING nRS; AUDIO /RS open (issues).  XI/XO
+    cascade is an unpopulated-footprint option if depth is ever needed.
   - |
-    COMPOSITOR -> PIXEL SET register path (decided 2026-08-13): a dedicated
-    12-bit registered value bus (set_pix_value[11:0]) alongside the
-    valid/target/commit handshake.  PIXEL's twelve former VIDCMD_Q taps
-    repoint to this bus and LEAVE the shared FIFO Q bus (12 fewer loads
-    there); PIXEL applies the value directly at the commit pulse — one
-    stage, no capture register (a captured shadow would be overwritten on
-    the very edge commit reads it, since value/valid/target/commit share a
-    pipeline stage).  The bus is registered from COMPOSITOR's staged word —
-    a combinational tap would be one cycle ahead of its own valid window.
-    Twelve point-to-point traces COMPOSITOR->PIXEL, same 25.175 MHz clock,
-    full-cycle setup — ordinary synchronous routing, not analog matching.
-    Chosen over a capture-strobe + fetch-stall design that measured +21 LC
-    on COMPOSITOR and made PIXEL-target SETs a permanent 2-slot special
-    case; the bus keeps record cost uniform (1 slot per word, everywhere).
-    CONSEQUENCE: COMPOSITOR is pin-closed — 63/64 I/O + 3/4 dedicated
-    inputs, one spare of each kind, accepted because its interface is
-    architecturally complete (video in/out, one FIFO, one handshake).
+    FIFO control strobes: series source termination at the driver end on
+    every /RE and /W line of every 7200 (PIXELS, VIDCMD, AUDIO).
   - |
-    VIDCMD FIFO empty flag -> COMPOSITOR (new pin vs Rev 1).
-    /EF from the VIDCMD FIFOs routes to a COMPOSITOR input; synchronized
-    on-chip with an asymmetric guard (2-FF sync governs the asynchronous
-    RISE from ENGINE-domain writes; the raw flag governs the FALL caused by
-    COMPOSITOR's own clock-aligned read).  Hardware requirement this
-    creates: FIFO tREF (/RE low to /EF low) must settle within one pixel
-    clock minus setup.  VERIFIED 2026-08-18 at the adopted 2-clock
-    cadence: tCO 8.0 + tREF 15 max + ~2 ns flight = 25.0 ns vs
-    T - tSU = 32.7 ns — +7.7 ns worst case (L15 column, ATF1508AS-10;
-    the shaping scheme whose halved budget this entry warned about was
-    rejected, see the read-port entry).
+    TIMING nVSYNC_IRQ -> GLUE nVSYNC: the level-6 frame
+    IRQ.  GLUE edge-latches it with W1C ack (VSYNC_STATUS/VSYNC_CLEAR at
+    0x17) because TIMING has no CPU bus to host an ack register.
   - |
-    Stream FIFO part unification (2026-08-13): all three streams use 2x
-    IDT7200 (256x9) — PIXELS byte-interleaved shared-Q pair, VIDCMD ganged
-    16-bit, AUDIO one per channel.  The 7202s originally specified for
-    AUDIO are hard to source; 256 pairs = 16.3 ms of buffer with half-full
-    at 128 pairs (~8 ms of refill runway, ~123 Hz IRQ) covers the measured
-    use cases (display-list fill held 49..93 pairs).  The 7200 family
-    cascades via XI/XO if depth is ever needed — an unpopulated-footprint
-    option, not a redesign.
+    Power entry: 5.5mm x 2.1mm center-positive barrel jack, regulated 5V
+    >= 2.5A, inline switch; silkscreen "5V regulated 2.5A+ center positive".
+    Supervisor: DS1233D-5 (open-drain RST, internal 5k pull-up, trip
+    4.50-4.74 V, 350 ms stretch, IOL 8 mA), wire-OR on ~RESET with the user
+    button, the CPU's RESET-instruction driver, and the debug-header master.
+    No RC on the reset net.  Bring-up gate: rail >= 4.85 V at the supervisor
+    under full load, else DS1233D-10 or trim the supply.
   - |
-    FIFO control strobes: series source termination on every /RE and /W
-    line at the driver end (all 7200 FIFOs — PIXELS, VIDCMD, AUDIO).
-    Promotes the Rev 1 fix to design: the Rev 1 7200 /RE bodge wires rang
-    and needed 10pF band-aid caps at the FIFO pins; Rev 2 terminates
-    properly at the source instead.
-  - |
-    TIMING nVSYNC_IRQ -> GLUE level-6 frame IRQ (decided 2026-08-13,
-    revised 2026-08-26).  Net: TIMING's dedicated nVSYNC_IRQ output (pin
-    31) to GLUE's pin 65 (the rev-1 ~VIDEO_IRQ input, renamed nVSYNC).  It
-    is a separate register from VGA_VSYNC, identical to it today (negative,
-    2 lines at v = 490..491) and guaranteed to keep that polarity in any
-    future raster mode, so the connector's VSYNC polarity can change
-    without moving the IRQ edge.  (The earlier plan tee'd VGA_VSYNC
-    pre-buffer; one TIMING pin buys the decoupling.)  The latch and the W1C
-    acknowledge live in GLUE (VSYNC_STATUS/VSYNC_CLEAR at offset 0x17)
-    because TIMING has no CPU bus to host an ack register — a raw level
-    would double-fire or be missed, so GLUE edge-detects the synchronized
-    assertion and holds the IRQ until the ISR clears it.  No GLUE change.
-  - |
-    TIMING -> COMPOSITOR contract: H_ACTIVE (and the /RS vsync pulse) must
-    LEAD the visible window by 2 pixel clocks — COMPOSITOR's consume-edge
-    plus registered-RGB_OUT pipeline is exactly 2 clocks (measured in the
-    compositor testbench).  Constrains whichever chip generates timing
-    (TIMING may be combined with PIXEL in one ATF1508); not a discrete
-    part, recorded here so the timing chip's counters are offset by design
-    rather than trimmed by bodge.
-  - |
-    Power entry + reset supervision (standardized 2026-08-16).
-    Input: 5.5mm x 2.1mm center-positive barrel jack, regulated 5V >= 2.5A
-    adapter, inline switch retained; silkscreen the contract at the jack
-    ("5V regulated 2.5A+ center positive").  Replaces rev-1 USB-C — a
-    plain-Rd sink is only entitled to 500 mA without CC sensing or PD, and
-    the rev-2 budget is ~1.3-1.7 A typ vs rev 1's measured 0.84 A (budget
-    and >=2 A switch/trace/bulk-cap requirements: rev2-electrical-review.md
-    section 8).  A CH224K-style PD trigger module with a barrel pigtail
-    adapts any PD charger if ever needed.
-    Supervisor: DS1233D-5 (datasheet 041002): open-drain RST, internal
-    5 kohm (3.75-6.25 k) pull-up, trip 4.50-4.74 V (typ 4.625), 350 ms
-    stretch, IOL 8 mA.  Wire-OR on ~RESET with the user button, the CPU's
-    own RESET-instruction driver, and the debug-header external master.
-    The D variant has NO pushbutton detect (selection guide: N/A) — an
-    external low is tolerated but not debounced or re-stretched, so button
-    release rides raw switch bounce.  Accepted: the bounce window sits
-    immediately after a completed reset and the worst case is a botched
-    boot cured by pressing again; plain DS1233-5 is the drop-in upgrade.
-    No RC on the reset net (rev-1 C3 retired — a cap there fights the
-    CPU's 124-clock RESET-instruction drive).  Bring-up gate: rail must
-    measure >= 4.85 V at the supervisor under full load, else move to
-    DS1233D-10 (4.25-4.49 V) or trim the supply.
-  - |
-    TIMING output contracts (consolidated 2026-08-26, extended the same
-    day — read before ANY timing.v revision; every consumer below relies
-    on the stated shape).  ENFORCED by cpld/pixel/timing_tb.v (`make
-    timing-sim`): every output is checked on every clock of two frames
-    against a closed-form law in the cycle index, twelve output-to-output
-    relations are checked, and ten negative-control mutations must each
-    make the run fail.  Fit: 35/64 LC, 15/32 I/O, ATF1504AS PLCC44,
-    -preassign keep + production flags (JTAG, TDI/TMS pullups,
-    power_reset).  Ladder 2026-08-26: 31 (frozen) -> 31 (+power_reset,
-    pins unchanged) -> 36 (+4 outputs, +line-parity flop) -> 35 (ticks
-    toggle every line instead; the parity flop went away).
-    - nRS: 8 pixel clocks at the top of the vsync line (rs_window =
-      v_cnt==V_SYNC_START & h_cnt<8).  Consumers: COMPOSITOR machine
-      reset, and /RS of the four video-stream FIFO chips — the 7200
-      demands /W and /RE inactive from tRSS 15 ns before its rise to
-      tRSR 10 ns after (ENGINE video-write descriptors must finish
-      before vsync; audio strobes exempt).
-    - H_ACTIVE: leads the visible window by 2 pixel clocks
-      (COMPOSITOR_LEAD, measured by compositor_tb).  Consumer:
-      COMPOSITOR slot gating.
-    - PIX_CONSUME/PIX_PRELOAD/PIX_LAST: registered strobes to PIXEL
-      (+1 clock split lead).  PIX_LAST is the last 8 consumption clocks
-      (h_cnt[9:3]==79); pixel.v's late_fetch_done tolerates ANY width
-      >= one byte but its derivations assume 8 — changing the width
-      means re-deriving pixel_tb's end-of-line cases.  PIX_PRELOAD
-      fires at H_TOTAL - PIXEL_FETCH_LEAD (16) before visible lines.
-    - Sync compares shift late by SPLIT_DAC_LEAD (derived, not tuned:
-      COMPOSITOR_LEAD + PIXEL_OUT_LEAD + SPLIT_LEAD = 4); the yml
-      constants block and timing.v localparams must stay equal.
-    - HBLANK (pin 19) -> ENGINE pin 2: registered (h_cnt >= 640), i.e.
-      high for h_cnt 640..799 on EVERY line, visible or blank, rising on
-      the very clock PIX_CONSUME falls when the line is visible.  ENGINE
-      2-FF synchronizes it and its wait_hblank descriptors wait for the
-      rising edge; that edge is the start of the 160-clock blank the
-      super-engine budgets (descriptor.h HBLANK_SYSCLK), which is why it
-      is NOT the HSYNC net (whose rise is 116 clocks later) and NOT
-      ~H_ACTIVE (which never toggles in vblank and would stall a list
-      re-armed there).  Resolves the previously unpinned Rev-2 source of
-      ENGINE's "HBLANK from VIDEO".
-    - nVSYNC_IRQ (pin 31) -> GLUE pin 65: registered ~in_vsync, identical
-      to VGA_VSYNC today, polarity fixed for all time (see the GLUE frame
-      IRQ entry).
-    - PADDLE_TICK (pin 17) -> PORTS pin 44 and AUDIO_TICK (pin 18) ->
-      PORTS pin 45: each a square wave that toggles on the clock that
-      starts every line (period 1600 clocks, free-running from reset with
-      no frame-boundary exception — 525 is odd, so a frame-locked parity
-      would slip once per frame).  PORTS 2-FF synchronizes each and counts
-      FALLING edges only: 15.734 kHz events for both
-      (PADDLE_TICKS_PER_SECOND, AUDIO_SAMPLES_PER_SECOND).  Square waves
-      because a one-clock pulse (39.7 ns) is narrower than a SYSCLK and
-      would be missed; falling-edge-only because a both-edges XOR detector
-      doubles the product terms of every PORTS paddle-counter bit and PORTS
-      fails routing (measured 2026-08-26; falling-edge fits at 122/128).
-      Two nets so the audio rate can change in TIMING alone.  Any future
-      audio-rate change is a change to AUDIO_TICK's toggle rate (event
-      rate = toggle rate / 2) and to AUDIO_SAMPLES_PER_SECOND.
-    - VGA_HSYNC and VGA_VSYNC now drive ONLY the 74AC541 buffers; nothing
-      else taps them.  Any alternate-raster mode is therefore contained in
-      TIMING plus the consumers of the contracts above.
-    - Pinout FROZEN 2026-08-26 (//PIN block): the original 9 signals plus
-      PADDLE_TICK 17, AUDIO_TICK 18, HBLANK 19, nVSYNC_IRQ 31 (appended by
-      a -preassign keep fit; none of the 9 moved).  RESERVED, not fitted:
-      pins 20, 21, 24, 25 for DUART OP4..OP7 (future mode/rate select —
-      TIMING must treat the OP reset state 1111 as today's behaviour), and
-      GCLK2 pin 44 left free for an optional second oscillator.  LAYOUT
-      REQUIREMENT: the schematic must route pins 17, 18, 19, 31 to their
-      consumers and pins 20, 21, 24, 25 to the DUART; the remaining 13
-      spare I/O are bitfile-usable later ONLY if routed to reachable
-      copper — a capture decision, not an afterthought.
-  - |
-    Carried forward from Rev 1 unchanged: 74HCT155 dual 2-to-4 decoder fans
-    ~IO_WR_EN out by A19:18 (write section: ~AUDIO_W etc.; read section
-    reserved), and the XR68C681 DUART on its DIP carrier with the ~CS
-    routing from GLUE and DTACKN return (see the DUART issue entry above —
-    resolve that checklist gap during Rev 2 capture).
-
+    Carried forward from Rev 1: the XR68C681 DUART with ~CS from GLUE
+    (nDUART_SELECT) and DTACKN returned to GLUE (nDUART_DTACK).

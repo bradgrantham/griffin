@@ -20,7 +20,7 @@ namespace Griffin {
 static constexpr uint32_t SYSCLK_HZ = 14000000UL;
 
 // ------------------------------------------------------------
-// GLUE: System glue logic (also hosts PS/2 keyboard RX/TX)
+// GLUE: System glue logic and PS/2 keyboard
 static constexpr uint32_t GLUE_BASE = 0xF00000UL;
 static constexpr uint32_t GLUE_SIZE = 0x040000UL;
 inline constexpr MemoryRange GLUE(0xF00000UL, 0x040000UL);
@@ -141,13 +141,29 @@ static constexpr uint32_t ENGINE_CTRL_ENABLE_SHIFT = 0U;
 static constexpr uint32_t ENGINE_CTRL_DEFAULT = 0x00U;
 
 // ------------------------------------------------------------
-// VIDEO: Freed region; rev-1 VIDEO retired in favor of TIMING+PIXEL+COMPOSITOR
-static constexpr uint32_t VIDEO_BASE = 0xE00000UL;
-static constexpr uint32_t VIDEO_SIZE = 0x100000UL;
-inline constexpr MemoryRange VIDEO(0xE00000UL, 0x100000UL);
-static constexpr int VIDEO_DTACK_WS = 0;  // wait states at 14000000 Hz
-static constexpr int VIDEO_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
-static constexpr int VIDEO_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
+// TIMING: Raster time base: VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, PIXEL strobes, ENGINE HBLANK, GLUE vsync IRQ, PORTS paddle/audio ticks
+static constexpr uint32_t TIMING_CLOCK = 25175000UL;
+static constexpr uint32_t TIMING_PIXEL_CLOCK_HZ = 25175000UL;  // pixel clock, Hz
+static constexpr uint32_t TIMING_H_ACTIVE = 640UL;  // pixel clocks
+static constexpr uint32_t TIMING_H_FRONT_PORCH = 16UL;  // pixel clocks
+static constexpr uint32_t TIMING_H_SYNC = 96UL;  // pixel clocks
+static constexpr uint32_t TIMING_H_BACK_PORCH = 48UL;  // pixel clocks
+static constexpr uint32_t TIMING_H_TOTAL = 800UL;  // pixel clocks
+static constexpr uint32_t TIMING_V_ACTIVE = 480UL;  // lines
+static constexpr uint32_t TIMING_V_FRONT_PORCH = 10UL;  // lines
+static constexpr uint32_t TIMING_V_SYNC = 2UL;  // lines
+static constexpr uint32_t TIMING_V_BACK_PORCH = 33UL;  // lines
+static constexpr uint32_t TIMING_V_TOTAL = 525UL;  // lines
+static constexpr uint32_t TIMING_HSYNC_ACTIVE_LOW = 1UL;  // HSYNC is asserted low during the sync interval
+static constexpr uint32_t TIMING_VSYNC_ACTIVE_LOW = 1UL;  // VSYNC is asserted low during the sync interval
+
+// ------------------------------------------------------------
+// PIXEL: PIXELS stream unpacker: 1bpp direct, 2bpp micro-HAM, 2bpp indexed, half rate; R4G4B4 to COMPOSITOR
+static constexpr uint32_t PIXEL_CLOCK = 25175000UL;
+
+// ------------------------------------------------------------
+// COMPOSITOR: VIDCMD stream player: per-slot source select over PIXEL's R4G4B4, SET forwarding to PIXEL, MASK overlays
+static constexpr uint32_t COMPOSITOR_CLOCK = 25175000UL;
 
 // ------------------------------------------------------------
 // PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe
@@ -350,14 +366,7 @@ static constexpr uint32_t DUART_STOPCC = 0xF8001FUL;  // READ: Stop counter/time
 static constexpr uint32_t DUART_OPR_CLR = 0xF8001FUL;  // WRITE: Output port bit reset (1 bits clear corresponding OP pins)
 
 // ------------------------------------------------------------
-// AUDIO: Stereo FIFO audio output, drained by PORTS at TIMING's AUDIO_TICK rate (15.734 kS/s)
-static constexpr uint32_t AUDIO_BASE = 0xC00000UL;
-static constexpr uint32_t AUDIO_SIZE = 0x040000UL;
-inline constexpr MemoryRange AUDIO(0xC00000UL, 0x040000UL);
-static constexpr int AUDIO_DTACK_WS = 0;  // wait states at 14000000 Hz
-static constexpr int AUDIO_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
-static constexpr int AUDIO_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator
-static constexpr uint32_t AUDIO_FIFO = 0xC00000UL;  // WRITE: Write one stereo sample pair into the audio FIFOs
+// AUDIO: Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate
 
 // RAM region — total of all RAM banks
 static constexpr uint32_t RAM_TOTAL_SIZE = 0x400000UL;
@@ -388,9 +397,6 @@ static constexpr uint32_t DUART_IP_RTC_NINT = 0x08U;
 static constexpr uint32_t RTC_I2C_ADDR = 0x68U;
 static constexpr uint32_t PS2_TX_DATA_PARITY = 0x02U;
 static constexpr uint32_t ENGINE_WORDS_PER_BURST = 0x14U;
-static constexpr uint32_t VIDEO_PIXEL_BYTES_PER_LINE = 0x50U;
-static constexpr uint32_t VIDEO_LINE_PIXEL_OFFSET = 0x04U;
-static constexpr uint32_t VIDEO_LINE_STRIDE_BYTES = 0x54U;
 static constexpr uint32_t VSYNC_IRQ_LEVEL = 0x06U;
 static constexpr uint32_t ENGINE_SIGNAL_PIXELS_FIFO_W = 0x01U;
 static constexpr uint32_t ENGINE_SIGNAL_VIDCMD_FIFO_W = 0x02U;

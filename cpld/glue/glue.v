@@ -9,21 +9,16 @@
 //
 // The Rev 2 memory map GLUE implements:
 //
-//   1. ROM is a 4 MB window at 0x800000-0xBFFFFF (A23 & ~A22), leaving
-//      0xC00000-0xCFFFFF free for the direct-bus peripherals.  Word writes
+//   1. ROM is a 4 MB window at 0x800000-0xBFFFFF (A23 & ~A22).  Word writes
 //      into that window drive ~ROM_WE for in-circuit reflash, but only once
 //      CONFIG.FLASH_WE_EN has been set (see the ~ROM_WE assign below).
-//   2. There is no AUDIO_LE and no 0xFC0000 audio-latch decode; the 74HC373
-//      stereo latch is gone and the audio path is a 7202 FIFO pair in the
-//      direct-bus region.
-//   3. The direct-bus strobes ~IO_RD_EN / ~IO_WR_EN cover 0xC00000-0xCFFFFF
-//      and feed a board-level 74155 (see griffin.yml "Direct-bus peripheral
-//      region"): read = region & AS & R/W, write = region & UDS & LDS & ~R/W
-//      so only deliberate full-word writes qualify.
+//   2. There is no audio decode of any kind: the audio FIFO pair is written
+//      only by ENGINE's AUDIO_FIFO_W deposit strobe.
+//   3. 0xC00000-0xCFFFFF and 0xE00000-0xEFFFFF are undecoded; an access
+//      there BERRs by DTACK timeout.
 //   4. ~PORTS_SELECT decodes the 0xFC0000 slot, like ~DUART_SELECT.
 //   5. ~PORTS_IRQ is autovectored at level 2 (below ENGINE at 3).
-//   6. PORTS and the direct-bus region both DTACK at their generated
-//      thresholds (0 wait states).
+//   6. PORTS DTACKs at its generated threshold (0 wait states).
 //
 // The PS/2 engine, DUART, CF at 0xF40000, DEBUG, BERR, VPA and HALT are
 // unchanged from Rev 1.
@@ -62,19 +57,12 @@ module glue (
     output wire        nRAM_2_SEL,
     output wire        nRAM_3_SEL,
     output wire        nRAM_4_SEL,
-    output wire        nVIDEO_SELECT,
     output wire        nENGINE_SELECT,
     output wire        nWRITE_LO,
     output wire        nWRITE_HI,
     output wire        DEBUG_OUT,
     output wire        nCF_CS0,
     output wire        nCF_CS1,
-
-    // Rev-2 direct-bus peripheral region 0xC00000-0xCFFFFF: two fully-timed
-    // region strobes into a board-level 74155 dual 2-to-4 decoder, which fans
-    // them out by A19:18.  GLUE never touches that data path.
-    output wire        nIO_RD_EN,
-    output wire        nIO_WR_EN,
 
     // Cycle-qualified select for the PORTS CPLD at 0xFC0000.
     output wire        nPORTS_SELECT,
@@ -135,12 +123,9 @@ module glue (
     wire ram_bank_2_region = (address_high_region == 4'h1);
     wire ram_bank_3_region = (address_high_region == 4'h2);
     wire ram_bank_4_region = (address_high_region == 4'h3);
-    // Rev 2: ROM is a 4 MB window at 0x800000-0xBFFFFF (A23 set, A22 clear),
-    // which frees 0xC00000-0xCFFFFF for the direct-bus peripherals.
+    // Rev 2: ROM is a 4 MB window at 0x800000-0xBFFFFF (A23 set, A22 clear).
     wire rom_region        = A_hi[23] & ~A_hi[22];
-    wire direct_bus_region = (address_high_region == 4'hc);
     wire engine_region     = (address_high_region == 4'hd);
-    wire video_region      = (address_high_region == 4'he);
     wire io_region         = (address_high_region == 4'hf);
 
     wire glue_segment  = io_region & (address_io_segment == 4'h0);
@@ -171,7 +156,6 @@ module glue (
     assign nROM_WE = ~(rom_region & bus_cycle & write
                        & hi_byte_selected & lo_byte_selected & flash_we_en);
 
-    assign nVIDEO_SELECT = ~(video_region & bus_cycle);
     assign nENGINE_SELECT = ~(engine_region & bus_cycle);
 
     // Bus error: assert after 15 wait-state clocks (~1.05 µs at 14.318 MHz)
@@ -255,13 +239,6 @@ module glue (
     // so GLUE only has to hand it a cycle-qualified region select.
     wire ports_select = ports_segment & bus_cycle;
     assign nPORTS_SELECT = ~ports_select;
-
-    // Direct-bus region strobes.  The write strobe qualifies on both byte
-    // strobes so only deliberate full-word writes reach the 74155 write
-    // section (this is what keeps the stereo FIFO pair in step).
-    assign nIO_RD_EN = ~(direct_bus_region & bus_cycle & read);
-    assign nIO_WR_EN = ~(direct_bus_region & bus_cycle & write
-                         & hi_byte_selected & lo_byte_selected);
 
     // CF chip selects are active-low on the card (-CE pins).
     // PCB nets are crossed: CPLD nCF_CS0 → CF /CS1, CPLD nCF_CS1 → CF /CS0.
@@ -558,13 +535,10 @@ module glue (
         ((~nRAM_4_SEL)      & (ws_cnt >= `RAM_BANK_4_DTACK_THRESHOLD))  |  // RAM bank 4
         ((~nROM_SELECT)     & (ws_cnt >= `ROM_DTACK_THRESHOLD))  |  // ROM
         (glue_select        & (ws_cnt >= `GLUE_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
-        (~nVIDEO_SELECT     & (ws_cnt >= `VIDEO_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
         (~nENGINE_SELECT    & (ws_cnt >= `ENGINE_DTACK_THRESHOLD)) |  // ENGINE (0 WS)
         (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
         ((~nDUART_SELECT)   & ~nDUART_DTACK) |  // DUART
-        (ports_select       & (ws_cnt >= `PORTS_DTACK_THRESHOLD)) |  // PORTS (0 WS)
-        ((direct_bus_region & bus_cycle)
-                            & (ws_cnt >= `AUDIO_DTACK_THRESHOLD));   // direct bus (74155 decodes the quadrant)
+        (ports_select       & (ws_cnt >= `PORTS_DTACK_THRESHOLD));   // PORTS (0 WS)
 
     assign nDTACK = ~dtack_comb;
 
@@ -637,10 +611,7 @@ endmodule
 //PIN: nIPL_0          : 79
 //PIN: nVPA            : 37
 //PIN: nPORTS_SELECT   : 21
-//PIN: nIO_RD_EN       : 36
-//PIN: nIO_WR_EN       : 35
 //PIN: nDUART_SELECT   : 18
-//PIN: nVIDEO_SELECT   : 40
 //PIN: nCF_CS0         : 54
 //PIN: nCF_CS1         : 55
 //PIN: nR_W            : 5

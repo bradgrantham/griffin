@@ -51,15 +51,6 @@ constexpr uint32_t debug = 0; // DEBUG_BUS | DEBUG_IO | DEBUG_UART;
 
 using namespace Griffin;
 
-// Direct-bus peripheral region (griffin.yml "Direct-bus peripheral region"):
-// one 1 MB window split into four 256 KB quadrants by A19:18, fanned out by a
-// 74155 from GLUE's ~IO_RD_EN / ~IO_WR_EN strobes.  Quadrant 0 is AUDIO; the
-// other three are reserved.  GLUE answers DTACK for the whole window, so an
-// access to a reserved quadrant must not fault -- it just reads back the
-// floating bus.  Not a griffin.yml peripheral of its own, so no generated
-// constant: derived here from the AUDIO base that anchors it.
-static constexpr uint32_t DIRECT_BUS_BASE = AUDIO_BASE;
-static constexpr uint32_t DIRECT_BUS_SIZE = 0x100000UL;
 
 // PTY-based console for serial emulation.
 // The master fd acts like the UART: write() sends to the terminal,
@@ -3193,62 +3184,6 @@ class GriffinEmulator : public moira::Moira
         }
     }
 
-    // --- Direct-bus region (0xC00000-0xCFFFFF) -----------------------------
-    // GLUE decodes the region and emits fully-timed ~IO_RD_EN / ~IO_WR_EN; a
-    // 74155 fans them out by A19:18.  GLUE never touches the data path, so a
-    // read of any quadrant (including AUDIO, which is write-only) sees the
-    // undriven bus.
-
-    uint8_t direct_bus_read8(uint32_t addr) const
-    {
-        if (debug & DEBUG_IO)
-        {
-            printf("read of uint8_t at write-only direct-bus %06X\n", addr);
-        }
-        return 0xFF;
-    }
-
-    uint16_t direct_bus_read16(uint32_t addr) const
-    {
-        if (debug & DEBUG_IO)
-        {
-            printf("read of uint16_t at write-only direct-bus %06X\n", addr);
-        }
-        return 0xFFFF;
-    }
-
-    void direct_bus_write8(uint32_t addr, uint8_t val) const
-    {
-        if (AUDIO.contains(addr))
-        {
-            // ~IO_WR_EN = region & UDS & LDS & ~R/W, so a byte write physically
-            // cannot strobe the 7202s.  Drop it loudly rather than silently
-            // honouring an access the hardware guards against.
-            printf("WARNING: 8-bit write 0x%02X to AUDIO FIFO at %06X dropped"
-                   " (~IO_WR_EN needs UDS and LDS; use a word write)\n",
-                   val, addr);
-            return;
-        }
-        if (debug & DEBUG_IO)
-        {
-            printf("write of uint8_t %02X at unpopulated direct-bus %06X\n", val, addr);
-        }
-    }
-
-    void direct_bus_write16(uint32_t addr, uint16_t val) const
-    {
-        if (AUDIO.contains(addr))
-        {
-            // One stereo pair per full-word write: L = D15-D8, R = D7-D0.
-            ports.audio_fifo_push(val);
-            return;
-        }
-        if (debug & DEBUG_IO)
-        {
-            printf("write of uint16_t %04X at unpopulated direct-bus %06X\n", val, addr);
-        }
-    }
-
     // Wait state penalty (extra SYSCLK cycles) for a memory access,
     // derived from griffin.yml dtack entries via codegen.py.
     // Note: read16 for RAM calls read8 twice, but RAM penalty is 0
@@ -3259,12 +3194,6 @@ class GriffinEmulator : public moira::Moira
             (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW))
         {
             return ROM_DTACK_PENALTY;
-        }
-        // AUDIO is at 0xC00000, BELOW IO_BASE -- its penalty must be tested
-        // outside the IO region, not nested inside it (where it was dead code).
-        if (addr >= AUDIO_BASE && addr < AUDIO_BASE + AUDIO_SIZE)
-        {
-            return AUDIO_DTACK_PENALTY;
         }
         if (addr >= IO_BASE && addr < IO_BASE + IO_SIZE)
         {
@@ -3456,12 +3385,6 @@ public:
             return ram_read8(addr);
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return ROM[(addr - ROM_BASE) % ROM_SIZE];
-        } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
-            return direct_bus_read8(addr);
-        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            // Freed region: rev-1 VIDEO is gone and nothing answers here.
-            // GLUE still decodes and DTACKs it, so the bus floats.
-            return EngineState::OPEN_BUS;
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
             return EngineState::OPEN_BUS;   // write-only: no STATUS, no readback
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
@@ -3484,10 +3407,6 @@ public:
                               : RAM[addr >> 1];
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return (ROM[(addr - ROM_BASE) % ROM_SIZE] << 8) | ROM[(addr - ROM_BASE + 1) % ROM_SIZE];
-        } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
-            return direct_bus_read16(addr);
-        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            return (EngineState::OPEN_BUS << 8) | EngineState::OPEN_BUS;
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
             return (EngineState::OPEN_BUS << 8) | EngineState::OPEN_BUS;
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
@@ -3506,12 +3425,8 @@ public:
             ram_write8(addr, val);
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
-        } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
-            direct_bus_write8(addr, val);
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write8(addr - IO_BASE, val);
-        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            return;   // freed region, no chip behind it
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
             const_cast<GriffinEmulator*>(this)->engine_write8(addr, val);
         } else {
@@ -3536,10 +3451,6 @@ public:
             }
         } else if (addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW) {
             return;
-        } else if (addr >= DIRECT_BUS_BASE && addr < DIRECT_BUS_BASE + DIRECT_BUS_SIZE) {
-            direct_bus_write16(addr, val);
-        } else if (addr >= VIDEO_BASE && addr < VIDEO_BASE + VIDEO_SIZE) {
-            return;   // freed region, no chip behind it
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
             // DESC is a TRUE 16-bit register — edma3.v latches D[14:0] on one
             // word write.  Rev-1 folded every ENGINE word write down to its low

@@ -97,6 +97,30 @@ def reg_default(reg):
     return val, has_default
 
 
+def video_timing_items(periph):
+    """Flatten a peripheral's video_timing block into (NAME, value, comment)
+    constants.  Checks that each axis's four intervals sum to its total, the
+    one invariant the JSON schema cannot express."""
+    vt = periph.get('video_timing')
+    if not vt:
+        return []
+    for axis in ('h', 'v'):
+        parts = [vt[f'{axis}_active'], vt[f'{axis}_front_porch'],
+                 vt[f'{axis}_sync'], vt[f'{axis}_back_porch']]
+        if sum(parts) != vt[f'{axis}_total']:
+            raise ValueError(f"video_timing {axis}: active+front_porch+sync+back_porch "
+                             f"= {sum(parts)} != {axis}_total {vt[f'{axis}_total']}")
+    items = [('PIXEL_CLOCK_HZ', vt['pixel_clock_hz'], 'pixel clock, Hz')]
+    for k in ('h_active', 'h_front_porch', 'h_sync', 'h_back_porch', 'h_total'):
+        items.append((k.upper(), vt[k], 'pixel clocks'))
+    for k in ('v_active', 'v_front_porch', 'v_sync', 'v_back_porch', 'v_total'):
+        items.append((k.upper(), vt[k], 'lines'))
+    for k in ('hsync_polarity', 'vsync_polarity'):
+        items.append((k[:5].upper() + '_ACTIVE_LOW', 1 if vt[k] == 'negative' else 0,
+                      f"{k[:5].upper()} is asserted {'low' if vt[k] == 'negative' else 'high'} during the sync interval"))
+    return items
+
+
 def linker_regions(perifs):
     """Merge peripherals sharing a linker section into address regions.
     Returns {SECTION_NAME_UPPER: [min_base, max_end]}, insertion-ordered."""
@@ -166,27 +190,27 @@ def write_c_header(hw: dict, path: Path) -> None:
     io_candidates = []     # (base, end) of non-linker peripherals
 
     for pname, periph in perifs.items():
+        # Busless chips (TIMING/PIXEL/COMPOSITOR) have no address_range: they
+        # contribute only a clock, an interrupt level and a raster spec.
         ar = periph.get('address_range')
-        if not ar:
-            continue
-
-        base = parse_int(ar['base'])
-        size = parse_int(ar.get('size', 0))
-        window = parse_int(ar['window']) if ar.get('window') else size
         linker_section = (periph.get('linker') or {}).get('section')
         desc = periph.get('description') or periph.get('part') or ''
 
         w(f"// {'-' * 60}")
         w(f"// {pname}" + (f": {desc}" if desc else ""))
-        w(f"static constexpr uint32_t {pname}_BASE = {fmt_hex(base, 6)}UL;")
-        if size:
-            w(f"static constexpr uint32_t {pname}_SIZE = {fmt_hex(size, 6)}UL;")
-        if window and (window != size or ar.get('window')):
-            w(f"static constexpr uint32_t {pname}_WINDOW = {fmt_hex(window, 6)}UL;")
+        if ar:
+            base = parse_int(ar['base'])
+            size = parse_int(ar.get('size', 0))
+            window = parse_int(ar['window']) if ar.get('window') else size
+            w(f"static constexpr uint32_t {pname}_BASE = {fmt_hex(base, 6)}UL;")
+            if size:
+                w(f"static constexpr uint32_t {pname}_SIZE = {fmt_hex(size, 6)}UL;")
+            if window and (window != size or ar.get('window')):
+                w(f"static constexpr uint32_t {pname}_WINDOW = {fmt_hex(window, 6)}UL;")
 
-        # MemoryRange spans the full decode window so .contains() is correct for address decode.
-        if window:
-            w(f"inline constexpr MemoryRange {pname}({fmt_hex(base, 6)}UL, {fmt_hex(window, 6)}UL);")
+            # MemoryRange spans the full decode window so .contains() is correct for address decode.
+            if window:
+                w(f"inline constexpr MemoryRange {pname}({fmt_hex(base, 6)}UL, {fmt_hex(window, 6)}UL);")
 
         # Interrupt level
         intr = periph.get('interrupt')
@@ -197,6 +221,14 @@ def write_c_header(hw: dict, path: Path) -> None:
         clk = periph.get('clock')
         if clk is not None:
             w(f"static constexpr uint32_t {pname}_CLOCK = {parse_int(clk)}UL;")
+
+        # Raster spec
+        for vname, vval, vcmt in video_timing_items(periph):
+            w(f"static constexpr uint32_t {pname}_{vname} = {vval}UL;  // {vcmt}")
+
+        if not ar:
+            w("")
+            continue
 
         # DTACK wait-state constants (for peripherals with fixed wait states)
         ws = get_dtack_ws(periph, proj['clock_hz'])
@@ -311,20 +343,18 @@ def write_asm_include(hw: dict, path: Path) -> None:
 
     for pname, periph in perifs.items():
         ar = periph.get('address_range')
-        if not ar:
-            continue
-
-        base = parse_int(ar['base'])
-        size = parse_int(ar.get('size', 0))
-        window = parse_int(ar['window']) if ar.get('window') else size
         desc = periph.get('description') or periph.get('part') or ''
 
         w(f"| {pname}" + (f": {desc}" if desc else ""))
-        w(f".equ {pname}_BASE, {fmt_hex(base, 6)}")
-        if size:
-            w(f".equ {pname}_SIZE, {fmt_hex(size, 6)}")
-        if window and (window != size or ar.get('window')):
-            w(f".equ {pname}_WINDOW, {fmt_hex(window, 6)}")
+        if ar:
+            base = parse_int(ar['base'])
+            size = parse_int(ar.get('size', 0))
+            window = parse_int(ar['window']) if ar.get('window') else size
+            w(f".equ {pname}_BASE, {fmt_hex(base, 6)}")
+            if size:
+                w(f".equ {pname}_SIZE, {fmt_hex(size, 6)}")
+            if window and (window != size or ar.get('window')):
+                w(f".equ {pname}_WINDOW, {fmt_hex(window, 6)}")
 
         # Interrupt level
         intr = periph.get('interrupt')
@@ -335,6 +365,13 @@ def write_asm_include(hw: dict, path: Path) -> None:
         clk = periph.get('clock')
         if clk is not None:
             w(f".equ {pname}_CLOCK, {parse_int(clk)}")
+
+        for vname, vval, vcmt in video_timing_items(periph):
+            w(f".equ {pname}_{vname}, {vval}  | {vcmt}")
+
+        if not ar:
+            w("")
+            continue
 
         for reg in periph.get('registers', []):
             offset = parse_int(reg['offset'])
@@ -466,20 +503,18 @@ def write_verilog_include(hw: dict, path: Path) -> None:
 
     for pname, periph in perifs.items():
         ar = periph.get('address_range')
-        if not ar:
-            continue
-
-        base = parse_int(ar['base'])
-        size = parse_int(ar.get('size', 0))
-        window = parse_int(ar['window']) if ar.get('window') else size
         desc = periph.get('description') or periph.get('part') or ''
 
         w(f"// {pname}" + (f": {desc}" if desc else ""))
-        w(f"`define {pname}_BASE 24'h{base:06X}")
-        if size:
-            w(f"`define {pname}_SIZE 24'h{size:06X}")
-        if window and window != size:
-            w(f"`define {pname}_WINDOW 24'h{window:06X}")
+        if ar:
+            base = parse_int(ar['base'])
+            size = parse_int(ar.get('size', 0))
+            window = parse_int(ar['window']) if ar.get('window') else size
+            w(f"`define {pname}_BASE 24'h{base:06X}")
+            if size:
+                w(f"`define {pname}_SIZE 24'h{size:06X}")
+            if window and window != size:
+                w(f"`define {pname}_WINDOW 24'h{window:06X}")
 
         # Interrupt level
         intr = periph.get('interrupt')
@@ -490,6 +525,13 @@ def write_verilog_include(hw: dict, path: Path) -> None:
         clk = periph.get('clock')
         if clk is not None:
             w(f"`define {pname}_CLOCK {parse_int(clk)}")
+
+        for vname, vval, vcmt in video_timing_items(periph):
+            w(f"`define {pname}_{vname} {vval}  // {vcmt}")
+
+        if not ar:
+            w("")
+            continue
 
         # DTACK wait-state threshold (for peripherals with fixed wait states)
         ws = get_dtack_ws(periph, proj['clock_hz'])

@@ -3,7 +3,7 @@
 | Project: Griffin
 .equ SYSCLK_HZ, 14000000
 
-| GLUE: System glue logic (also hosts PS/2 keyboard RX/TX)
+| GLUE: System glue logic and PS/2 keyboard
 .equ GLUE_BASE, 0xF00000
 .equ GLUE_SIZE, 0x040000
 .equ GLUE_IRQ_LEVEL, 4
@@ -89,9 +89,27 @@
 .equ ENGINE_CTRL_ENABLE_SHIFT, 0
 .equ ENGINE_CTRL_DEFAULT, 0x00
 
-| VIDEO: Freed region; rev-1 VIDEO retired in favor of TIMING+PIXEL+COMPOSITOR
-.equ VIDEO_BASE, 0xE00000
-.equ VIDEO_SIZE, 0x100000
+| TIMING: Raster time base: VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, PIXEL strobes, ENGINE HBLANK, GLUE vsync IRQ, PORTS paddle/audio ticks
+.equ TIMING_CLOCK, 25175000
+.equ TIMING_PIXEL_CLOCK_HZ, 25175000  | pixel clock, Hz
+.equ TIMING_H_ACTIVE, 640  | pixel clocks
+.equ TIMING_H_FRONT_PORCH, 16  | pixel clocks
+.equ TIMING_H_SYNC, 96  | pixel clocks
+.equ TIMING_H_BACK_PORCH, 48  | pixel clocks
+.equ TIMING_H_TOTAL, 800  | pixel clocks
+.equ TIMING_V_ACTIVE, 480  | lines
+.equ TIMING_V_FRONT_PORCH, 10  | lines
+.equ TIMING_V_SYNC, 2  | lines
+.equ TIMING_V_BACK_PORCH, 33  | lines
+.equ TIMING_V_TOTAL, 525  | lines
+.equ TIMING_HSYNC_ACTIVE_LOW, 1  | HSYNC is asserted low during the sync interval
+.equ TIMING_VSYNC_ACTIVE_LOW, 1  | VSYNC is asserted low during the sync interval
+
+| PIXEL: PIXELS stream unpacker: 1bpp direct, 2bpp micro-HAM, 2bpp indexed, half rate; R4G4B4 to COMPOSITOR
+.equ PIXEL_CLOCK, 25175000
+
+| COMPOSITOR: VIDCMD stream player: per-slot source select over PIXEL's R4G4B4, SET forwarding to PIXEL, MASK overlays
+.equ COMPOSITOR_CLOCK, 25175000
 
 | PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe
 .equ PORTS_BASE, 0xFC0000
@@ -281,10 +299,7 @@
 .equ DUART_STOPCC, 0xF8001F  | READ
 .equ DUART_OPR_CLR, 0xF8001F  | WRITE
 
-| AUDIO: Stereo FIFO audio output, drained by PORTS at TIMING's AUDIO_TICK rate (15.734 kS/s)
-.equ AUDIO_BASE, 0xC00000
-.equ AUDIO_SIZE, 0x040000
-.equ AUDIO_FIFO, 0xC00000  | WRITE
+| AUDIO: Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate
 
 | RAM region — total of all RAM banks
 .equ RAM_TOTAL_SIZE, 0x400000
@@ -311,9 +326,6 @@
 .equ RTC_I2C_ADDR, 0x68
 .equ PS2_TX_DATA_PARITY, 0x02
 .equ ENGINE_WORDS_PER_BURST, 0x14
-.equ VIDEO_PIXEL_BYTES_PER_LINE, 0x50
-.equ VIDEO_LINE_PIXEL_OFFSET, 0x04
-.equ VIDEO_LINE_STRIDE_BYTES, 0x54
 .equ VSYNC_IRQ_LEVEL, 0x06
 .equ ENGINE_SIGNAL_PIXELS_FIFO_W, 0x01
 .equ ENGINE_SIGNAL_VIDCMD_FIFO_W, 0x02

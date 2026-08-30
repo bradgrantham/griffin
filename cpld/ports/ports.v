@@ -21,9 +21,9 @@
 //      counter — one enable bit and one IRQ latch.  The rate is TIMING's to
 //      choose (15.734 kHz today); PORTS only edge-detects.
 //
-// PORTS does not write the audio FIFOs: ~AUDIO_W comes from the board-level
-// 74155 gated by GLUE's ~IO_WR_EN (griffin.yml AUDIO), so the only audio pins
-// here are the 7202 pair's half-full flag and their shared read strobe.
+// PORTS does not write the audio FIFOs: their /W is ENGINE's AUDIO_FIFO_W
+// deposit strobe (griffin.yml AUDIO), so the only audio pins here are the
+// 7200 pair's half-full flag and their shared read strobe.
 //
 // No nDTACK here: GLUE decodes the region, hands over the cycle-qualified
 // ~PORTS_SELECT, and answers threshold DTACK for it, exactly as it does for

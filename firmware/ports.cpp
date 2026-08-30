@@ -52,7 +52,9 @@ void ports_isr(void)
     {
         /* STUB: refill the audio FIFOs here once playback exists.  They are
          * 7200s (256 pairs deep), so half-full leaves roughly 128 stereo
-         * sample pairs of headroom per service; write them to AUDIO_FIFO.
+         * sample pairs of headroom per service.  There is no CPU write
+         * path to the FIFOs: a refill is AUDIO_FIFO_W deposits in the
+         * display list.
          * Until then the DACs simply run dry. */
 
         /* Ack.  AUDIO_CONTROL is a plain write register, not write-1-clear:

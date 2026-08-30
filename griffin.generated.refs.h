@@ -13,7 +13,7 @@
 
 namespace Griffin::reg {
 
-// GLUE: System glue logic (also hosts PS/2 keyboard RX/TX)
+// GLUE: System glue logic and PS/2 keyboard
 inline volatile uint8_t &GLUE_DEBUG_OUT = *reinterpret_cast<volatile uint8_t *>(0xF00001UL);  // WRITE: Set or clear DEBUG_OUT signal (debug LED and test point output)
 inline volatile uint8_t &GLUE_CONFIG = *reinterpret_cast<volatile uint8_t *>(0xF00007UL);  // WRITE: GLUE configuration register
 inline volatile uint8_t &GLUE_PS2_TX_DATA = *reinterpret_cast<volatile uint8_t *>(0xF00009UL);  // WRITE: Byte to transmit host->device; the write itself starts the frame
@@ -84,8 +84,5 @@ inline volatile uint8_t &DUART_STARTCC = *reinterpret_cast<volatile uint8_t *>(0
 inline volatile uint8_t &DUART_OPR_SET = *reinterpret_cast<volatile uint8_t *>(0xF8001DUL);  // WRITE: Output port bit set (1 bits set corresponding OP pins)
 inline volatile uint8_t &DUART_STOPCC = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // READ: Stop counter/timer command (read to stop; data ignored)
 inline volatile uint8_t &DUART_OPR_CLR = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // WRITE: Output port bit reset (1 bits clear corresponding OP pins)
-
-// AUDIO: Stereo FIFO audio output, drained by PORTS at TIMING's AUDIO_TICK rate (15.734 kS/s)
-inline volatile uint16_t &AUDIO_FIFO = *reinterpret_cast<volatile uint16_t *>(0xC00000UL);  // WRITE: Write one stereo sample pair into the audio FIFOs
 
 } // namespace Griffin::reg

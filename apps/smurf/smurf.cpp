@@ -93,7 +93,7 @@
 // 262.5 pairs per 525-line frame.  A frame's list cannot deposit half a pair,
 // so table 0 carries 262 and table 1 carries 263 and the loop alternates them
 // -- the average is exact and the FIFO neither dries nor overflows.  The FIFO
-// is primed by the CPU (writes to AUDIO_FIFO) until PORTS reports half full
+// is primed by a one-shot descriptor list (there is no CPU write path) to half full
 // plus a margin, which keeps the level above the half-full mark all frame and
 // therefore keeps the firmware's level-2 HF_IRQ from firing at all.  Priming
 // is repeated after every screen rebuild, since a rebuild is 300 ms with no
@@ -165,9 +165,19 @@ constexpr unsigned LAST_SLOT = se::H_ACTIVE - 1;            // 639
 constexpr unsigned AUDIO_PAIRS[2] = { 262, 263 };   // per table; averages 262.5
 constexpr unsigned AUDIO_PAIRS_MAX = 263;
 
-// Pairs written past the half-full mark when priming, so the running level
+// Pairs deposited past the half-full mark when priming, so the running level
 // stays above half full and the firmware's HF_IRQ never latches.
 constexpr unsigned AUDIO_PRIME_MARGIN = 40;
+constexpr unsigned PRIME_PAIRS = Griffin::AUDIO_FIFO_DEPTH / 2 + AUDIO_PRIME_MARGIN;
+
+// The prime list: ceil(PRIME_PAIRS / DESC_MAX_COUNT) deposit descriptors plus
+// the stop_after pacer, placed in the unused tail of table 0 (the two tables
+// fill the carve exactly; a frame's descriptors stop at g_stop_desc_word).
+constexpr unsigned PRIME_DESCS =
+    (PRIME_PAIRS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT + 1;
+constexpr uint32_t PRIME_TABLE_OFFSET = FRAME_DESCRIPTORS * se::DESC_BYTES;
+static_assert(PRIME_TABLE_OFFSET + PRIME_DESCS * se::DESC_BYTES <= TABLE_STRIDE,
+              "the audio prime list must fit table 0 after a frame's descriptors");
 
 // ===========================================================================
 // Game geometry
@@ -1461,23 +1471,63 @@ void audio_render(uint16_t *dst, unsigned pairs)
     }
 }
 
-// Fill the FIFO to just over half full, then a margin further.  PORTS reports
-// only the half-full flag, so this is the one measurement available -- and
-// staying above the mark is exactly what keeps the firmware's level-2 HF_IRQ
-// from latching every frame.
+// Fill the FIFO to half full plus a margin.  The audio FIFOs have no
+// CPU-mapped write path, so priming is a one-shot descriptor list of
+// AUDIO_FIFO_W deposits; the PORTS pop is held off while it runs so the level
+// afterwards is exactly what was deposited, and staying above half full is
+// what keeps the firmware's level-2 HF_IRQ from latching every frame.  The
+// sample buffer is static and the list lives in table 0's tail: both
+// are frame-owned RAM until ENGINE has walked the list, which the two vsync
+// waits guarantee before anything else is armed.
+uint16_t g_prime_buf[PRIME_PAIRS];
+
+void audio_enable(bool on);
+
 void audio_prime()
 {
-    unsigned guard = 2 * Griffin::AUDIO_FIFO_DEPTH;
-    uint16_t pair = 0;
-    while ((PORTS_AUDIO_STATUS & Griffin::PORTS_AUDIO_STATUS_HALF_FULL_MASK) == 0 && guard-- != 0)
+    // Already at or above half full: nothing drained it, and the 7200 drops
+    // deposits past full, so there is nothing safe to add.
+    if ((PORTS_AUDIO_STATUS & Griffin::PORTS_AUDIO_STATUS_HALF_FULL_MASK) != 0)
     {
-        audio_render(&pair, 1);
-        AUDIO_FIFO = pair;
+        return;
     }
-    for (unsigned i = 0; i < AUDIO_PRIME_MARGIN; i++)
+    const bool was_enabled =
+        (PORTS_AUDIO_STATUS & Griffin::PORTS_AUDIO_STATUS_ENABLE_MASK) != 0;
+    audio_enable(false);
+
+    audio_render(g_prime_buf, PRIME_PAIRS);
+
+    uint16_t *p = reinterpret_cast<uint16_t *>(g_table_base + PRIME_TABLE_OFFSET);
+    unsigned done = 0;
+    unsigned n    = 0;
+    while (done < PRIME_PAIRS)
     {
-        audio_render(&pair, 1);
-        AUDIO_FIFO = pair;
+        const unsigned left  = PRIME_PAIRS - done;
+        const unsigned burst = left < se::DESC_MAX_COUNT ? left : se::DESC_MAX_COUNT;
+        se::Descriptor d;
+        d.src         = reinterpret_cast<uint32_t>(&g_prime_buf[done]);
+        d.count       = burst;
+        d.signal_mask = se::SIGNAL_AUDIO_FIFO_W;
+        d.wait_hblank = false;
+        put_desc(p + n * se::DESC_WORDS, se::encode_descriptor(d));
+        done += burst;
+        n++;
+    }
+    se::Descriptor sd;
+    sd.src         = reinterpret_cast<uint32_t>(&g_static_pool[0]);
+    sd.count       = 1;
+    sd.signal_mask = se::SIGNAL_NONE;
+    sd.stop_after  = true;
+    put_desc(p + n * se::DESC_WORDS, se::encode_descriptor(sd));
+
+    ENGINE_DESC = static_cast<uint16_t>(
+        ((g_table_base + PRIME_TABLE_OFFSET) - se::DESC_TABLE_BASE) >> 1);
+    griffin_vsync_wait();
+    griffin_vsync_wait();
+
+    if (was_enabled)
+    {
+        audio_enable(true);
     }
 }
 

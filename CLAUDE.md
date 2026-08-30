@@ -4,20 +4,24 @@
 
 * This is a homebrew 68000 computer intended to let me use some parts I've had for decades in my bin, including 68000P12, AS6C4008-55PCN, a bunch of 70ns 27C512, and a handful of discrete parts.  The IC parts bin inventory is at chip-inventory.csv but I also have assorted LEDs, transistors, diodes, and a large selection of capacitors and resistors.  I've added to my collection for this project: MC68681, XR68C681, ATF1508CPLD, W27C512-45Z, 68010P12, 7200 LP15
 
-
 * Goals include display of bitmaps starting with 640*480*1bpp, audio, and CF reading.  Possibly FUZIX, MiNT, EmuTOS, CP/M-68K, Linux
 
 ## Definition
 
-* griffin.yml is source of design
-  * Original project notes in griffin.md but no need to read unless context required or to edit
+* griffin.yml is source for
+  (a) CPU interaction: memory map, register bitfields and legal values, constants CPU code writes
+  (b) bitfile creation: the same bitfields plus structural rules (e.g. ENGINE reads descriptors only from top memory)
+  (c) high-level schematic validation: which chip drives which net
+  (d) Not pull-ups, pull-downs, bypass or decoupling. Only facts used downstream — no investigative notes, no fit counts, no dated changelog.
+* Original project notes in griffin.md but no need to read unless context required or to edit
+* griffin.yml and griffin.md hold current facts only; dated decisions, measurements (fit LC/FF/PT ladders) and investigations go in griffin.log
   * KICAD rev 1 board design is in board/
     * A print of the PCB and schematic are in board_rev_1_pcb.pdf and board_rev_1_schematic.pdf
     * netlist is in board/board-pcb-rev-1.distilled.txt except with bodges applied as noted in griffin.yml, produced with kicad_netlist_summary_2.py
     * Rev 1 gerbers are in board/board-gerb
+    * What was an AT89S51 in the board rev and in the distilled netlist is now a XR68C681
   * GLUE Verilog for ATF1508AS in cpld/glue
-  * What was an AT89S51 in the board rev and in the distilled netlist is now a XR68C681 DUART on a bodged DIP carrier.
-  * Makefile for GLUE, VIDEO, ENGINE in cpld
+  * Makefile for GLUE, PIXEL, COMPOSITOR, PORTS, TIMING, ENGINE in cpld/
   * ROM in firmware/{crt0.s,linker.ld,rom.cpp,Makefile} and associated other files in firmware/
   * bringup ROM in sanity/{sanity.s,linker.ld,Makefile} (not keeping up to date)
   * emulator in emulator/ and the intent is to at least emulate the 68k and MMIO accesses.  TBD whether to emulate the ATF1508's using Verilator.
@@ -25,9 +29,9 @@
 * When possible, store new hardware definitions in griffin.yml; register addresses, bits and bitfields, constants, protocol between peripherals, constants, and then generate included headers.
   * In a register `description:`, keep the **first sentence on one physical line ending in a period**, with no mid-text periods in it (e.g. avoid `FOO.BAR`).  codegen.py uses that first sentence verbatim — newlines included — as the C header `//` comment, so a wrapped first sentence leaks bare text into griffin.generated.h/.refs.h and breaks the build.  (The .inc/.vh outputs only emit the access keyword, so only the C++ headers are sensitive.)
 
-* Keep in mind for instruction-counted loops that there are ROM wait states.
+* Have only one source of truth.  E.g. cpld/engine/engine.v or other Verilog may have PIN annotations in it; then there is no reason to note the pin layout is frozen or give pin numbers in griffin.yml or griffin.md.
 
-* The pins have been hand-assigned to ATF1508 pins, and those must remain where assigned because a PCB has already been manufactured.
+* Keep in mind for instruction-counted loops that there are ROM wait states.
 
 * I don't have "timeout", use a perl one-liner instead.
 
@@ -56,13 +60,12 @@
 
 ### Video-chain discipline (established Aug 2026; violating it has found real bugs every time it was applied)
 
-* **The propagation lockstep.**  For the video chain, five layers must agree and a semantic RTL change is INCOMPLETE until propagated through all of them: (1) the RTL (cpld/{compositor,pixel}/), whose header comments state the semantic laws; (2) the chip testbench (compositor_tb.v, pixel_tb.v — `make compositor-sim` / `make pixel-sim`), which is the executable timing spec and whose MEASURED CONSTANTS are ground truth; (3) the shared model super-engine/render.{h,cpp} (PixelUnit/CompositorUnit), kept equation-for-equation with the RTL; (4) the suite cases (super-engine/main.cpp) asserting authored screens pixel-exact; (5) the emulator, which inherits through the shared render.cpp and must rebuild clean.
-* **Testbench rules**: every video CPLD gets a testbench (compositor_tb.v, pixel_tb.v, and since 2026-08-26 timing_tb.v — `make timing-sim` — which checks every TIMING output against closed-form laws on every clock plus output-to-output relations, and runs `-DMUTATE=n` negative controls that must fail).  Expectations are hand-derived from the documented laws BEFORE simulating, never tuned to sim output; a derivation-vs-sim disagreement halts for cycle-by-cycle analysis; include negative-control mutations proving the bench can fail.  pixel_tb.v found two shipped-RTL bugs (bit_pos drift, PIX_LAST tail) on the day it was created.
-* **Pinouts are FROZEN** (//PIN: blocks: GLUE+PORTS 2026-07-30; COMPOSITOR+PIXEL+TIMING 2026-08-26).  Route the board only from those blocks.  All fitter targets use `-preassign keep` plus the production strategy flags (JTAG = on, TDI/TMS pullups, power_reset) — never fit a to-be-frozen design without them.  Adding NEW ports may place on spare pins (append them to the block); MOVING a frozen pin is a board respin.  TIMING has 21 spare I/O; new-pin features are bitfile-only ONLY if the schematic routes those spares to reachable copper.
-* **Fit experiments** run as ladders with every rung's LC/FF/PT recorded, and rejected alternatives are kept as documented negative results (pixel_combined.v, the 4-stage delay line, the planar mask, the inline-color MASK header).
-* **The datasheet** griffin-video-datasheet.html (also published as a Claude artifact) is the mechanism-and-recipes reference: record encodings, measured seam/cadence constants, screen-mode budgets, and qualification status.  Update its status stamps (PRODUCTION / PRELIMINARY / OPEN) when packages land.
-* sanity/sanity.bin and firmware/rom.bin should execute in emulator/emulator/build/emulator.
-  * note that by default UART TX and RX is through a PTY and video is an SDL window — both are interactive and awkward to drive unattended.
+* For the video chain, five layers must agree and a semantic RTL change is INCOMPLETE until propagated through all of them: (1) the RTL (cpld/{compositor,pixel}/), whose header comments state the semantic laws; (2) the chip testbench (compositor_tb.v, pixel_tb.v — `make compositor-sim` / `make pixel-sim`), which is the executable timing spec and whose MEASURED CONSTANTS are ground truth; (3) the shared model super-engine/render.{h,cpp} (PixelUnit/CompositorUnit), kept equation-for-equation with the RTL; (4) the suite cases (super-engine/main.cpp) asserting authored screens pixel-exact; (5) the emulator, which inherits through the shared render.cpp and must rebuild clean.
+* Every video CPLD gets a testbench (compositor_tb.v, pixel_tb.v, and timing_tb.v — `make timing-sim` — which checks every TIMING output against closed-form laws on every clock plus output-to-output relations, and runs `-DMUTATE=n` negative controls that must fail).  Expectations are hand-derived from the documented laws BEFORE simulating, never tuned to sim output; a derivation-vs-sim disagreement halts for cycle-by-cycle analysis; include negative-control mutations proving the bench can fail.  pixel_tb.v found two shipped-RTL bugs (bit_pos drift, PIX_LAST tail) on the day it was created.
+* Pinouts are frozen.  All fitter targets use `-preassign keep` plus the production strategy flags (JTAG = on, TDI/TMS pullups, power_reset) — never fit a to-be-frozen design without them.
+* Fit experiments run as ladders with every rung's LC/FF/PT recorded, and rejected alternatives are logged
+* griffin-video-datasheet.html is the mechanism-and-recipes reference for a hypothetical sofrware designer: record encodings, measured seam/cadence constants, screen-mode budgets, and qualification status.  Update its status stamps (PRODUCTION / PRELIMINARY / OPEN) when packages land.
+* firmware/rom.bin should execute in emulator/emulator/build/emulator.
 
 ## General design guidelines
 
@@ -78,3 +81,4 @@
 
 * In general prefer facilities don't cross-communicate except absolutely necessary.  E.g. a CF card facility can fill in a string with identity, but wouldn't call the UART to print it.  A higher function would call to get the identity, and then call whatever routine it prefers to print the identity or store it in NVRAM or whatever.
 
+* if nothing is decoded at a region, delete the decode and release the CPLD pin or pins.

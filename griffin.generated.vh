@@ -4,7 +4,7 @@
 // Project: Griffin
 `define SYSCLK_HZ 14000000
 
-// GLUE: System glue logic (also hosts PS/2 keyboard RX/TX)
+// GLUE: System glue logic and PS/2 keyboard
 `define GLUE_BASE 24'hF00000
 `define GLUE_SIZE 24'h040000
 `define GLUE_IRQ_LEVEL 4
@@ -97,10 +97,27 @@
 `define ENGINE_CTRL_ENABLE_SHIFT 0
 `define ENGINE_CTRL_DEFAULT 8'h00
 
-// VIDEO: Freed region; rev-1 VIDEO retired in favor of TIMING+PIXEL+COMPOSITOR
-`define VIDEO_BASE 24'hE00000
-`define VIDEO_SIZE 24'h100000
-`define VIDEO_DTACK_THRESHOLD 4'd2  // 0 WS at 14000000 Hz
+// TIMING: Raster time base: VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, PIXEL strobes, ENGINE HBLANK, GLUE vsync IRQ, PORTS paddle/audio ticks
+`define TIMING_CLOCK 25175000
+`define TIMING_PIXEL_CLOCK_HZ 25175000  // pixel clock, Hz
+`define TIMING_H_ACTIVE 640  // pixel clocks
+`define TIMING_H_FRONT_PORCH 16  // pixel clocks
+`define TIMING_H_SYNC 96  // pixel clocks
+`define TIMING_H_BACK_PORCH 48  // pixel clocks
+`define TIMING_H_TOTAL 800  // pixel clocks
+`define TIMING_V_ACTIVE 480  // lines
+`define TIMING_V_FRONT_PORCH 10  // lines
+`define TIMING_V_SYNC 2  // lines
+`define TIMING_V_BACK_PORCH 33  // lines
+`define TIMING_V_TOTAL 525  // lines
+`define TIMING_HSYNC_ACTIVE_LOW 1  // HSYNC is asserted low during the sync interval
+`define TIMING_VSYNC_ACTIVE_LOW 1  // VSYNC is asserted low during the sync interval
+
+// PIXEL: PIXELS stream unpacker: 1bpp direct, 2bpp micro-HAM, 2bpp indexed, half rate; R4G4B4 to COMPOSITOR
+`define PIXEL_CLOCK 25175000
+
+// COMPOSITOR: VIDCMD stream player: per-slot source select over PIXEL's R4G4B4, SET forwarding to PIXEL, MASK overlays
+`define COMPOSITOR_CLOCK 25175000
 
 // PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe
 `define PORTS_BASE 24'hFC0000
@@ -292,11 +309,7 @@
 `define DUART_STOPCC 24'hF8001F  // READ
 `define DUART_OPR_CLR 24'hF8001F  // WRITE
 
-// AUDIO: Stereo FIFO audio output, drained by PORTS at TIMING's AUDIO_TICK rate (15.734 kS/s)
-`define AUDIO_BASE 24'hC00000
-`define AUDIO_SIZE 24'h040000
-`define AUDIO_DTACK_THRESHOLD 4'd2  // 0 WS at 14000000 Hz
-`define AUDIO_FIFO 24'hC00000  // WRITE
+// AUDIO: Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate
 
 // RAM region — total of all RAM banks
 `define RAM_TOTAL_SIZE 23'h400000
@@ -323,9 +336,6 @@
 `define RTC_I2C_ADDR 8'h68
 `define PS2_TX_DATA_PARITY 8'h02
 `define ENGINE_WORDS_PER_BURST 8'h14
-`define VIDEO_PIXEL_BYTES_PER_LINE 8'h50
-`define VIDEO_LINE_PIXEL_OFFSET 8'h04
-`define VIDEO_LINE_STRIDE_BYTES 8'h54
 `define VSYNC_IRQ_LEVEL 8'h06
 `define ENGINE_SIGNAL_PIXELS_FIFO_W 8'h01
 `define ENGINE_SIGNAL_VIDCMD_FIFO_W 8'h02
