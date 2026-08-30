@@ -16,14 +16,15 @@
 //      pot comparator sense is still low, plus a CPU-controlled dump bit that
 //      drives the discharge FET and holds the counters at zero (this retires
 //      the two 74HC590s and the rev-1 DUART OP4/OP5 dump/clear dance).
-//   4. The audio FIFO pop strobe and the latched half-full IRQ.  The pop is
-//      timed off TIMING's AUDIO_TICK, so there is no divider register and no
-//      counter — one enable bit and one IRQ latch.  The rate is TIMING's to
-//      choose (15.734 kHz today); PORTS only edge-detects.
+//   4. The audio FIFO pop strobe, the FIFO reset line, and the empty flag
+//      as pollable status.  The pop is timed off TIMING's AUDIO_TICK,
+//      so there is no divider register and no counter — one enable bit and
+//      one reset bit.  The rate is TIMING's to choose (15.734 kHz today);
+//      PORTS only edge-detects.  Audio raises no interrupt.
 //
 // PORTS does not write the audio FIFOs: their /W is ENGINE's AUDIO_FIFO_W
-// deposit strobe (griffin.yml AUDIO), so the only audio pins here are the
-// 7200 pair's half-full flag and their shared read strobe.
+// deposit strobe (griffin.yml AUDIO), so the audio pins here are the 7200
+// pair's empty flag, their shared read strobe, and their shared reset.
 //
 // No nDTACK here: GLUE decodes the region, hands over the cycle-qualified
 // ~PORTS_SELECT, and answers threshold DTACK for it, exactly as it does for
@@ -83,8 +84,9 @@ module ports
 
     output wire       PADDLE_DUMP,       // gate of the paddle discharge FET
 
-    input  wire       nFIFO_HF,          // 7202 pair half-full flag
-    output wire       nFIFO_RE,          // 7202 pair read strobe
+    input  wire       nFIFO_EF,          // 7200 pair empty flag
+    output wire       nFIFO_RE,          // 7200 pair read strobe
+    output wire       nFIFO_RS,          // 7200 pair reset, held low from power-on
 
     output wire       nPORTS_IRQ         // push-pull, into GLUE's IPL encoder
 );
@@ -306,67 +308,49 @@ module ports
     assign PADDLE_DUMP = paddle_dump;
 
     // ----------------------------------------------------------------
-    // Audio FIFO pop.  The pop strobe is TIMING's AUDIO_TICK edge, so there
-    // is no period register and no counter — one enable bit and one IRQ
-    // latch.
+    // Audio FIFO pop and reset.  The pop strobe is TIMING's AUDIO_TICK edge,
+    // so there is no period register and no counter — one enable bit and
+    // one reset bit.  No interrupt: the level is dead-reckoned by whoever
+    // arms the display list, and the flags are polled.
     //
-    // nFIFO_HF is the 7202 half-full flag, active low while the FIFO holds
-    // half or more; it rises when the FIFO drains below half, which is when
-    // firmware must refill.  Async, so 2-FF synchronizer + one delayed copy
-    // for the rising-edge detect.
+    // nFIFO_EF is the 7200 empty flag, active low.  Nothing in this chip
+    // acts on it; it only passes through the read mux to the CPU, so like
+    // the joystick switch inputs it is read raw (a synchronizer here would
+    // protect downstream synchronous logic, of which there is none, and
+    // PORTS has no cells to spare).  nFIFO_RS comes up ASSERTED
+    // (audio_reset = 1 at reset): the 7200 requires a reset before its first
+    // write, so the FIFOs are held until software releases them.  The 7200
+    // needs /W and /RE inactive around the /RS rise (tRSS/tRSR): /RE is
+    // gated off here while reset is set, and the /W side is software's (no
+    // audio deposits while changing RESET).
     //
-    //   0x1F write AUDIO_CONTROL : bit0 = ENABLE, bit1 = CLEAR_HF_IRQ (W1C)
-    //   0x1F read  AUDIO_STATUS  : bit0 = HF_IRQ latched, bit1 = HALF_FULL
-    //                              (live), bit2 = ENABLE
+    //   0x1F write AUDIO_CONTROL : bit0 = ENABLE, bit1 = RESET
+    //   0x1F read  AUDIO_STATUS  : bit0 = EMPTY, bit1 = ENABLE
     // ----------------------------------------------------------------
     wire audio_control_write_select = ports_write & (A == AUDIO_CONTROL_ADDR[4:1]);
     wire audio_status_read_select   = ports_read  & (A == AUDIO_CONTROL_ADDR[4:1]);
 
     reg audio_enable;
-    reg half_full_meta;
-    reg half_full_sync;
-    reg half_full_sync_delayed;
-    reg audio_interrupt_latched;
-
-    // Rising edge of nFIFO_HF = FIFO fell below half full.
-    wire half_full_below_edge = half_full_sync & ~half_full_sync_delayed;
+    reg audio_reset;
 
     always @(posedge SYSCLK)
     begin
         if (reset)
         begin
-            audio_enable            <= 1'b0;
-            half_full_meta          <= 1'b1;   // empty FIFO reads as below half
-            half_full_sync          <= 1'b1;
-            half_full_sync_delayed  <= 1'b1;
-            audio_interrupt_latched <= 1'b0;
+            audio_enable <= 1'b0;
+            audio_reset  <= 1'b1;
         end
-        else
+        else if (audio_control_write_select)
         begin
-            half_full_meta         <= nFIFO_HF;
-            half_full_sync         <= half_full_meta;
-            half_full_sync_delayed <= half_full_sync;
-
-            if (audio_control_write_select)
-            begin
-                audio_enable <= D[`PORTS_AUDIO_CONTROL_ENABLE_SHIFT];
-            end
-
-            if (half_full_below_edge)
-            begin
-                audio_interrupt_latched <= 1'b1;
-            end
-            else if (audio_control_write_select
-                     & D[`PORTS_AUDIO_CONTROL_CLEAR_HF_IRQ_SHIFT])
-            begin
-                audio_interrupt_latched <= 1'b0;
-            end
+            audio_enable <= D[`PORTS_AUDIO_CONTROL_ENABLE_SHIFT];
+            audio_reset  <= D[`PORTS_AUDIO_CONTROL_RESET_SHIFT];
         end
     end
 
-    // One SYSCLK low per pop; the 7202 output register holds the sample on Q
+    // One SYSCLK low per pop; the 7200 output register holds the sample on Q
     // until the next read, so the R2R DACs are fed with no latch in the CPLD.
-    assign nFIFO_RE = ~(audio_pop_tick & audio_enable);
+    assign nFIFO_RE = ~(audio_pop_tick & audio_enable & ~audio_reset);
+    assign nFIFO_RS = ~audio_reset;
 
     // ----------------------------------------------------------------
     // Read mux.  One combinational selection; the pins are tri-stated
@@ -408,21 +392,19 @@ module ports
         end
         else if (audio_status_read_select)
         begin
-            read_data = {5'b0,
-                         audio_enable,             // bit 2: ENABLE
-                         ~half_full_sync,          // bit 1: HALF_FULL (live)
-                         audio_interrupt_latched}; // bit 0: HF_IRQ
+            read_data = {6'b0,
+                         audio_enable,             // bit 1: ENABLE
+                         ~nFIFO_EF};               // bit 0: EMPTY (raw)
         end
     end
 
     assign D = read_active ? read_data : 8'bz;
 
     // ----------------------------------------------------------------
-    // Interrupt.  The mouse engine and the audio half-full latch are
-    // wire-ORed into one push-pull active-low request into GLUE's priority
-    // encoder (autovector level 2).
+    // Interrupt.  The mouse engine is the only source: one push-pull
+    // active-low request into GLUE's priority encoder (autovector level 2).
     // ----------------------------------------------------------------
-    assign nPORTS_IRQ = ~(mouse_interrupt_request | audio_interrupt_latched);
+    assign nPORTS_IRQ = ~mouse_interrupt_request;
 
 endmodule
 
@@ -643,9 +625,11 @@ endmodule
 // with `-preassign keep`.  The Rev 2 PCB is routed from these numbers, so do
 // not renumber them; a netlist change that makes the fitter want a different
 // placement is a board respin, not a re-fit.
-// 2026-08-26: LINE_STROBE (pin 44, the HSYNC tap) became PADDLE_TICK on the
-// same pin, and AUDIO_TICK was appended on spare pin 45 by a -preassign keep
-// fit; no frozen pin moved.  Both nets come from TIMING.
+// Appended on spare pins by -preassign keep fits, no frozen pin moved:
+// AUDIO_TICK 45 (2026-08-26), nFIFO_EF 48 and nFIFO_RS 52 (2026-08-29).
+// Released: nFIFO_HF pin 34 (2026-08-30).
+// New ports must be given explicit pins here: near full, the fitter fails
+// at grouping when left to choose them (griffin.log 2026-08-29).
 //
 // Format rules (from run_fitter.sh):
 //   grep '// PIN:' ports.v | cut -d' ' -f2-  ->  ports.pin fed to fit1508.exe
@@ -694,6 +678,7 @@ endmodule
 //PIN: JOYSTICK_2_PIN9   : 37
 //PIN: JOYSTICK_2_PIN5   : 8
 //PIN: PADDLE_DUMP       : 33
-//PIN: nFIFO_HF          : 34
+//PIN: nFIFO_EF          : 48
 //PIN: nFIFO_RE          : 61
+//PIN: nFIFO_RS          : 52
 //PIN: nPORTS_IRQ        : 17

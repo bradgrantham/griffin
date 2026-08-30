@@ -28,7 +28,7 @@ inline volatile uint8_t &GLUE_VSYNC_CLEAR = *reinterpret_cast<volatile uint8_t *
 inline volatile uint16_t &ENGINE_DESC = *reinterpret_cast<volatile uint16_t *>(0xD00002UL);  // WRITE: Descriptor word address within RAM's top 64K; writing arms DMA
 inline volatile uint8_t &ENGINE_CTRL = *reinterpret_cast<volatile uint8_t *>(0xD00005UL);  // WRITE: DMA enable and abort; any write clears a pending ~ENGINE_IRQ
 
-// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe
+// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop/reset control
 inline volatile uint8_t &PORTS_JOYSTICK_PORT_1 = *reinterpret_cast<volatile uint8_t *>(0xFC0001UL);  // READ: Joystick port 1 switches, active low (0 = closed)
 inline volatile uint8_t &PORTS_JOYSTICK_PORT_2 = *reinterpret_cast<volatile uint8_t *>(0xFC0003UL);  // READ: Joystick port 2 switches, active low (0 = closed)
 inline volatile uint8_t &PORTS_PADDLE_A_COUNT = *reinterpret_cast<volatile uint8_t *>(0xFC0005UL);  // READ: Paddle A position, the pot on port 1 pin 9
@@ -39,8 +39,8 @@ inline volatile uint8_t &PORTS_PS2_MOUSE_STATUS = *reinterpret_cast<volatile uin
 inline volatile uint8_t &PORTS_PS2_MOUSE_CLEAR = *reinterpret_cast<volatile uint8_t *>(0xFC0011UL);  // WRITE: Write-1-to-clear for PS2_MOUSE_STATUS latched flags / IRQ ack
 inline volatile uint8_t &PORTS_PS2_MOUSE_CTRL = *reinterpret_cast<volatile uint8_t *>(0xFC0013UL);  // WRITE: Open-drain drive control for PS2_MOUSE_CLK and PS2_MOUSE_DATA for the TX inhibit handshake
 inline volatile uint8_t &PORTS_PS2_MOUSE_RX_DATA = *reinterpret_cast<volatile uint8_t *>(0xFC0015UL);  // READ: Assembled PS/2 mouse data byte; valid while RX_READY is set
-inline volatile uint8_t &PORTS_AUDIO_CONTROL = *reinterpret_cast<volatile uint8_t *>(0xFC001FUL);  // WRITE: Audio FIFO pop control
-inline volatile uint8_t &PORTS_AUDIO_STATUS = *reinterpret_cast<volatile uint8_t *>(0xFC001FUL);  // READ: Audio FIFO pop status
+inline volatile uint8_t &PORTS_AUDIO_CONTROL = *reinterpret_cast<volatile uint8_t *>(0xFC001FUL);  // WRITE: Audio FIFO pop and reset control
+inline volatile uint8_t &PORTS_AUDIO_STATUS = *reinterpret_cast<volatile uint8_t *>(0xFC001FUL);  // READ: Audio FIFO status; no interrupt, poll it
 
 // CF: Storage via CF card in True IDE 16-bit PIO mode
 inline volatile uint16_t &CF_DATA = *reinterpret_cast<volatile uint16_t *>(0xF40000UL);  // RW: 16-bit data port to/from the CF card

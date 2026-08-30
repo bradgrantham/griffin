@@ -93,9 +93,8 @@
 // 262.5 pairs per 525-line frame.  A frame's list cannot deposit half a pair,
 // so table 0 carries 262 and table 1 carries 263 and the loop alternates them
 // -- the average is exact and the FIFO neither dries nor overflows.  The FIFO
-// is primed by a one-shot descriptor list (there is no CPU write path) to half full
-// plus a margin, which keeps the level above the half-full mark all frame and
-// therefore keeps the firmware's level-2 HF_IRQ from firing at all.  Priming
+// is primed by a one-shot descriptor list (there is no CPU write path) to half
+// full plus a margin, so the level stays inside the FIFO all frame.  Priming
 // is repeated after every screen rebuild, since a rebuild is 300 ms with no
 // list armed and the FIFO empties long before the end of it.  (Feeding the
 // FIFO from the CPU across a rebuild was tried and is a false economy: a
@@ -166,7 +165,7 @@ constexpr unsigned AUDIO_PAIRS[2] = { 262, 263 };   // per table; averages 262.5
 constexpr unsigned AUDIO_PAIRS_MAX = 263;
 
 // Pairs deposited past the half-full mark when priming, so the running level
-// stays above half full and the firmware's HF_IRQ never latches.
+// never reaches empty between bursts.
 constexpr unsigned AUDIO_PRIME_MARGIN = 40;
 constexpr unsigned PRIME_PAIRS = Griffin::AUDIO_FIFO_DEPTH / 2 + AUDIO_PRIME_MARGIN;
 
@@ -1473,27 +1472,23 @@ void audio_render(uint16_t *dst, unsigned pairs)
 
 // Fill the FIFO to half full plus a margin.  The audio FIFOs have no
 // CPU-mapped write path, so priming is a one-shot descriptor list of
-// AUDIO_FIFO_W deposits; the PORTS pop is held off while it runs so the level
-// afterwards is exactly what was deposited, and staying above half full is
-// what keeps the firmware's level-2 HF_IRQ from latching every frame.  The
-// sample buffer is static and the list lives in table 0's tail: both
-// are frame-owned RAM until ENGINE has walked the list, which the two vsync
-// waits guarantee before anything else is armed.
+// AUDIO_FIFO_W deposits, run after a RESET pulse so the level afterwards is
+// exactly what was deposited (there is no level readback; the pop rate is
+// pixel-clock-locked, so from here on the level is dead-reckoned).  The
+// sample buffer is static and the list lives in table 0's tail: both are
+// frame-owned RAM until ENGINE has walked the list, which the two vsync
+// waits guarantee before anything else is armed.  Callers guarantee no
+// audio-depositing list is armed (the 7200's /RS rule).
 uint16_t g_prime_buf[PRIME_PAIRS];
 
 void audio_enable(bool on);
 
 void audio_prime()
 {
-    // Already at or above half full: nothing drained it, and the 7200 drops
-    // deposits past full, so there is nothing safe to add.
-    if ((PORTS_AUDIO_STATUS & Griffin::PORTS_AUDIO_STATUS_HALF_FULL_MASK) != 0)
-    {
-        return;
-    }
     const bool was_enabled =
         (PORTS_AUDIO_STATUS & Griffin::PORTS_AUDIO_STATUS_ENABLE_MASK) != 0;
-    audio_enable(false);
+    PORTS_AUDIO_CONTROL = static_cast<uint8_t>(Griffin::PORTS_AUDIO_CONTROL_RESET_MASK);
+    PORTS_AUDIO_CONTROL = 0;
 
     audio_render(g_prime_buf, PRIME_PAIRS);
 
@@ -1531,11 +1526,18 @@ void audio_prime()
     }
 }
 
+// ENABLE only; RESET stays released (audio_prime() pulsed and released it).
 void audio_enable(bool on)
 {
     PORTS_AUDIO_CONTROL = static_cast<uint8_t>(
-        Griffin::PORTS_AUDIO_CONTROL_CLEAR_HF_IRQ_MASK |
-        (on ? Griffin::PORTS_AUDIO_CONTROL_ENABLE_MASK : 0u));
+        on ? Griffin::PORTS_AUDIO_CONTROL_ENABLE_MASK : 0u);
+}
+
+// Put the FIFO pair back in reset, discarding whatever is queued, once the
+// last armed list has finished (one vsync after the final arm).
+void audio_park_fifo()
+{
+    PORTS_AUDIO_CONTROL = static_cast<uint8_t>(Griffin::PORTS_AUDIO_CONTROL_RESET_MASK);
 }
 
 // ===========================================================================
@@ -2071,6 +2073,8 @@ int main(int argc, char **argv)
     const uint32_t ticks_end = griffin_getticks();
 
     audio_enable(false);
+    griffin_vsync_wait();       // the last armed list has finished by now
+    audio_park_fifo();
     (void)griffin_video_direct_end();
 
     const uint32_t ms = ticks_end - ticks_start;

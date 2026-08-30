@@ -166,7 +166,7 @@ static constexpr uint32_t PIXEL_CLOCK = 25175000UL;
 static constexpr uint32_t COMPOSITOR_CLOCK = 25175000UL;
 
 // ------------------------------------------------------------
-// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe
+// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop/reset control
 static constexpr uint32_t PORTS_BASE = 0xFC0000UL;
 static constexpr uint32_t PORTS_SIZE = 0x040000UL;
 inline constexpr MemoryRange PORTS(0xFC0000UL, 0x040000UL);
@@ -245,19 +245,17 @@ static constexpr uint32_t PORTS_PS2_MOUSE_CTRL_DATA_SHIFT = 1U;
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA = 0xFC0015UL;  // READ: Assembled PS/2 mouse data byte; valid while RX_READY is set
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_MASK  = 0xFFU;  // bits 7:0
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_SHIFT = 0U;
-static constexpr uint32_t PORTS_AUDIO_CONTROL = 0xFC001FUL;  // WRITE: Audio FIFO pop control
+static constexpr uint32_t PORTS_AUDIO_CONTROL = 0xFC001FUL;  // WRITE: Audio FIFO pop and reset control
 static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_SHIFT = 0U;
-static constexpr uint32_t PORTS_AUDIO_CONTROL_CLEAR_HF_IRQ_MASK  = 0x02U;  // bits 1:1
-static constexpr uint32_t PORTS_AUDIO_CONTROL_CLEAR_HF_IRQ_SHIFT = 1U;
-static constexpr uint32_t PORTS_AUDIO_CONTROL_DEFAULT = 0x00U;
-static constexpr uint32_t PORTS_AUDIO_STATUS = 0xFC001FUL;  // READ: Audio FIFO pop status
-static constexpr uint32_t PORTS_AUDIO_STATUS_HF_IRQ_MASK  = 0x01U;  // bits 0:0
-static constexpr uint32_t PORTS_AUDIO_STATUS_HF_IRQ_SHIFT = 0U;
-static constexpr uint32_t PORTS_AUDIO_STATUS_HALF_FULL_MASK  = 0x02U;  // bits 1:1
-static constexpr uint32_t PORTS_AUDIO_STATUS_HALF_FULL_SHIFT = 1U;
-static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_MASK  = 0x04U;  // bits 2:2
-static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_SHIFT = 2U;
+static constexpr uint32_t PORTS_AUDIO_CONTROL_RESET_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t PORTS_AUDIO_CONTROL_RESET_SHIFT = 1U;
+static constexpr uint32_t PORTS_AUDIO_CONTROL_DEFAULT = 0x02U;
+static constexpr uint32_t PORTS_AUDIO_STATUS = 0xFC001FUL;  // READ: Audio FIFO status; no interrupt, poll it
+static constexpr uint32_t PORTS_AUDIO_STATUS_EMPTY_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t PORTS_AUDIO_STATUS_EMPTY_SHIFT = 0U;
+static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_SHIFT = 1U;
 
 // ------------------------------------------------------------
 // CF: Storage via CF card in True IDE 16-bit PIO mode

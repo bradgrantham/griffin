@@ -2168,11 +2168,10 @@ struct PortsState
     PaddleCounter paddle_b;
     bool paddle_dump = false;
 
-    // --- audio FIFO (the 7202 pair) and its pop strobe ---
+    // --- audio FIFO (the 7200 pair), its pop strobe and its reset ---
     std::deque<uint16_t> audio_fifo;    // one entry per stereo pair, L<<8 | R
     bool audio_enable = false;
-    bool audio_hf_irq = false;          // latched, W1C via AUDIO_CONTROL
-    bool audio_half_full_prev = false;  // starts empty: no edge at boot
+    bool audio_reset = true;            // AUDIO_CONTROL.RESET, 1 from power-on
     bool tick_phase = false;            // level of TIMING's ticks: they toggle
                                         // once per line and the falling edge
                                         // (phase 1 -> 0) is the event
@@ -2191,29 +2190,13 @@ struct PortsState
 
     // --- audio FIFO ------------------------------------------------------
 
-    bool audio_half_full() const { return audio_fifo.size() >= AUDIO_FIFO_DEPTH / 2; }
-
-    // PORTS latches HF_IRQ on the falling edge of "half full or more" (the
-    // rising edge of the active-low /HF pin), meaning the FIFO just drained
-    // below half and firmware should refill.
-    void update_half_full_edge()
-    {
-        bool half_full = audio_half_full();
-        if (audio_half_full_prev && !half_full)
-        {
-            audio_hf_irq = true;
-        }
-        audio_half_full_prev = half_full;
-    }
-
     void audio_fifo_push(uint16_t pair)
     {
-        if (audio_fifo.size() >= AUDIO_FIFO_DEPTH)
+        if (audio_reset || audio_fifo.size() >= AUDIO_FIFO_DEPTH)
         {
-            return;             // 7202 full: the write is swallowed
+            return;             // held in reset, or 7200 full: the write is swallowed
         }
         audio_fifo.push_back(pair);
-        update_half_full_edge();
     }
 
     void audio_fifo_pop()
@@ -2263,7 +2246,7 @@ struct PortsState
 
         for (uint32_t i = 0; i < events; i++)
         {
-            if (audio_enable)
+            if (audio_enable && !audio_reset)
             {
                 audio_fifo_pop();
             }
@@ -2275,10 +2258,6 @@ struct PortsState
             {
                 audio_out->sample(dac_left, dac_right);
             }
-        }
-        if (audio_enable)
-        {
-            update_half_full_edge();
         }
     }
 
@@ -2319,9 +2298,8 @@ struct PortsState
             case PORTS_PADDLE_B_COUNT:  return paddle_b.count;
             case PORTS_AUDIO_STATUS:
                 return static_cast<uint8_t>(
-                      (audio_hf_irq      ? PORTS_AUDIO_STATUS_HF_IRQ_MASK : 0)
-                    | (audio_half_full() ? PORTS_AUDIO_STATUS_HALF_FULL_MASK : 0)
-                    | (audio_enable      ? PORTS_AUDIO_STATUS_ENABLE_MASK : 0));
+                      (audio_fifo.empty() ? PORTS_AUDIO_STATUS_EMPTY_MASK : 0)
+                    | (audio_enable       ? PORTS_AUDIO_STATUS_ENABLE_MASK : 0));
             default:
                 break;
         }
@@ -2347,9 +2325,10 @@ struct PortsState
         if (abs_addr == PORTS_AUDIO_CONTROL)
         {
             audio_enable = (val & PORTS_AUDIO_CONTROL_ENABLE_MASK) != 0;
-            if (val & PORTS_AUDIO_CONTROL_CLEAR_HF_IRQ_MASK)
+            audio_reset  = (val & PORTS_AUDIO_CONTROL_RESET_MASK) != 0;
+            if (audio_reset)
             {
-                audio_hf_irq = false;
+                audio_fifo.clear();     // /RS low: every queued pair is gone
             }
             return;
         }
@@ -2359,8 +2338,8 @@ struct PortsState
         }
     }
 
-    // PORTS wire-ORs its interrupt sources onto one level-2 pin.
-    bool irq_pending() const { return mouse.irq_pending() || audio_hf_irq; }
+    // The mouse is the only PORTS interrupt source.
+    bool irq_pending() const { return mouse.irq_pending(); }
 };
 
 // ---------------------------------------------------------------------------

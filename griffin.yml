@@ -424,7 +424,7 @@ peripherals:
   # (TX_DATA 0x09, STATUS/CLEAR 0x11, CTRL 0x13, RX_DATA 0x15).
   PORTS:
     part: ATF1508AS
-    description: "PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop strobe"
+    description: "PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop/reset control"
     address_range:
       base: 0xFC0000
       size: 0x040000
@@ -437,7 +437,7 @@ peripherals:
       - 20000000: 0
     interrupt:
       level: 2
-      signal: ~PORTS_IRQ    # wire-OR of mouse RX_READY/TX_DONE and audio HF_IRQ
+      signal: ~PORTS_IRQ    # mouse RX_READY/TX_DONE only; audio raises no interrupt
     registers:
       - offset: 0x01
         name: JOYSTICK_PORT_1
@@ -545,8 +545,7 @@ peripherals:
         width: 8
         description: |
           Write-1-to-clear for PS2_MOUSE_STATUS latched flags / IRQ ack.
-          The level-2 IRQ de-asserts once RX_READY, TX_DONE and the audio
-          HF_IRQ latch are all clear.
+          The level-2 IRQ de-asserts once RX_READY and TX_DONE are clear.
         bits:
           - { bit: "0", name: RX_READY, description: "Write 1 to clear RX_READY (RX byte ISR ack)" }
           - { bit: "1", name: TX_DONE,  description: "Write 1 to clear TX_DONE (TX completion ISR ack)" }
@@ -574,30 +573,38 @@ peripherals:
         access: write
         width: 8
         description: |
-          Audio FIFO pop control.
+          Audio FIFO pop and reset control.
           ENABLE gates the read strobe PORTS sends to both 7200s on every
           AUDIO_TICK event; clearing it freezes the DACs on their last sample
-          without disturbing FIFO contents.
+          without disturbing FIFO contents.  RESET drives both 7200 /RS pins
+          low, discarding every queued pair; its reset value 1 holds the FIFOs
+          in reset from power-on (the 7200 requires a reset before its first
+          write) until software releases it.  The 7200 needs /W and /RE
+          inactive from tRSS 15 ns before /RS rises to tRSR 10 ns after:
+          PORTS holds its own /RE off while RESET is set, and software must
+          change RESET only when no descriptor list that deposits AUDIO_FIFO_W
+          is armed.  Flush sequence: ENABLE=0, RESET=1, RESET=0, deposit,
+          ENABLE=1.
         bits:
           - { bit: "0", name: ENABLE, default: 0,
               description: "1 = pop one stereo sample pair per AUDIO_TICK event (15.73 kS/s today); 0 = hold" }
-          - { bit: "1", name: CLEAR_HF_IRQ,
-              description: "Write 1 to clear the latched half-full IRQ (refill ISR ack)" }
+          - { bit: "1", name: RESET, default: 1,
+              description: "1 = hold both 7200 /RS low (FIFOs empty, pops suppressed); 0 = run" }
       - offset: 0x1F
         name: AUDIO_STATUS
         access: read
         width: 8
         description: |
-          Audio FIFO pop status.
-          HF_IRQ latches the rising 7200 half-full flag (FIFO drained below
-          half: refill) and asserts the shared level-2 IRQ until cleared with
-          AUDIO_CONTROL.CLEAR_HF_IRQ; HALF_FULL is the live flag for polling.
+          Audio FIFO status; no interrupt, poll it.
+          EMPTY is the raw 7200 /EF pin, read like the joystick switches
+          (nothing in PORTS acts on it): the last pair has been popped and
+          the DACs hold it.  The level is otherwise dead-reckoned: the pop
+          rate is locked to the pixel clock, and a missed frame is detected
+          from the vsync latch, not from the FIFO.
         bits:
-          - { bit: "0", name: HF_IRQ,
-              description: "1 = FIFO dropped below half full since the last ack; asserts level-2 IRQ" }
-          - { bit: "1", name: HALF_FULL,
-              description: "Live synchronized 7200 flag: 1 = half full or more" }
-          - { bit: "2", name: ENABLE,
+          - { bit: "0", name: EMPTY,
+              description: "Live 7200 /EF: 1 = no pairs queued" }
+          - { bit: "1", name: ENABLE,
               description: "Current AUDIO_CONTROL ENABLE state" }
 
   # 16-bit True IDE PIO: DATA is word offset 0x00; task-file registers are
@@ -769,7 +776,9 @@ peripherals:
   # only /W is ENGINE's AUDIO_FIFO_W deposit strobe (ENGINE_SIGNAL_AUDIO_FIFO_W):
   # one word per stereo pair, L = D15-D8, R = D7-D0, unsigned 8-bit
   # /R comes from PORTS once per AUDIO_TICK event
-  # (AUDIO_SAMPLES_PER_SECOND) while PORTS AUDIO_CONTROL.ENABLE is set
+  # (AUDIO_SAMPLES_PER_SECOND) while PORTS AUDIO_CONTROL.ENABLE is set;
+  # /RS of both chips from PORTS (AUDIO_CONTROL.RESET); /EF of the pair goes
+  # to PORTS as AUDIO_STATUS.EMPTY.  /HF is unconnected.  No interrupt.
   AUDIO:
     part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC"
     description: "Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate"
@@ -787,8 +796,8 @@ constants:
   CF_DH_LBA:            0xE0
   PS2_RX_QUEUE_SIZE:    64
 
-  # Audio FIFO geometry (2x IDT7200, 256 x 9, one per channel); half-full =
-  # 128 pairs = 8.1 ms of refill runway at ~123 Hz IRQ.
+  # Audio FIFO geometry (2x IDT7200, 256 x 9, one per channel): 256 pairs =
+  # 16.3 ms at AUDIO_SAMPLES_PER_SECOND; fills are sized against this.
   AUDIO_FIFO_DEPTH:          256
   AUDIO_SAMPLES_PER_SECOND:  15734   # TIMING AUDIO_TICK falling edges: every second 31.469 kHz line
   PADDLE_TICKS_PER_SECOND:   15734   # TIMING PADDLE_TICK falling edges: same, the 2600 scanline rate
@@ -921,7 +930,6 @@ issues:
   - "VIDCMD SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  Swapping the target NUMBERS to match the colour numbers is a wire-contract change, not yet decided."
   - "Only one raster mode (640x480 in 800x525 @ 60) is specified.  Alternate rasters (the DUART OP4..OP7 selector into TIMING) have no video_timing entry and no consumer contract."
   - "The PIXELS and VIDCMD stream FIFOs (ENGINE -> PIXEL / COMPOSITOR) are described in comments and constants, not as first-class entries."
-  - "AUDIO FIFO /RS source is unpinned: the 7200 needs a reset before its first write; PIXELS/VIDCMD get TIMING's nRS but the audio pair is on no reset net.  Proposed: system ~RESET directly to both audio /RS pins.  Decide at schematic capture."
   - "BERR in 0x400000-0x7FFFFF, 0xC00000-0xCFFFFF and 0xE00000-0xEFFFFF is by DTACK timeout (no decode); state whether that is the intended contract."
   - "BERR in unassigned IO spaces is unspecified."
   - "Writes to bank 1 during ROM overlay are unspecified."
@@ -958,8 +966,9 @@ interfaces:
     byte-interleaved shared-Q pair (/RE from PIXEL), VIDCMD ganged 16-bit
     (/RE from COMPOSITOR), AUDIO one per channel (/RE from PORTS).  All /W
     strobes come from ENGINE's deposit outputs; data pins on D[15:0].
-    PIXELS and VIDCMD /RS from TIMING nRS; AUDIO /RS open (issues).  XI/XO
-    cascade is an unpopulated-footprint option if depth is ever needed.
+    PIXELS and VIDCMD /RS from TIMING nRS; AUDIO /RS from PORTS
+    (AUDIO_CONTROL.RESET), AUDIO /EF to PORTS, /HF unconnected.  XI/XO cascade is an
+    unpopulated-footprint option if depth is ever needed.
   - |
     FIFO control strobes: series source termination at the driver end on
     every /RE and /W line of every 7200 (PIXELS, VIDCMD, AUDIO).
