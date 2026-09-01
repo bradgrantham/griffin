@@ -840,7 +840,7 @@ peripherals:
   # /RS of both chips from PORTS (AUDIO_CONTROL.RESET); /EF of the pair goes
   # to PORTS as AUDIO_STATUS.EMPTY.  /HF is unconnected.  No interrupt.
   AUDIO:
-    part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC + CD4049 MSB inverters + LM358 output buffer"
+    part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC + CD4049 MSB inverters + LM358 buffer + LM386 speaker amp"
     description: "Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate"
 
 constants:
@@ -1103,17 +1103,27 @@ interfaces:
     divider: 0-2.5 V, 5k source) -> 3.3 nF to GND (single pole ~9.7 kHz,
     ahead of the buffer) -> LM358 half as unity buffer -> 4.7k to GND at
     the op-amp output (class-A bias against LM358 crossover distortion)
-    -> 100 uF AC coupling -> 1k to GND (DC return) -> 100R series ->
-    stereo jack tip/ring.  2.5 Vpp max ~= 0.88 Vrms line level; the
-    LM358 output ceiling at a 5 V rail is ~3.5 V, so nothing clips.  The
+    -> 100 uF AC coupling -> volume pot (dual-gang 10k audio taper, one
+    gang per channel: element top to the cap, bottom to GND -- the pot IS
+    the DC return -- wiper out) -> 100R series -> stereo jack tip/ring.
+    2.5 Vpp max ~= 0.88 Vrms line level at full rotation; the LM358
+    output ceiling at a 5 V rail is ~3.5 V, so nothing clips.  The
     MSB inverter must be CMOS-output (rail-level VOH, like the 7200's
     other seven bits); a TTL inverter's ~3.5 V high would shrink the MSB
-    weight ~25% exactly at the zero crossing.  Mono buzzer as Rev 1:
-    jack switch contact -> 47R -> magnetic buzzer on the L channel,
-    silenced by plug insertion.  Ladder, divider, filter and buffer
-    placed at the jack.  BOM: 2x 4610X-R2R-103LF, 1x CD4049 (2 of 6
-    gates, unused inputs grounded), 1x LM358, per channel 10k + 4.7k +
-    1k + 100R + 3.3 nF + 100 uF, plus 47R and the buzzer.
+    weight ~25% exactly at the zero crossing.
+    Internal speaker (replaces the Rev 1 buzzer): the jack's
+    normally-closed tip and ring switch contacts each feed 10k into a
+    mono sum at the LM386 input (47k to GND holds the input quiet when
+    the contacts open), LM386 at default gain 20 -> 10R + 47 nF Zobel ->
+    250 uF -> 8 ohm speaker.  Inserting a plug opens both contacts and
+    mutes the speaker; the volume pot sits upstream of the sum, so the
+    knob governs speaker and jack alike.  Software mute is
+    AUDIO_CONTROL.ENABLE (DACs freeze on a DC level).  Ladder, divider,
+    filter and buffer placed at the jack; pot and speaker are
+    panel/case parts.  BOM: 2x 4610X-R2R-103LF, 1x CD4049 (2 of 6
+    gates, unused inputs grounded), 1x LM358, 1x LM386, dual 10kA pot +
+    knob, 8-ohm speaker, per channel 10k + 4.7k + 100R + 3.3 nF +
+    100 uF, plus 2x 10k sum, 47k, 10R + 47 nF, 250 uF.
   - |
     Carried forward from Rev 1: the XR68C681 DUART with ~CS from GLUE
     (nDUART_SELECT) and DTACKN returned to GLUE (nDUART_DTACK).  Its

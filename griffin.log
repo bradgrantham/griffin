@@ -1,0 +1,413 @@
+# Griffin design log
+#
+# Dated decisions, measurements, investigations, rejected alternatives and
+# retirements, moved out of griffin.yml and griffin.md so that those hold only
+# current facts.  Chronological, oldest first.  Fit numbers (LC/FF/PT) live
+# here and in the fitter's .fit outputs, nowhere else.
+
+Rev 1 bring-up (undated) -- AT89S52 IO MCU abandoned
+  The AT89S52's P2 port drives D0-D7 with weak internal pull-ups (~50 uA) and
+  something on the board held the bus during IO MCU cycles: P2 read back 0x3C
+  when nothing should drive D0-D7 (expected 0xFF); scope showed one device at
+  ~5 V and another at ~4.5 V on D0, consistent with a ~1-2 kohm path to GND.
+  Communication worked only when the board ran abnormally slowly under logic-
+  analyzer interference with CLK.  Ruled out: ROM (nROM_SELECT high during
+  the cycles, at TP14 and U2 pin 20), RAM (all nRAM_x_SEL deasserted), CF
+  (removed), the 74HC373 audio latch (pulled), VIDEO (reflashed with an
+  explicit D tristate), ENGINE (unpopulated), GLUE decode (selects mutually
+  exclusive and gated by bus_cycle; GLUE D bus tristated unless a GLUE
+  register read), and a 100-iteration NOP delay before DTACK.  Also: the
+  keyboard/mouse clocks had been moved off the interrupt-capable P3.2/P3.3
+  pins.  Decision: XR68C681 DUART on a bodged DIP carrier for serial and the
+  100 Hz systick; PS/2 moved into GLUE.
+
+Rev 1 bring-up (undated) -- GLUE bit-bang serial and GLUE_TIMER removed
+  A 5-bit /8 auto-reload GLUE_TIMER armed a DTACK stall for deterministic
+  bit timing and drove bit-bang UART TX/RX on DEBUG_OUT/DEBUG_IN
+  (timer_putchar / debug_getchar_asm).  Video DMA stalls and jitters the CPU
+  and broke the bit loop, so both were removed; serial is DUART-only and
+  crt0 brings the DUART up early.  A per-bit PS/2 assist in GLUE was
+  replaced by the whole-frame PS/2 engine for the same reason.
+
+Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
+  Unterminated bodge wires on the video FIFO /RE lines rang and doubled
+  reads (image creep); 10 pF to GND at the FIFO pins was the stopgap.  Rev 2
+  terminates every FIFO /RE and /W at the source instead.
+
+2026-07-24 -- possible new hardware features
+  PS/2 mouse port: does not fit GLUE (grouping failure, every fitter lever
+  tried); proposed for ENGINE.  Generalized ENGINE: stream into VIDEO, AUDIO
+  or COPY FIFOs from RAM/ROM/CF, stream out of a COPY FIFO to RAM, optional
+  block on the FIFO HF flags.  (Mouse placement superseded 2026-07-28.)
+
+2026-07-28 -- PORTS, the fourth CPLD
+  Fit experiment in cpld/ports (ten ifdef wrapper configurations, since
+  deleted; ladder sources in commit 16ad819; full numbers in
+  pcbv2-ports-design.md).  Two PS/2 frame engines will not share one ATF1508:
+  the pair alone needs 140 of 128 nodes, and Foldback_logic, xor_synthesis,
+  Logic_Doubling and TQFP100 all fail identically -- a channel is ~50 FF but
+  costs far more once the foldback expands.  So the keyboard stays in GLUE
+  and the mouse gets its own CPLD.  Mouse + 2 joysticks + 2 paddles + the
+  audio FIFO pop = 111/128 LC, 80 FF, 41/64 I/O, 311 PT, first pass.  The
+  74HCT245 / 74HC590 joystick and paddle chips are retired: the DE-9s and
+  paddle ramps cost 0 FF and 21 FF in the CPLD, and the two 74155 read
+  strobes and the DUART OP4/OP5 dump/clear dance go away (PADDLE_CONTROL.DUMP
+  replaces them).  A programmable audio divider is not worth a chip (~30 FF;
+  PORTS + divider = 151 FF, rejected before placement); halving the VIDEO
+  HSYNC tap costs one flip-flop and gives the 15.73 kS/s the design already
+  assumed, so the audio pop moved from VIDEO into PORTS ("VIDEO generates
+  ~R" became "PORTS generates ~R").  The Rev 3 "dedicated ATF1504 for audio at
+  0xFC0000" idea is superseded by the same measurement; 0xFC0000 is PORTS.
+
+2026-07-30 -- GLUE and PORTS pinouts frozen; ENGINE IRQ re-wired
+  Rev-2 GLUE logic always fit (107/128 LC in the experiment, 109/128 LC,
+  57 FF, 326 PT as built) but routing failed with the rev-1 hand-assigned
+  pins kept.  The earlier claim that it "fails no matter what" was wrong:
+  the fitter auto-escalates to Foldback_logic but leaves Xor_synthesis off,
+  and with -strategy xor_synthesis = on it fits.  Dropping -strategy debug
+  and adding Foldback_logic by hand change nothing on their own; debug +
+  xor_synthesis has crashed the fitter, so GLUE drops -strategy debug.  The
+  pinout was harvested from a -preassign ignore fit, re-verified under
+  -preassign keep, and frozen in glue.v's //PIN block: 63/64 I/O + 3/4
+  dedicated inputs.  PORTS as built under -preassign keep: 118/128 LC, 80 FF,
+  40/64 I/O + 2/4 dedicated inputs, 364 PT (vs 111 LC free placement -- the
+  cost of the frozen pinout); xor_synthesis measured head-to-head on PORTS
+  made no difference (365 PT either way), so PORTS does not use it.  Four
+  ATF1508s built and fitting: GLUE 109/128 LC 63/64 I/O 57 FF 326 PT; VIDEO
+  126/128 LC 53/64 I/O 99 FF 355 PT; ENGINE 91/128 LC 49/64 I/O 48 FF
+  244 PT; PORTS 118/128 LC 40/64 I/O 80 FF 364 PT.  ENGINE had the only
+  real headroom; PORTS had 24 spare I/O but 10 spare cells.  ~ENGINE_IRQ
+  had been stubbed to 0 in GLUE during Rev 1 bring-up (610b06d), which would
+  have dropped the port from the frozen pinout; re-wired as a live level-3
+  input (ENGINE pin 5 -> GLUE pin 68) before the freeze.  The "ENGINE
+  self-decodes its own MMIO" idea was never built; ~ENGINE_SELECT stays a
+  net (GLUE pin 39 -> ENGINE pin 84) and is committed by the freeze.
+
+2026-08 -- super-engine video path adopted
+  Rev 1's in-band-header VIDEO + page-streaming ENGINE retired in favour of
+  ENGINE -> {PIXELS, VIDCMD} FIFOs -> PIXEL (+TIMING) -> COMPOSITOR -> DAC.
+  ENGINE's AUDIO_FIFO_W descriptor strobe added as a DMA fill path for the
+  audio FIFO.  The rev-1 84-byte-stride in-band-header framebuffer remains
+  only as the CF image container (VIDEO_LINE_STRIDE_BYTES etc.).
+
+2026-08-10 -- VIDCMD read-port shaping gate proposed
+  A 74AC00 NAND scheme to shape /RE for a 1-word-per-clock VIDCMD cadence.
+  Rejected 2026-08-18 (below).
+
+2026-08-12 -- VGA R4G4B4 output stage design handoff
+  ATF1508AS -> 2x 74AC541 -> weighted-resistor DAC -> DE-15.  Buffers are
+  mandatory (ATF1508AS VOH specified only to -2 mA; the MSB sources ~8.6 mA
+  -- direct drive gives code-dependent nonlinearity).  Ideal weights
+  500/1k/2k/4k with a 105R shunt; chosen E12 implementation bit3 = 2x 1k
+  parallel, bit2 = 1k, bit1 = 2x 1k series, bit0 = 3.9k (2.6% weight error =
+  0.03 LSB; do not double up), shunt 100R.  FS ~= 0.693 V loaded, Zth ~=
+  72.7R.  74AC541 Rout (~10-15R) folds into the series values; optionally
+  trim bit3 toward 487R if measured FS matters.
+
+2026-08-13 -- COMPOSITOR -> PIXEL SET path: value bus
+  A dedicated 12-bit registered value bus (set_pix_value) alongside the
+  valid/target/commit handshake, chosen over a capture-strobe + fetch-stall
+  design that measured +21 LC on COMPOSITOR and made PIXEL-target SETs a
+  permanent 2-slot special case.  PIXEL's twelve former VIDCMD_Q taps leave
+  the shared FIFO Q bus.  COMPOSITOR becomes pin-closed (63/64 I/O + 3/4
+  dedicated inputs), accepted because its interface is complete.
+  Same day: PIXEL+TIMING combined measured ~153 LC against the 128-LC part
+  (pixel_combined.v kept as the negative result), so TIMING is a separate
+  ATF1504AS PLCC44.  Stream FIFO parts unified on 2x IDT7200 per stream: the
+  IDT7202s (1024 deep) specified for AUDIO are hard to source; 256 pairs =
+  16.3 ms with half-full at 128 (~8 ms runway, ~123 Hz IRQ) covers the
+  measured display-list fill of 49..93 pairs; XI/XO cascade footprint if
+  depth is ever needed.  TIMING's vsync -> GLUE level-6 IRQ decided (revised
+  2026-08-26).
+
+2026-08-16 -- power entry and reset supervision standardized
+  USB-C replaced by a 5.5 x 2.1 mm barrel jack: a plain-Rd USB-C sink is
+  entitled to only 500 mA without CC sensing or PD, and the rev-2 budget is
+  ~1.3-1.7 A typ vs rev 1's measured 0.84 A (rev2-electrical-review.md
+  section 8).  DS1233D-5 supervisor; the D variant has no pushbutton
+  detect, so button release rides raw bounce -- accepted (worst case a
+  botched boot cured by pressing again; plain DS1233-5 is the drop-in
+  upgrade).  Rev-1 C3 on the reset net retired (fights the CPU's 124-clock
+  RESET-instruction drive).  Case wants a round cutout instead of USB-C.
+
+2026-08-18 -- VIDCMD FIFO read port resolved: registered /RE, 2 clocks/word
+  The 74AC00 gate scheme dies structurally: a captured word must be valid
+  from T - tSU = 32.7 ns through the capture edge, so /RE must fall by
+  32.7 - tA = 17.7 ns and rise at or after T - tDV = 34.7 ns; a half-period
+  /RE rises near T/2 and data dies tDV = 5 ns later, so the valid window
+  [tPD + 15, T/2 + ~6] misses every capture edge by ~8-15 ns in every
+  phasing, and manufacturing the needed ~87%-phase edge requires a ~15 ns
+  delay element whose tolerance stack (74AC00 tPD 2-8 ns, or an RC into
+  non-Schmitt inputs) exceeds the window.  Rejected without a breadboard;
+  74AC00/74F00 purchase dropped.  Adopted registered-/RE margins are in
+  griffin.yml (COMPOSITOR).  Consequence: VIDCMD cadence is 2 slots per
+  word, 1-px spans render 2 px wide; propagation done 2026-08-19.
+
+2026-08-19 -- VIDCMD 2-clock cadence rework done, all layers
+  compositor.v + testbench: registered /RE with park-on-Q banking; 102
+  checks pass incl. PAIR_LOCAL/PAIR_PIX banked-pair tests; fits 112/128 LC,
+  down 4 from the value-bus baseline; Q is X-poisoned after /RE rises so
+  stale-Q use fails visibly.  Measured: sustained cadence 2 slots/word,
+  banked-pair gap 1 slot, PIXEL-target SET cost 2 slots, commit leads its
+  slot's RGB_OUT by 1 clock, pipeline 2 clocks.  vidcmd-spec.md addendum
+  (fetch engine, pair law, value bus replaces the Q-tap conduit, TILE
+  dropped); super-engine render.cpp implements the fetch engine equation
+  for equation; the author sizes CUSHION fillers from a vidcmd_plan_line()
+  fetch simulation.  Suite all-PASS with one expectation change (m3-cursor
+  84->98: HOLD widens 1-px outline segments).  Cadence floor: 1-px spans
+  need >= 4-px pitch; the ENGINE delivery ceiling (~1 word / 3.6 px clocks)
+  binds first at realistic densities.
+
+2026-08-21 -- AUDIO FIFO /RS found unpinned (still open; see griffin.yml issues)
+
+2026-08-24 -- MASK record implemented; cmp_held_fg/bg renamed
+  The `01` prefix (TILE, dropped) carries MASK: two words, sixteen pixels of
+  per-pixel overlay, no inline colour; data word reloads out of the park at
+  pixel 8 with a HOLD stretch on starvation; header is playback-class.
+  Measured seams: RUN->mask 0, mask->mask 0 (gapless), mask->SET->mask 2;
+  derived mask->SET,SET->mask 4 and RUN->SET,SET->mask 3.  cmp_held_fg/bg
+  renamed cmp_color1/cmp_color0 (VIDCMD_SET_CMP_HELD_FG/BG ->
+  VIDCMD_SET_CMP_COLOR1/COLOR0), numbering and wire encoding unchanged --
+  target 0 still writes cmp_color1 and target 1 cmp_color0; swapping the
+  numbers is a wire-contract change deliberately not bundled.  Propagated
+  to render.cpp, descriptor.h, vidcmd_plan_line, vidcmd-spec.md; m6-console
+  and m7-kiosk render pixel-exact.  PIXEL the same day: late-cutoff fix
+  costs 4 LC / 1 FF and saves 15 PT (one flip-flop); the four-stage delay
+  line alternative measured 126 LC and failed routing on both passes.
+  PIXEL fit ladder: as-was 116 LC/75 FF/398 PT; + bit_pos capture-clock fix
+  108/75/366; + 2bpp indexed 112/78/414; + half rate 116/80/460; + late
+  cutoff 120/81/445.
+
+2026-08-26 -- TIMING fan-out package; COMPOSITOR/PIXEL/TIMING pinouts frozen
+  PADDLE_TICK (17), AUDIO_TICK (18), HBLANK (19), nVSYNC_IRQ (31) added on
+  spare pins by a -preassign keep fit; none of the original 9 moved.  Ladder:
+  31 LC (frozen) -> 31 (+power_reset) -> 36 (+4 outputs, +line-parity flop)
+  -> 35 (ticks toggle every line; parity flop gone).  Final 35/64 LC, 15/32
+  I/O.  Ticks are square waves because a one-clock pulse (39.7 ns) is
+  narrower than a SYSCLK; PORTS counts falling edges only because a
+  both-edges XOR detector doubles the product terms of every paddle-counter
+  bit and PORTS fails routing (falling-edge fits at 122/128).  The Rev 2
+  draft's HSYNC tap into PORTS (31.469 kHz with a /2 in PORTS) is retired;
+  TIMING is the single time base.  nVSYNC_IRQ is a dedicated TIMING register
+  instead of tee'ing VGA_VSYNC pre-buffer, so the connector polarity can
+  change without moving the IRQ edge.  DUART OP4..OP7 routed to TIMING pins
+  20/21/24/25 as a future mode/rate selector; GCLK2 pin 44 left free.
+  timing_tb.v created (closed-form laws, 12 output relations, 10 negative-
+  control mutations).  ENGINE's HBLANK source pinned to TIMING pin 19.
+  Alternate-raster and programmable-audio-divider fits measured (+19 and
+  +22 LC, all = 64/64 with ticks + CSYNC) and not adopted.
+
+2026-08-29 -- griffin.yml scope narrowed; VIDEO region and direct bus deleted
+  griffin.yml is the source for CPU interaction, bitfile creation and
+  high-level schematic validation only; rationale and history move here.
+  The rev-1 VIDEO peripheral entry is gone: TIMING, PIXEL and COMPOSITOR are
+  busless peripheral entries and video_timing lives under TIMING (codegen
+  now emits TIMING_H_*/V_* and *_CLOCK for busless chips).  Nothing lives
+  at 0xE00000, so GLUE's video_region decode and nVIDEO_SELECT are deleted
+  and GLUE pin 40 is released (the region now BERRs).  The audio FIFO is
+  filled by ENGINE DMA only (AUDIO_FIFO_W): the CPU-mapped AUDIO FIFO
+  register at 0xC00000 is gone, and with it the whole 0xC00000 direct-bus
+  region -- GLUE's ~IO_RD_EN/~IO_WR_EN (pins 36/35 released) and the
+  74HCT155 fan-out; the three "reserved" quadrants (including the ENGINE
+  COPY-FIFO candidate at 0xCC0000) had no occupant.  apps/smurf primes the
+  FIFO with a one-shot descriptor list instead of CPU writes.  GLUE refit
+  to confirm the remaining pins did not move.
+
+2026-08-29 -- audio HF interrupt dropped; /EF and /RS brought to PORTS
+  With the audio FIFO filled only by vsync-armed display lists (the firmware
+  console re-arms every frame too), a FIFO-paced refill interrupt has no
+  consumer; the pop rate is locked to the pixel clock (262/263 pairs per
+  frame), so software dead-reckons the level and polls HALF_FULL at vsync
+  as the missed-frame detector.  PORTS loses the HF latch, its W1C ack and
+  the level-2 wire-OR (~PORTS_IRQ is mouse-only).  Added: /EF synchronized
+  into AUDIO_STATUS.EMPTY (play-to-end / DAC parked), and /RS driven from
+  AUDIO_CONTROL.RESET with reset value 1, which both satisfies the 7200's
+  reset-before-first-write requirement and gives a flush; this closes the
+  "audio /RS unpinned" issue.  Not adopted (yet): IDT7201 (512 deep) for a
+  whole-frame burst per vblank -- 263 + cushion <= 512 allows one burst with
+  a 249-pair cushion or two bursts with ~380, versus the 7200's nine bursts
+  spread through the frame; depends on the 7201 being sourceable.
+  PORTS fit ladder for the change (ATF1508AS PLCC84, -preassign keep,
+  production flags; before: 122/128 LC, 371 PT, blocks B/C/F at 39/40
+  fan-in):
+    0. 2-FF syncs on /HF and /EF, RESET readback, /RE gated by RESET:
+       keep -> grouping fail x5; free -> 121 LC, block C 17/16, fail.
+    A. minus RESET readback: grouping fail.
+    B. minus the /RE gate as well: grouping fail.
+    C. raw /HF and /EF into the read mux (no syncs), /RE gate kept, no
+       readback: free -> 119 LC / 366 PT fits; keep with the fitter
+       choosing the two new pins -> placement fail then grouping fail;
+       keep with nFIFO_EF : 48 and nFIFO_RS : 52 given in the //PIN block
+       -> 120/128 LC, 368 PT, pass 1, no frozen pin moved.  ADOPTED.
+    D. rung C plus the 2-FF syncs back, explicit pins: grouping fail x5.
+  Finding: on a near-full ATF1508 under -preassign keep the fitter will not
+  choose pins for new ports; give them explicitly.  The raw flags are
+  justified because nothing in PORTS acts on them (the HF edge detector
+  that needed the synchronizer is gone) -- they are CPU-polled like the
+  joystick switch inputs.
+
+2026-08-30 -- HALF_FULL dropped; PORTS pin 34 released
+  With RESET giving a deterministic flush-and-deposit prime and the vsync
+  latch already detecting a missed frame, HALF_FULL's two remaining jobs
+  were covered; what it offered beyond that (a hardware check on dead
+  reckoning about a frame before EMPTY) did not justify a signal nothing
+  acts on.  nFIFO_HF removed from PORTS, the 7200 /HF pins are unconnected,
+  AUDIO_STATUS is EMPTY (bit 0) + ENABLE (bit 1).  smurf's audio_prime()
+  is now RESET pulse + fixed deposit with no flag guard.
+
+2026-08-30 -- ENGINE strobes locked, ENGINE/CF status into GLUE, spare headers
+  Pre-schematic net decisions.  ENGINE nSIGNAL[6:0] became four named
+  strobes on the frozen pins: nPIXELS_FIFO_W 10, nVIDCMD_FIFO_W 8,
+  nAUDIO_FIFO_W 6, nSIGNAL_SPARE 9 (to a header); pins 40, 41, 46 released
+  and nDTACK_BUS (81) deleted -- ENGINE never sampled it, GLUE owns DTACK
+  for DESC/CTRL.  The wider mask was kept for a write-capable engine
+  (DMA to memory, DMA to CF) that needs a different ENGINE, not more
+  strobes; edma2-class designs do not fit at 128/128.
+  ENGINE -> GLUE status wires added, since ENGINE reads see the open bus:
+  ENGINE_ACTIVE (dma_en) pin 80 -> GLUE 35, ENGINE_WAITING (state ==
+  HBLANK_WAIT) pin 4 -> GLUE 36, read back with the IRQ net as GLUE
+  ENGINE_STATUS (0x19).
+  CF sideband added: INTRQ -> GLUE 40 (pull-down), IORDY -> GLUE 2 (pull-up;
+  dedicated input pin, keeps 63 as the last free GLUE I/O).  CF_PINS (0x1B)
+  reads both; INTRQ is level 1 gated by CONFIG.CF_IRQ_EN; IORDY is 2-FF
+  synchronized and gates the CF DTACK term, BERR timeout unchanged (a card
+  holding IORDY past ws_cnt 15 BERRs).  The CF dtack threshold was NOT
+  lowered: that is a datasheet-timing decision for later, now safe to make.
+  Spare headers: ENGINE nSIGNAL_SPARE/GND/+5V near the FIFOs; PORTS pins
+  34, 41 + GND (unused I/O under Pin_keep_mode, no pulls).  Rejected: a
+  spare bus between CPLDs (the chips with room, PIXEL 105/128 and PORTS
+  120/128 with ~20 free pins each, have nothing to say to each other; the
+  ones that do, ENGINE/COMPOSITOR/PORTS, are at 93-96% LC and COMPOSITOR
+  has no output-capable pin left), D[7:0] onto PIXEL (bus loading, and it
+  bypasses VIDCMD SET), strobes to CF (PIO cycle >= 165 ns vs 143 ns
+  deposits, and GLUE owns IOWR qualification).
+  ENGINE fit ladder (ATF1508AS PLCC84, -preassign keep, production flags;
+  before: 123 LC / 77 FF / 414 PT):
+    A. 4 strobes, ENGINE_ACTIVE = dma_en and ENGINE_WAITING = (state ==
+       HBLANK_WAIT) as combinational outputs on 80/4: placement fail then
+       grouping fail x4, does not fit.
+    B. same, both status outputs as registered copies (one CPUCLK late):
+       120 LC / 76 FF / 408 PT, no warnings past pass 1.  ADOPTED; the
+       copies decouple the pin cells from where dma_en and state live.
+  GLUE: 111 -> 113/128 LC, 65 FF, 308 PT, pins frozen; no grouping warnings.
+  PORTS unchanged at 120/128 (comment only).  Emulator models
+  ENGINE_STATUS (walker armed/parked/irq) and CF_PINS (IORDY=1, INTRQ not
+  modeled); super-engine suite all cases PASS.
+  Found in passing: firmware/rom.cpp no longer builds at HEAD
+  (VIDEO_PIXEL_BYTES_PER_LINE gone from griffin.yml since 08-14); not
+  touched here.
+
+2026-08-31 -- Reset topology: supervisor diode split; GLUE halt-blink indicator
+  Question that drove it: with GLUE mirroring the shared ~RESET net onto
+  ~HALT, the CPU's own RESET instruction (124 CPUCLK) came back at it as
+  ~HALT.  M68000UM findings (manualslib copy of M68000UM, pp. 73-76):
+  external reset asserted DURING a RESET instruction is ignored (hence the
+  132-clock rule for external resets); HALT alone is a bus-cycle-level
+  mechanism ("normal cycle terminate and halt, continue when HALT
+  negated", buses tri-stated, arbitration continues) and the instruction
+  runs no bus cycles, so the echo was almost certainly benign -- but only
+  by inference, and the plain DS1233-5's pushbutton detect (unlike the
+  no-detect D variant) could have stretched the 8.9 us pulse into a full
+  350 ms CPU reset (min detect time unknown).  Chosen: remove the
+  question by construction.
+  Topology: user button on the DS1233-5 RST pin (detect + debounce +
+  350 ms re-stretch); Schottky diode, anode on the system ~RESET net,
+  cathode at RST, so supervisor/button lows reach the net (VOL + Vf
+  ~= 0.5 V < 0.8 V VIL) but the CPU RESET-instruction pulse and
+  debug-header lows never reach the supervisor; RST also runs to GLUE
+  nSUPERVISOR_RESET (pin 63, GLUE's last free I/O), which is now the sole
+  source of GLUE's ~HALT assertion.  RESET instruction therefore asserts
+  neither ~HALT nor the pushbutton detect; both griffin.yml issues
+  (unstated ~HALT contract, DS1233 pulse-detect uncertainty) closed.
+  Firmware still never executes RESET (the pulse still resets GLUE and
+  restores the ROM overlay under a running CPU).
+  Halt indicator: GLUE senses nHALT (double bus fault self-halt or
+  debug-header hold; the CPU cannot report either) and overrides
+  DEBUG_OUT with blink_cnt[4] of a 5-bit vsync-edge divider (~1.9 Hz,
+  free-running off the 60 Hz frame rate; no 23-FF SYSCLK divider needed).
+  GLUE fit ladder (ATF1508AS PLCC84, -preassign keep, production flags;
+  before: 113 LC / 65 FF / 308 PT):
+    0. combinational DEBUG_OUT mux + 2-FF nHALT sync: "fail to route
+       variable nAS in Block 4", grouping fail x4.
+    A. + registered debug_led_r output copy: still grouping fail.
+    B. rung A + single-FF nHALT sync: FITS, 113 LC / 72 FF / 335 PT,
+       no warnings, pins frozen incl. nSUPERVISOR_RESET 63.  ADOPTED.
+  1-FF sync justified: feeds only the LED mux, no state machine; a
+  metastable sample costs one wrong LED clock (cf. the PORTS raw /EF
+  precedent, 2026-08-30).  LED lags one SYSCLK via debug_led_r.
+
+2026-08-31 -- GLUE sheds DEBUG_IN and nDUART_RESET; pins 64 and 24 are bodge spares
+  Bodge-reserve audit before capture: GLUE was pin-full, and its two
+  weakest pins were rev-1 leftovers.  DEBUG_IN (64) was the bit-bang UART
+  RX readback, documented unused since serial went DUART-only; port,
+  decode and read-mux leg deleted (reads at 0xF00001 now float like any
+  undecoded GLUE offset).  nDUART_RESET (24) was a totem-pole copy of
+  nRESET; the XR68C681 datasheet confirms RESET is ACTIVE LOW (clears
+  SRA/SRB/IMR/ISR/OPR/OPCR, IVR=0x0F, OP pins high -- the reset state the
+  OP4-7/TIMING contract already assumes), and griffin.md's rev-2 DUART
+  plan already said "~RESET from ~RESET net", so the DUART's RESET now
+  sits directly on the system ~RESET net (supervisor stretch gives it a
+  clean long assertion; edge is the net's 10k RC rise, same as the CPLD
+  GCLRs).  Both pins released as unassigned bodge spares (pin keeper, no
+  pulls), to be routed to pads only.
+  Fit (ATF1508AS PLCC84, -preassign keep, production flags): fits, 0
+  grouping warnings, frozen pins held.  113 -> 119/128 LC and 335 -> 342
+  PT despite strictly less logic -- FFs unchanged at 72, so this is the
+  fitter choosing a different foldback/cascade arrangement for the
+  changed netlist, not real growth; recorded as-is.
+
+2026-08-31 -- Experiment: GLUE with free pin assignment (capacity check)
+  Question: is the frozen pinout costing GLUE logic capacity?  Same
+  netlist and strategy flags, -preassign ignore instead of keep:
+    keep   (production): 119 LC / 72 FF / 342 PT / 16 foldback, pass 1
+    ignore (free pins):  119 LC / 72 FF / 341 PT / 16 foldback
+  Identical to within 1 PT.  Finding: the pinout constrains WHICH designs
+  fit (grouping/routing, cf. the nAS Block-4 route fail in the halt-blink
+  ladder), not how much logic this design needs once it fits -- no
+  capacity is being left on the table by -preassign keep.  Production
+  keep fit re-run afterward; frozen pins verified unchanged.
+
+2026-08-31 -- Audio output stage designed; samples become two's complement
+  Closes the last pre-capture issue.  Rev-1 baseline (netlist): '373 ->
+  4610X 10k R2R -> LM358A unity -> 1k + 10 nF (fc ~16 kHz) -> 100 uF ->
+  1k load -> 2x 100R to both jack channels (mono), 47R + buzzer on the
+  jack switch contact; LM358B floating.  Known defect (2026-08 electrical
+  review, re-ratified): R2R full scale 5 V vs LM358 VOH ~3.5 V at a 5 V
+  rail -- the top ~30% of codes clipped.
+  Rev-2 per channel: 7200 Q -> CD4049 inverter on Q7 -> R2R -> 10k to GND
+  (the ladder's own 10k Thevenin is the divider top: exact 2:1, one part)
+  -> 3.3 nF (single pole ~9.7 kHz at the 5k source, ahead of the buffer)
+  -> LM358 half unity -> 4.7k class-A pull-down -> 100 uF -> 1k return ->
+  100R -> jack.  2.5 Vpp max, +1 V below the VOH ceiling.  Buzzer kept on
+  L via the switch contact.  Rejected: 2-pole Sallen-Key (needs a second
+  dual now that both LM358 halves are channels), rail-to-rail op-amp with
+  no divider (5 Vpp is over line level anyway), true bipolar analog
+  (pointless behind the AC coupling).
+  Sample format: TWO'S COMPLEMENT, 0x00 = silence.  ENGINE never touches
+  data (deposit architecture), so the flip is 2 gates of a CD4049 between
+  each FIFO Q7 and its ladder MSB.  MUST be CMOS-output: the bin's TTL
+  7404N/74S04 VOH ~3.5 V would shrink the MSB weight ~25% at the zero
+  crossing against the 7200's rail-level outputs.  4049 tPD ~50 ns skews
+  only the MSB per transition; filtered by the 9.7 kHz pole.  Rejected: a
+  software XOR 0x8080 per fill (about 1% CPU at full rate, and every
+  mixer pays it forever).  Propagated: emulator DACs model the inverters
+  (^0x80, idle 0x80), smurf audio_render mixes signed with +-120 clamp,
+  griffin.yml AUDIO + interfaces entry, griffin.md, checklist.
+  BOM adds: 2x 4610X-R2R-103LF (procure -- only one on the rev-1 board),
+  CD4049 (bin, x7), LM358 (salvage rev-1 U15 or buy).
+
+2026-08-31 -- Volume pot + LM386 internal speaker; buzzer retired
+  Chain tail change only, nothing upstream of the coupling cap moves.
+  Dual-gang 10k audio-taper pot replaces the 1k DC return (element top to
+  the 100 uF, bottom to GND, wiper -> 100R -> jack), worst-case source
+  ~2.5k at mid-rotation.  Internal speaker replaces rev-1's LS1 magnetic
+  buzzer: the jack's NC tip and ring switch contacts each feed 10k into a
+  mono sum (47k to GND for the open-contact state) into an LM386 at
+  default gain 20, 10R + 47 nF Zobel, 250 uF to an 8-ohm cone (~300 mW at
+  5 V).  Plug insertion opens the contacts and mutes the speaker (the
+  rev-1 topology generalized); the pot sits upstream of the sum so one
+  knob governs jack and speaker.  Software mute remains
+  AUDIO_CONTROL.ENABLE.  Rejected: a PORTS-register attenuator (games
+  already own loudness in the signed mixer; MATINEE has no CPU cycles to
+  scale a stream -- the physical knob covers exactly that case).
+  Procure: LM386 (not in bin), dual 10kA pot + knob, small 8-ohm speaker.
