@@ -628,6 +628,10 @@ endmodule
 // Appended on spare pins by -preassign keep fits, no frozen pin moved:
 // AUDIO_TICK 45 (2026-08-26), nFIFO_EF 48 and nFIFO_RS 52 (2026-08-29).
 // Released: nFIFO_HF pin 34 (2026-08-30).
+// Pins 34 and 41 are routed to the PORTS spare header (griffin.yml
+// interfaces) but are not ports of this module: unused I/O, tri-state
+// under the fitter's pin keeper.  Give them explicit pins here if a
+// function is ever assigned.
 // New ports must be given explicit pins here: near full, the fitter fails
 // at grouping when left to choose them (griffin.log 2026-08-29).
 //

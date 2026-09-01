@@ -20,8 +20,18 @@
 //   5. ~PORTS_IRQ is autovectored at level 2 (below ENGINE at 3).
 //   6. PORTS DTACKs at its generated threshold (0 wait states).
 //
-// The PS/2 engine, DUART, CF at 0xF40000, DEBUG, BERR, VPA and HALT are
-// unchanged from Rev 1.
+//   7. ENGINE has no readable registers, so its two status wires
+//      (ENGINE_ACTIVE, ENGINE_WAITING) and its IRQ line are read back here
+//      as ENGINE_STATUS.
+//   8. The CF card's INTRQ and IORDY sideband pins come here: INTRQ is
+//      readable (CF_PINS) and, gated by CONFIG.CF_IRQ_EN, is the level-1
+//      interrupt; IORDY is readable and qualifies the CF DTACK.
+//
+// The PS/2 engine, DUART, CF at 0xF40000, BERR, VPA and HALT are
+// otherwise unchanged from Rev 1.  Rev-1 leftovers DEBUG_IN (bit-bang UART
+// RX readback) and nDUART_RESET (the DUART's RESET is active low and sits
+// directly on the system ~RESET net) are gone; pins 64 and 24 are the
+// bodge spares.
 
 `include "../../griffin.generated.vh"
 
@@ -33,7 +43,6 @@ module glue (
     // the bottom of this file is the single source of truth for the Rev 2
     // pinout.  (Do not write the assignment prefix in prose: run_fitter.sh
     // greps for it and any line carrying it lands in the .pin file.)
-    input  wire        DEBUG_IN,         // UART RX input
     input  wire        nVSYNC,           // TIMING's VSYNC, tee'd from the VGA net
                                          // before the 74AC541 buffer (was rev-1
                                          // ~VIDEO_IRQ on the same pin); latched
@@ -42,6 +51,11 @@ module glue (
     input  wire        nDUART_IRQ,       // DUART interrupt request (active low)
     input  wire        nENGINE_IRQ,      // ENGINE CPLD interrupt request (active low)
     input  wire        nPORTS_IRQ,       // PORTS CPLD interrupt request (active low)
+    input  wire        ENGINE_ACTIVE,    // ENGINE: list armed and running (its dma_en)
+    input  wire        ENGINE_WAITING,   // ENGINE: parked in a wait_hblank descriptor
+    input  wire        CF_INTRQ,         // CF card interrupt request (True IDE, active high)
+    input  wire        CF_IORDY,         // CF card ready; low extends the PIO cycle
+    input  wire        nSUPERVISOR_RESET, // DS1233 side of the reset diode (supervisor + button only)
     input  wire        nAS,
     input  wire        [23:18] A_hi,
     input  wire        [5:1]   A_lo,
@@ -75,9 +89,8 @@ module glue (
 
     output wire        nR_W,
     output wire        nDUART_SELECT,
-    output wire        nDUART_RESET,  // Active low reset to 68681
 
-    // PS/2 keyboard (pins 39/40, open-drain with external pull-ups).
+    // PS/2 keyboard (open-drain with external pull-ups).
     // CPLD drives 0 when pin is asserted; tri-states otherwise.
     inout  wire        PS2_CLK,
     inout  wire        PS2_DATA
@@ -101,16 +114,19 @@ module glue (
     wire bus_cycle = AS & ~iack_cycle;
 
     wire RESET = ~nRESET;
-    assign nDUART_RESET = nRESET;
 
     // ----------------------------------------------------------------
     // nHALT — open-drain style bidirectional
     //
-    // During reset: drive low (assert HALT to CPU).
-    // Otherwise: tristate so the CPU can self-halt on double bus
-    // fault.  External pull-up required.
+    // During supervisor/button reset: drive low (assert HALT to CPU).
+    // The source is the DS1233 side of the reset diode
+    // (nSUPERVISOR_RESET), NOT the shared ~RESET net, so the CPU's own
+    // RESET instruction (which pulls the shared net for 124 clocks) is
+    // not echoed back at it as ~HALT.  Otherwise tristate: the CPU
+    // pulls nHALT low itself on a double bus fault, and the debug
+    // header may hold it for bus mastering.  External 4.7k pull-up.
     // ----------------------------------------------------------------
-    assign nHALT = RESET ? 1'b0 : 1'bz;
+    assign nHALT = nSUPERVISOR_RESET ? 1'bz : 1'b0;
 
     assign nR_W = ~R_nW;
     assign nWRITE_LO = ~(lo_byte_selected & write);
@@ -175,6 +191,8 @@ module glue (
     //   4: PS/2     (~PS2_IRQ,    internal) — nIPL = 011
     //   3: ENGINE   (~ENGINE_IRQ)           — nIPL = 100
     //   2: PORTS    (~PORTS_IRQ)            — nIPL = 101
+    //   1: CF       (CF_INTRQ, gated by CONFIG bit CF_IRQ_EN)
+    //                                       — nIPL = 110
     //   none:                               — nIPL = 111
     //
     // TIMING has no CPU bus, so the frame IRQ's latch and acknowledge live
@@ -197,6 +215,10 @@ module glue (
     wire engine_irq_active    = ~nENGINE_IRQ;
     wire ports_irq_active     = ~nPORTS_IRQ;
     wire ps2_irq_active;  // driven by PS/2 bit_ready below
+    // CF INTRQ is an asynchronous level like the DUART and PORTS lines; the
+    // 68000 samples IPL on consecutive clocks, so no synchronizer here.
+    reg  cf_irq_en;       // CONFIG bit CF_IRQ_EN, reset 0
+    wire cf_irq_active        = CF_INTRQ & cf_irq_en;
 
     reg [1:0] vsync_sync;
     reg       vsync_last;
@@ -229,6 +251,7 @@ module glue (
                   ps2_irq_active     ? 3'b011 :  // level 4
                   engine_irq_active  ? 3'b100 :  // level 3
                   ports_irq_active   ? 3'b101 :  // level 2
+                  cf_irq_active      ? 3'b110 :  // level 1
                                        3'b111;   // no interrupt
 
     wire glue_select = glue_segment & bus_cycle;
@@ -259,10 +282,13 @@ module glue (
     //
     // Glue registers live at 0xF00000+ (glue_segment).
     // 68000 byte addresses, odd bytes active with LDS:
-    //   0xF00001  — DEBUG_IN         (read,  bit 0 = DEBUG_IN pin state)
     //   0xF00001  — DEBUG_OUT        (write, bit 0 = OUT)
     //   0xF00007  — CONFIG           (write, bit 0 = ROM_OVERLAY_DISABLE,
-    //                                        bit 1 = FLASH_WE_EN)
+    //                                        bit 1 = FLASH_WE_EN,
+    //                                        bit 2 = VSYNC_IRQ_EN,
+    //                                        bit 3 = CF_IRQ_EN)
+    //   0xF00019  — ENGINE_STATUS    (read,  ACTIVE / WAITING / IRQ)
+    //   0xF0001B  — CF_PINS          (read,  INTRQ / IORDY)
     //
     // A_lo[5:1] selects the word address within the segment.
     // ----------------------------------------------------------------
@@ -276,10 +302,10 @@ module glue (
     localparam [23:0] GLUE_PS2_RX_DATA_ADDR  = `GLUE_PS2_RX_DATA;
     // VSYNC_STATUS and VSYNC_CLEAR share 0xF00017 (R/W sides of the same slot).
     localparam [23:0] GLUE_VSYNC_STATUS_ADDR = `GLUE_VSYNC_STATUS;
+    localparam [23:0] GLUE_ENGINE_STATUS_ADDR = `GLUE_ENGINE_STATUS;
+    localparam [23:0] GLUE_CF_PINS_ADDR       = `GLUE_CF_PINS;
 
     wire debug_out_select      = glue_select & lo_byte_selected & write
-                                 & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
-    wire debug_in_select       = glue_select & lo_byte_selected & read
                                  & (A_lo[5:1] == GLUE_DEBUG_ADDR[5:1]);
     // PS2_TX_DATA spans two word slots (0x09/0x0B): decode on A_lo[5:2]
     // and let A_lo[1] carry the firmware-computed odd-parity bit.  The
@@ -299,6 +325,10 @@ module glue (
                                     & (A_lo[5:1] == GLUE_VSYNC_STATUS_ADDR[5:1]);
     wire vsync_clear_write_select = glue_select & lo_byte_selected & write
                                     & (A_lo[5:1] == GLUE_VSYNC_STATUS_ADDR[5:1]);
+    wire engine_status_read_select = glue_select & lo_byte_selected & read
+                                     & (A_lo[5:1] == GLUE_ENGINE_STATUS_ADDR[5:1]);
+    wire cf_pins_read_select       = glue_select & lo_byte_selected & read
+                                     & (A_lo[5:1] == GLUE_CF_PINS_ADDR[5:1]);
     // ----------------------------------------------------------------
     // Data bus — bidirectional
     //
@@ -306,15 +336,14 @@ module glue (
     // All other times the pins are tristated so the CPU, ROM, RAM,
     // etc. can drive the bus.
     // ----------------------------------------------------------------
-    wire glue_read_active = debug_in_select | ps2_status_read_select
-                          | ps2_rx_data_read_select | vsync_status_read_select;
+    wire glue_read_active = ps2_status_read_select
+                          | ps2_rx_data_read_select | vsync_status_read_select
+                          | engine_status_read_select | cf_pins_read_select;
 
     reg [7:0] glue_read_data;
     always @(*) begin
         glue_read_data = 8'h00;
-        if (debug_in_select)
-            glue_read_data = {7'd0, DEBUG_IN};
-        else if (ps2_status_read_select)
+        if (ps2_status_read_select)
             glue_read_data = {1'b0,
                               ps2_clk_clean,     // bit 6: CLK_LIVE (debounced)
                               ps2_data_sync[1],  // bit 5: DATA_LIVE
@@ -327,6 +356,18 @@ module glue (
             glue_read_data = rx_byte;
         else if (vsync_status_read_select)
             glue_read_data = {7'd0, vsync_pending};
+        // ENGINE_ACTIVE / ENGINE_WAITING are registered in ENGINE on the same
+        // SYSCLK and CF_INTRQ / CF_IORDY are slow levels: all four are read
+        // raw, like the joystick switches in PORTS.
+        else if (engine_status_read_select)
+            glue_read_data = {5'd0,
+                              engine_irq_active,   // bit 2: IRQ
+                              ENGINE_WAITING,      // bit 1: WAITING
+                              ENGINE_ACTIVE};      // bit 0: ACTIVE
+        else if (cf_pins_read_select)
+            glue_read_data = {6'd0,
+                              CF_IORDY,            // bit 1: IORDY
+                              CF_INTRQ};           // bit 0: INTRQ
     end
 
     assign D = glue_read_active ? glue_read_data : 8'bz;
@@ -341,6 +382,7 @@ module glue (
             rom_overlay_disable <= 0;
             flash_we_en         <= 0;
             vsync_irq_en        <= 0;
+            cf_irq_en           <= 0;
             debug_out_reg       <= 0;
         end else begin
             if (glue_select & lo_byte_selected & write
@@ -348,13 +390,44 @@ module glue (
                 rom_overlay_disable <= D[0];
                 flash_we_en         <= D[`GLUE_CONFIG_FLASH_WE_EN_SHIFT];
                 vsync_irq_en        <= D[`GLUE_CONFIG_VSYNC_IRQ_EN_SHIFT];
+                cf_irq_en           <= D[`GLUE_CONFIG_CF_IRQ_EN_SHIFT];
             end
             if (debug_out_select)
                 debug_out_reg <= D[0];
         end
     end
 
-    assign DEBUG_OUT = debug_out_reg;
+    // ----------------------------------------------------------------
+    // Halted-CPU indicator.  nHALT low while GLUE itself is out of
+    // reset means the CPU has stopped: a double bus fault (the 68000
+    // asserts nHALT and only a reset restarts it) or a debug-header
+    // hold.  The CPU cannot report that itself, so GLUE overrides
+    // DEBUG_OUT with a vsync/32 (~1.9 Hz) blink while the synchronized
+    // nHALT is low; debug_out_reg regains the pin when it releases.
+    // Unlatched, so a stale-low sample right after reset release
+    // selects the blink bit for ~100 ns — invisible.
+    // ----------------------------------------------------------------
+    // Single sync FF is deliberate: halt_sync feeds only the LED mux
+    // (display, no state machine), so a metastable sample costs at most
+    // one wrong LED clock.
+    reg       halt_sync;
+    reg [4:0] blink_cnt;
+    reg       debug_led_r;    // registered copy so the pin cell does not
+                              // constrain where the mux sources live
+    always @(posedge SYSCLK) begin
+        if (RESET) begin
+            halt_sync   <= 1'b1;
+            blink_cnt   <= 5'd0;
+            debug_led_r <= 1'b0;
+        end else begin
+            halt_sync   <= nHALT;
+            if (vsync_last & ~vsync_sync[1])
+                blink_cnt <= blink_cnt + 5'd1;
+            debug_led_r <= ~halt_sync ? blink_cnt[4] : debug_out_reg;
+        end
+    end
+
+    assign DEBUG_OUT = debug_led_r;
 
     // ----------------------------------------------------------------
     // PS/2 frame engine (GLUE_PS2_TX_DATA / _STATUS / _CLEAR / _CTRL /
@@ -528,6 +601,20 @@ module glue (
             ws_cnt <= ws_cnt + 4'd1;
     end
 
+    // CF IORDY qualifies the CF DTACK: the card negates IORDY (drives it
+    // low) when it needs the PIO cycle extended, and releases it when the
+    // data is ready.  It is asynchronous, so it is 2-FF synchronized before
+    // it can gate the combinational DTACK output.  The BERR timeout below
+    // is unchanged and still bounds the cycle: a card holding IORDY low
+    // past ws_cnt 15 gets a bus error, not a hang.
+    reg [1:0] cf_iordy_sync;
+    always @(posedge SYSCLK) begin
+        if (RESET)
+            cf_iordy_sync <= 2'b11;
+        else
+            cf_iordy_sync <= {cf_iordy_sync[0], CF_IORDY};
+    end
+
     wire dtack_comb =
         ((~nRAM_1_SEL)      & (ws_cnt >= `RAM_BANK_1_DTACK_THRESHOLD))  |  // RAM bank 1
         ((~nRAM_2_SEL)      & (ws_cnt >= `RAM_BANK_2_DTACK_THRESHOLD))  |  // RAM bank 2
@@ -536,7 +623,8 @@ module glue (
         ((~nROM_SELECT)     & (ws_cnt >= `ROM_DTACK_THRESHOLD))  |  // ROM
         (glue_select        & (ws_cnt >= `GLUE_DTACK_THRESHOLD))  |  // GLUE (0 WS, same as RAM)
         (~nENGINE_SELECT    & (ws_cnt >= `ENGINE_DTACK_THRESHOLD)) |  // ENGINE (0 WS)
-        (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)) |  // CF
+        (cf_select          & (ws_cnt >= `CF_DTACK_THRESHOLD)
+                            & cf_iordy_sync[1]) |  // CF, IORDY-qualified
         ((~nDUART_SELECT)   & ~nDUART_DTACK) |  // DUART
         (ports_select       & (ws_cnt >= `PORTS_DTACK_THRESHOLD));   // PORTS (0 WS)
 
@@ -561,12 +649,14 @@ endmodule
 //   - Nothing after the pin number - the cut includes all trailing text
 //   - JTAG pins (TDI:14, TMS:23, TCK:62, TDO:71) are dedicated; no PIN entry needed
 //
+// Released: DEBUG_IN (64) and nDUART_RESET (24) — unassigned bodge
+// spares (pin keeper, no pulls); route to pads only.
+//
 //PIN: CHIP "glue" ASSIGNED TO AN PLCC84
 //
 //PIN: SYSCLK          : 83
 //PIN: nRESET          : 84
 //PIN: nHALT           : 25
-//PIN: DEBUG_IN        : 64
 //PIN: DEBUG_OUT       : 61
 //PIN: nVSYNC          : 65
 //PIN: nROM_SELECT     : 17
@@ -622,7 +712,11 @@ endmodule
 //PIN: nDUART_IRQ      : 67
 //PIN: nENGINE_IRQ     : 68
 //PIN: nPORTS_IRQ      : 69
+//PIN: ENGINE_ACTIVE   : 35
+//PIN: ENGINE_WAITING  : 36
+//PIN: CF_INTRQ        : 40
+//PIN: CF_IORDY        : 2
+//PIN: nSUPERVISOR_RESET : 63
 //PIN: nENGINE_SELECT  : 39
-//PIN: nDUART_RESET    : 24
 //PIN: PS2_CLK         : 80
 //PIN: PS2_DATA        : 77

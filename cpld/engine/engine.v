@@ -1,11 +1,9 @@
-// edma3.v — Griffin display-list DMA engine (ATF1508AS) — DRAFT
+// engine.v — Griffin display-list DMA engine (ATF1508AS), production ENGINE
 //
-// Fit experiment for the ENGINE successor: a descriptor-array ("display
-// list") DMA engine.  Unlike edma.v (which chained descriptors inline with
-// the payload) this version keeps a descriptor pointer into a table in the
-// top 64K of RAM, so the CPU can rewrite the list without touching the
-// pixel data.  NOT wired into `make all`; this module exists to measure
-// logic-cell / flip-flop / product-term cost against the Rev-1 pinout.
+// A descriptor-array ("display list") DMA engine.  Unlike edma.v (which
+// chained descriptors inline with the payload) this version keeps a
+// descriptor pointer into a table in the top 64K of RAM, so the CPU can
+// rewrite the list without touching the pixel data.
 //
 // Descriptors are 4 words (8 bytes) and must be 4-word aligned; three words
 // are used and the fourth is a pad, read and discarded so that the single
@@ -15,8 +13,10 @@
 //   word 0: [15]    wait_hblank  wait for HBLANK rising edge before payload
 //           [14]    stop_after   last entry: assert nENGINE_IRQ and stop
 //           [13:9]  count        payload words, 0-biased (0 = 1, 31 = 32)
-//           [8:7]   reserved
-//           [6:0]   signal mask  one-hot (or multi-cast) destination strobes
+//           [8:4]   reserved
+//           [3:0]   signal mask  one-hot (or multi-cast) deposit strobes:
+//                   0 nPIXELS_FIFO_W, 1 nVIDCMD_FIFO_W, 2 nAUDIO_FIFO_W,
+//                   3 nSIGNAL_SPARE (griffin.yml ENGINE_SIGNAL_*)
 //   word 1: [15:7]  reserved
 //           [6:0]   src[22:16]
 //   word 2: [15:1]  src[15:1]
@@ -26,7 +26,7 @@
 // Operation: the CPU writes the word address of the first descriptor, which
 // arms the engine.  ENGINE bus-masters (BR -> BG -> AS idle -> BGACK), reads
 // the four descriptor words at {8'h3F, desc_ptr} (RAM's top 64K), then reads
-// `count` words from {1'b0, src_addr} pulsing the descriptor's nSIGNAL lines
+// `count` words from {1'b0, src_addr} pulsing the descriptor's strobe lines
 // once per word (the selected consumer latches D[15:0] off the bus — nothing
 // is ever written, so no write cycles and no address decode).  The bus is
 // released and re-requested between descriptors, and a wait_hblank descriptor
@@ -34,24 +34,21 @@
 // re-acquires.
 //
 // Holding the bus across a chain of non-waiting descriptors (the original
-// intent, edma2.v) does not fit the frozen Rev-1 ENGINE pinout: it needs
-// 128/128 logic cells even with free pins and grouping-fails at -preassign
-// keep.  Releasing between every descriptor costs one extra arbitration
-// round-trip per descriptor and fit at 124/128.
+// intent, edma2.v) does not fit the frozen ENGINE pinout: it needs 128/128
+// logic cells even with free pins and grouping-fails at -preassign keep.
+// Releasing between every descriptor costs one extra arbitration round-trip
+// per descriptor.  Fit ladders: griffin.log.
 //
-// Measured (ATF1508AS PLCC84, -preassign keep, Rev-1 pinout):
-//   edma2.v, 7-bit count, binary dest[2:0] + nDEPOSIT   124 LC  75 FF  434 PT
-//   + 5-bit count only                                  DOES NOT FIT
-//   + 5-bit count and 7 one-hot strobes (this file)     123 LC  77 FF  414 PT
-// The 5-bit count alone is a wash on logic cells and pushes the fitter off
-// the placement cliff; it only pays off combined with the one-hot strobes,
-// which delete the binary decode and drop the worst equation from 10 PTs to
-// 5 (one macrocell's worth) across the whole design.
+// The CPU cannot read ENGINE (reads see the open bus); its state is exposed
+// through two wires into GLUE's ENGINE_STATUS register: ENGINE_ACTIVE (a
+// list is armed and not yet stopped or aborted) and ENGINE_WAITING (parked
+// in a wait_hblank descriptor with the bus released).  With nENGINE_IRQ
+// (also into GLUE) that distinguishes idle / running / parked / finished.
 //
-// Transfer timing follows production engine.v: AS/UDS/LDS are asserted once
-// and held, the address advances every 2 CPUCLK cycles, and DTACK is ignored
-// because the framebuffer is 0-wait-state SRAM selected combinationally from
-// the address.  The count is loaded complemented and counted *up* to the
+// Transfer timing: AS/UDS/LDS are asserted once and held, the address
+// advances every 2 CPUCLK cycles, and DTACK is not sampled because every
+// source ENGINE reads is 0-wait-state SRAM selected combinationally from
+// the address.  GLUE owns DTACK for the CPU's writes to DESC and CTRL.  The count is loaded complemented and counted *up* to the
 // all-ones terminal — on ATF1508 a constant costs roughly its number of 1
 // bits, so upcounters with an all-1s terminal beat downcounters and equality
 // comparators.
@@ -70,10 +67,6 @@ module Edma3
     inout  wire        nLDS,
     inout  wire [2:0]  FC,
 
-    // Bus observation.  Unused — DTACK carries no information the engine
-    // doesn't already have for 0-WS SRAM; pin retained for the Rev 1 board.
-    input  wire        nDTACK_BUS,      // pin 81 (GCLK3)
-
     // CPU register interface
     input  wire        nENGINE_SELECT,  // pin 84 (OE1) — GLUE address decode
 
@@ -82,11 +75,17 @@ module Edma3
     output reg         nBR,             // pin 79
     output reg         nBGACK,          // pin 77
 
-    // Generalized deposit interface — one active-low strobe per consumer,
-    // driven straight from the descriptor's mask, so no off-chip decoder.
-    // Bit 0 VIDEO_FIFO_W, 1 VIDEO_PALETTE, 2 VIDEO_MODE, 3 OVERLAY_FIFO_W,
-    // 4 AUDIO_FIFO_W, 5 spare, 6 spare.
-    output wire [6:0]  nSIGNAL,
+    // Deposit strobes — one active-low /W per consumer FIFO, driven straight
+    // from the descriptor's mask bit, so no off-chip decoder.  The consumer's
+    // data pins sit on D[15:0].  nSIGNAL_SPARE (mask bit 3) goes to a header.
+    output wire        nPIXELS_FIFO_W,  // mask bit 0
+    output wire        nVIDCMD_FIFO_W,  // mask bit 1
+    output wire        nAUDIO_FIFO_W,   // mask bit 2
+    output wire        nSIGNAL_SPARE,   // mask bit 3
+
+    // Status wires to GLUE (ENGINE_STATUS register), see header.
+    output wire        ENGINE_ACTIVE,   // dma_en
+    output wire        ENGINE_WAITING,  // parked in STATE_HBLANK_WAIT
 
     // Raster pacing input from TIMING's HBLANK output (Rev 2; was VIDEO's
     // in Rev 1): high for h_cnt 640..799 on every line, so the rising edge
@@ -110,7 +109,7 @@ module Edma3
     reg [14:0] desc_ptr;                // A[15:1] of the current descriptor word
     reg [22:1] src_addr;                // A[22:1] of the current payload word
     reg [4:0]  words_left;              // complemented; all-1s = last word
-    reg [6:0]  signal_mask;             // latched at descriptor word 0
+    reg [3:0]  signal_mask;             // latched at descriptor word 0
     reg        deposit;                 // strobe phase, one cycle per word
     reg        wait_hblank;
     reg        stop_after;
@@ -118,9 +117,13 @@ module Edma3
     reg        phase_payload;           // 0 = fetching descriptor, 1 = payload
 
     // Combinational fan-out of one strobe-phase flip-flop through the latched
-    // mask: 7 pin cells plus 1 buried flip-flop, rather than 7 output
+    // mask: 4 pin cells plus 1 buried flip-flop, rather than 4 output
     // flip-flops each carrying the full state decode.
-    assign nSIGNAL = ~(signal_mask & {7{deposit}});
+    wire [3:0] nSIGNAL = ~(signal_mask & {4{deposit}});
+    assign nPIXELS_FIFO_W = nSIGNAL[0];
+    assign nVIDCMD_FIFO_W = nSIGNAL[1];
+    assign nAUDIO_FIFO_W  = nSIGNAL[2];
+    assign nSIGNAL_SPARE  = nSIGNAL[3];
 
     // ----------------------------------------------------------------
     // Bus tri-state — drive only when BGACK is asserted (mastering)
@@ -206,6 +209,26 @@ module Edma3
 
     reg [3:0] state;
 
+    // Registered copies (one CPUCLK late) so the output pin cells do not
+    // constrain where the fitter places dma_en and the state register.
+    reg engine_active_r;
+    reg engine_waiting_r;
+    always @(posedge CPUCLK or posedge RESET)
+    begin
+        if (RESET)
+        begin
+            engine_active_r  <= 1'b0;
+            engine_waiting_r <= 1'b0;
+        end
+        else
+        begin
+            engine_active_r  <= dma_en;
+            engine_waiting_r <= (state == STATE_HBLANK_WAIT);
+        end
+    end
+    assign ENGINE_ACTIVE  = engine_active_r;
+    assign ENGINE_WAITING = engine_waiting_r;
+
     always @(posedge CPUCLK or posedge RESET)
     begin
         if (RESET)
@@ -223,7 +246,7 @@ module Edma3
             desc_ptr      <= 15'd0;
             src_addr      <= 22'd0;
             words_left    <= 5'd0;
-            signal_mask   <= 7'd0;
+            signal_mask   <= 4'd0;
             wait_hblank   <= 1'b0;
             stop_after    <= 1'b0;
         end
@@ -311,7 +334,7 @@ module Edma3
                             wait_hblank <= D[15];
                             stop_after  <= D[14];
                             words_left  <= ~D[13:9];
-                            signal_mask <= D[6:0];
+                            signal_mask <= D[3:0];
                         end
 
                         2'b01:
@@ -442,29 +465,30 @@ module Edma3
 
 endmodule
 
-// EDMA3 ATF1508 — Griffin board Rev 1 ENGINE socket
+// ENGINE ATF1508 — Griffin board Rev 2
 // Pin assignments for atf15xx_yosys / fit1508.exe, PLCC-84 package
 //
-// Identical to production engine.v except: nFIFO_W (10), q8_toggle_out (8)
-// and nFIFO_HF (6) are gone, and nSIGNAL[6:0]/HBLANK take those pins plus
-// 9, 40, 41, 46 and 2 — all unconnected on the Rev 1 PCB.  Pin 80 is the
-// last free I/O and is held in reserve.
+// FROZEN.  The Rev 1 hand pinout with: nFIFO_W (10), q8_toggle_out (8),
+// nFIFO_HF (6) and nDTACK_BUS (81) gone; the three FIFO /W strobes on 10,
+// 8, 6 and the spare strobe on 9; HBLANK on 2; the two GLUE status wires on
+// 80 and 4.  Pins 40, 41, 46 and 81 are released (unconnected).
 //
-//PIN: CHIP "edma3" ASSIGNED TO AN PLCC84
+//PIN: CHIP "engine" ASSIGNED TO AN PLCC84
 //
 // System
 //PIN: CPUCLK         : 83
 //PIN: nRESET         : 1
 //PIN: nENGINE_SELECT : 84
-//PIN: nDTACK_BUS     : 81
 //
 // Bus arbitration
 //PIN: nBG            : 76
 //PIN: nBR            : 79
 //PIN: nBGACK         : 77
 //
-// IRQ output to GLUE
+// IRQ and status to GLUE
 //PIN: nENGINE_IRQ    : 5
+//PIN: ENGINE_ACTIVE  : 80
+//PIN: ENGINE_WAITING : 4
 //
 // Bus control
 //PIN: R_nW           : 25
@@ -518,12 +542,11 @@ endmodule
 //PIN: D_1            : 68
 //PIN: D_0            : 18
 //
-// Deposit strobes, active low (bodge wires to breadboard)
-//PIN: nSIGNAL_0      : 10
-//PIN: nSIGNAL_1      : 8
-//PIN: nSIGNAL_2      : 6
-//PIN: nSIGNAL_3      : 9
-//PIN: nSIGNAL_4      : 40
-//PIN: nSIGNAL_5      : 41
-//PIN: nSIGNAL_6      : 46
+// Deposit strobes, active low: FIFO /W pins; the spare goes to a header
+//PIN: nPIXELS_FIFO_W : 10
+//PIN: nVIDCMD_FIFO_W : 8
+//PIN: nAUDIO_FIFO_W  : 6
+//PIN: nSIGNAL_SPARE  : 9
+//
+// Raster pacing from TIMING
 //PIN: HBLANK         : 2

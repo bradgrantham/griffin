@@ -204,7 +204,7 @@ inline constexpr uint8_t SIGNAL_NONE          = 0x00;
 inline constexpr uint8_t SIGNAL_PIXELS_FIFO_W = 0x01;  // bit 0
 inline constexpr uint8_t SIGNAL_VIDCMD_FIFO_W = 0x02;  // bit 1
 inline constexpr uint8_t SIGNAL_AUDIO_FIFO_W  = 0x04;  // bit 2
-inline constexpr uint8_t SIGNAL_SPARE_3       = 0x08;  // bit 3 (unassigned)
+inline constexpr uint8_t SIGNAL_SPARE         = 0x08;  // bit 3: ENGINE nSIGNAL_SPARE header, no FIFO
 inline constexpr uint8_t SIGNAL_MASK_ALL      = 0x0F;
 
 // ============================================================================

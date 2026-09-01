@@ -911,7 +911,7 @@ static void dl_build_console_list()
 
 // On-CF image geometry.  Not hardware; just the file layout, and it happens to
 // match the framebuffer exactly now that neither has a header.
-static constexpr unsigned IMG_PIXEL_BYTES = Griffin::VIDEO_PIXEL_BYTES_PER_LINE;  // 80
+static constexpr unsigned IMG_PIXEL_BYTES = 2 * Griffin::PIXELS_WORDS_PER_LINE_1BPP;  // 80
 
 // The four file sizes `view` recognises, all derived from the raster geometry
 // above rather than written out.  See image-tools/smurf-assets/README.md for

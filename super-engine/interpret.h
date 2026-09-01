@@ -73,6 +73,9 @@ public:
     WalkResult advance(Memory ram, uint64_t hblank_edge_cycle, DepositSink &sink);
 
     bool armed() const { return armed_; }
+    // A wait_hblank descriptor is parked, waiting for the next HBLANK edge
+    // (the hardware's ENGINE_WAITING wire, bus released).
+    bool parked() const { return pending_; }
     bool irq_pending() const { return irq_pending_; }
     void clear_irq() { irq_pending_ = false; }
     uint32_t descriptor_pointer() const { return desc_ptr_; }

@@ -15,7 +15,7 @@ project:
 peripherals:
   GLUE:
     part: ATF1508AS
-    description: "System glue logic and PS/2 keyboard"
+    description: "System glue logic, PS/2 keyboard, ENGINE and CF card status readback"
     address_range:
       base: 0xF00000
       size: 0x040000
@@ -34,7 +34,11 @@ peripherals:
         name: DEBUG_OUT
         access: write
         width: 8
-        description: "Set or clear DEBUG_OUT signal (debug LED and test point output)"
+        description: |
+          Set or clear DEBUG_OUT signal (debug LED and test point output).
+          While ~HALT is low (CPU halted: double bus fault, or a
+          debug-header hold) GLUE overrides the pin with a ~1.9 Hz blink
+          (vsync/32); the register value returns when ~HALT releases.
         bits:
           - { bit: "0", name: OUT, description: "DEBUG_OUT drive level" }
       - offset: 0x07
@@ -49,6 +53,8 @@ peripherals:
               description: "Write 1 to enable the ~ROM_WE strobe so ROM-window word writes reach the flash (JEDEC program/erase); 0 write-protects flash" }
           - { bit: "2", name: VSYNC_IRQ_EN, default: 0,
               description: "Write 1 to let a latched vsync drive the level-6 IPL code; 0 (reset value) suppresses only the IRQ term, leaving the vsync_pending latch, VSYNC_STATUS readback and VSYNC_CLEAR W1C live so firmware can poll vblank without an ISR" }
+          - { bit: "3", name: CF_IRQ_EN, default: 0,
+              description: "Write 1 to let the CF card's INTRQ level drive the level-1 IPL code; 0 (reset value) leaves CF_PINS.INTRQ readable but raises no interrupt" }
       - offset: 0x09
         name: PS2_TX_DATA
         access: write
@@ -139,6 +145,39 @@ peripherals:
         description: "Write-1-to-clear for VSYNC_PENDING / level-6 IRQ ack."
         bits:
           - { bit: "0", name: VSYNC_PENDING, description: "Write 1 to clear VSYNC_PENDING (vsync ISR ack)" }
+      - offset: 0x19
+        name: ENGINE_STATUS
+        access: read
+        width: 8
+        description: |
+          Display-list ENGINE state, read back through GLUE because ENGINE reads see the open bus.
+          ACTIVE and WAITING are ENGINE's registered status wires (ENGINE
+          pins 80 and 4 -> GLUE), one SYSCLK behind its state machine; IRQ
+          is the ~ENGINE_IRQ net.  Idle = 000, running = 001, parked in a
+          wait_hblank descriptor = 011, finished by stop_after and not yet
+          acknowledged = 100 (the list disarms itself), aborted = 000.
+        bits:
+          - { bit: "0", name: ACTIVE,
+              description: "1 = a list is armed and has not stopped or been aborted (ENGINE dma_en)" }
+          - { bit: "1", name: WAITING,
+              description: "1 = ENGINE has released the bus and is waiting for TIMING's HBLANK rising edge" }
+          - { bit: "2", name: IRQ,
+              description: "1 = ~ENGINE_IRQ is asserted (stop_after reached; any DESC or CTRL write clears it)" }
+      - offset: 0x1B
+        name: CF_PINS
+        access: read
+        width: 8
+        description: |
+          CF card sideband pin levels, read raw.
+          INTRQ is the card's True IDE interrupt request (high = a command
+          has completed or DRQ is set, per the card's nIEN setting); it is
+          also the level-1 interrupt when CONFIG bit CF_IRQ_EN is set.
+          IORDY low means the card is extending the current PIO cycle; GLUE
+          synchronizes it and withholds the CF DTACK while it is low, up to
+          the BERR timeout.
+        bits:
+          - { bit: "0", name: INTRQ, description: "Live CF INTRQ level" }
+          - { bit: "1", name: IORDY, description: "Live CF IORDY level (1 = ready)" }
 
   # Decode: A23 & ~A22; the 1MB image mirrors 4x through the 4MB window.
   # At reset ROM is also overlaid over RAM bank 1 until CONFIG.ROM_OVERLAY_DISABLE.
@@ -228,12 +267,21 @@ peripherals:
     linker:
       section: ram
 
-  # nENGINE_SELECT comes from GLUE
-  # Write-only MMIO decoded on A[2:1] with LDS; reads see the open bus.
+  # nENGINE_SELECT comes from GLUE, which also owns DTACK for the CPU's
+  # DESC/CTRL writes (0 wait states); ENGINE has no DTACK pin.  As a master
+  # it does not sample DTACK either: every source it reads is 0-wait-state
+  # SRAM selected combinationally from the address.
+  # Write-only MMIO decoded on A[2:1] with LDS; reads see the open bus, so
+  # ENGINE's state is read through GLUE ENGINE_STATUS (ACTIVE and WAITING
+  # wires from ENGINE, plus the ~ENGINE_IRQ net).
   # ENGINE is a bus master (BR/BG/BGACK): each 4-word descriptor reads
   # count words from any address and pulses one active-low deposit strobe
-  # (ENGINE_SIGNAL_*) per word -- PIXELS / VIDCMD / AUDIO FIFO /W -- so the
-  # consumers' data pins sit directly on D[15:0] and need no address decode.
+  # per word, chosen by the descriptor's mask (ENGINE_SIGNAL_*): the nets
+  # nPIXELS_FIFO_W, nVIDCMD_FIFO_W and nAUDIO_FIFO_W are the /W pins of the
+  # three FIFO pairs, whose data pins sit directly on D[15:0] and need no
+  # address decode; nSIGNAL_SPARE (mask bit 3) goes only to a header.
+  # ~ENGINE_IRQ asserts when a stop_after descriptor completes and clears on
+  # any DESC or CTRL write.
   # Descriptors themselves are read only from the top 64K of RAM.
   # wait_hblank descriptors wait for the rising edge of TIMING's HBLANK.
   # Descriptor format and strobe semantics: super-engine/descriptor.h and
@@ -362,7 +410,7 @@ peripherals:
   #   mode[2] = half rate (ignored in micro-HAM).  1bpp (mode[1:0] == 00) is
   #   80 bytes/line MSB first (PIXELS_WORDS_PER_LINE_1BPP); micro-HAM and
   #   indexed are two stream bits per pixel clock, 160 bytes/line
-  #   (PIXELS_WORDS_PER_LINE_HAM); half rate holds each bit-group for two
+  #   (PIXELS_WORDS_PER_LINE_2BPP); half rate holds each bit-group for two
   #   clocks and halves the stream (40 / 80 bytes) at half the horizontal
   #   resolution.  PIXEL_SKIP >= 8 discards whole bytes; [2:0] shifts bits.
   # - RGB_OUT[11:0] -> COMPOSITOR RGB_IN, one register after the decoder's
@@ -609,9 +657,18 @@ peripherals:
 
   # 16-bit True IDE PIO: DATA is word offset 0x00; task-file registers are
   # byte-wide on D7-D0 at the odd offsets.  GLUE gates IOWR with AS.
+  # Sideband pins to GLUE (see GLUE CF_PINS): INTRQ (active high; the card
+  # tri-states it when nIEN = 1, so the board pulls it down) is the level-1
+  # interrupt when CONFIG.CF_IRQ_EN is set; IORDY (the card tri-states it
+  # when not extending a cycle, so the board pulls it up) withholds the CF
+  # DTACK while low.  The dtack entries below are the fixed part of the
+  # cycle; IORDY can only lengthen it, never shorten it.
   CF:
     part: "Compact Flash (True IDE)"
     description: "Storage via CF card in True IDE 16-bit PIO mode"
+    interrupt:
+      level: 1
+      signal: CF_INTRQ    # gated in GLUE by CONFIG.CF_IRQ_EN
     address_range:
       base: 0xF40000
       size: 0x040000
@@ -661,7 +718,8 @@ peripherals:
     # (future raster/audio-rate select); unused today, and the OP reset state
     # (OPR = 0 -> pins HIGH, 1111) must remain today's behaviour.
     # Bus: ~CS from GLUE (nDUART_SELECT), DTACKN back to GLUE (nDUART_DTACK),
-    # ~IACK tied high (autovectors), ~RESET from GLUE nDUART_RESET.
+    # ~IACK tied high (autovectors), RESET (active low) directly on the
+    # system ~RESET net.
     address_range:
       base: 0xF80000
       size: 0x040000
@@ -826,10 +884,12 @@ constants:
   # VIDCMD/descriptor encodings stay in super-engine/descriptor.h; semantics
   # in vidcmd-spec.md; implementations in cpld/{engine,compositor,pixel}.
 
-  # ENGINE descriptor word0 one-hot deposit strobe mask bits (3 assigned + 1 spare).
+  # ENGINE descriptor word0 one-hot deposit strobe mask bits; each drives the
+  # ENGINE pin of the same name.  SPARE goes to a header, not to a FIFO.
   ENGINE_SIGNAL_PIXELS_FIFO_W:  0x01
   ENGINE_SIGNAL_VIDCMD_FIFO_W:  0x02
   ENGINE_SIGNAL_AUDIO_FIFO_W:   0x04
+  ENGINE_SIGNAL_SPARE:          0x08
 
   # VIDCMD SET target numbering {1, ttt, value[11:0]}: 0..1 COMPOSITOR-local,
   # 2..6 forwarded to PIXEL over the valid/target/commit handshake, 7 spare.
@@ -850,7 +910,7 @@ constants:
   # Pixel stream lengths (no in-band header): 1bpp = 1 bit/px, 2bpp
   # micro-HAM / indexed = 2 stream bits per px clock.
   PIXELS_WORDS_PER_LINE_1BPP: 40
-  PIXELS_WORDS_PER_LINE_HAM:  80
+  PIXELS_WORDS_PER_LINE_2BPP: 80   # both 2bpp modes, micro-HAM and indexed
 
   # Pipeline lead constants -- DERIVED from measured stage latencies, not
   # tuned; TIMING fires its comparators early by exactly these amounts and
@@ -924,8 +984,7 @@ bodges:
 
 # Open items only.
 issues:
-  - "FIFO desync observability: the display-list ENGINE does not drive the 7200 9th-bit toggle, so there is no desync detector in rev 2.  Decide whether a CPU-pollable status is wanted or frame-bounded /RS recovery is enough."
-  - "What raises ~ENGINE_IRQ is unspecified; the pin is routed but always 1."
+  - "FIFO desync observability: the display-list ENGINE does not drive the 7200 9th-bit toggle, so there is no FIFO-level desync detector in rev 2.  GLUE ENGINE_STATUS exposes the engine's own state; decide whether that plus frame-bounded /RS recovery is enough."
   - "Micro-HAM stream encoding is not captured in the YAML."
   - "VIDCMD SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  Swapping the target NUMBERS to match the colour numbers is a wire-contract change, not yet decided."
   - "Only one raster mode (640x480 in 800x525 @ 60) is specified.  Alternate rasters (the DUART OP4..OP7 selector into TIMING) have no video_timing entry and no consumer contract."
@@ -935,10 +994,7 @@ issues:
   - "Writes to bank 1 during ROM overlay are unspecified."
   - "Other RAM areas during overlay: probably pass through except ROM space; should ROM then be limited to the image size with BERR outside it?"
   - "IO ports repeating (mirroring) within their range is not stated."
-  - "DTACK ownership for ENGINE is unstated; probably GLUE should continue to own DTACK."
-  - "Per-peripheral interrupt.level is given but the YAML never states that GLUE encodes IPL2:0 and asserts ~VPA on IACK, nor which IRQ signals are physical nets (ENGINE, DUART, PORTS -> GLUE) versus internal (~PS2_IRQ never leaves GLUE); a netlist diff will expect a ~PS2_IRQ net."
-  - "Not captured here: the two oscillators, SYSCLK into a GCLK on each CPLD, and the ~HALT open-drain contract.  A clocks: section or one more interfaces entry would make them checkable."
-  - "ENGINE's nSIGNAL strobe width and bit naming in engine.v (7 bits, rev-1 names) disagree with the ENGINE_SIGNAL_* constants (3 assigned + 1 spare); reconcile before the ENGINE pinout is used for the audio /W net."
+  - "Per-peripheral interrupt.level is given but the YAML never states that GLUE encodes IPL2:0 and asserts ~VPA on IACK, nor which IRQ signals are physical nets (ENGINE, DUART, PORTS, CF -> GLUE) versus internal (~PS2_IRQ never leaves GLUE); a netlist diff will expect a ~PS2_IRQ net."
 
 # Chip-to-chip interface contracts: parts, nets, and pinned numbers.  KiCad
 # is the connectivity authority; this is the intent layer.  Read as a parts
@@ -964,8 +1020,10 @@ interfaces:
   - |
     Stream FIFO parts: all three streams use 2x IDT7200 (256x9) -- PIXELS
     byte-interleaved shared-Q pair (/RE from PIXEL), VIDCMD ganged 16-bit
-    (/RE from COMPOSITOR), AUDIO one per channel (/RE from PORTS).  All /W
-    strobes come from ENGINE's deposit outputs; data pins on D[15:0].
+    (/RE from COMPOSITOR), AUDIO one per channel (/RE from PORTS).  Each
+    pair's /W pins are one ENGINE deposit strobe: nPIXELS_FIFO_W,
+    nVIDCMD_FIFO_W, nAUDIO_FIFO_W (ENGINE pins per engine.v); data pins on
+    D[15:0].
     PIXELS and VIDCMD /RS from TIMING nRS; AUDIO /RS from PORTS
     (AUDIO_CONTROL.RESET), AUDIO /EF to PORTS, /HF unconnected.  XI/XO cascade is an
     unpopulated-footprint option if depth is ever needed.
@@ -979,11 +1037,60 @@ interfaces:
   - |
     Power entry: 5.5mm x 2.1mm center-positive barrel jack, regulated 5V
     >= 2.5A, inline switch; silkscreen "5V regulated 2.5A+ center positive".
-    Supervisor: DS1233D-5 (open-drain RST, internal 5k pull-up, trip
-    4.50-4.74 V, 350 ms stretch, IOL 8 mA), wire-OR on ~RESET with the user
-    button, the CPU's RESET-instruction driver, and the debug-header master.
-    No RC on the reset net.  Bring-up gate: rail >= 4.85 V at the supervisor
-    under full load, else DS1233D-10 or trim the supply.
+    Supervisor: DS1233-5 (open-drain RST, internal 5k pull-up, trip
+    4.50-4.74 V, 350 ms stretch, IOL 8 mA).  The user button hangs on the
+    supervisor's RST pin: the plain (non-D) part senses the low as a
+    pushbutton press, debounces it, and re-stretches the full reset after
+    release, so the button needs no RC of its own.  Supervisor RST reaches
+    the system ~RESET net through a Schottky diode (anode on the net,
+    cathode at RST): the supervisor and button pull the net low (asserted
+    level VOL + Vf ~= 0.5 V, under the 0.8 V TTL VIL), while lows driven
+    on the net -- the CPU's 124-clock RESET-instruction pulse, the
+    debug-header master -- never reach RST, so they cannot trip the
+    pushbutton detect and be stretched.  RST also feeds GLUE's
+    nSUPERVISOR_RESET input (pin in glue.v), the source of ~HALT
+    assertion (next entry).  ~RESET net wire-OR drivers: the diode, the
+    CPU, the debug-header master; 10k pull-up; no RC on the net.
+    Bring-up gate: rail >= 4.85 V at the supervisor under full load, else
+    DS1233-10 or trim the supply.  Firmware never executes the RESET
+    instruction: its pulse still resets GLUE (CONFIG clears, ROM overlay
+    returns) under a still-running CPU.
+  - |
+    ~HALT open-drain wire-OR: GLUE drives it low while nSUPERVISOR_RESET
+    is asserted (power-on, brownout, button -- and NOT the CPU's own
+    RESET instruction, which GLUE does not echo back); the CPU drives it
+    low on a double bus fault; the debug-header master may hold it with
+    ~RESET for bus mastering.  4.7k pull-up; nothing may drive it high.
+    GLUE also senses ~HALT: while low with GLUE out of reset, DEBUG_OUT
+    is overridden with a vsync/32 (~1.9 Hz) blink so a halted CPU is
+    visible on the debug LED; the register value returns on release.
+  - |
+    ENGINE -> GLUE status wires: ENGINE_ACTIVE (ENGINE pin 80 -> GLUE 35)
+    and ENGINE_WAITING (ENGINE pin 4 -> GLUE 36), plus the existing
+    ~ENGINE_IRQ net, read back as GLUE ENGINE_STATUS.  Plain push-pull
+    CPLD-to-CPLD signals, no pulls.
+  - |
+    CF sideband: card INTRQ -> GLUE pin 40 with a pull-down, card IORDY ->
+    GLUE pin 2 with a pull-up (both are tri-stated by the card at times).
+    INTRQ is the level-1 interrupt (CONFIG.CF_IRQ_EN); IORDY qualifies
+    the CF DTACK.  Both readable as GLUE CF_PINS.
+  - |
+    Spare headers, 0.1 in, for a future daughter board; no logic behind
+    them today.  ENGINE spare strobe header near the stream FIFOs:
+    nSIGNAL_SPARE (ENGINE pin 9), GND, +5V -- a fourth deposit sink sits
+    on D[15:0] like the FIFOs.  PORTS spare header: PORTS pins 34 and 41
+    (unassigned I/O, left tri-state with the fitter's pin keeper, so no
+    pulls) and GND.  GLUE bodge spares: pins 24 and 64, unassigned I/O
+    (pin keeper), routed to pads only.
+  - |
+    Clocks: three oscillators, no CPLD re-drives a clock.  SYSCLK (14 MHz
+    can) -> CPU CLK and pin 83 (GCLK1) of GLUE, ENGINE and PORTS.  Pixel
+    oscillator (25.175 MHz can) -> TIMING pin 43 (GCLK1, PLCC44) and pin 83
+    (GCLK1) of PIXEL and COMPOSITOR; TIMING pin 44 (GCLK2) stays free for
+    an optional second oscillator (see TIMING).  The DUART runs its own
+    3.6864 MHz crystal on X1/X2.
   - |
     Carried forward from Rev 1: the XR68C681 DUART with ~CS from GLUE
-    (nDUART_SELECT) and DTACKN returned to GLUE (nDUART_DTACK).
+    (nDUART_SELECT) and DTACKN returned to GLUE (nDUART_DTACK).  Its
+    active-low RESET sits directly on the system ~RESET net; the Rev 1
+    GLUE copy (nDUART_RESET) is gone.

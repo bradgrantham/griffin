@@ -13,7 +13,7 @@
 
 namespace Griffin::reg {
 
-// GLUE: System glue logic and PS/2 keyboard
+// GLUE: System glue logic, PS/2 keyboard, ENGINE and CF card status readback
 inline volatile uint8_t &GLUE_DEBUG_OUT = *reinterpret_cast<volatile uint8_t *>(0xF00001UL);  // WRITE: Set or clear DEBUG_OUT signal (debug LED and test point output)
 inline volatile uint8_t &GLUE_CONFIG = *reinterpret_cast<volatile uint8_t *>(0xF00007UL);  // WRITE: GLUE configuration register
 inline volatile uint8_t &GLUE_PS2_TX_DATA = *reinterpret_cast<volatile uint8_t *>(0xF00009UL);  // WRITE: Byte to transmit host->device; the write itself starts the frame
@@ -23,6 +23,8 @@ inline volatile uint8_t &GLUE_PS2_CTRL = *reinterpret_cast<volatile uint8_t *>(0
 inline volatile uint8_t &GLUE_PS2_RX_DATA = *reinterpret_cast<volatile uint8_t *>(0xF00015UL);  // READ: Assembled PS/2 data byte; valid while RX_READY is set
 inline volatile uint8_t &GLUE_VSYNC_STATUS = *reinterpret_cast<volatile uint8_t *>(0xF00017UL);  // READ: Latched vsync frame interrupt status
 inline volatile uint8_t &GLUE_VSYNC_CLEAR = *reinterpret_cast<volatile uint8_t *>(0xF00017UL);  // WRITE: Write-1-to-clear for VSYNC_PENDING / level-6 IRQ ack
+inline volatile uint8_t &GLUE_ENGINE_STATUS = *reinterpret_cast<volatile uint8_t *>(0xF00019UL);  // READ: Display-list ENGINE state, read back through GLUE because ENGINE reads see the open bus
+inline volatile uint8_t &GLUE_CF_PINS = *reinterpret_cast<volatile uint8_t *>(0xF0001BUL);  // READ: CF card sideband pin levels, read raw
 
 // ENGINE: Display-list DMA engine walking 4-word descriptors from the top 64K of RAM
 inline volatile uint16_t &ENGINE_DESC = *reinterpret_cast<volatile uint16_t *>(0xD00002UL);  // WRITE: Descriptor word address within RAM's top 64K; writing arms DMA

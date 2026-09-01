@@ -207,9 +207,6 @@ Dedicated ATF1508 CPLD for:
 * DEBUG\_OUT  
   * Sets or clears debug LED and test point output  
   * Pre-DUART boot "alive" blink, and TX-timeout/panic LED blink (no longer a UART line)  
-* DEBUG_IN
-  * Reads test point input  
-  * Unused now that serial is the DUART (formerly the bit-bang UART RX input)
 * Registers: see [griffin.yml](griffin.yml).
 
 ## VIDEO

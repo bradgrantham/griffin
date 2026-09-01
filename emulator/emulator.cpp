@@ -1313,7 +1313,8 @@ struct EngineState
                ((static_cast<uint32_t>(val) & ENGINE_DESC_ADDR_MASK) << 1);
     }
 
-    // No CPU-readable state exists; GLUE answers DTACK and the bus floats.
+    // ENGINE itself has no readable registers: GLUE answers DTACK and the
+    // bus floats.  Its state is read through GLUE_ENGINE_STATUS.
     static constexpr uint8_t OPEN_BUS = 0xFF;
 };
 
@@ -2937,6 +2938,7 @@ class GriffinEmulator : public moira::Moira
     // vsync latch, VSYNC_STATUS and VSYNC_CLEAR stay live so the guest can
     // poll vblank.  Resets to 0, matching GLUE.
     mutable bool vsync_irq_en = false;
+    mutable bool cf_irq_en = false;   // GLUE CONFIG.CF_IRQ_EN; the emulated card never raises INTRQ
     PTYConsole pty_console;
     PTYConsole pty_console_b;   // DUART channel B (unconnected by default)
     mutable CFState cf;
@@ -3018,6 +3020,32 @@ class GriffinEmulator : public moira::Moira
             // VIDEO's CLRINT: the interrupt source moved chips when VIDEO did.
             return video.vsync_pending ? GLUE_VSYNC_STATUS_VSYNC_PENDING_MASK : 0;
         }
+        if (addr + IO_BASE == GLUE_ENGINE_STATUS)
+        {
+            // ENGINE's ACTIVE/WAITING wires and its IRQ net, read through
+            // GLUE.  The walker runs a list to its next park point in one
+            // call, so WAITING is simply "armed and parked on wait_hblank".
+            uint8_t v = 0;
+            if (engine.walker.armed())
+            {
+                v |= GLUE_ENGINE_STATUS_ACTIVE_MASK;
+            }
+            if (engine.walker.armed() && engine.walker.parked())
+            {
+                v |= GLUE_ENGINE_STATUS_WAITING_MASK;
+            }
+            if (engine.walker.irq_pending())
+            {
+                v |= GLUE_ENGINE_STATUS_IRQ_MASK;
+            }
+            return v;
+        }
+        if (addr + IO_BASE == GLUE_CF_PINS)
+        {
+            // The emulated card completes every command instantly and never
+            // extends a cycle: INTRQ is not modeled (reads 0), IORDY reads 1.
+            return GLUE_CF_PINS_IORDY_MASK;
+        }
         if (is_ports_addr(addr))
         {
             return ports.read_reg(addr + IO_BASE);
@@ -3089,6 +3117,7 @@ class GriffinEmulator : public moira::Moira
             // data bus on every CONFIG write.  Re-evaluate the IPL because
             // enabling it can expose an already-latched vsync.
             vsync_irq_en = (val & GLUE_CONFIG_VSYNC_IRQ_EN_MASK) != 0;
+            cf_irq_en = (val & GLUE_CONFIG_CF_IRQ_EN_MASK) != 0;
             const_cast<GriffinEmulator*>(this)->update_ipl();
             if (debug & DEBUG_IO)
             {
@@ -4082,6 +4111,10 @@ public:
         update_ipl();
     }
 
+    // The emulated CF card completes every command instantly and INTRQ is
+    // not modeled; kept as one place to change when it is.
+    static constexpr bool cf_intrq() { return false; }
+
     // Unified IPL management — picks highest active interrupt source
     void update_ipl()
     {
@@ -4104,6 +4137,10 @@ public:
             // Lowest of the four CPLDs: below ENGINE's level 3.
             static_assert(PORTS_IRQ_LEVEL < ENGINE_IRQ_LEVEL);
             setIPL(PORTS_IRQ_LEVEL);
+        } else if (cf_irq_en && cf_intrq()) {
+            // CF INTRQ, level 1, gated by CONFIG.CF_IRQ_EN.
+            static_assert(CF_IRQ_LEVEL < PORTS_IRQ_LEVEL);
+            setIPL(CF_IRQ_LEVEL);
         } else {
             setIPL(0);
         }

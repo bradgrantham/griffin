@@ -20,7 +20,7 @@ namespace Griffin {
 static constexpr uint32_t SYSCLK_HZ = 14000000UL;
 
 // ------------------------------------------------------------
-// GLUE: System glue logic and PS/2 keyboard
+// GLUE: System glue logic, PS/2 keyboard, ENGINE and CF card status readback
 static constexpr uint32_t GLUE_BASE = 0xF00000UL;
 static constexpr uint32_t GLUE_SIZE = 0x040000UL;
 inline constexpr MemoryRange GLUE(0xF00000UL, 0x040000UL);
@@ -38,6 +38,8 @@ static constexpr uint32_t GLUE_CONFIG_FLASH_WE_EN_MASK  = 0x02U;  // bits 1:1
 static constexpr uint32_t GLUE_CONFIG_FLASH_WE_EN_SHIFT = 1U;
 static constexpr uint32_t GLUE_CONFIG_VSYNC_IRQ_EN_MASK  = 0x04U;  // bits 2:2
 static constexpr uint32_t GLUE_CONFIG_VSYNC_IRQ_EN_SHIFT = 2U;
+static constexpr uint32_t GLUE_CONFIG_CF_IRQ_EN_MASK  = 0x08U;  // bits 3:3
+static constexpr uint32_t GLUE_CONFIG_CF_IRQ_EN_SHIFT = 3U;
 static constexpr uint32_t GLUE_CONFIG_DEFAULT = 0x00U;
 static constexpr uint32_t GLUE_PS2_TX_DATA = 0xF00009UL;  // WRITE: Byte to transmit host->device; the write itself starts the frame
 static constexpr uint32_t GLUE_PS2_TX_DATA_MASK  = 0xFFU;  // bits 7:0
@@ -76,6 +78,18 @@ static constexpr uint32_t GLUE_VSYNC_STATUS_VSYNC_PENDING_SHIFT = 0U;
 static constexpr uint32_t GLUE_VSYNC_CLEAR = 0xF00017UL;  // WRITE: Write-1-to-clear for VSYNC_PENDING / level-6 IRQ ack
 static constexpr uint32_t GLUE_VSYNC_CLEAR_VSYNC_PENDING_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t GLUE_VSYNC_CLEAR_VSYNC_PENDING_SHIFT = 0U;
+static constexpr uint32_t GLUE_ENGINE_STATUS = 0xF00019UL;  // READ: Display-list ENGINE state, read back through GLUE because ENGINE reads see the open bus
+static constexpr uint32_t GLUE_ENGINE_STATUS_ACTIVE_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t GLUE_ENGINE_STATUS_ACTIVE_SHIFT = 0U;
+static constexpr uint32_t GLUE_ENGINE_STATUS_WAITING_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t GLUE_ENGINE_STATUS_WAITING_SHIFT = 1U;
+static constexpr uint32_t GLUE_ENGINE_STATUS_IRQ_MASK  = 0x04U;  // bits 2:2
+static constexpr uint32_t GLUE_ENGINE_STATUS_IRQ_SHIFT = 2U;
+static constexpr uint32_t GLUE_CF_PINS = 0xF0001BUL;  // READ: CF card sideband pin levels, read raw
+static constexpr uint32_t GLUE_CF_PINS_INTRQ_MASK  = 0x01U;  // bits 0:0
+static constexpr uint32_t GLUE_CF_PINS_INTRQ_SHIFT = 0U;
+static constexpr uint32_t GLUE_CF_PINS_IORDY_MASK  = 0x02U;  // bits 1:1
+static constexpr uint32_t GLUE_CF_PINS_IORDY_SHIFT = 1U;
 
 // ------------------------------------------------------------
 // ROM: 2x SST39SF040-70 (512Kx8 DIP-32 5V NOR flash, socketed; 1MB total)
@@ -262,6 +276,7 @@ static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_SHIFT = 1U;
 static constexpr uint32_t CF_BASE = 0xF40000UL;
 static constexpr uint32_t CF_SIZE = 0x040000UL;
 inline constexpr MemoryRange CF(0xF40000UL, 0x040000UL);
+static constexpr uint32_t CF_IRQ_LEVEL = 1U;
 static constexpr int CF_DTACK_WS = 7;  // wait states at 14000000 Hz
 static constexpr int CF_DTACK_THRESHOLD = 14;  // ws_cnt threshold for Verilog
 static constexpr int CF_DTACK_PENALTY = 12;  // extra SYSCLK cycles for emulator
@@ -399,6 +414,7 @@ static constexpr uint32_t VSYNC_IRQ_LEVEL = 0x06U;
 static constexpr uint32_t ENGINE_SIGNAL_PIXELS_FIFO_W = 0x01U;
 static constexpr uint32_t ENGINE_SIGNAL_VIDCMD_FIFO_W = 0x02U;
 static constexpr uint32_t ENGINE_SIGNAL_AUDIO_FIFO_W = 0x04U;
+static constexpr uint32_t ENGINE_SIGNAL_SPARE = 0x08U;
 static constexpr uint32_t VIDCMD_SET_CMP_COLOR1 = 0x00U;
 static constexpr uint32_t VIDCMD_SET_CMP_COLOR0 = 0x01U;
 static constexpr uint32_t VIDCMD_SET_PIX_PAL_FG = 0x02U;
@@ -409,7 +425,7 @@ static constexpr uint32_t VIDCMD_SET_PIX_PIXEL_SKIP = 0x06U;
 static constexpr uint32_t PIXELS_FIFO_WORDS = 0x100U;
 static constexpr uint32_t VIDCMD_FIFO_WORDS = 0x100U;
 static constexpr uint32_t PIXELS_WORDS_PER_LINE_1BPP = 0x28U;
-static constexpr uint32_t PIXELS_WORDS_PER_LINE_HAM = 0x50U;
+static constexpr uint32_t PIXELS_WORDS_PER_LINE_2BPP = 0x50U;
 static constexpr uint32_t COMPOSITOR_LEAD = 0x02U;
 static constexpr uint32_t PIXEL_OUT_LEAD = 0x01U;
 static constexpr uint32_t TIMING_SPLIT_LEAD = 0x01U;
