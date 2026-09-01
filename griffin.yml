@@ -832,13 +832,15 @@ peripherals:
 
   # AUDIO has no CPU path.  The FIFO pair's data pins sit on D[15:0] and the
   # only /W is ENGINE's AUDIO_FIFO_W deposit strobe (ENGINE_SIGNAL_AUDIO_FIFO_W):
-  # one word per stereo pair, L = D15-D8, R = D7-D0, unsigned 8-bit
+  # one word per stereo pair, L = D15-D8, R = D7-D0, two's complement 8-bit
+  # (0x00 = silence = DAC midscale: a CD4049 inverter flips each channel's
+  # Q7 between FIFO and ladder -- see the audio output interfaces entry)
   # /R comes from PORTS once per AUDIO_TICK event
   # (AUDIO_SAMPLES_PER_SECOND) while PORTS AUDIO_CONTROL.ENABLE is set;
   # /RS of both chips from PORTS (AUDIO_CONTROL.RESET); /EF of the pair goes
   # to PORTS as AUDIO_STATUS.EMPTY.  /HF is unconnected.  No interrupt.
   AUDIO:
-    part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC"
+    part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC + CD4049 MSB inverters + LM358 output buffer"
     description: "Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate"
 
 constants:
@@ -1018,7 +1020,10 @@ interfaces:
     Layout: ladders + shunts at the DE-15, not at the buffers; 12 DAC traces
     short and roughly matched; solid ground return from shunts to shell.
   - |
-    Stream FIFO parts: all three streams use 2x IDT7200 (256x9) -- PIXELS
+    Stream FIFO parts: no transceivers anywhere on D[15:0] -- the six
+    7200 data-pin loads sit directly on the bus alongside CPU, 8 RAM,
+    2 ROM, 3 CPLDs, DUART and CF (decision re-affirmed for Rev 2).
+    All three streams use 2x IDT7200 (256x9) -- PIXELS
     byte-interleaved shared-Q pair (/RE from PIXEL), VIDCMD ganged 16-bit
     (/RE from COMPOSITOR), AUDIO one per channel (/RE from PORTS).  Each
     pair's /W pins are one ENGINE deposit strobe: nPIXELS_FIFO_W,
@@ -1089,6 +1094,26 @@ interfaces:
     (GCLK1) of PIXEL and COMPOSITOR; TIMING pin 44 (GCLK2) stays free for
     an optional second oscillator (see TIMING).  The DUART runs its own
     3.6864 MHz crystal on X1/X2.
+  - |
+    Audio output stage, per channel (x2, L and R identical): 7200 Q[7:0]
+    -> CD4049 inverter on Q7 only (samples in RAM and files are two's
+    complement; the inverter maps them onto the unsigned ladder, so 0x00
+    = silence = midscale) -> 4610X-R2R-103LF 10k R2R network -> 10k to
+    GND (with the ladder's 10k Thevenin impedance this IS the 2:1
+    divider: 0-2.5 V, 5k source) -> 3.3 nF to GND (single pole ~9.7 kHz,
+    ahead of the buffer) -> LM358 half as unity buffer -> 4.7k to GND at
+    the op-amp output (class-A bias against LM358 crossover distortion)
+    -> 100 uF AC coupling -> 1k to GND (DC return) -> 100R series ->
+    stereo jack tip/ring.  2.5 Vpp max ~= 0.88 Vrms line level; the
+    LM358 output ceiling at a 5 V rail is ~3.5 V, so nothing clips.  The
+    MSB inverter must be CMOS-output (rail-level VOH, like the 7200's
+    other seven bits); a TTL inverter's ~3.5 V high would shrink the MSB
+    weight ~25% exactly at the zero crossing.  Mono buzzer as Rev 1:
+    jack switch contact -> 47R -> magnetic buzzer on the L channel,
+    silenced by plug insertion.  Ladder, divider, filter and buffer
+    placed at the jack.  BOM: 2x 4610X-R2R-103LF, 1x CD4049 (2 of 6
+    gates, unused inputs grounded), 1x LM358, per channel 10k + 4.7k +
+    1k + 100R + 3.3 nF + 100 uF, plus 47R and the buzzer.
   - |
     Carried forward from Rev 1: the XR68C681 DUART with ~CS from GLUE
     (nDUART_SELECT) and DTACKN returned to GLUE (nDUART_DTACK).  Its

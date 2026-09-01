@@ -2176,8 +2176,11 @@ struct PortsState
     bool tick_phase = false;            // level of TIMING's ticks: they toggle
                                         // once per line and the falling edge
                                         // (phase 1 -> 0) is the event
-    uint8_t dac_left = 0;
-    uint8_t dac_right = 0;              // 7202 output registers hold last sample
+    // Post-inverter DAC codes (offset binary).  The board flips each
+    // channel's Q7 through a CD4049 between FIFO and ladder, so guest
+    // samples are two's complement and 0x80 here = guest 0x00 = silence.
+    uint8_t dac_left = 0x80;
+    uint8_t dac_right = 0x80;           // 7202 output registers hold last sample
 
     // Optional host sink for what the DACs present (--wav-out / playback).
     // Write-only from here: PORTS never reads it back, so attaching one cannot
@@ -2208,8 +2211,10 @@ struct PortsState
         }
         uint16_t pair = audio_fifo.front();
         audio_fifo.pop_front();
-        dac_left = static_cast<uint8_t>(pair >> 8);
-        dac_right = static_cast<uint8_t>(pair & 0xFF);
+        // ^ 0x80 models the CD4049 MSB inverters: two's complement in
+        // memory -> offset binary at the ladders.
+        dac_left = static_cast<uint8_t>((pair >> 8) ^ 0x80);
+        dac_right = static_cast<uint8_t>((pair & 0xFF) ^ 0x80);
     }
 
     // --- PADDLE_TICK / AUDIO_TICK ----------------------------------------

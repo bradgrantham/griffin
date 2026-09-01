@@ -101,7 +101,9 @@
 // CPU-written pair costs enough that the rebuild has to service more pops than
 // it saves, and 300 ms of rebuild became 1.8 s.  The flip is silent.)
 //
-// Silence is 0x80: the DAC is unsigned and 0x00 is the negative rail.
+// Silence is 0x00: samples are two's complement.  The board's CD4049
+// inverters flip each channel's MSB between FIFO and ladder, so signed
+// samples land on the unsigned R2R correctly and zero-filled RAM is mute.
 
 #include <cstdint>
 #include <cstdio>
@@ -1423,16 +1425,18 @@ void audio_render(uint16_t *dst, unsigned pairs)
                 n = 1;
             }
 
-            int v = 0x80 + ml + sl + ((na != 0) ? (((lfsr & 1u) != 0) ? na : -na) : 0);
-            if (v < 8)
+            // Two's complement mix; clamp keeps the rev-1 headroom (+-120).
+            int v = ml + sl + ((na != 0) ? (((lfsr & 1u) != 0) ? na : -na) : 0);
+            if (v < -120)
             {
-                v = 8;
+                v = -120;
             }
-            else if (v > 248)
+            else if (v > 120)
             {
-                v = 248;
+                v = 120;
             }
-            const uint16_t word = static_cast<uint16_t>((v << 8) | v);
+            const uint8_t b = static_cast<uint8_t>(v);
+            const uint16_t word = static_cast<uint16_t>((b << 8) | b);
             for (unsigned i = 0; i < n; i++)
             {
                 *dst++ = word;
