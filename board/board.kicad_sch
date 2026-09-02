@@ -63,7 +63,7 @@
 			(color 0 0 0 0.0000)
 		)
 		(uuid "189c4050-bf27-4d93-977d-e73def496750")
-		(property "Sheetname" "VIDEO"
+		(property "Sheetname" "TIMING"
 			(at 88.9 100.8884 0)
 			(effects
 				(font
@@ -420,6 +420,48 @@
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
 					(page "3")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 152.4 138.43)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "e2d268ce-e8ff-40b5-8bcd-edc0ec06e755")
+		(property "Sheetname" "VIDEO1"
+			(at 152.4 137.7184 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "composite.kicad_sch"
+			(at 152.4 165.6846 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "13")
 				)
 			)
 		)

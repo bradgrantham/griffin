@@ -9,15 +9,15 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 
 ## Core
 
-- [ ] 68010 CPU
-- [ ] 14 MHz system oscillator
-- [ ] 25.175 MHz pixel oscillator
+- [x] 68010 CPU
+- [x] 14 MHz system oscillator
+- [x] 25.175 MHz pixel oscillator
 - [ ] Optional second-oscillator footprint (TIMING GCLK2, pin 44)
 - [ ] DS1233-5 reset supervisor (button hangs on its RST pin)
 - [ ] Reset isolation diode: Schottky, anode on ~RESET net, cathode at RST
 - [ ] nSUPERVISOR_RESET net: DS1233 RST -> GLUE pin 63 (sources ~HALT)
 - [ ] Reset button
-- [ ] Barrel jack power entry (5.5mm x 2.1mm center-positive)
+- [x] Barrel jack power entry (5.5mm x 2.1mm center-positive)
 - [ ] Inline power switch
 - [ ] Reverse-polarity protection (P-FET ideal-diode)
 
@@ -92,7 +92,7 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 ## Remove from rev-1 schematic
 
 - [ ] AT89S52 IO MCU (and its crystal/support)
-- [ ] USB-C power entry
+- [x] USB-C power entry
 - [ ] Composite/NTSC jack + NTSC clock provisions
 - [ ] VIDEO CPLD
 - [ ] Audio 74HC373 latch

@@ -411,3 +411,13 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   already own loudness in the signed mixer; MATINEE has no CPU cycles to
   scale a stream -- the physical knob covers exactly that case).
   Procure: LM386 (not in bin), dual 10kA pot + knob, small 8-ohm speaker.
+
+2026-09-01 -- CPU pin disposition captured; ~IPL2:0 and ~VPA pulls added
+  Schematic capture of the 68010: E and ~VMA no-connect (no 6800
+  peripherals); pull-ups on ~RESET 10k / ~HALT 4.7k (the net pulls),
+  ~BR and ~BGACK 10k (float during ENGINE ISP), ~AS/~UDS/~LDS/R-W 10k
+  (float on every ENGINE DMA handover and in debug bus-master mode),
+  and -- new to the schedule -- ~IPL2:0 and ~VPA 10k: GLUE drives them
+  push-pull but they float during GLUE ISP / blank GLUE, and floating
+  IPL reads level 7 (non-maskable).  D/A/FC/~BG/~DTACK/~BERR plain
+  nets; CLK via the oscillator's 33R series.

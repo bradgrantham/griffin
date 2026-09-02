@@ -395,6 +395,7 @@ Bodging between ENGINE and VIDEO and piggybacked 7200s a la video-fifo-wiring.md
 - [ ] 4.7K on HALT; any CPU lines that may float or lead
 - [ ] ~AS, ~UDS, ~LDS, R/~W (and ~DTACK if ever tri-stated) — strobes must idle deasserted while the CPU is tri-stated (~RESET+~HALT bus-master mode via the debug headers), else GLUE sees phantom cycles; also cleans up LA captures
 - [ ] PS/2 CLK & DATA — **both ports**: keyboard on GLUE, mouse on PORTS
+- [ ] ~IPL2:0 and ~VPA, 10 K each — GLUE drives them push-pull, but every GLUE→CPU control input floats during GLUE JTAG/ISP or with a blank GLUE, and a floating IPL reading 000 is a level-7 interrupt, which is non-maskable; pulled, the idle reads 111 / VPA deasserted and a half-programmed board fails quiet.  Same ISP-float reasoning as the ~BR/~BGACK pulls (ENGINE side)
 - [ ] the IRQ nets into GLUE's priority encoder — nVSYNC (from TIMING), ~DUART_IRQ, ~PORTS_IRQ and **~ENGINE_IRQ** (inert until ENGINE stops tying it high, so without a pull-up it is exactly the kind of net that floats into a phantom level-3)
 - [ ] joystick switch lines (bussed resistor networks to +5 V) — except DE-9 pins 5/9 on the paddle port: weak 1 MΩ discretes there, since the paddle pot parallels the pull-up (still fine for reading SMS button 2, just slow edges)
 - [ ] I²C SCL/SDA to 5 V
