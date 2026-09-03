@@ -713,7 +713,10 @@ peripherals:
     #   OP3: RTC_SDA_DRIVE (N-FET gate: pin high pulls SDA low)
     #                                            IP2: RTC_SDA readback
     #                                            IP3: DS3231 ~INT
-    #   OP4..OP7: -> TIMING pins 20, 21, 24, 25  IP4, IP5: spare
+    #   OP4..OP7: -> TIMING pins 20, 21, 24, 25  IP4: DCD_B (ch B carrier)
+    #                                            IP5: RI_B (ch B ring)
+    # IP4/IP5 come from the ch B RS-232 receivers; the 68681
+    # change-of-state IRQ covers only IP0-IP3, so both are poll-only.
     # OP4..OP7 are a static firmware-settable configuration word for TIMING
     # (future raster/audio-rate select); unused today, and the OP reset state
     # (OPR = 0 -> pins HIGH, 1111) must remain today's behaviour.
@@ -840,7 +843,7 @@ peripherals:
   # /RS of both chips from PORTS (AUDIO_CONTROL.RESET); /EF of the pair goes
   # to PORTS as AUDIO_STATUS.EMPTY.  /HF is unconnected.  No interrupt.
   AUDIO:
-    part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC + CD4049 MSB inverters + LM358 buffer + LM386 speaker amp"
+    part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC + CD4049 MSB inverters + LM358 buffer + 3x LM386 (L/R headphone drivers + speaker amp)"
     description: "Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate"
 
 constants:
@@ -869,6 +872,8 @@ constants:
   DUART_OP_RTC_SDA_DRIVE:  0x08   # OP3
   DUART_IP_RTC_SDA:        0x04   # IP2
   DUART_IP_RTC_NINT:       0x08   # IP3
+  DUART_IP_DCD_B:          0x10   # IP4: ch B carrier detect (poll-only)
+  DUART_IP_RI_B:           0x20   # IP5: ch B ring indicate (poll-only)
   RTC_I2C_ADDR:            0x68   # DS3231 7-bit I2C address
 
   # PS/2 TX parity is carried in address bit 1 of the TX_DATA registers.
@@ -1040,8 +1045,18 @@ interfaces:
     IRQ.  GLUE edge-latches it with W1C ack (VSYNC_STATUS/VSYNC_CLEAR at
     0x17) because TIMING has no CPU bus to host an ack register.
   - |
-    Power entry: 5.5mm x 2.1mm center-positive barrel jack, regulated 5V
-    >= 2.5A, inline switch; silkscreen "5V regulated 2.5A+ center positive".
+    Power entry: the motherboard is +5 V ONLY.  No other rail exists on
+    the board or may be added (RS-232 levels come from the MAX232 charge
+    pumps; anything external that needs another voltage brings its own
+    supply).  Board connector: keyed 6-position AMP MATE-N-LOK (the
+    Apple II supply connector), +5 V and GND on the positions Apple used
+    for them, every other position NOT CONNECTED so a mis-mated Apple II
+    supply does no harm -- VERIFY the Apple II pinout before silk.
+    Never a bare pin header.  Silkscreen at the connector "5V ONLY --
+    regulated 2.5A+".  Panel side: 5.5mm x 2.1mm center-positive barrel
+    jack + inline switch, harnessed to the MATE-N-LOK; regulated 5V
+    >= 2.5A brick.  Harness and contact drop count against the
+    supervisor trip budget below.
     Supervisor: DS1233-5 (open-drain RST, internal 5k pull-up, trip
     4.50-4.74 V, 350 ms stretch, IOL 8 mA).  The user button hangs on the
     supervisor's RST pin: the plain (non-D) part senses the low as a
@@ -1103,27 +1118,72 @@ interfaces:
     divider: 0-2.5 V, 5k source) -> 3.3 nF to GND (single pole ~9.7 kHz,
     ahead of the buffer) -> LM358 half as unity buffer -> 4.7k to GND at
     the op-amp output (class-A bias against LM358 crossover distortion)
-    -> 100 uF AC coupling -> volume pot (dual-gang 10k audio taper, one
-    gang per channel: element top to the cap, bottom to GND -- the pot IS
-    the DC return -- wiper out) -> 100R series -> stereo jack tip/ring.
-    2.5 Vpp max ~= 0.88 Vrms line level at full rotation; the LM358
-    output ceiling at a 5 V rail is ~3.5 V, so nothing clips.  The
-    MSB inverter must be CMOS-output (rail-level VOH, like the 7200's
-    other seven bits); a TTL inverter's ~3.5 V high would shrink the MSB
-    weight ~25% exactly at the zero crossing.
+    -> 100 uF AC coupling -> the LINE node.  Three consumers hang on
+    LINE, so the level there is knob-independent:
+    (1) LINE OUT: LINE -> 100R series -> RCA jack (L and R, a pair).
+    Fixed level, always on: 2.5 Vpp max ~= 0.88 Vrms at full scale; the
+    LM358 output ceiling at a 5 V rail is ~3.5 V, so nothing clips.
+    (2) VOLUME POT: dual-gang 10k audio taper, one gang per channel,
+    element top to LINE, bottom to GND -- the pot IS the coupling cap's
+    DC return -- wiper out.  The element is a fixed 10k across LINE, so
+    the knob does not move the line-out level; the buffer sees the pot
+    in parallel with the external line input (>= 10k), ~5k, fine for an
+    LM358.
+    (3) HEADPHONES: wiper -> 10k series / 1k to GND (~11:1 pad; an
+    LM386 cannot go below gain 20 and 0.88 Vrms x 20 would clip a 5 V
+    rail) -> LM386 (pins 1/8 open, gain 20) -> 10R + 47 nF Zobel ->
+    250 uF -> switched 3.5 mm stereo jack tip/ring.  ~1.6 Vrms max into
+    32 ohm (~80 mW); the knob sets it.
+    The MSB inverter must be CMOS-output (rail-level VOH, like the
+    7200's other seven bits); a TTL inverter's ~3.5 V high would shrink
+    the MSB weight ~25% exactly at the zero crossing.
     Internal speaker (replaces the Rev 1 buzzer): the jack's
-    normally-closed tip and ring switch contacts each feed 10k into a
-    mono sum at the LM386 input (47k to GND holds the input quiet when
-    the contacts open), LM386 at default gain 20 -> 10R + 47 nF Zobel ->
-    250 uF -> 8 ohm speaker.  Inserting a plug opens both contacts and
-    mutes the speaker; the volume pot sits upstream of the sum, so the
-    knob governs speaker and jack alike.  Software mute is
-    AUDIO_CONTROL.ENABLE (DACs freeze on a DC level).  Ladder, divider,
-    filter and buffer placed at the jack; pot and speaker are
-    panel/case parts.  BOM: 2x 4610X-R2R-103LF, 1x CD4049 (2 of 6
-    gates, unused inputs grounded), 1x LM358, 1x LM386, dual 10kA pot +
-    knob, 8-ohm speaker, per channel 10k + 4.7k + 100R + 3.3 nF +
-    100 uF, plus 2x 10k sum, 47k, 10R + 47 nF, 250 uF.
+    normally-closed tip and ring switch contacts now carry the two
+    headphone-amp outputs; each feeds 47k into a mono sum at the
+    speaker LM386 input, 1k to GND (the 47k||47k = 23.5k source into 1k
+    is a ~25:1 pad: 1.6 Vrms max per side -> ~65 mV at the amp -> ~1.3
+    Vrms into the speaker, ~200 mW, no clipping at any knob position;
+    the 1k also holds the input quiet when the contacts open).  Speaker
+    LM386 at default gain 20 -> 10R + 47 nF Zobel -> 250 uF -> 8 ohm
+    speaker.  Inserting a plug opens both contacts and mutes the
+    speaker.  Behaviour: RCA line out ignores the knob; the knob governs
+    headphones and speaker together; headphones mute the speaker (the
+    Apple IIc convention).  Software mute is AUDIO_CONTROL.ENABLE (DACs
+    freeze on a DC level) and silences all three.  Ladder, divider,
+    filter and buffer placed at the RCAs; headphone amps at the 3.5 mm
+    jack; pot and speaker are panel/case parts.  BOM: 2x
+    4610X-R2R-103LF, 1x CD4049 (2 of 6 gates, unused inputs grounded),
+    1x LM358, 3x LM386, dual 10kA pot + knob, 8-ohm speaker, 2x RCA
+    jack, 1x switched 3.5 mm stereo jack; per channel 10k + 4.7k + 100R
+    + 3.3 nF + 100 uF (DAC/buffer/line), 10k + 1k (pad), 10R + 47 nF +
+    250 uF (headphone amp); speaker: 2x 47k sum, 1k, 10R + 47 nF,
+    250 uF.
+  - |
+    RS-232 level stage: both DUART channels are real RS-232 at the rear
+    panel; the TTL bench headers remain.  One MAX232 per channel (its 2
+    drivers + 2 receivers = TXD/RXD + RTS/CTS; 1 uF charge-pump caps);
+    ch B's DCD and RI come through a 75189 quad receiver (2 of 4
+    sections, unused inputs grounded) into DUART IP4/IP5.  All MAX232
+    stages invert, which lands every polarity correctly (UART mark ->
+    -V, ~RTS pin low -> +V asserted).
+    Ch A console: DB-25 FEMALE wired DCE, so a terminal (DTE) uses a
+    straight cable.  Pin 2 -> receiver -> RXDA; TXDA -> driver -> pin 3;
+    terminal RTS (pin 4) -> receiver -> IP0 (~CTS_A); OP0 (~RTS_A) ->
+    driver -> pin 5 (terminal CTS); strap
+    DSR (6) and DCD (8) to the terminal's DTR (20) at the connector;
+    pin 7 signal ground.
+    Ch B modem port: DB-25 MALE wired DTE -- straight cable to a
+    Hayes-style modem, null modem to a computer peer.  TXDB -> driver ->
+    pin 2; pin 3 -> receiver -> RXDB; OP1 (~RTS_B) -> driver -> pin 4;
+    pin 5 -> receiver -> IP1 (~CTS_B); pin 8 (DCD) -> 75189 -> IP4;
+    pin 22 (RI) -> 75189 -> IP5; DTR (20) strapped to DSR (6) at the
+    connector (modem set &D0; hang-up via +++ATH; a GLUE bodge spare
+    can drive DTR later if ever wanted); pin 7 signal ground.
+    Header/port coexistence: the DUART TX pins drive TTL header and
+    MAX232 driver inputs in parallel (no conflict); each receiver
+    output (RXD_A, CTS_A, RXD_B, CTS_B) reaches the DUART through a
+    2-pin series jumper -- jumper in = RS-232 port live, jumper out =
+    the TTL header owns the line.  Four jumpers, silk-labeled.
   - |
     Carried forward from Rev 1: the XR68C681 DUART with ~CS from GLUE
     (nDUART_SELECT) and DTACKN returned to GLUE (nDUART_DTACK).  Its

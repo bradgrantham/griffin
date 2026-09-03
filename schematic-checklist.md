@@ -63,6 +63,11 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 
 - [ ] XR68C681 DUART DIP-40, native (retires DIP-carrier bodge); RESET direct on ~RESET net
 - [ ] 3.6864 MHz DUART crystal
+- [ ] 2x MAX232 + 1uF charge-pump caps (one per channel: TXD/RXD + RTS/CTS)
+- [ ] 75189 quad receiver: ch B DCD -> IP4, RI -> IP5 (unused inputs grounded)
+- [ ] DB-25F console connector, wired DCE; DSR+DCD strapped to DTR at connector
+- [ ] DB-25M modem connector, wired DTE; DTR-DSR strap (Hayes &D0)
+- [ ] 4x isolation jumpers on MAX232 receiver outputs (RXD/CTS, both channels)
 - [ ] 74HCT155 direct-bus decoder
 - [ ] DS3231 RTC
 - [ ] Coin-cell holder
@@ -79,8 +84,8 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 
 ## Headers & debug
 
-- [ ] Console TTL header (DUART Ch A, FTDI pinout)
-- [ ] Second serial TTL header (DUART Ch B)
+- [ ] Console TTL header (DUART Ch A, FTDI pinout; behind isolation jumpers)
+- [ ] Second serial TTL header (DUART Ch B; behind isolation jumpers)
 - [ ] JTAG programming header 1x6
 - [ ] Debug/LA headers: 2x 2x15 (gusmanb pinout)
 - [ ] SYSCLK buffered/series-R tap for LA header

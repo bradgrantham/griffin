@@ -421,3 +421,22 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   push-pull but they float during GLUE ISP / blank GLUE, and floating
   IPL reads level 7 (non-maskable).  D/A/FC/~BG/~DTACK/~BERR plain
   nets; CLK via the oscillator's 33R series.
+
+2026-09-01 -- Real RS-232 on both DUART channels; IP4/IP5 assigned DCD_B/RI_B
+  The Aerie's Hayes needs real levels, and TTL headers were the one
+  visible 2026-ism on the rear panel.  One MAX232 per channel (bin, x3)
+  gives TXD/RXD + RTS/CTS exactly; ch B's DCD and RI ride a 75189 quad
+  receiver (bin, x2) into the DUART's last two inputs, IP4/IP5 --
+  poll-only, since 68681 change-of-state IRQs cover only IP0-IP3.
+  Ch A console = DB-25F wired DCE (terminal straight-cables in; DSR+DCD
+  strapped to the terminal's DTR).  Ch B modem = DB-25M wired DTE
+  (straight to the modem, null modem to a peer -- matching the planned
+  Aerie laptop hookup); DTR-DSR strap with the modem at &D0, hang-up by
+  +++ATH, a GLUE bodge spare can drive DTR later.  TTL bench headers
+  retained: TX fans out harmlessly; the four receiver outputs (RXD/CTS
+  x2) pass through series isolation jumpers so header and port never
+  fight.  MC1488 drivers rejected: they need +-12 V rails the 5 V-only
+  supply doesn't have; the MAX232 charge pump is the whole reason to
+  accept a 1987 part inside a declared reproduction.  No CPLD, firmware
+  or emulator impact; DUART_IP_DCD_B/DUART_IP_RI_B masks generated for
+  the Aerie software to poll.
