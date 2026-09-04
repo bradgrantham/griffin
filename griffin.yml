@@ -36,8 +36,7 @@ peripherals:
         width: 8
         description: |
           Set or clear DEBUG_OUT signal (debug LED and test point output).
-          While ~HALT is low (CPU halted: double bus fault, or a
-          debug-header hold) GLUE overrides the pin with a ~1.9 Hz blink
+          While ~HALT is low GLUE overrides the pin with a ~1.9 Hz blink
           (vsync/32); the register value returns when ~HALT releases.
         bits:
           - { bit: "0", name: OUT, description: "DEBUG_OUT drive level" }
@@ -52,19 +51,19 @@ peripherals:
           - { bit: "1", name: FLASH_WE_EN, default: 0,
               description: "Write 1 to enable the ~ROM_WE strobe so ROM-window word writes reach the flash (JEDEC program/erase); 0 write-protects flash" }
           - { bit: "2", name: VSYNC_IRQ_EN, default: 0,
-              description: "Write 1 to let a latched vsync drive the level-6 IPL code; 0 (reset value) suppresses only the IRQ term, leaving the vsync_pending latch, VSYNC_STATUS readback and VSYNC_CLEAR W1C live so firmware can poll vblank without an ISR" }
+              description: "Write 1 to let VSYNC_PENDING assert the level-6 IRQ; 0 suppresses only the IRQ, so VSYNC_STATUS/VSYNC_CLEAR still work for polling" }
           - { bit: "3", name: CF_IRQ_EN, default: 0,
-              description: "Write 1 to let the CF card's INTRQ level drive the level-1 IPL code; 0 (reset value) leaves CF_PINS.INTRQ readable but raises no interrupt" }
+              description: "Write 1 to let CF INTRQ assert the level-1 IRQ; 0 leaves CF_PINS.INTRQ readable but raises no interrupt" }
       - offset: 0x09
         name: PS2_TX_DATA
         access: write
         width: 8
         description: |
           Byte to transmit host->device; the write itself starts the frame.
-          Precondition: CPU has held PS2_CLK low >= 100 us via PS2_CTRL.CLK.
-          Frame is start/8-data-LSB-first/parity/stop shifted on device
-          PS2_CLK falling edges; device ACK lands in TX_ACK and TX_DONE
-          raises the level-4 IRQ.  Parity is not computed in hardware:
+          The request-to-send clock inhibit is not done in hardware: hold
+          PS2_CLK low >= 100 us via PS2_CTRL.CLK first.  Bits are shifted
+          on device PS2_CLK falling edges; the device ACK lands in TX_ACK
+          and TX_DONE raises the IRQ.  Parity is not computed in hardware:
           address bit 1 carries it, so write PS2_TX_DATA for parity 0 or
           PS2_TX_DATA + PS2_TX_DATA_PARITY (0x0B) for parity 1.  Ignored
           while a TX or RX frame is in progress.
@@ -76,20 +75,20 @@ peripherals:
         width: 8
         description: |
           PS/2 frame-engine status.
-          One IRQ per assembled 11-bit RX frame (RX_READY) or completed TX
-          (TX_DONE); both W1C via PS2_CLEAR.  Firmware checks odd parity
-          from RX_PARITY.
+          One IRQ per assembled RX frame (RX_READY) or completed TX
+          (TX_DONE); both W1C via PS2_CLEAR.  Parity is not checked in
+          hardware: firmware checks RX_PARITY.
         bits:
           - { bit: "0", name: RX_READY,
-              description: "1 = a received byte is in PS2_RX_DATA; asserts level-4 IRQ; W1C via PS2_CLEAR" }
+              description: "1 = a received byte is in PS2_RX_DATA; asserts the IRQ" }
           - { bit: "1", name: TX_DONE,
-              description: "1 = host->device frame finished; asserts level-4 IRQ; W1C via PS2_CLEAR" }
+              description: "1 = host->device frame finished; asserts the IRQ" }
           - { bit: "2", name: TX_ACK,
               description: "Device ACK sampled on the final clock of the last TX (0 = acknowledged)" }
           - { bit: "3", name: RX_PARITY,
-              description: "Received parity bit of the latched byte (firmware checks odd parity)" }
+              description: "Received parity bit of the latched byte (not checked in hardware)" }
           - { bit: "4", name: RX_FRAME_ERR,
-              description: "1 = received stop bit was not 1 (framing error)" }
+              description: "1 = framing error" }
           - { bit: "5", name: DATA_LIVE,
               description: "Unlatched synchronized PS2_DATA pin state (debug)" }
           - { bit: "6", name: CLK_LIVE,
@@ -100,8 +99,8 @@ peripherals:
         width: 8
         description: |
           Write-1-to-clear for PS2_STATUS latched flags / IRQ ack.
-          The level-4 IRQ de-asserts on the same cycle once both RX_READY
-          and TX_DONE are clear.
+          The IRQ de-asserts on the same cycle once both RX_READY and
+          TX_DONE are clear.
         bits:
           - { bit: "0", name: RX_READY, description: "Write 1 to clear RX_READY (RX byte ISR ack)" }
           - { bit: "1", name: TX_DONE,  description: "Write 1 to clear TX_DONE (TX completion ISR ack)" }
@@ -111,33 +110,33 @@ peripherals:
         width: 8
         description: |
           Open-drain drive control for PS2_CLK and PS2_DATA for the TX inhibit handshake.
-          Set = drive low; clear = tri-state to the external pull-up.  CLK is
-          ignored while a TX frame is in progress (the engine owns the pins).
+          CLK is ignored while a TX frame is in progress (the engine owns
+          the pins).
         bits:
           - { bit: "0", name: CLK,
-              description: "1 = drive PS2_CLK low (inhibit device / request-to-send); 0 = tri-state" }
+              description: "1 = drive PS2_CLK low (inhibit / request-to-send)" }
           - { bit: "1", name: DATA,
-              description: "1 = drive PS2_DATA low; 0 = tri-state (pull-up high)" }
+              description: "1 = drive PS2_DATA low" }
       - offset: 0x15
         name: PS2_RX_DATA
         access: read
         width: 8
         description: "Assembled PS/2 data byte; valid while RX_READY is set."
         bits:
-          - { bit: "7:0", name: DATA, description: "Received scancode byte (LSB-first on the wire)" }
+          - { bit: "7:0", name: DATA, description: "Received scancode byte" }
       - offset: 0x17
         name: VSYNC_STATUS
         access: read
         width: 8
         description: |
           Latched vsync frame interrupt status.
-          GLUE 2-FF synchronizes TIMING's nVSYNC_IRQ and latches its
-          assertion edge; while CONFIG.VSYNC_IRQ_EN is set the latch asserts
-          the level-6 IRQ until cleared via VSYNC_CLEAR.  Latch and readback
-          are unconditional, so firmware may poll and acknowledge with no ISR.
+          GLUE latches the assertion edge of TIMING's nVSYNC_IRQ; while
+          CONFIG.VSYNC_IRQ_EN is set the latch asserts the level-6 IRQ
+          until cleared via VSYNC_CLEAR.  Latch and readback are
+          unconditional, so firmware may poll and acknowledge with no ISR.
         bits:
           - { bit: "0", name: VSYNC_PENDING,
-              description: "1 = a vsync edge has been latched; asserts the level-6 IRQ when CONFIG bit VSYNC_IRQ_EN is set; W1C via VSYNC_CLEAR" }
+              description: "1 = a vsync edge has been latched; W1C via VSYNC_CLEAR" }
       - offset: 0x17
         name: VSYNC_CLEAR
         access: write
@@ -151,30 +150,27 @@ peripherals:
         width: 8
         description: |
           Display-list ENGINE state, read back through GLUE because ENGINE reads see the open bus.
-          ACTIVE and WAITING are ENGINE's registered status wires (ENGINE
-          pins 80 and 4 -> GLUE), one SYSCLK behind its state machine; IRQ
-          is the ~ENGINE_IRQ net.  Idle = 000, running = 001, parked in a
-          wait_hblank descriptor = 011, finished by stop_after and not yet
-          acknowledged = 100 (the list disarms itself), aborted = 000.
+          ACTIVE and WAITING are ENGINE's registered status wires, one
+          SYSCLK behind its state machine; IRQ is the ~ENGINE_IRQ net.
+          Idle or aborted = 000, running = 001, parked in a wait_hblank
+          descriptor = 011, finished by stop_after and not yet
+          acknowledged = 100 (the list disarms itself).
         bits:
           - { bit: "0", name: ACTIVE,
               description: "1 = a list is armed and has not stopped or been aborted (ENGINE dma_en)" }
           - { bit: "1", name: WAITING,
               description: "1 = ENGINE has released the bus and is waiting for TIMING's HBLANK rising edge" }
           - { bit: "2", name: IRQ,
-              description: "1 = ~ENGINE_IRQ is asserted (stop_after reached; any DESC or CTRL write clears it)" }
+              description: "1 = ~ENGINE_IRQ is asserted" }
       - offset: 0x1B
         name: CF_PINS
         access: read
         width: 8
         description: |
           CF card sideband pin levels, read raw.
-          INTRQ is the card's True IDE interrupt request (high = a command
-          has completed or DRQ is set, per the card's nIEN setting); it is
-          also the level-1 interrupt when CONFIG bit CF_IRQ_EN is set.
-          IORDY low means the card is extending the current PIO cycle; GLUE
-          synchronizes it and withholds the CF DTACK while it is low, up to
-          the BERR timeout.
+          INTRQ is the level-1 interrupt when CONFIG bit CF_IRQ_EN is set.
+          GLUE withholds the CF DTACK while IORDY is low, up to the BERR
+          timeout.
         bits:
           - { bit: "0", name: INTRQ, description: "Live CF INTRQ level" }
           - { bit: "1", name: IORDY, description: "Live CF IORDY level (1 = ready)" }
@@ -204,9 +200,9 @@ peripherals:
     linker:
       section: rom
 
-  # 4 banks x 1MB, each a pair of AS6C4008 (one per byte lane).  GLUE decodes
-  # nRAM_[1-4]_SEL from A21:20 within A23:22 == 00, drives WRITE_LO/WRITE_HI
-  # byte strobes, /OE from nR_W.  All four banks are always populated.
+  # 4 banks x 1MB, each a pair of AS6C4008.  GLUE decodes nRAM_[1-4]_SEL
+  # from A21:20 within A23:22 == 00 and drives the WRITE_LO/WRITE_HI byte
+  # strobes.  All four banks are always populated.
   RAM_BANK_1:
     part: "2x AS6C4008"
     address_range:
@@ -272,14 +268,13 @@ peripherals:
   # it does not sample DTACK either: every source it reads is 0-wait-state
   # SRAM selected combinationally from the address.
   # Write-only MMIO decoded on A[2:1] with LDS; reads see the open bus, so
-  # ENGINE's state is read through GLUE ENGINE_STATUS (ACTIVE and WAITING
-  # wires from ENGINE, plus the ~ENGINE_IRQ net).
-  # ENGINE is a bus master (BR/BG/BGACK): each 4-word descriptor reads
-  # count words from any address and pulses one active-low deposit strobe
-  # per word, chosen by the descriptor's mask (ENGINE_SIGNAL_*): the nets
-  # nPIXELS_FIFO_W, nVIDCMD_FIFO_W and nAUDIO_FIFO_W are the /W pins of the
-  # three FIFO pairs, whose data pins sit directly on D[15:0] and need no
-  # address decode; nSIGNAL_SPARE (mask bit 3) goes only to a header.
+  # ENGINE's state is read through GLUE ENGINE_STATUS.
+  # ENGINE is a bus master: each 4-word descriptor reads count words from
+  # any address and pulses one active-low deposit strobe per word, chosen
+  # by the descriptor's mask (ENGINE_SIGNAL_*): the nets nPIXELS_FIFO_W,
+  # nVIDCMD_FIFO_W and nAUDIO_FIFO_W are the /W pins of the three FIFO
+  # pairs (see interfaces, Stream FIFO parts); nSIGNAL_SPARE (mask bit 3)
+  # goes only to a header.
   # ~ENGINE_IRQ asserts when a stop_after descriptor completes and clears on
   # any DESC or CTRL write.
   # Descriptors themselves are read only from the top 64K of RAM.
@@ -309,9 +304,7 @@ peripherals:
         width: 16
         description: |
           Descriptor word address within RAM's top 64K; writing arms DMA.
-          D[14:0] is the word address of the first 4-word descriptor (byte
-          address 0x3F0000 + 2*addr); descriptors are 4-word aligned.  The
-          write also clears a pending ~ENGINE_IRQ.
+          Byte address = 0x3F0000 + 2*ADDR; descriptors are 4-word aligned.
         bits:
           - { bit: "14:0", name: ADDR,
               description: "Word address of the first descriptor within the top 64K of RAM" }
@@ -322,13 +315,13 @@ peripherals:
         description: |
           DMA enable and abort; any write clears a pending ~ENGINE_IRQ.
           A stop_after descriptor clears ENABLE itself at list end, so the
-          usual IRQ ack is CTRL=0 from the level-3 ISR.
+          usual IRQ ack is CTRL=0 from the ISR.
         bits:
           - { bit: "0", name: ENABLE, default: 0,
               description: "1 = run the armed list; 0 = abort and release the bus" }
 
-  # None of TIMING -> PIXEL -> COMPOSITOR -> DAC is on the CPU bus.
-  # the CPU # reaches them only through ENGINE's PIXELS/VIDCMD FIFO streams.
+  # None of TIMING -> PIXEL -> COMPOSITOR -> DAC is on the CPU bus; the CPU
+  # reaches them only through ENGINE's PIXELS/VIDCMD FIFO streams.  The
   # frame IRQ is TIMING's nVSYNC_IRQ latched in GLUE (VSYNC_STATUS/VSYNC_CLEAR).
 
   # TIMING (cpld/pixel/timing.v, ATF1504AS PLCC44) owns the VGA raster timing
@@ -348,23 +341,21 @@ peripherals:
   #   H_TOTAL - PIXEL_PRELOAD_LEAD before a visible line.
   # - Sync compares shift late by DAC_LEAD (4); timing.v localparams must
   #   equal the lead constants below.
-  # - HBLANK (pin 19) -> ENGINE pin 2: registered h_cnt >= 640, high for
-  #   640..799 on EVERY line, visible or blank, rising on the clock
-  #   PIX_CONSUME falls.  ENGINE 2-FF synchronizes it and wait_hblank
-  #   descriptors wait for the rising edge, the start of the 160-clock
-  #   blank budgeted in descriptor.h HBLANK_SYSCLK.  Not the HSYNC net
-  #   (rises 116 clocks later), not ~H_ACTIVE (never toggles in vblank).
-  # - nVSYNC_IRQ (pin 31) -> GLUE pin 65: registered ~in_vsync, identical to
-  #   VGA_VSYNC today (negative, 2 lines at v = 490..491); polarity fixed for
-  #   every future raster mode, so the connector's VSYNC polarity can change
-  #   without moving the IRQ edge.  GLUE edge-latches it (VSYNC_STATUS).
-  # - PADDLE_TICK (pin 17) -> PORTS pin 44 and AUDIO_TICK (pin 18) -> PORTS
-  #   pin 45: square waves toggling on the clock that starts every line
-  #   (period 1600 clocks, free-running from reset, no frame-boundary
-  #   exception).  PORTS 2-FF synchronizes each and counts FALLING edges
-  #   only: 15.734 kHz events (PADDLE_TICKS_PER_SECOND,
-  #   AUDIO_SAMPLES_PER_SECOND).  Two nets so the audio rate can change in
-  #   TIMING alone: event rate = toggle rate / 2.
+  # - HBLANK -> ENGINE: registered h_cnt >= 640, high for 640..799 on
+  #   EVERY line, visible or blank, rising on the clock PIX_CONSUME falls.
+  #   ENGINE 2-FF synchronizes it and wait_hblank descriptors wait for the
+  #   rising edge, the start of the 160-clock blank budgeted in
+  #   descriptor.h HBLANK_SYSCLK.
+  # - nVSYNC_IRQ -> GLUE: registered ~in_vsync, identical to VGA_VSYNC
+  #   today (negative, 2 lines at v = 490..491); polarity fixed for every
+  #   future raster mode independent of the connector's VSYNC polarity.
+  #   GLUE edge-latches it (VSYNC_STATUS).
+  # - PADDLE_TICK and AUDIO_TICK -> PORTS: square waves toggling on the
+  #   clock that starts every line (period 1600 clocks, free-running from
+  #   reset, no frame-boundary exception).  PORTS 2-FF synchronizes each
+  #   and counts FALLING edges only: 15.734 kHz events
+  #   (PADDLE_TICKS_PER_SECOND, AUDIO_SAMPLES_PER_SECOND).  Separate nets
+  #   so the audio rate can change alone.
   # - VGA_HSYNC and VGA_VSYNC drive ONLY the 74AC541 buffers.
   # - DUART OP4..OP7 -> TIMING pins 20, 21, 24, 25: reserved static
   #   configuration inputs (future raster/audio-rate select), not fitted;
@@ -374,9 +365,8 @@ peripherals:
     part: "ATF1504AS (PLCC44)"
     description: "Raster time base: VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, PIXEL strobes, ENGINE HBLANK, GLUE vsync IRQ, PORTS paddle/audio ticks"
     clock: 25175000    # dedicated pixel oscillator, not SYSCLK; shared by PIXEL and COMPOSITOR
-    # VESA 640x480@60: 800x525 scan, negative sync polarity on both.  Counts:
-    # horizontal in pixel clocks, vertical in lines; active -> front porch ->
-    # sync -> back porch, summing to the total (codegen checks the sums).
+    # VESA 640x480@60.  Horizontal counts in pixel clocks, vertical in
+    # lines; codegen checks that the four terms sum to the total.
     # timing.v's H_*/V_* localparams must equal these values; the generated
     # TIMING_H_*/TIMING_V_* defines are the checkable form.
     video_timing:
@@ -391,16 +381,15 @@ peripherals:
       v_sync:         2
       v_back_porch:   33
       v_total:        525
-      hsync_polarity: negative   # asserted low during the sync interval
+      hsync_polarity: negative
       vsync_polarity: negative
 
   # PIXEL (cpld/pixel/pixel.v) unpacks the PIXELS FIFO byte stream into R4G4B4
   # for COMPOSITOR and hosts the SET-target registers COMPOSITOR forwards.
   # - PIXELS FIFO read port: 2x IDT7200 as a byte-interleaved shared-Q pair,
   #   PIXELS_Q[7:0] in, nPIXELS_RE_EVEN / nPIXELS_RE_ODD out.  A byte is
-  #   consumed every >= 8 pixel clocks (2bpp modes) or 16 (1bpp), so the port
-  #   needs no read-timing analysis beyond COMPOSITOR's VIDCMD one at 8x the
-  #   period.  /RS of the pair is TIMING's nRS.
+  #   consumed every >= 8 pixel clocks (2bpp modes) or 16 (1bpp).  /RS of
+  #   the pair is TIMING's nRS.
   # - Raster events come only from TIMING (PIX_CONSUME / PIX_PRELOAD /
   #   PIX_LAST, see TIMING).  nRESET is the power-on GCLR, not the frame /RS.
   # - SET registers, applied directly at COMPOSITOR's set_pix_commit from the
@@ -436,40 +425,28 @@ peripherals:
   # TIMING's nRS (GCLR), once per frame.  RGB_OUT[11:0] -> the 74AC541
   # buffers and DAC (see interfaces).
   # - VIDCMD FIFO read port (2x IDT7200L15, shared /RE): registered /RE
-  #   from COMPOSITOR, 2 pixel clocks per word, no shaping gate; all edges
-  #   are GCLK rising edges, so there is no duty-cycle dependence.  Pinned
-  #   parameters: IDT7200L15 tRC 25 min / tA 15 max / tRPW 15 min / tRR 10
-  #   min / tDV 5 min / tRHZ 15 max / tREF 15 max (REN_7200-7202_DST
-  #   20171127, 30 pF); ATF1508AS-10 GCLK tSU 7 / tH 0, clock-pin-to-output
-  #   8.0 ns max at 35 pF (DS20006682A Table 1-4); T = 39.72 ns.  Worst-case
-  #   margins incl. ~2 ns flight and series termination: pulse +24.7 ns,
-  #   recovery +29.7, cycle +54.4, data setup +7.7, hold +6.  Consequence:
-  #   VIDCMD cadence is uniformly 2 slots per word (1-px spans render 2 px
-  #   wide); compositor_tb, vidcmd-spec.md and the super-engine model encode
-  #   it.
+  #   from COMPOSITOR, 2 pixel clocks per word, no shaping gate (timing
+  #   margins: griffin.log 2026-09-03).  Consequence: VIDCMD cadence is
+  #   uniformly 2 slots per word (1-px spans render 2 px wide);
+  #   compositor_tb, vidcmd-spec.md and the super-engine model encode it.
   # - VIDCMD FIFO /EF -> COMPOSITOR input, synchronized on-chip with an
   #   asymmetric guard (2-FF sync governs the asynchronous rise from
   #   ENGINE-domain writes; the raw flag governs the fall caused by
-  #   COMPOSITOR's own clock-aligned read).  Requirement: tCO 8.0 + tREF 15
-  #   + ~2 ns flight = 25.0 ns vs T - tSU = 32.7 ns (+7.7 ns worst case).
+  #   COMPOSITOR's own clock-aligned read).
   # - COMPOSITOR -> PIXEL SET path: a dedicated 12-bit registered value bus
   #   set_pix_value[11:0] alongside the valid/target/commit handshake; the
   #   bus is registered from COMPOSITOR's staged word and PIXEL applies it
-  #   at the commit pulse with no capture register.  Twelve point-to-point
-  #   traces, same clock, full-cycle setup: ordinary synchronous routing.
+  #   at the commit pulse with no capture register.
   COMPOSITOR:
     part: "ATF1508AS (PLCC84)"
     description: "VIDCMD stream player: per-slot source select over PIXEL's R4G4B4, SET forwarding to PIXEL, MASK overlays"
     clock: 25175000
 
   # GLUE decodes the region, hands over ~PORTS_SELECT and answers DTACK.
-  # Time bases come from TIMING: PADDLE_TICK (TIMING 17 -> PORTS 44) and
-  # AUDIO_TICK (TIMING 18 -> PORTS 45), square waves toggling once per line;
-  # PORTS 2-FF synchronizes each and counts FALLING edges only
-  # (PADDLE_TICKS_PER_SECOND / AUDIO_SAMPLES_PER_SECOND).  PORTS has no
-  # divider; a rate change is a TIMING change.
-  # The mouse channel mirrors GLUE's keyboard register layout and offsets
-  # (TX_DATA 0x09, STATUS/CLEAR 0x11, CTRL 0x13, RX_DATA 0x15).
+  # Time bases are TIMING's PADDLE_TICK and AUDIO_TICK (see TIMING); PORTS
+  # counts falling edges only and has no divider, so a rate change is a
+  # TIMING change.
+  # The mouse channel mirrors GLUE's keyboard register layout and offsets.
   PORTS:
     part: ATF1508AS
     description: "PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop/reset control"
@@ -498,7 +475,7 @@ peripherals:
           LEFT/RIGHT (2600 convention).  No interrupt; poll from the vsync
           ISR.  Bit 7 reads 1.
         bits:
-          - { bit: "0", name: UP,    description: "Port 1 up, DE-9 pin 1 (0 = pressed)" }
+          - { bit: "0", name: UP,    description: "Port 1 up, DE-9 pin 1" }
           - { bit: "1", name: DOWN,  description: "Port 1 down, DE-9 pin 2" }
           - { bit: "2", name: LEFT,  description: "Port 1 left, DE-9 pin 3 (also paddle B fire)" }
           - { bit: "3", name: RIGHT, description: "Port 1 right, DE-9 pin 4 (also paddle A fire)" }
@@ -527,12 +504,11 @@ peripherals:
         description: |
           Paddle A position, the pot on port 1 pin 9.
           Counts PADDLE_TICK events while the pot's RC ramp holds the
-          comparator low, freezes when it crosses, saturates at 0xFF (255
-          ticks ~= 16.2 ms, one frame).  Board RC must cross full travel in
-          < ~250 ticks.  Needs per-unit software calibration (comparator
-          threshold; pot parallels the 1M pin-5/9 pull-up).
+          comparator low, freezes when it crosses, saturates at 0xFF (about
+          one frame).  Board RC must cross full travel in < ~250 ticks.
+          Needs per-unit software calibration.
         bits:
-          - { bit: "7:0", name: COUNT, description: "PADDLE_TICK count (15.734 kHz), saturating at 0xFF" }
+          - { bit: "7:0", name: COUNT, description: "PADDLE_TICK count, saturating at 0xFF" }
       - offset: 0x07
         name: PADDLE_B_COUNT
         access: read
@@ -541,7 +517,7 @@ peripherals:
           Paddle B position, the pot on port 1 pin 5.
           Behaves as PADDLE_A_COUNT; cleared by the same PADDLE_CONTROL.DUMP.
         bits:
-          - { bit: "7:0", name: COUNT, description: "Line-rate count, saturating at 0xFF" }
+          - { bit: "7:0", name: COUNT, description: "PADDLE_TICK count, saturating at 0xFF" }
       - offset: 0x09
         name: PS2_MOUSE_TX_DATA
         access: write
@@ -549,8 +525,8 @@ peripherals:
         description: |
           Byte to transmit host->mouse; the write itself starts the frame.
           Same protocol as GLUE PS2_TX_DATA, including parity in address
-          bit 1 (write +PS2_TX_DATA_PARITY for parity 1) and TX_DONE on the
-          level-2 IRQ.  Ignored while a TX or RX frame is in progress.
+          bit 1 (write +PS2_TX_DATA_PARITY for parity 1) and TX_DONE
+          raising the IRQ.  Ignored while a TX or RX frame is in progress.
         bits:
           - { bit: "7:0", name: DATA, description: "Data byte to send (write triggers TX)" }
       - offset: 0x0F
@@ -574,15 +550,15 @@ peripherals:
           PS2_MOUSE_CLEAR.
         bits:
           - { bit: "0", name: RX_READY,
-              description: "1 = a received byte is in PS2_MOUSE_RX_DATA; asserts level-2 IRQ; W1C via PS2_MOUSE_CLEAR" }
+              description: "1 = a received byte is in PS2_MOUSE_RX_DATA; asserts the IRQ" }
           - { bit: "1", name: TX_DONE,
-              description: "1 = host->device frame finished; asserts level-2 IRQ; W1C via PS2_MOUSE_CLEAR" }
+              description: "1 = host->device frame finished; asserts the IRQ" }
           - { bit: "2", name: TX_ACK,
               description: "Device ACK sampled on the final clock of the last TX (0 = acknowledged)" }
           - { bit: "3", name: RX_PARITY,
-              description: "Received parity bit of the latched byte (firmware checks odd parity)" }
+              description: "Received parity bit of the latched byte (not checked in hardware)" }
           - { bit: "4", name: RX_FRAME_ERR,
-              description: "1 = received stop bit was not 1 (framing error)" }
+              description: "1 = framing error" }
           - { bit: "5", name: DATA_LIVE,
               description: "Unlatched synchronized PS2_MOUSE_DATA pin state (debug)" }
           - { bit: "6", name: CLK_LIVE,
@@ -593,7 +569,7 @@ peripherals:
         width: 8
         description: |
           Write-1-to-clear for PS2_MOUSE_STATUS latched flags / IRQ ack.
-          The level-2 IRQ de-asserts once RX_READY and TX_DONE are clear.
+          The IRQ de-asserts once RX_READY and TX_DONE are clear.
         bits:
           - { bit: "0", name: RX_READY, description: "Write 1 to clear RX_READY (RX byte ISR ack)" }
           - { bit: "1", name: TX_DONE,  description: "Write 1 to clear TX_DONE (TX completion ISR ack)" }
@@ -606,16 +582,16 @@ peripherals:
           Same semantics as GLUE PS2_CTRL.
         bits:
           - { bit: "0", name: CLK,
-              description: "1 = drive PS2_MOUSE_CLK low (inhibit device / request-to-send); 0 = tri-state" }
+              description: "1 = drive PS2_MOUSE_CLK low (inhibit / request-to-send)" }
           - { bit: "1", name: DATA,
-              description: "1 = drive PS2_MOUSE_DATA low; 0 = tri-state (pull-up high)" }
+              description: "1 = drive PS2_MOUSE_DATA low" }
       - offset: 0x15
         name: PS2_MOUSE_RX_DATA
         access: read
         width: 8
         description: "Assembled PS/2 mouse data byte; valid while RX_READY is set."
         bits:
-          - { bit: "7:0", name: DATA, description: "Received packet byte (LSB-first on the wire)" }
+          - { bit: "7:0", name: DATA, description: "Received packet byte" }
       - offset: 0x1F
         name: AUDIO_CONTROL
         access: write
@@ -626,16 +602,14 @@ peripherals:
           AUDIO_TICK event; clearing it freezes the DACs on their last sample
           without disturbing FIFO contents.  RESET drives both 7200 /RS pins
           low, discarding every queued pair; its reset value 1 holds the FIFOs
-          in reset from power-on (the 7200 requires a reset before its first
-          write) until software releases it.  The 7200 needs /W and /RE
-          inactive from tRSS 15 ns before /RS rises to tRSR 10 ns after:
-          PORTS holds its own /RE off while RESET is set, and software must
-          change RESET only when no descriptor list that deposits AUDIO_FIFO_W
-          is armed.  Flush sequence: ENABLE=0, RESET=1, RESET=0, deposit,
-          ENABLE=1.
+          in reset from power-on until software releases it.  The 7200's /RS
+          setup/recovery rule (see TIMING nRS) means PORTS holds its own /RE
+          off while RESET is set, and software must change RESET only when no
+          descriptor list that deposits AUDIO_FIFO_W is armed.  Flush
+          sequence: ENABLE=0, RESET=1, RESET=0, deposit, ENABLE=1.
         bits:
           - { bit: "0", name: ENABLE, default: 0,
-              description: "1 = pop one stereo sample pair per AUDIO_TICK event (15.73 kS/s today); 0 = hold" }
+              description: "1 = pop one stereo sample pair per AUDIO_TICK event; 0 = hold" }
           - { bit: "1", name: RESET, default: 1,
               description: "1 = hold both 7200 /RS low (FIFOs empty, pops suppressed); 0 = run" }
       - offset: 0x1F
@@ -646,23 +620,16 @@ peripherals:
           Audio FIFO status; no interrupt, poll it.
           EMPTY is the raw 7200 /EF pin, read like the joystick switches
           (nothing in PORTS acts on it): the last pair has been popped and
-          the DACs hold it.  The level is otherwise dead-reckoned: the pop
-          rate is locked to the pixel clock, and a missed frame is detected
-          from the vsync latch, not from the FIFO.
+          the DACs hold it.
         bits:
           - { bit: "0", name: EMPTY,
               description: "Live 7200 /EF: 1 = no pairs queued" }
           - { bit: "1", name: ENABLE,
               description: "Current AUDIO_CONTROL ENABLE state" }
 
-  # 16-bit True IDE PIO: DATA is word offset 0x00; task-file registers are
-  # byte-wide on D7-D0 at the odd offsets.  GLUE gates IOWR with AS.
-  # Sideband pins to GLUE (see GLUE CF_PINS): INTRQ (active high; the card
-  # tri-states it when nIEN = 1, so the board pulls it down) is the level-1
-  # interrupt when CONFIG.CF_IRQ_EN is set; IORDY (the card tri-states it
-  # when not extending a cycle, so the board pulls it up) withholds the CF
-  # DTACK while low.  The dtack entries below are the fixed part of the
-  # cycle; IORDY can only lengthen it, never shorten it.
+  # 16-bit True IDE PIO.  GLUE gates IOWR with AS.  Sideband pins INTRQ and
+  # IORDY go to GLUE (see GLUE CF_PINS).  The dtack entries below are the
+  # fixed part of the cycle; IORDY extends it.
   CF:
     part: "Compact Flash (True IDE)"
     description: "Storage via CF card in True IDE 16-bit PIO mode"
@@ -683,9 +650,9 @@ peripherals:
       - { offset: 0x00, name: DATA,         access: rw,    width: 16,
           description: "16-bit data port to/from the CF card" }
       - { offset: 0x03, name: ERROR,        access: read,  width: 8,
-          description: "Error register; valid after a command error" }
+          description: "Error register" }
       - { offset: 0x03, name: FEATURES,     access: write, width: 8,
-          description: "Features register; written before issuing SET_FEATURES command" }
+          description: "Features register" }
       - { offset: 0x05, name: SECTOR_COUNT, access: rw,    width: 8,
           description: "Number of sectors to transfer" }
       - { offset: 0x07, name: SECTOR_NUM,   access: rw,    width: 8,
@@ -697,9 +664,9 @@ peripherals:
       - { offset: 0x0D, name: DRIVE_HEAD,   access: rw,    width: 8,
           description: "LBA bits 27:24 and drive select; OR with CF_DH_LBA for LBA mode" }
       - { offset: 0x0F, name: STATUS,       access: read,  width: 8,
-          description: "Device status; poll BSY clear and DRQ set before data transfer" }
+          description: "Status register" }
       - { offset: 0x0F, name: COMMAND,      access: write, width: 8,
-          description: "Issue command; write after setting all other registers" }
+          description: "Command register" }
 
   DUART:
     part: "XR68C681"
@@ -717,12 +684,11 @@ peripherals:
     #                                            IP5: RI_B (ch B ring)
     # IP4/IP5 come from the ch B RS-232 receivers; the 68681
     # change-of-state IRQ covers only IP0-IP3, so both are poll-only.
-    # OP4..OP7 are a static firmware-settable configuration word for TIMING
-    # (future raster/audio-rate select); unused today, and the OP reset state
-    # (OPR = 0 -> pins HIGH, 1111) must remain today's behaviour.
+    # OP4..OP7 are a static configuration word for TIMING (see TIMING); the
+    # OP reset state (OPR = 0 -> pins HIGH, 1111) must remain today's
+    # behaviour.
     # Bus: ~CS from GLUE (nDUART_SELECT), DTACKN back to GLUE (nDUART_DTACK),
-    # ~IACK tied high (autovectors), RESET (active low) directly on the
-    # system ~RESET net.
+    # ~IACK tied high, RESET (active low) directly on the system ~RESET net.
     address_range:
       base: 0xF80000
       size: 0x040000
@@ -734,9 +700,9 @@ peripherals:
     berr_timeout: 256
     registers:
       - { offset: 0x01, name: MR1A,   access: rw,    width: 8,
-          description: "Channel A mode register 1 (after reset or MR pointer reset)" }
+          description: "Channel A mode register 1" }
       - { offset: 0x01, name: MR2A,   access: rw,    width: 8,
-          description: "Channel A mode register 2 (second access after MR pointer reset)" }
+          description: "Channel A mode register 2" }
       - offset: 0x03
         name: SRA
         access: read
@@ -763,11 +729,11 @@ peripherals:
           - { bit: "3:2", name: TC,  description: "Transmitter command: 0=no action, 1=enable TX, 2=disable TX" }
           - { bit: "6:4", name: MC,  description: "Misc command: 1=reset MR ptr, 2=reset RX, 3=reset TX, 4=reset error, 5=reset break, 6=start break, 7=stop break" }
       - { offset: 0x07, name: RBA,    access: read,  width: 8,
-          description: "Channel A receiver buffer (read to dequeue FIFO)" }
+          description: "Channel A receiver buffer" }
       - { offset: 0x07, name: TBA,    access: write, width: 8,
-          description: "Channel A transmitter buffer (write to enqueue)" }
+          description: "Channel A transmitter buffer" }
       - { offset: 0x09, name: IPCR,   access: read,  width: 8,
-          description: "Input port change register (read clears interrupt)" }
+          description: "Input port change register" }
       - offset: 0x09
         name: ACR
         access: write
@@ -805,9 +771,9 @@ peripherals:
       - { offset: 0x0F, name: CTLR,   access: write, width: 8,
           description: "Counter/timer lower preload register" }
       - { offset: 0x11, name: MR1B,   access: rw,    width: 8,
-          description: "Channel B mode register 1 (after reset or MR pointer reset)" }
+          description: "Channel B mode register 1" }
       - { offset: 0x11, name: MR2B,   access: rw,    width: 8,
-          description: "Channel B mode register 2 (second access after MR pointer reset)" }
+          description: "Channel B mode register 2" }
       - { offset: 0x13, name: SRB,    access: read,  width: 8,
           description: "Channel B status register (same bit layout as SRA)" }
       - { offset: 0x13, name: CSRB,   access: write, width: 8,
@@ -815,9 +781,9 @@ peripherals:
       - { offset: 0x15, name: CRB,    access: write, width: 8,
           description: "Channel B command register (same bit layout as CRA)" }
       - { offset: 0x17, name: RBB,    access: read,  width: 8,
-          description: "Channel B receiver buffer (read to dequeue FIFO)" }
+          description: "Channel B receiver buffer" }
       - { offset: 0x17, name: TBB,    access: write, width: 8,
-          description: "Channel B transmitter buffer (write to enqueue)" }
+          description: "Channel B transmitter buffer" }
       - { offset: 0x19, name: IVR,    access: rw,    width: 8,
           description: "Interrupt vector register" }
       - { offset: 0x1B, name: IP,     access: read,  width: 8,
@@ -825,23 +791,19 @@ peripherals:
       - { offset: 0x1B, name: OPCR,   access: write, width: 8,
           description: "Output port configuration register" }
       - { offset: 0x1D, name: STARTCC, access: read, width: 8,
-          description: "Start counter/timer command (read to start; data ignored)" }
+          description: "Start counter/timer command (read)" }
       - { offset: 0x1D, name: OPR_SET, access: write, width: 8,
-          description: "Output port bit set (1 bits set corresponding OP pins)" }
+          description: "Output port bit set (sets OPR bits; those OP pins go LOW)" }
       - { offset: 0x1F, name: STOPCC,  access: read, width: 8,
-          description: "Stop counter/timer command (read to stop; data ignored)" }
+          description: "Stop counter/timer command (read)" }
       - { offset: 0x1F, name: OPR_CLR, access: write, width: 8,
-          description: "Output port bit reset (1 bits clear corresponding OP pins)" }
+          description: "Output port bit reset (clears OPR bits; those OP pins go HIGH)" }
 
-  # AUDIO has no CPU path.  The FIFO pair's data pins sit on D[15:0] and the
-  # only /W is ENGINE's AUDIO_FIFO_W deposit strobe (ENGINE_SIGNAL_AUDIO_FIFO_W):
-  # one word per stereo pair, L = D15-D8, R = D7-D0, two's complement 8-bit
-  # (0x00 = silence = DAC midscale: a CD4049 inverter flips each channel's
-  # Q7 between FIFO and ladder -- see the audio output interfaces entry)
-  # /R comes from PORTS once per AUDIO_TICK event
-  # (AUDIO_SAMPLES_PER_SECOND) while PORTS AUDIO_CONTROL.ENABLE is set;
-  # /RS of both chips from PORTS (AUDIO_CONTROL.RESET); /EF of the pair goes
-  # to PORTS as AUDIO_STATUS.EMPTY.  /HF is unconnected.  No interrupt.
+  # AUDIO has no CPU path: the only /W is ENGINE's AUDIO_FIFO_W deposit
+  # strobe (ENGINE_SIGNAL_AUDIO_FIFO_W), one word per stereo pair,
+  # L = D15-D8, R = D7-D0, two's complement 8-bit (0x00 = silence; see the
+  # audio output interfaces entry).  /R, /RS and /EF belong to PORTS
+  # (AUDIO_CONTROL, AUDIO_STATUS); /HF is unconnected.  No interrupt.
   AUDIO:
     part: "2x IDT7200 FIFO + 2x 8-bit R2R DAC + CD4049 MSB inverters + LM358 buffer + 3x LM386 (L/R headphone drivers + speaker amp)"
     description: "Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate"
@@ -855,7 +817,6 @@ constants:
   CF_CMD_WRITE_SECTORS: 0x30
   CF_CMD_IDENTIFY:      0xEC
   CF_CMD_SET_FEATURES:  0xEF
-  CF_CMD_SET_8BIT:      0x01   # rev-1 8-bit PIO only; unused with the 16-bit DATA port
   CF_DH_LBA:            0xE0
   PS2_RX_QUEUE_SIZE:    64
 
@@ -863,7 +824,7 @@ constants:
   # 16.3 ms at AUDIO_SAMPLES_PER_SECOND; fills are sized against this.
   AUDIO_FIFO_DEPTH:          256
   AUDIO_SAMPLES_PER_SECOND:  15734   # TIMING AUDIO_TICK falling edges: every second 31.469 kHz line
-  PADDLE_TICKS_PER_SECOND:   15734   # TIMING PADDLE_TICK falling edges: same, the 2600 scanline rate
+  PADDLE_TICKS_PER_SECOND:   15734   # TIMING PADDLE_TICK falling edges: same
 
   # DUART OP/IP masks (see the DUART pin wiring).  OP pins drive the
   # COMPLEMENT of their OPR bits; RTC_SDA_DRIVE inverts again through the
@@ -879,9 +840,8 @@ constants:
   # PS/2 TX parity is carried in address bit 1 of the TX_DATA registers.
   PS2_TX_DATA_PARITY:   0x02
 
-  # ENGINE bus-arbitration burst: words per BR/BGACK cycle.  Shorter than a
-  # scanline so one burst (~2.86 us at 2 CPUCLK/word) cannot fill an hblank
-  # (~6.35 us); long enough to amortize the ~10-cycle handshake.
+  # ENGINE bus-arbitration burst: words per bus-grant cycle (sizing
+  # rationale: griffin.log 2026-09-03).
   ENGINE_WORDS_PER_BURST: 20
 
   # Frame interrupt level (TIMING nVSYNC_IRQ latched in GLUE).
@@ -909,8 +869,7 @@ constants:
   VIDCMD_SET_PIX_MODE:       5
   VIDCMD_SET_PIX_PIXEL_SKIP: 6
 
-  # Stream FIFOs: 2x IDT7200 256x9 per stream (VIDCMD ganged 16-bit;
-  # PIXELS byte-interleaved shared-Q pair).
+  # Stream FIFO depth in words (parts: interfaces, Stream FIFO parts).
   PIXELS_FIFO_WORDS: 256
   VIDCMD_FIFO_WORDS: 256
 
@@ -926,8 +885,7 @@ constants:
   PIXEL_OUT_LEAD:     1    # ham_held -> registered RGB_OUT inside PIXEL
   TIMING_SPLIT_LEAD:  1    # TIMING->PIXEL registered strobe hop
   DAC_LEAD:           4    # sum of the above: sync compares shift by this
-  PIXEL_PRELOAD_LEAD: 16   # hblank fetch lead: 2 first byte + 2 skip-discard
-                           # + 7 alignment shifts = 11, rounded up
+  PIXEL_PRELOAD_LEAD: 16   # hblank fetch lead (derivation: griffin.log 2026-09-03)
 
 # Firmware<->application syscall ABI: TRAP #15, call number in d0, up to
 # three args in d1/d2/d3 (pointers as longs), result in d0; d0 < 0 is -errno.
@@ -941,34 +899,34 @@ syscalls:
       description: "Terminate the application and return control to the firmware."
     - name: WRITE
       number: 1
-      description: "write(fd in d1, buf in d2, len in d3) to the console or a file."
+      description: "write(fd, buf, len) to the console or a file."
     - name: READ
       number: 2
-      description: "read(fd in d1, buf in d2, len in d3) from the console or a file."
+      description: "read(fd, buf, len) from the console or a file."
     - name: OPEN
       number: 3
-      description: "open(path in d1, flags in d2, mode in d3) and return a file descriptor."
+      description: "open(path, flags, mode); returns a file descriptor."
     - name: CLOSE
       number: 4
-      description: "close(fd in d1) a previously opened file descriptor."
+      description: "close(fd)."
     - name: LSEEK
       number: 5
-      description: "lseek(fd in d1, offset in d2, whence in d3) within an open file."
+      description: "lseek(fd, offset, whence)."
     - name: FSTAT
       number: 6
-      description: "fstat(fd in d1, struct stat in d2) for an open file descriptor."
+      description: "fstat(fd, stat buffer)."
     - name: ISATTY
       number: 7
-      description: "isatty(fd in d1) returns nonzero if the descriptor is a terminal."
+      description: "isatty(fd)."
     - name: STAT
       number: 8
-      description: "stat(path in d1, struct stat in d2) for a named file."
+      description: "stat(path, stat buffer)."
     - name: INPUTREADY
       number: 9
       description: "Return 1 if console input is ready so a read from the console would not block."
     - name: READDIR
       number: 10
-      description: "readdir(path in d1, index in d2, entry buffer in d3) fills one directory entry and returns 0, or 1 past the end."
+      description: "readdir(path, index, entry buffer) fills one directory entry and returns 0, or 1 past the end."
     - name: GETTICKS
       number: 11
       description: "Return milliseconds since boot as an unsigned 32-bit count that wraps."
@@ -1017,8 +975,7 @@ interfaces:
     specified only to -2 mA; the MSB sources ~8.6 mA).
     DAC per channel (x3): binary-weighted ladder + shunt to ground.  bit3 =
     2x 1k parallel, bit2 = 1k, bit1 = 2x 1k series, bit0 = 3.9k, shunt =
-    100R; 1k are 1% metal film (same batch), 3.9k may be 5%.  FS ~= 0.693 V
-    loaded, Zth ~= 72.7R, worst-case systematic error ~= 0.03 LSB.
+    100R; 1k are 1% metal film (same batch), 3.9k may be 5%.
     Syncs: buffer -> 100R series -> DE-15 pins 13/14; no termination.
     DE-15: R=1, G=2, B=3, HS=13, VS=14; 5,6,7,8,10 + shell -> GND.
     BOM: 21x 1k 1%, 3x 3.9k, 5x 100R, 2x 74AC541.
@@ -1027,7 +984,7 @@ interfaces:
   - |
     Stream FIFO parts: no transceivers anywhere on D[15:0] -- the six
     7200 data-pin loads sit directly on the bus alongside CPU, 8 RAM,
-    2 ROM, 3 CPLDs, DUART and CF (decision re-affirmed for Rev 2).
+    2 ROM, 3 CPLDs, DUART and CF.
     All three streams use 2x IDT7200 (256x9) -- PIXELS
     byte-interleaved shared-Q pair (/RE from PIXEL), VIDCMD ganged 16-bit
     (/RE from COMPOSITOR), AUDIO one per channel (/RE from PORTS).  Each
@@ -1041,115 +998,81 @@ interfaces:
     FIFO control strobes: series source termination at the driver end on
     every /RE and /W line of every 7200 (PIXELS, VIDCMD, AUDIO).
   - |
-    TIMING nVSYNC_IRQ -> GLUE nVSYNC: the level-6 frame
-    IRQ.  GLUE edge-latches it with W1C ack (VSYNC_STATUS/VSYNC_CLEAR at
-    0x17) because TIMING has no CPU bus to host an ack register.
+    TIMING nVSYNC_IRQ -> GLUE nVSYNC: the level-6 frame IRQ, edge-latched
+    in GLUE with W1C ack (VSYNC_STATUS/VSYNC_CLEAR).
   - |
-    Power entry: the motherboard is +5 V ONLY.  No other rail exists on
-    the board or may be added (RS-232 levels come from the MAX232 charge
-    pumps; anything external that needs another voltage brings its own
-    supply).  Board connector: keyed 6-position AMP MATE-N-LOK (the
-    Apple II supply connector), +5 V and GND on the positions Apple used
-    for them, every other position NOT CONNECTED so a mis-mated Apple II
-    supply does no harm -- VERIFY the Apple II pinout before silk.
-    Never a bare pin header.  Silkscreen at the connector "5V ONLY --
-    regulated 2.5A+".  Panel side: 5.5mm x 2.1mm center-positive barrel
-    jack + inline switch, harnessed to the MATE-N-LOK; regulated 5V
-    >= 2.5A brick.  Harness and contact drop count against the
-    supervisor trip budget below.
-    Supervisor: DS1233-5 (open-drain RST, internal 5k pull-up, trip
-    4.50-4.74 V, 350 ms stretch, IOL 8 mA).  The user button hangs on the
-    supervisor's RST pin: the plain (non-D) part senses the low as a
-    pushbutton press, debounces it, and re-stretches the full reset after
-    release, so the button needs no RC of its own.  Supervisor RST reaches
-    the system ~RESET net through a Schottky diode (anode on the net,
-    cathode at RST): the supervisor and button pull the net low (asserted
-    level VOL + Vf ~= 0.5 V, under the 0.8 V TTL VIL), while lows driven
-    on the net -- the CPU's 124-clock RESET-instruction pulse, the
-    debug-header master -- never reach RST, so they cannot trip the
-    pushbutton detect and be stretched.  RST also feeds GLUE's
-    nSUPERVISOR_RESET input (pin in glue.v), the source of ~HALT
-    assertion (next entry).  ~RESET net wire-OR drivers: the diode, the
-    CPU, the debug-header master; 10k pull-up; no RC on the net.
-    Bring-up gate: rail >= 4.85 V at the supervisor under full load, else
-    DS1233-10 or trim the supply.  Firmware never executes the RESET
-    instruction: its pulse still resets GLUE (CONFIG clears, ROM overlay
-    returns) under a still-running CPU.
+    Power entry: the logic board is +5 V only. Board connector: keyed 6-position AMP MATE-N-LOK in
+    the Apple II pinout -- VERIFY before silk.  +5 V and GND feed the
+    board; +12 V, -12 V and -5 V are passed through, untouched, as bare
+    copper to a 4-pin drive power connector (AMP 1-480424-0 style) at
+    the case's single half-height bay.  Panel side: 5.5mm x 2.1mm
+    center-positive barrel jack + inline switch to +5V and GND.
+    Regulated 5V >= 2.5A brick.
+    Supervisor: DS1233-5 (the plain part, not the D variant: its RST pin
+    doubles as a debounced pushbutton input).  The user button hangs on
+    RST with no RC of its own.  RST reaches the system ~RESET net through
+    a Schottky diode (anode on the net, cathode at RST): the supervisor
+    and button pull the net low, while lows driven on the net -- the
+    CPU's RESET instruction, the debug-header master -- never reach RST,
+    so they cannot trip the pushbutton detect and be stretched.  RST also
+    feeds GLUE's nSUPERVISOR_RESET input, the source of ~HALT assertion
+    (next entry).  ~RESET net wire-OR drivers: the diode, the CPU, the
+    debug-header master; no RC on the net.  Firmware never executes the
+    RESET instruction: its pulse still resets GLUE (CONFIG clears, ROM
+    overlay returns) under a still-running CPU.
   - |
     ~HALT open-drain wire-OR: GLUE drives it low while nSUPERVISOR_RESET
     is asserted (power-on, brownout, button -- and NOT the CPU's own
-    RESET instruction, which GLUE does not echo back); the CPU drives it
-    low on a double bus fault; the debug-header master may hold it with
-    ~RESET for bus mastering.  4.7k pull-up; nothing may drive it high.
-    GLUE also senses ~HALT: while low with GLUE out of reset, DEBUG_OUT
-    is overridden with a vsync/32 (~1.9 Hz) blink so a halted CPU is
-    visible on the debug LED; the register value returns on release.
+    RESET instruction, which GLUE does not echo back); the debug-header
+    master may hold it with ~RESET for bus mastering.  GLUE also senses
+    ~HALT for the DEBUG_OUT halt blink (see GLUE DEBUG_OUT).
   - |
-    ENGINE -> GLUE status wires: ENGINE_ACTIVE (ENGINE pin 80 -> GLUE 35)
-    and ENGINE_WAITING (ENGINE pin 4 -> GLUE 36), plus the existing
-    ~ENGINE_IRQ net, read back as GLUE ENGINE_STATUS.  Plain push-pull
-    CPLD-to-CPLD signals, no pulls.
+    ENGINE -> GLUE status wires: ENGINE_ACTIVE and ENGINE_WAITING, plus
+    the existing ~ENGINE_IRQ net, read back as GLUE ENGINE_STATUS.
   - |
-    CF sideband: card INTRQ -> GLUE pin 40 with a pull-down, card IORDY ->
-    GLUE pin 2 with a pull-up (both are tri-stated by the card at times).
-    INTRQ is the level-1 interrupt (CONFIG.CF_IRQ_EN); IORDY qualifies
-    the CF DTACK.  Both readable as GLUE CF_PINS.
+    CF sideband: card INTRQ and IORDY -> GLUE, readable as GLUE CF_PINS;
+    INTRQ is the level-1 interrupt (CONFIG.CF_IRQ_EN), IORDY qualifies
+    the CF DTACK.
   - |
     Spare headers, 0.1 in, for a future daughter board; no logic behind
     them today.  ENGINE spare strobe header near the stream FIFOs:
     nSIGNAL_SPARE (ENGINE pin 9), GND, +5V -- a fourth deposit sink sits
     on D[15:0] like the FIFOs.  PORTS spare header: PORTS pins 34 and 41
-    (unassigned I/O, left tri-state with the fitter's pin keeper, so no
-    pulls) and GND.  GLUE bodge spares: pins 24 and 64, unassigned I/O
-    (pin keeper), routed to pads only.
+    (unassigned I/O) and GND.  GLUE bodge spares: pins 24 and 64,
+    unassigned I/O, routed to pads only.
   - |
     Clocks: three oscillators, no CPLD re-drives a clock.  SYSCLK (14 MHz
-    can) -> CPU CLK and pin 83 (GCLK1) of GLUE, ENGINE and PORTS.  Pixel
-    oscillator (25.175 MHz can) -> TIMING pin 43 (GCLK1, PLCC44) and pin 83
-    (GCLK1) of PIXEL and COMPOSITOR; TIMING pin 44 (GCLK2) stays free for
-    an optional second oscillator (see TIMING).  The DUART runs its own
-    3.6864 MHz crystal on X1/X2.
+    can) -> CPU CLK and GCLK1 of GLUE, ENGINE and PORTS.  Pixel
+    oscillator (25.175 MHz can) -> GCLK1 of TIMING, PIXEL and COMPOSITOR.
+    The DUART runs its own 3.6864 MHz crystal on X1/X2.
   - |
     Audio output stage, per channel (x2, L and R identical): 7200 Q[7:0]
-    -> CD4049 inverter on Q7 only (samples in RAM and files are two's
-    complement; the inverter maps them onto the unsigned ladder, so 0x00
-    = silence = midscale) -> 4610X-R2R-103LF 10k R2R network -> 10k to
-    GND (with the ladder's 10k Thevenin impedance this IS the 2:1
-    divider: 0-2.5 V, 5k source) -> 3.3 nF to GND (single pole ~9.7 kHz,
-    ahead of the buffer) -> LM358 half as unity buffer -> 4.7k to GND at
-    the op-amp output (class-A bias against LM358 crossover distortion)
-    -> 100 uF AC coupling -> the LINE node.  Three consumers hang on
-    LINE, so the level there is knob-independent:
+    -> CD4049 inverter on Q7 only (samples are two's complement; the
+    inverter maps them onto the unsigned ladder, so 0x00 = silence =
+    midscale; it must be a CMOS-output inverter, rail-level VOH like the
+    7200's other seven bits) -> 4610X-R2R-103LF 10k R2R network -> 10k
+    to GND (2:1 divider with the ladder: 0-2.5 V, 5k source) -> 3.3 nF
+    to GND (single pole ~9.7 kHz) -> LM358 half as unity buffer -> 4.7k
+    to GND at the op-amp output -> 100 uF AC coupling -> the LINE node.
+    Three consumers hang on LINE, so the level there is knob-independent:
     (1) LINE OUT: LINE -> 100R series -> RCA jack (L and R, a pair).
-    Fixed level, always on: 2.5 Vpp max ~= 0.88 Vrms at full scale; the
-    LM358 output ceiling at a 5 V rail is ~3.5 V, so nothing clips.
+    Fixed level, always on: 2.5 Vpp max ~= 0.88 Vrms at full scale.
     (2) VOLUME POT: dual-gang 10k audio taper, one gang per channel,
-    element top to LINE, bottom to GND -- the pot IS the coupling cap's
-    DC return -- wiper out.  The element is a fixed 10k across LINE, so
-    the knob does not move the line-out level; the buffer sees the pot
-    in parallel with the external line input (>= 10k), ~5k, fine for an
-    LM358.
-    (3) HEADPHONES: wiper -> 10k series / 1k to GND (~11:1 pad; an
-    LM386 cannot go below gain 20 and 0.88 Vrms x 20 would clip a 5 V
-    rail) -> LM386 (pins 1/8 open, gain 20) -> 10R + 47 nF Zobel ->
-    250 uF -> switched 3.5 mm stereo jack tip/ring.  ~1.6 Vrms max into
-    32 ohm (~80 mW); the knob sets it.
-    The MSB inverter must be CMOS-output (rail-level VOH, like the
-    7200's other seven bits); a TTL inverter's ~3.5 V high would shrink
-    the MSB weight ~25% exactly at the zero crossing.
+    element top to LINE, bottom to GND (the pot is the coupling cap's DC
+    return), wiper out.
+    (3) HEADPHONES: wiper -> 10k series / 1k to GND (~11:1 pad) -> LM386
+    (gain 20) -> 10R + 47 nF Zobel -> 250 uF -> switched 3.5 mm stereo
+    jack tip/ring.  ~1.6 Vrms max into 32 ohm (~80 mW); the knob sets it.
     Internal speaker (replaces the Rev 1 buzzer): the jack's
-    normally-closed tip and ring switch contacts now carry the two
-    headphone-amp outputs; each feeds 47k into a mono sum at the
-    speaker LM386 input, 1k to GND (the 47k||47k = 23.5k source into 1k
-    is a ~25:1 pad: 1.6 Vrms max per side -> ~65 mV at the amp -> ~1.3
-    Vrms into the speaker, ~200 mW, no clipping at any knob position;
-    the 1k also holds the input quiet when the contacts open).  Speaker
-    LM386 at default gain 20 -> 10R + 47 nF Zobel -> 250 uF -> 8 ohm
-    speaker.  Inserting a plug opens both contacts and mutes the
-    speaker.  Behaviour: RCA line out ignores the knob; the knob governs
-    headphones and speaker together; headphones mute the speaker (the
-    Apple IIc convention).  Software mute is AUDIO_CONTROL.ENABLE (DACs
-    freeze on a DC level) and silences all three.  Ladder, divider,
+    normally-closed tip and ring switch contacts carry the two
+    headphone-amp outputs; each feeds 47k into a mono sum at the speaker
+    LM386 input, 1k to GND (~25:1 pad; the 1k also holds the input quiet
+    when the contacts open) -> LM386 (gain 20) -> 10R + 47 nF Zobel ->
+    250 uF -> 8 ohm speaker (~1.3 Vrms, ~200 mW).  Inserting a plug
+    opens both contacts and mutes the speaker.  Behaviour: RCA line out
+    ignores the knob; the knob governs headphones and speaker together;
+    headphones mute the speaker.  Software mute is AUDIO_CONTROL.ENABLE
+    (DACs freeze on a DC level) and silences all three.  Ladder, divider,
     filter and buffer placed at the RCAs; headphone amps at the 3.5 mm
     jack; pot and speaker are panel/case parts.  BOM: 2x
     4610X-R2R-103LF, 1x CD4049 (2 of 6 gates, unused inputs grounded),
@@ -1161,31 +1084,22 @@ interfaces:
   - |
     RS-232 level stage: both DUART channels are real RS-232 at the rear
     panel; the TTL bench headers remain.  One MAX232 per channel (its 2
-    drivers + 2 receivers = TXD/RXD + RTS/CTS; 1 uF charge-pump caps);
-    ch B's DCD and RI come through a 75189 quad receiver (2 of 4
-    sections, unused inputs grounded) into DUART IP4/IP5.  All MAX232
-    stages invert, which lands every polarity correctly (UART mark ->
-    -V, ~RTS pin low -> +V asserted).
-    Ch A console: DB-25 FEMALE wired DCE, so a terminal (DTE) uses a
-    straight cable.  Pin 2 -> receiver -> RXDA; TXDA -> driver -> pin 3;
-    terminal RTS (pin 4) -> receiver -> IP0 (~CTS_A); OP0 (~RTS_A) ->
-    driver -> pin 5 (terminal CTS); strap
-    DSR (6) and DCD (8) to the terminal's DTR (20) at the connector;
-    pin 7 signal ground.
-    Ch B modem port: DB-25 MALE wired DTE -- straight cable to a
-    Hayes-style modem, null modem to a computer peer.  TXDB -> driver ->
-    pin 2; pin 3 -> receiver -> RXDB; OP1 (~RTS_B) -> driver -> pin 4;
-    pin 5 -> receiver -> IP1 (~CTS_B); pin 8 (DCD) -> 75189 -> IP4;
-    pin 22 (RI) -> 75189 -> IP5; DTR (20) strapped to DSR (6) at the
-    connector (modem set &D0; hang-up via +++ATH; a GLUE bodge spare
-    can drive DTR later if ever wanted); pin 7 signal ground.
+    drivers + 2 receivers = TXD/RXD + RTS/CTS); ch B's DCD and RI come
+    through a 75189 quad receiver (2 of 4 sections, unused inputs
+    grounded) into DUART IP4/IP5.
+    Ch A console: DB-25 FEMALE wired DCE.  Pin 2 -> receiver -> RXDA;
+    TXDA -> driver -> pin 3; pin 4 (terminal RTS) -> receiver -> IP0
+    (~CTS_A); OP0 (~RTS_A) -> driver -> pin 5 (terminal CTS); strap DSR
+    (6) and DCD (8) to the terminal's DTR (20) at the connector; pin 7
+    signal ground.
+    Ch B modem port: DB-25 MALE wired DTE.  TXDB -> driver -> pin 2;
+    pin 3 -> receiver -> RXDB; OP1 (~RTS_B) -> driver -> pin 4; pin 5 ->
+    receiver -> IP1 (~CTS_B); pin 8 (DCD) -> 75189 -> IP4; pin 22 (RI)
+    -> 75189 -> IP5; DTR (20) strapped to DSR (6) at the connector (a
+    GLUE bodge spare can drive DTR later if ever wanted); pin 7 signal
+    ground.
     Header/port coexistence: the DUART TX pins drive TTL header and
-    MAX232 driver inputs in parallel (no conflict); each receiver
+    MAX232 driver inputs in parallel; each receiver
     output (RXD_A, CTS_A, RXD_B, CTS_B) reaches the DUART through a
     2-pin series jumper -- jumper in = RS-232 port live, jumper out =
     the TTL header owns the line.  Four jumpers, silk-labeled.
-  - |
-    Carried forward from Rev 1: the XR68C681 DUART with ~CS from GLUE
-    (nDUART_SELECT) and DTACKN returned to GLUE (nDUART_DTACK).  Its
-    active-low RESET sits directly on the system ~RESET net; the Rev 1
-    GLUE copy (nDUART_RESET) is gone.

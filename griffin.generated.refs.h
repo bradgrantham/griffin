@@ -46,25 +46,25 @@ inline volatile uint8_t &PORTS_AUDIO_STATUS = *reinterpret_cast<volatile uint8_t
 
 // CF: Storage via CF card in True IDE 16-bit PIO mode
 inline volatile uint16_t &CF_DATA = *reinterpret_cast<volatile uint16_t *>(0xF40000UL);  // RW: 16-bit data port to/from the CF card
-inline volatile uint8_t &CF_ERROR = *reinterpret_cast<volatile uint8_t *>(0xF40003UL);  // READ: Error register; valid after a command error
-inline volatile uint8_t &CF_FEATURES = *reinterpret_cast<volatile uint8_t *>(0xF40003UL);  // WRITE: Features register; written before issuing SET_FEATURES command
+inline volatile uint8_t &CF_ERROR = *reinterpret_cast<volatile uint8_t *>(0xF40003UL);  // READ: Error register
+inline volatile uint8_t &CF_FEATURES = *reinterpret_cast<volatile uint8_t *>(0xF40003UL);  // WRITE: Features register
 inline volatile uint8_t &CF_SECTOR_COUNT = *reinterpret_cast<volatile uint8_t *>(0xF40005UL);  // RW: Number of sectors to transfer
 inline volatile uint8_t &CF_SECTOR_NUM = *reinterpret_cast<volatile uint8_t *>(0xF40007UL);  // RW: LBA bits 7:0
 inline volatile uint8_t &CF_CYL_LO = *reinterpret_cast<volatile uint8_t *>(0xF40009UL);  // RW: LBA bits 15:8
 inline volatile uint8_t &CF_CYL_HI = *reinterpret_cast<volatile uint8_t *>(0xF4000BUL);  // RW: LBA bits 23:16
 inline volatile uint8_t &CF_DRIVE_HEAD = *reinterpret_cast<volatile uint8_t *>(0xF4000DUL);  // RW: LBA bits 27:24 and drive select; OR with CF_DH_LBA for LBA mode
-inline volatile uint8_t &CF_STATUS = *reinterpret_cast<volatile uint8_t *>(0xF4000FUL);  // READ: Device status; poll BSY clear and DRQ set before data transfer
-inline volatile uint8_t &CF_COMMAND = *reinterpret_cast<volatile uint8_t *>(0xF4000FUL);  // WRITE: Issue command; write after setting all other registers
+inline volatile uint8_t &CF_STATUS = *reinterpret_cast<volatile uint8_t *>(0xF4000FUL);  // READ: Status register
+inline volatile uint8_t &CF_COMMAND = *reinterpret_cast<volatile uint8_t *>(0xF4000FUL);  // WRITE: Command register
 
 // DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C
-inline volatile uint8_t &DUART_MR1A = *reinterpret_cast<volatile uint8_t *>(0xF80001UL);  // RW: Channel A mode register 1 (after reset or MR pointer reset)
-inline volatile uint8_t &DUART_MR2A = *reinterpret_cast<volatile uint8_t *>(0xF80001UL);  // RW: Channel A mode register 2 (second access after MR pointer reset)
+inline volatile uint8_t &DUART_MR1A = *reinterpret_cast<volatile uint8_t *>(0xF80001UL);  // RW: Channel A mode register 1
+inline volatile uint8_t &DUART_MR2A = *reinterpret_cast<volatile uint8_t *>(0xF80001UL);  // RW: Channel A mode register 2
 inline volatile uint8_t &DUART_SRA = *reinterpret_cast<volatile uint8_t *>(0xF80003UL);  // READ: Channel A status register
 inline volatile uint8_t &DUART_CSRA = *reinterpret_cast<volatile uint8_t *>(0xF80003UL);  // WRITE: Channel A clock select register
 inline volatile uint8_t &DUART_CRA = *reinterpret_cast<volatile uint8_t *>(0xF80005UL);  // WRITE: Channel A command register
-inline volatile uint8_t &DUART_RBA = *reinterpret_cast<volatile uint8_t *>(0xF80007UL);  // READ: Channel A receiver buffer (read to dequeue FIFO)
-inline volatile uint8_t &DUART_TBA = *reinterpret_cast<volatile uint8_t *>(0xF80007UL);  // WRITE: Channel A transmitter buffer (write to enqueue)
-inline volatile uint8_t &DUART_IPCR = *reinterpret_cast<volatile uint8_t *>(0xF80009UL);  // READ: Input port change register (read clears interrupt)
+inline volatile uint8_t &DUART_RBA = *reinterpret_cast<volatile uint8_t *>(0xF80007UL);  // READ: Channel A receiver buffer
+inline volatile uint8_t &DUART_TBA = *reinterpret_cast<volatile uint8_t *>(0xF80007UL);  // WRITE: Channel A transmitter buffer
+inline volatile uint8_t &DUART_IPCR = *reinterpret_cast<volatile uint8_t *>(0xF80009UL);  // READ: Input port change register
 inline volatile uint8_t &DUART_ACR = *reinterpret_cast<volatile uint8_t *>(0xF80009UL);  // WRITE: Auxiliary control register (timer/counter mode, BRG set select)
 inline volatile uint8_t &DUART_ISR = *reinterpret_cast<volatile uint8_t *>(0xF8000BUL);  // READ: Interrupt status register
 inline volatile uint8_t &DUART_IMR = *reinterpret_cast<volatile uint8_t *>(0xF8000BUL);  // WRITE: Interrupt mask register (same bit layout as ISR; 1=enabled)
@@ -72,19 +72,19 @@ inline volatile uint8_t &DUART_CUR = *reinterpret_cast<volatile uint8_t *>(0xF80
 inline volatile uint8_t &DUART_CTUR = *reinterpret_cast<volatile uint8_t *>(0xF8000DUL);  // WRITE: Counter/timer upper preload register
 inline volatile uint8_t &DUART_CLR = *reinterpret_cast<volatile uint8_t *>(0xF8000FUL);  // READ: Counter/timer lower byte (current value)
 inline volatile uint8_t &DUART_CTLR = *reinterpret_cast<volatile uint8_t *>(0xF8000FUL);  // WRITE: Counter/timer lower preload register
-inline volatile uint8_t &DUART_MR1B = *reinterpret_cast<volatile uint8_t *>(0xF80011UL);  // RW: Channel B mode register 1 (after reset or MR pointer reset)
-inline volatile uint8_t &DUART_MR2B = *reinterpret_cast<volatile uint8_t *>(0xF80011UL);  // RW: Channel B mode register 2 (second access after MR pointer reset)
+inline volatile uint8_t &DUART_MR1B = *reinterpret_cast<volatile uint8_t *>(0xF80011UL);  // RW: Channel B mode register 1
+inline volatile uint8_t &DUART_MR2B = *reinterpret_cast<volatile uint8_t *>(0xF80011UL);  // RW: Channel B mode register 2
 inline volatile uint8_t &DUART_SRB = *reinterpret_cast<volatile uint8_t *>(0xF80013UL);  // READ: Channel B status register (same bit layout as SRA)
 inline volatile uint8_t &DUART_CSRB = *reinterpret_cast<volatile uint8_t *>(0xF80013UL);  // WRITE: Channel B clock select register
 inline volatile uint8_t &DUART_CRB = *reinterpret_cast<volatile uint8_t *>(0xF80015UL);  // WRITE: Channel B command register (same bit layout as CRA)
-inline volatile uint8_t &DUART_RBB = *reinterpret_cast<volatile uint8_t *>(0xF80017UL);  // READ: Channel B receiver buffer (read to dequeue FIFO)
-inline volatile uint8_t &DUART_TBB = *reinterpret_cast<volatile uint8_t *>(0xF80017UL);  // WRITE: Channel B transmitter buffer (write to enqueue)
+inline volatile uint8_t &DUART_RBB = *reinterpret_cast<volatile uint8_t *>(0xF80017UL);  // READ: Channel B receiver buffer
+inline volatile uint8_t &DUART_TBB = *reinterpret_cast<volatile uint8_t *>(0xF80017UL);  // WRITE: Channel B transmitter buffer
 inline volatile uint8_t &DUART_IVR = *reinterpret_cast<volatile uint8_t *>(0xF80019UL);  // RW: Interrupt vector register
 inline volatile uint8_t &DUART_IP = *reinterpret_cast<volatile uint8_t *>(0xF8001BUL);  // READ: Input port (unlatched)
 inline volatile uint8_t &DUART_OPCR = *reinterpret_cast<volatile uint8_t *>(0xF8001BUL);  // WRITE: Output port configuration register
-inline volatile uint8_t &DUART_STARTCC = *reinterpret_cast<volatile uint8_t *>(0xF8001DUL);  // READ: Start counter/timer command (read to start; data ignored)
-inline volatile uint8_t &DUART_OPR_SET = *reinterpret_cast<volatile uint8_t *>(0xF8001DUL);  // WRITE: Output port bit set (1 bits set corresponding OP pins)
-inline volatile uint8_t &DUART_STOPCC = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // READ: Stop counter/timer command (read to stop; data ignored)
-inline volatile uint8_t &DUART_OPR_CLR = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // WRITE: Output port bit reset (1 bits clear corresponding OP pins)
+inline volatile uint8_t &DUART_STARTCC = *reinterpret_cast<volatile uint8_t *>(0xF8001DUL);  // READ: Start counter/timer command (read)
+inline volatile uint8_t &DUART_OPR_SET = *reinterpret_cast<volatile uint8_t *>(0xF8001DUL);  // WRITE: Output port bit set (sets OPR bits; those OP pins go LOW)
+inline volatile uint8_t &DUART_STOPCC = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // READ: Stop counter/timer command (read)
+inline volatile uint8_t &DUART_OPR_CLR = *reinterpret_cast<volatile uint8_t *>(0xF8001FUL);  // WRITE: Output port bit reset (clears OPR bits; those OP pins go HIGH)
 
 } // namespace Griffin::reg

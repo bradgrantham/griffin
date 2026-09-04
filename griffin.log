@@ -139,8 +139,8 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   phasing, and manufacturing the needed ~87%-phase edge requires a ~15 ns
   delay element whose tolerance stack (74AC00 tPD 2-8 ns, or an RC into
   non-Schmitt inputs) exceeds the window.  Rejected without a breadboard;
-  74AC00/74F00 purchase dropped.  Adopted registered-/RE margins are in
-  griffin.yml (COMPOSITOR).  Consequence: VIDCMD cadence is 2 slots per
+  74AC00/74F00 purchase dropped.  Adopted registered-/RE margins: see the
+  2026-09-03 entry.  Consequence: VIDCMD cadence is 2 slots per
   word, 1-px spans render 2 px wide; propagation done 2026-08-19.
 
 2026-08-19 -- VIDCMD 2-clock cadence rework done, all layers
@@ -330,7 +330,8 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
     0. combinational DEBUG_OUT mux + 2-FF nHALT sync: "fail to route
        variable nAS in Block 4", grouping fail x4.
     A. + registered debug_led_r output copy: still grouping fail.
-    B. rung A + single-FF nHALT sync: FITS, 113 LC / 72 FF / 335 PT,
+    B. rung A + single-FF nHALT sync: FITS, 113 LC / 72 FF / 335
+ PT,
        no warnings, pins frozen incl. nSUPERVISOR_RESET 63.  ADOPTED.
   1-FF sync justified: feeds only the LED mux, no state machine; a
   metastable sample costs one wrong LED clock (cf. the PORTS raw /EF
@@ -440,3 +441,50 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   accept a 1987 part inside a declared reproduction.  No CPLD, firmware
   or emulator impact; DUART_IP_DCD_B/DUART_IP_RI_B masks generated for
   the Aerie software to poll.
+
+2026-09-03 -- griffin.yml pruned of textbook, duplicated and rationale text
+  Rule applied (now in CLAUDE.md): the YAML states only contracts a
+  beginner-to-intermediate practitioner could not derive from the 68000
+  bus, the parts' datasheets or the standard; each fact has one home;
+  rationale, derivations, measurements, checklists and pulls live here.
+  Deliberate exceptions kept in the YAML because they are the things that
+  get gotten wrong: the DUART OPR complement and IP4/IP5 being poll-only.
+  Material moved out of the YAML so it is not lost:
+  - VIDCMD FIFO read port (COMPOSITOR): registered /RE, 2 pixel clocks per
+    word, no shaping gate; all edges are GCLK rising edges, so no
+    duty-cycle dependence.  Pinned parameters: IDT7200L15 tRC 25 min /
+    tA 15 max / tRPW 15 min / tRR 10 min / tDV 5 min / tRHZ 15 max /
+    tREF 15 max (REN_7200-7202_DST 20171127, 30 pF); ATF1508AS-10 GCLK
+    tSU 7 / tH 0, clock-pin-to-output 8.0 ns max at 35 pF (DS20006682A
+    Table 1-4); T = 39.72 ns.  Worst-case margins incl. ~2 ns flight and
+    series termination: pulse +24.7 ns, recovery +29.7, cycle +54.4, data
+    setup +7.7, hold +6.  /EF path: tCO 8.0 + tREF 15 + ~2 ns flight =
+    25.0 ns vs T - tSU = 32.7 ns (+7.7 ns worst case).  COMPOSITOR ->
+    PIXEL set_pix_value bus: twelve point-to-point traces, same clock,
+    full-cycle setup, ordinary synchronous routing.
+  - PIXELS FIFO read port: a byte is consumed every >= 8 pixel clocks
+    (2bpp) or 16 (1bpp), so it needs no read-timing analysis beyond the
+    VIDCMD one at 8x the period.
+  - ENGINE HBLANK source is TIMING's registered h_cnt >= 640: not the
+    HSYNC net (rises 116 clocks later), not ~H_ACTIVE (never toggles in
+    vblank).  PADDLE_TICK and AUDIO_TICK are two nets so the audio rate
+    can change in TIMING alone; event rate = toggle rate / 2.
+  - ENGINE_WORDS_PER_BURST = 20: shorter than a scanline so one burst
+    (~2.86 us at 2 CPUCLK/word) cannot fill an hblank (~6.35 us); long
+    enough to amortize the ~10-cycle BR/BG/BGACK handshake.
+  - PIXEL_PRELOAD_LEAD = 16: 2 first byte + 2 skip-discard + 7 alignment
+    shifts = 11, rounded up.
+  - Paddle counters: 255 ticks ~= 16.2 ms, one frame; the pot parallels
+    the 1M pin-5/9 pull-up, hence per-unit software calibration.
+  - Reset: DS1233-5 open-drain RST, internal 5k pull-up, trip 4.50-4.74
+    V, 350 ms stretch, IOL 8 mA; asserted level on ~RESET through the
+    Schottky VOL + Vf ~= 0.5 V, under the 0.8 V TTL VIL; the CPU's RESET
+    instruction drives ~RESET for 124 clocks.  ~RESET 10k and ~HALT 4.7k
+    pull-ups (2026-09-01 entry).  Bring-up gate: rail >= 4.85 V at the
+    supervisor under full load, else DS1233-10 or trim the supply.
+  - VGA DAC: FS ~= 0.693 V loaded, Zth ~= 72.7R, worst-case systematic
+    error ~= 0.03 LSB (2026-08-12 entry).
+  - CF_CMD_SET_8BIT constant deleted (rev-1 8-bit PIO; no users).
+  - Audio-stage arithmetic (Thevenin divider, class-A bias, clipping
+    headroom, LM386 gain floor and pads) and RS-232 cabling (DTE/DCE,
+    MAX232 polarity, modem straps) moved to reminders.md.

@@ -29,6 +29,15 @@
 * When possible, store new hardware definitions in griffin.yml; register addresses, bits and bitfields, constants, protocol between peripherals, constants, and then generate included headers.
   * In a register `description:`, keep the **first sentence on one physical line ending in a period**, with no mid-text periods in it (e.g. avoid `FOO.BAR`).  codegen.py uses that first sentence verbatim — newlines included — as the C header `//` comment, so a wrapped first sentence leaks bare text into griffin.generated.h/.refs.h and breaks the build.  (The .inc/.vh outputs only emit the access keyword, so only the C++ headers are sensitive.)
 
+* griffin.yml stays lean.  The pruning rules (applied 2026-09-03; keep it this way):
+  * State only what a beginner-to-intermediate practitioner could not derive from the 68000 bus, the parts' datasheets, or the standard (ATA, PS/2, VGA, RS-232, POSIX).  Example: the ~HALT entry says who besides the CPU drives it, not that the CPU drives it on a double bus fault.  When a register description would be a datasheet or POSIX sentence, the name alone is the description.
+  * One home per fact, and elsewhere a pointer ("see TIMING"), never a restatement.  IRQ levels live in the peripheral's `interrupt:` entry; reset values in `default:`; pin numbers in the Verilog PIN annotations; FIFO topology in the "Stream FIFO parts" interfaces entry.
+  * Contracts, not implementation: "latches the assertion edge", not "2-FF synchronizes"; "IORDY extends the cycle", not how GLUE does it.
+  * Rationale, rejected alternatives, derivations, measured margins, datasheet parameter lists, bring-up gates and pull-ups/downs go to griffin.log as a dated entry, never to the YAML.
+  * Deliberate exceptions, kept because they are exactly the things that get gotten wrong: the DUART OPR complement (OPR_SET drives the pin LOW) and IP4/IP5 being poll-only.
+
+* reminders.md holds refreshers on fields outside the project's core competence (audio circuitry, RS-232, ...): the arithmetic and datasheet facts behind values in griffin.yml.  Add a section whenever Brad asks about the same thing twice in a session or seems confused by it; when trimming griffin.yml, move such material there rather than deleting it.
+
 * Have only one source of truth.  E.g. cpld/engine/engine.v or other Verilog may have PIN annotations in it; then there is no reason to note the pin layout is frozen or give pin numbers in griffin.yml or griffin.md.
 
 * Keep in mind for instruction-counted loops that there are ROM wait states.

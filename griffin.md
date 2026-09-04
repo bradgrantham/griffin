@@ -88,7 +88,7 @@ How to reduce chance of spin and reduce likelihood of bodge?  Use golden referen
 
 ~~**Use USB\_C and print a case.**~~
 
-**3D-printed case.**  Power comes in at a panel-mount barrel jack with an inline switch (round cutout) and is harnessed to the board's power connector — see Power.  Connectors to the rear.
+**3D-printed case.**  Power comes in at a panel-mount barrel jack with an inline switch (round cutout) and is harnessed to the board's power connector — see Power.  Connectors to the rear.  One half-height 5.25" bay on the front behind a blank bezel, with the drive power connector behind it; the bay is empty (no floppy hardware of any kind; no hard disk).
 
 ## Rear panel
 
@@ -97,7 +97,7 @@ How to reduce chance of spin and reduce likelihood of bodge?  Use golden referen
 * Video: DE-15 VGA
 * Game ports: 2× DE-9 male, Atari convention; paddles on port 1
 * Audio: RCA stereo pair (line out, fixed level) + 3.5 mm stereo headphone jack; volume knob governs headphones and the internal speaker; plugging in headphones mutes the speaker
-* CF card slot
+* CF card slot, behind a sprung door.  The card wears a printed cap (top, sides, grip; open bottom) so it handles as a cartridge; the cap rides rails in a printed bay over the board and the card's nose rides the CF header's own guides — the slot itself is unchanged.  Keep the top side clear under the card footprint plus the cap's travel, ~40 × 45 mm at the rear edge.
 * Power: barrel jack + inline switch; reset button
 * Cosmetics: diffused LEDs (power, DEBUG), real toggle/momentary switches, plain D-sub hoods
 
@@ -153,10 +153,10 @@ Clean everything up for Rev 2, get as much tested as possible
 
 ## Power
 
-The motherboard is **+5 V only**.  No other rail exists on the board or may be added; RS-232 levels come from the MAX232 charge pumps, and anything external that needs another voltage brings its own supply.
+The logic board is **+5 V only**.  Nothing on the board consumes another rail or may; RS-232 levels come from the MAX232 charge pumps.  The other Apple II rails pass through the board to the bay's drive power connector.
 
-* Board connector: keyed 6-position AMP MATE-N-LOK (the Apple II supply connector).  +5 V and GND on the positions Apple used for them, every other position not connected, so a mis-mated Apple II supply does no harm.  **Verify the Apple II pinout before silk.**  Never a bare pin header.  Silkscreen at the connector: "5V ONLY — regulated 2.5A+".
-* Panel: 5.5mm x 2.1mm center-positive barrel jack + inline switch, harnessed to the MATE-N-LOK.  Regulated 5V ≥2.5A adapter.  Have adapters, can make/buy more; a CH224K-style PD trigger module with a barrel pigtail turns any PD charger into a compliant supply if ever wanted.
+* Board connector: keyed 6-position AMP MATE-N-LOK in the **Apple II pinout**.  +5 V and GND feed the board; +12 V, −12 V and −5 V are passed through, untouched, to a 4-pin drive power connector (AMP 1-480424-0 style) at the bay.  An Apple II supply is exactly what the connector expects.  **Verify the Apple II pinout before silk.**  Never a bare pin header.  Silkscreen the rails at both connectors.
+* Panel: 5.5mm x 2.1mm center-positive barrel jack + inline switch, harnessed to the +5 V positions.  Regulated 5V ≥2.5A adapter.  Have adapters, can make/buy more; a CH224K-style PD trigger module with a barrel pigtail turns any PD charger into a compliant supply if ever wanted.  The pass-through pins are dead on a 5 V brick; anything in the bay wants a multi-rail supply (an Apple II supply, or a triple-output open-frame in the case).
 * Budget is ~1.3–1.7 A typ (see rev2-electrical-review.md §8).  Harness and contact drop count against the DS1233-5 trip budget below.
 * Why not USB-C: a plain-Rd USB-C sink is only *entitled* to 500 mA without reading the source's Rp advertisement or negotiating PD.
 
@@ -366,6 +366,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 - [ ] Audio connectors: 2× RCA (line out) + 1× switched 3.5 mm stereo jack (headphones; NC contacts feed the speaker sum); RCA retainer feet — partial holes?; dual 10kA pot + 8 Ω speaker are panel parts, bring them to a header
 - [ ] Video FIFOs: 2× 7200 on the board natively (retires the piggyback bodge of video-fifo-wiring.md); termination in SI section below
 - [ ] VGA: DE-15 connector; remove the composite/NTSC jack and any NTSC clock provisions — Rev 2 is VGA-only
+- [ ] CF: CFT-125 header at the rear board edge, card over the board; top-side keep-out ~40 × 45 mm under the card + cartridge-cap travel; bay rails and sprung door are case parts
 - [ ] DUART: XR68C681 DIP-40 native (retires the DIP-carrier bodge); A1-A4→RS1-RS4, D0-7 + R/~W direct, ~RESET from ~RESET net, ~IACK tied high (autovectors), 3.6864 MHz crystal on X1/X2 (clearance if ZIF)
 - [ ] Serial: 2× MAX232 (bin) + 75189 (bin) level stages; DB-25F console wired DCE (DSR+DCD strapped to DTR), DB-25M modem port wired DTE (DTR–DSR strap; DCD pin 8 → IP4, RI pin 22 → IP5); TTL bench headers retained behind 4 isolation jumpers on the receiver outputs
 - [ ] RTC: DS3231 + coin-cell holder; SCL=OP2, SDA via OP3→2N7000 (drain on SDA) + IP2 readback
@@ -381,8 +382,8 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 - [ ] Debug headers: 2× 2×15 THT mirroring the gusmanb level-shifter pinout (pull channel map + gender/orientation from the project KiCad; leave clearance for two analyzers side by side or ribbon out); header 1 = D0–D15 + ~AS/~UDS/~LDS/R/~W/~DTACK + ~RESET/~HALT (23 — spare-channel candidates: audio line clock or paddle DUMP), header 2 = A1–A23 + SYSCLK (via a buffered/series-R tap — do not stub the raw clock net); 5V-ref pins from the rail, 3V3 NC, triggers NC/pads
 
 ### Power & decoupling
-- [ ] Keyed 6-position AMP MATE-N-LOK power connector on the board, +5 V/GND only on Apple's positions, the rest N/C — verify the Apple II pinout before silk; silkscreen "5V ONLY — regulated 2.5A+"; connector/traces rated ≥2 A
-- [ ] Panel harness: 5.5mm x 2.1mm center-positive barrel jack + inline switch to the MATE-N-LOK (replaces rev-1 USB-C); the harness drop is inside the DS1233-5 trip budget
+- [ ] Keyed 6-position AMP MATE-N-LOK power connector on the board in the Apple II pinout — verify before silk; +5 V/GND to the board, +12/−12/−5 passed through as bare copper to a 4-pin drive power connector (AMP 1-480424-0 style) placed at the bay; silkscreen the rails at both; +5 V connector/traces rated ≥2 A
+- [ ] Panel harness: 5.5mm x 2.1mm center-positive barrel jack + inline switch to the +5 V positions (replaces rev-1 USB-C); the harness drop is inside the DS1233-5 trip budget
 - [ ] bulk 220–470 µF at entry + 10 µF per CPLD/FIFO cluster; consider reverse-polarity protection (P-FET ideal-diode style — a series Schottky costs ~0.3–0.4 V the DS1233-5 trip budget can't afford)
 - [ ] decoupling cap on every +5V/GND pair, especially the CPLDs
 
