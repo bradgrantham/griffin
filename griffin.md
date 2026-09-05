@@ -236,7 +236,7 @@ See [griffin.yml](griffin.yml) for the complete peripheral address map.
 
 Dedicated ATF1508 CPLD for:
 
-* Address decode: nRAM_[1-4]_SEL, nROM_SELECT, CF incl CS0/CS1 + AS-gated IORD/IOWR, ~DUART_SELECT, ~PORTS_SELECT, ~ENGINE_SELECT (a real net, GLUE pin 39 → ENGINE pin 84)
+* Address decode: nRAM_[1-4]_SEL, nROM_SELECT, CF incl CS0/CS1 + AS-gated IORD/IOWR, ~DUART_SELECT, ~PORTS_SELECT, ~ENGINE_SELECT (a real net, GLUE nENGINE_SELECT → ENGINE pin 84)
 * DTACK / wait-state generation for everything including PORTS and CF (CF IORDY low extends the cycle); BERR by timeout for the undecoded regions
 * WRITE_LO / WRITE_HI byte write strobes from ~UDS, ~LDS and R/~W
 * ~ROM_WE for in-circuit flash programming (word writes only, gated by CONFIG.FLASH_WE_EN)
@@ -335,7 +335,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 
 ## Interrupts (autovector)
 
-* 6: vsync — TIMING's dedicated nVSYNC_IRQ output (pin 31) to GLUE pin 65, polarity fixed regardless of raster mode, edge-latched in GLUE, W1C via VSYNC_CLEAR
+* 6: vsync — TIMING's dedicated nVSYNC_IRQ output (pin 31) to GLUE nVSYNC, polarity fixed regardless of raster mode, edge-latched in GLUE, W1C via VSYNC_CLEAR
 * 5: DUART (systick + serial)
 * 4: PS/2 keyboard (GLUE)
 * 3: ENGINE (list completion)
@@ -372,8 +372,8 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 - [ ] RTC: DS3231 + coin-cell holder; SCL=OP2, SDA via OP3→2N7000 (drain on SDA) + IP2 readback
 - [ ] PS/2: **two ports**, full-size DIN-5 pair; fix footprint + pin mapping (Rev 1 mini-DIN-6 was wrong); keyboard CLK/DATA to GLUE, mouse CLK/DATA to PORTS
 - [ ] PORTS: ATF1508AS PLCC84 socket + JTAG chain; nets ~PORTS_SELECT / ~PORTS_IRQ / A4-A1 / ~LDS / R~W / D7-D0 to GLUE and the bus, **PADDLE_TICK (TIMING 17 → PORTS 44) and AUDIO_TICK (TIMING 18 → PORTS 45)** as its only time bases, ~R, ~RS and ~EF to the 7200 pair, mouse PS/2, both DE-9s, PADDLE_DUMP to the FET gates — pin numbers from the frozen `//PIN:` block in cpld/ports/ports.v
-- [ ] TIMING fan-out (pins from the `//PIN:` block in cpld/pixel/timing.v): HBLANK (pin 19) → ENGINE pin 2; nVSYNC_IRQ (pin 31) → GLUE pin 65 (VGA_VSYNC no longer tee'd); VGA_HSYNC/VGA_VSYNC only to the 74AC541s; DUART OP4/OP5/OP6/OP7 → TIMING pins 20/21/24/25 (reserved, no logic yet — route them anyway); leave GCLK2 (pin 44) free with an optional oscillator footprint; the remaining TIMING spares are bitfile-usable later only if routed to reachable copper (header or test points)
-- [ ] ~ENGINE_IRQ: ENGINE pin 5 → GLUE pin 68; needs a pull-up like the other IRQ nets (see Pull-ups)
+- [ ] TIMING fan-out (pins from the `//PIN:` block in cpld/pixel/timing.v): HBLANK (pin 19) → ENGINE pin 2; nVSYNC_IRQ (pin 31) → GLUE nVSYNC (VGA_VSYNC no longer tee'd); VGA_HSYNC/VGA_VSYNC only to the 74AC541s; DUART OP4/OP5/OP6/OP7 → TIMING pins 20/21/24/25 (reserved, no logic yet — route them anyway); leave GCLK2 (pin 44) free with an optional oscillator footprint; the remaining TIMING spares are bitfile-usable later only if routed to reachable copper (header or test points)
+- [ ] ~ENGINE_IRQ: ENGINE pin 5 → GLUE nENGINE_IRQ; needs a pull-up like the other IRQ nets (see Pull-ups)
 - [ ] No 74155 and no direct-bus region in Rev 2 (deleted with the CPU audio path); ~ENGINE_SELECT *is* a net (GLUE pin 39 → ENGINE pin 84); CF CS1 stays routed from GLUE
 - [ ] Joysticks: 2× DE-9 male PCB-mount, switch lines **straight into PORTS** — no '245s; bussed pull-up networks, polyfuse on pin-7 +5V, optional series R + clamps between connector and the CPLD
 - [ ] Paddles (port 1 only): 2× {~10 nF film cap to GND + 2N7000 drain, gate←PADDLE_DUMP from PORTS} on DE-9 pins 5/9, pin 5/9 also to PORTS as the count-enable senses — no '590s; all DNP-able, a sticks-only build omits the caps/FETs
