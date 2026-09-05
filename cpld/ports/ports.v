@@ -84,9 +84,9 @@ module ports
 
     output wire       PADDLE_DUMP,       // gate of the paddle discharge FET
 
-    input  wire       nFIFO_EF,          // 7200 pair empty flag
-    output wire       nFIFO_RE,          // 7200 pair read strobe
-    output wire       nFIFO_RS,          // 7200 pair reset, held low from power-on
+    input  wire       nAUDIO_FIFO_EF,          // 7200 pair empty flag
+    output wire       nAUDIO_FIFO_RE,          // 7200 pair read strobe
+    output wire       nAUDIO_FIFO_RS,          // 7200 pair reset, held low from power-on
 
     output wire       nPORTS_IRQ         // push-pull, into GLUE's IPL encoder
 );
@@ -313,11 +313,11 @@ module ports
     // one reset bit.  No interrupt: the level is dead-reckoned by whoever
     // arms the display list, and the flags are polled.
     //
-    // nFIFO_EF is the 7200 empty flag, active low.  Nothing in this chip
+    // nAUDIO_FIFO_EF is the 7200 empty flag, active low.  Nothing in this chip
     // acts on it; it only passes through the read mux to the CPU, so like
     // the joystick switch inputs it is read raw (a synchronizer here would
     // protect downstream synchronous logic, of which there is none, and
-    // PORTS has no cells to spare).  nFIFO_RS comes up ASSERTED
+    // PORTS has no cells to spare).  nAUDIO_FIFO_RS comes up ASSERTED
     // (audio_reset = 1 at reset): the 7200 requires a reset before its first
     // write, so the FIFOs are held until software releases them.  The 7200
     // needs /W and /RE inactive around the /RS rise (tRSS/tRSR): /RE is
@@ -349,8 +349,8 @@ module ports
 
     // One SYSCLK low per pop; the 7200 output register holds the sample on Q
     // until the next read, so the R2R DACs are fed with no latch in the CPLD.
-    assign nFIFO_RE = ~(audio_pop_tick & audio_enable & ~audio_reset);
-    assign nFIFO_RS = ~audio_reset;
+    assign nAUDIO_FIFO_RE = ~(audio_pop_tick & audio_enable & ~audio_reset);
+    assign nAUDIO_FIFO_RS = ~audio_reset;
 
     // ----------------------------------------------------------------
     // Read mux.  One combinational selection; the pins are tri-stated
@@ -394,7 +394,7 @@ module ports
         begin
             read_data = {6'b0,
                          audio_enable,             // bit 1: ENABLE
-                         ~nFIFO_EF};               // bit 0: EMPTY (raw)
+                         ~nAUDIO_FIFO_EF};               // bit 0: EMPTY (raw)
         end
     end
 
@@ -626,8 +626,8 @@ endmodule
 // not renumber them; a netlist change that makes the fitter want a different
 // placement is a board respin, not a re-fit.
 // Appended on spare pins by -preassign keep fits, no frozen pin moved:
-// AUDIO_TICK 45 (2026-08-26), nFIFO_EF 48 and nFIFO_RS 52 (2026-08-29).
-// Released: nFIFO_HF pin 34 (2026-08-30).
+// AUDIO_TICK 45 (2026-08-26), nAUDIO_FIFO_EF 48 and nAUDIO_FIFO_RS 52 (2026-08-29).
+// Released: nAUDIO_FIFO_HF pin 34 (2026-08-30).
 // Pins 34 and 41 are routed to the PORTS spare header (griffin.yml
 // interfaces) but are not ports of this module: unused I/O, tri-state
 // under the fitter's pin keeper.  Give them explicit pins here if a
@@ -682,7 +682,7 @@ endmodule
 //PIN: JOYSTICK_2_PIN9   : 37
 //PIN: JOYSTICK_2_PIN5   : 8
 //PIN: PADDLE_DUMP       : 33
-//PIN: nFIFO_EF          : 48
-//PIN: nFIFO_RE          : 61
-//PIN: nFIFO_RS          : 52
+//PIN: nAUDIO_FIFO_EF          : 48
+//PIN: nAUDIO_FIFO_RE          : 61
+//PIN: nAUDIO_FIFO_RS          : 52
 //PIN: nPORTS_IRQ        : 17
