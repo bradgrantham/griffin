@@ -12,26 +12,24 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [x] 68010 CPU
 - [x] 14 MHz system oscillator
 - [x] 25.175 MHz pixel oscillator
-- [ ] Optional second-oscillator footprint (TIMING GCLK2, pin 44)
-- [ ] DS1233-5 reset supervisor (button hangs on its RST pin)
-- [ ] Reset isolation diode: Schottky, anode on ~RESET net, cathode at RST
-- [ ] nSUPERVISOR_RESET net: DS1233 RST -> GLUE pin 63 (sources ~HALT)
-- [ ] Reset button
-- [x] Barrel jack power entry (5.5mm x 2.1mm center-positive)
-- [ ] Inline power switch
-- [ ] Reverse-polarity protection (P-FET ideal-diode)
+- [x] Optional second-oscillator footprint (TIMING GCLK2, pin 44)
+- [x] DS1233-5 reset supervisor (button hangs on its RST pin)
+- [x] Reset isolation diode: Schottky, anode on ~RESET net, cathode at RST
+- [ ] nSUPERVISOR_RESET net: DS1233 RST -> GLUE pin 84 (sources ~HALT)
+- [x] Reset button
+- [x] 6-pin power header - https://www.digikey.com/en/products/detail/te-connectivity-amp-connectors/640500-1/187758?fbclid=IwY2xjawUG6vZwZG9mAWV4dG4DYWVtAjEwAGJyaWQRMVMxVzh6bW9WUkdEcHlBaktzcnRjBmFwcF9pZBAyMjIwMzkxNzg4MjAwODkyAAEeWl4eztEJP8iR58QZ9OmAJ92TIHq7s3BUc4BR4RiXnqa1eGCCplmakONtw0Q_aem_Bxny1SMMt7ad0dHB6OfFug
 
 ## Memory
 
-- [ ] RAM: 8x AS6C4008 DIP-32, socketed
-- [ ] ROM: 2x SST39SF040 DIP-32, socketed (new footprint vs W27C512)
+- [x] RAM: 8x AS6C4008 DIP-32, socketed
+- [x] ROM: 2x SST39SF040 DIP-32, socketed (new footprint vs W27C512)
 
 ## CPLDs
 
-- [ ] GLUE ATF1508 PLCC84 (new rev-2 pinout; spare I/O 24, 64 to bodge pads)
+- [x] GLUE ATF1508 PLCC84 (rev-2 pinout re-frozen 2026-09-04; spares 64 (I/O) and 2 (input-only) to bodge pads)
+- [x] PORTS ATF1508 PLCC84 (new chip)
 - [ ] ENGINE ATF1508 PLCC84 (pins 40/41/46/81 released, unconnected)
 - [ ] ENGINE -> GLUE status wires: ENGINE_ACTIVE 80->35, ENGINE_WAITING 4->36
-- [ ] PORTS ATF1508 PLCC84 (new chip)
 - [ ] PIXEL ATF1508 PLCC84 (new chip; replaces VIDEO)
 - [ ] COMPOSITOR ATF1508 PLCC84 (new chip)
 - [ ] TIMING ATF1504AS PLCC44 (new chip)
@@ -92,14 +90,15 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [ ] Debug LED(s) (DEBUG_OUT also blinks ~1.9 Hz while CPU halted)
 - [ ] ENGINE spare-strobe header near FIFOs: nSIGNAL_SPARE (pin 9), GND, +5V
 - [ ] PORTS spare header: pins 34, 41, GND
-- [ ] GLUE bodge pads: pins 24, 64 (unassigned)
+- [ ] GLUE bodge pads: pins 64 (I/O) and 2 (input-only, OE1/IN) (unassigned)
+- [x] MATE-N-LOK 4-pin Molex power male
 
 ## Remove from rev-1 schematic
 
 - [ ] AT89S52 IO MCU (and its crystal/support)
 - [x] USB-C power entry
-- [ ] Composite/NTSC jack + NTSC clock provisions
-- [ ] VIDEO CPLD
+- [x] Composite/NTSC jack + NTSC clock provisions
+- [x] VIDEO CPLD
 - [ ] Audio 74HC373 latch
 - [ ] 2x 74HCT245 joystick buffers
 - [ ] 2x 74HC590 paddle counters
