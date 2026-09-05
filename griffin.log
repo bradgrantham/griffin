@@ -488,3 +488,29 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   - Audio-stage arithmetic (Thevenin divider, class-A bias, clipping
     headroom, LM386 gain floor and pads) and RS-232 cabling (DTE/DCE,
     MAX232 polarity, modem straps) moved to reminders.md.
+
+2026-09-04 -- GLUE pinout re-frozen from a free fit; stray-pinout cause found
+  Symptom: `make glue` at 14:34 produced a pinout matching neither the
+  frozen //PIN: block nor a free fit.  Cause, reproduced exactly: the
+  fitter had been handed an empty glue.pin (no //PIN: lines matched when
+  run_fitter.sh grepped glue.v), and with -preassign keep and no
+  assignments it places every pin freely while still logging
+  "Preassign = KEEP" and "Preassign_file = " (blank -- that field is
+  always blank; the pin file is picked up by name).  Not nondeterminism:
+  the same edif fit with keep reproduced the frozen block pin for pin,
+  and two -preassign ignore fits agreed with each other pin for pin.
+  Per Brad, the //PIN: block is replaced by the free-fit pinout so the
+  schematic labels are placed from a fitter-native assignment:
+    ignore (free pins): 119 LC / 72 FF / 341 PT / 16 foldback, fits pass 2
+    keep on the new block: 119 LC / 72 FF / 344 PT / 17 foldback, fits
+       pass 5 (passes 1-4 placement/routing fail: nRESET blk 4; FC_2,
+       A_lo_3, XXL_743 blk 6), pins held, run twice, identical.
+    keep on the OLD block (same edif, for reference): 342 PT / 16
+       foldback, fits pass 2, pins held -- the old block still fit.
+  Changes vs the old block: nRESET moves off dedicated input 84 to I/O
+  54 (no cost: glue.v uses nRESET synchronously, never as GCLR);
+  nSUPERVISOR_RESET takes 84; dedicated inputs 3/4 used.  Spares are now
+  pin 64 (I/O) and pin 2 (OE1/IN, input-only) instead of 24 and 64.
+  griffin.md GLUE pin numbers (nENGINE_SELECT, nVSYNC, nENGINE_IRQ)
+  replaced by signal names per the one-source-of-truth rule;
+  schematic-checklist.md pin 63 -> 84 and spare list updated.
