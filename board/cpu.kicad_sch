@@ -1816,12 +1816,6 @@
 		(uuid "85540f19-2dfd-4e42-b14b-94375c7eaaf4")
 	)
 	(junction
-		(at 113.03 135.89)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "901dc1f7-fb95-455f-a643-77fa85423f08")
-	)
-	(junction
 		(at 124.46 52.07)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -1850,12 +1844,6 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "df97543f-bc05-45c7-a554-9c4de5e80ecd")
-	)
-	(junction
-		(at 102.87 116.84)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "e7a883fd-9a4e-43d2-966c-cb26fadcd3aa")
 	)
 	(junction
 		(at 111.76 26.67)
@@ -2219,7 +2207,7 @@
 	)
 	(wire
 		(pts
-			(xy 102.87 114.3) (xy 102.87 116.84)
+			(xy 102.87 114.3) (xy 102.87 119.38)
 		)
 		(stroke
 			(width 0)
@@ -2249,16 +2237,6 @@
 	)
 	(wire
 		(pts
-			(xy 113.03 127) (xy 113.03 135.89)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "565c4bf7-9346-4084-81f1-6ad0acf82ec7")
-	)
-	(wire
-		(pts
 			(xy 127 91.44) (xy 139.7 91.44)
 		)
 		(stroke
@@ -2279,7 +2257,7 @@
 	)
 	(wire
 		(pts
-			(xy 96.52 135.89) (xy 113.03 135.89)
+			(xy 96.52 135.89) (xy 143.51 135.89)
 		)
 		(stroke
 			(width 0)
@@ -2306,16 +2284,6 @@
 			(type default)
 		)
 		(uuid "6506db01-007e-477f-9447-a13cc18af096")
-	)
-	(wire
-		(pts
-			(xy 102.87 116.84) (xy 113.03 116.84)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "65f7a543-1629-4c4f-a1cd-51144306c55e")
 	)
 	(wire
 		(pts
@@ -2486,16 +2454,6 @@
 			(type default)
 		)
 		(uuid "8cdf6d4f-9d94-4fc8-923b-2aa3d74849ed")
-	)
-	(wire
-		(pts
-			(xy 102.87 116.84) (xy 102.87 119.38)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "8cecc6c2-ee6d-4ab5-a3d6-036a26d9cca5")
 	)
 	(wire
 		(pts
@@ -2789,16 +2747,6 @@
 	)
 	(wire
 		(pts
-			(xy 113.03 135.89) (xy 143.51 135.89)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "d4fbab8b-0087-4eca-8855-0d555e0bf960")
-	)
-	(wire
-		(pts
 			(xy 173.99 92.71) (xy 184.15 92.71)
 		)
 		(stroke
@@ -2956,16 +2904,6 @@
 			(type default)
 		)
 		(uuid "fac7a13d-c4f0-4395-a27e-ae5cd1b5214b")
-	)
-	(wire
-		(pts
-			(xy 113.03 116.84) (xy 113.03 119.38)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "fbf8afba-6671-4d30-a5a4-b0cb2bfd9b1b")
 	)
 	(wire
 		(pts
@@ -4590,76 +4528,6 @@
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/e2759770-a9ef-4fa2-921d-b35f031ff7ee"
 					(reference "#PWR077")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:R")
-		(at 113.03 123.19 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "2ad99e1a-1fb9-4bf0-9518-7389671590e5")
-		(property "Reference" "R10"
-			(at 115.57 121.9199 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "10K"
-			(at 115.57 124.4599 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal"
-			(at 111.252 123.19 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 113.03 123.19 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Resistor"
-			(at 113.03 123.19 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "2"
-			(uuid "1cf6aa5b-e46b-4e27-80b2-a0ac87868dbf")
-		)
-		(pin "1"
-			(uuid "c0d3e749-3eb6-4474-960e-203b3c761a4c")
-		)
-		(instances
-			(project "board"
-				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/e2759770-a9ef-4fa2-921d-b35f031ff7ee"
-					(reference "R10")
 					(unit 1)
 				)
 			)

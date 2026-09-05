@@ -188,7 +188,7 @@
 			(color 0 0 0 0.0000)
 		)
 		(uuid "7a73031a-1268-4f74-b6da-20608cb50de6")
-		(property "Sheetname" "POWER_CLOCK"
+		(property "Sheetname" "POWER_CLOCK_RESET"
 			(at 25.4 24.6884 0)
 			(effects
 				(font
