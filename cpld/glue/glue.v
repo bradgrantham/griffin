@@ -636,11 +636,16 @@ endmodule
 // GLUE ATF1508 (U12) - Griffin board, Rev 2
 // Pin assignments for atf15xx_yosys / fit1508.exe, PLCC-84 package
 //
-// FROZEN 2026-07-30.  Derived from a `-preassign ignore` fit (the rev-1 hand
-// pinout could not route the rev-2 design) and re-verified with
-// `-preassign keep`.  The Rev 2 PCB is routed from these numbers, so do not
-// renumber them; a netlist change that makes the fitter want a different
-// placement is a board respin, not a re-fit.
+// FROZEN 2026-09-04.  Derived from a `-preassign ignore` fit of the final
+// pre-capture netlist and re-verified with `-preassign keep` (the two runs
+// agree pin for pin).  The Rev 2 schematic and PCB are captured from these
+// numbers, so do not renumber them; a netlist change that makes the fitter
+// want a different placement is a board respin, not a re-fit.
+//
+// If a fit ever comes back with a different pinout, check glue.pin first:
+// run_fitter.sh regenerates it from the PIN lines below, and a fit with an
+// empty glue.pin (no PIN lines matched) silently places everything freely
+// while still reporting "Preassign = KEEP".
 //
 // Format rules (from run_fitter.sh):
 //   grep '// PIN:' glue.v | cut -d' ' -f2-  ->  glue.pin fed to fit1508.exe
@@ -649,74 +654,74 @@ endmodule
 //   - Nothing after the pin number - the cut includes all trailing text
 //   - JTAG pins (TDI:14, TMS:23, TCK:62, TDO:71) are dedicated; no PIN entry needed
 //
-// Released: DEBUG_IN (64) and nDUART_RESET (24) — unassigned bodge
-// spares (pin keeper, no pulls); route to pads only.
+// Spares: pin 64 (I/O) and pin 2 (dedicated input OE1/IN, input-only) —
+// unassigned bodge spares (pin keeper, no pulls); route to pads only.
 //
 //PIN: CHIP "glue" ASSIGNED TO AN PLCC84
 //
-//PIN: SYSCLK          : 83
-//PIN: nRESET          : 84
-//PIN: nHALT           : 25
-//PIN: DEBUG_OUT       : 61
-//PIN: nVSYNC          : 65
-//PIN: nROM_SELECT     : 17
-//PIN: nROM_WE         : 41
-//PIN: nAS             : 1
+//PIN: SYSCLK            : 83
+//PIN: nRESET            : 54
+//PIN: nHALT             : 41
+//PIN: DEBUG_OUT         : 70
+//PIN: nVSYNC            : 68
+//PIN: nROM_SELECT       : 17
+//PIN: nROM_WE           : 77
+//PIN: nAS               : 1
 // atf15xx_yosys seems to flatten out pins starting > 0, so renumber A_hi
 //   A_hi_0 = CPU A18 ... A_hi_5 = CPU A23
-//PIN: A_hi_5          : 46
-//PIN: A_hi_4          : 10
-//PIN: A_hi_3          : 12
-//PIN: A_hi_2          : 11
-//PIN: A_hi_1          : 8
-//PIN: A_hi_0          : 6
+//PIN: A_hi_5            : 4
+//PIN: A_hi_4            : 5
+//PIN: A_hi_3            : 31
+//PIN: A_hi_2            : 30
+//PIN: A_hi_1            : 49
+//PIN: A_hi_0            : 50
 // atf15xx_yosys seems to flatten out pins starting > 0, so renumber A_lo
 //   A_lo_0 = CPU A1 ... A_lo_4 = CPU A5
-//PIN: A_lo_4          : 29
-//PIN: A_lo_3          : 28
-//PIN: A_lo_2          : 27
-//PIN: A_lo_1          : 45
-//PIN: A_lo_0          : 44
-//PIN: D_7             : 57
-//PIN: D_6             : 51
-//PIN: D_5             : 48
-//PIN: D_4             : 60
-//PIN: D_3             : 49
-//PIN: D_2             : 58
-//PIN: D_1             : 50
-//PIN: D_0             : 52
-//PIN: nUDS            : 9
-//PIN: nLDS            : 31
-//PIN: R_nW            : 30
-//PIN: nRAM_1_SEL      : 20
-//PIN: nRAM_2_SEL      : 34
-//PIN: nRAM_3_SEL      : 33
-//PIN: nRAM_4_SEL      : 22
-//PIN: nWRITE_LO       : 4
-//PIN: nWRITE_HI       : 56
-//PIN: nDTACK          : 15
-//PIN: nBERR           : 16
-//PIN: nIPL_2          : 76
-//PIN: nIPL_1          : 81
-//PIN: nIPL_0          : 79
-//PIN: nVPA            : 37
-//PIN: nPORTS_SELECT   : 21
-//PIN: nDUART_SELECT   : 18
-//PIN: nCF_CS0         : 54
-//PIN: nCF_CS1         : 55
-//PIN: nR_W            : 5
-//PIN: FC_0            : 73
-//PIN: FC_1            : 75
-//PIN: FC_2            : 74
-//PIN: nDUART_DTACK    : 70
-//PIN: nDUART_IRQ      : 67
-//PIN: nENGINE_IRQ     : 68
-//PIN: nPORTS_IRQ      : 69
-//PIN: ENGINE_ACTIVE   : 35
-//PIN: ENGINE_WAITING  : 36
-//PIN: CF_INTRQ        : 40
-//PIN: CF_IORDY        : 2
-//PIN: nSUPERVISOR_RESET : 63
-//PIN: nENGINE_SELECT  : 39
-//PIN: PS2_CLK         : 80
-//PIN: PS2_DATA        : 77
+//PIN: A_lo_4            : 10
+//PIN: A_lo_3            : 73
+//PIN: A_lo_2            : 9
+//PIN: A_lo_1            : 8
+//PIN: A_lo_0            : 6
+//PIN: D_7               : 40
+//PIN: D_6               : 35
+//PIN: D_5               : 37
+//PIN: D_4               : 39
+//PIN: D_3               : 36
+//PIN: D_2               : 34
+//PIN: D_1               : 33
+//PIN: D_0               : 81
+//PIN: nUDS              : 67
+//PIN: nLDS              : 12
+//PIN: R_nW              : 11
+//PIN: nRAM_1_SEL        : 22
+//PIN: nRAM_2_SEL        : 58
+//PIN: nRAM_3_SEL        : 76
+//PIN: nRAM_4_SEL        : 75
+//PIN: nWRITE_LO         : 25
+//PIN: nWRITE_HI         : 74
+//PIN: nDTACK            : 15
+//PIN: nBERR             : 61
+//PIN: nIPL_2            : 56
+//PIN: nIPL_1            : 57
+//PIN: nIPL_0            : 80
+//PIN: nVPA              : 55
+//PIN: nPORTS_SELECT     : 16
+//PIN: nDUART_SELECT     : 21
+//PIN: nCF_CS0           : 18
+//PIN: nCF_CS1           : 20
+//PIN: nR_W              : 27
+//PIN: FC_0              : 44
+//PIN: FC_1              : 28
+//PIN: FC_2              : 45
+//PIN: nDUART_DTACK      : 51
+//PIN: nDUART_IRQ        : 48
+//PIN: nENGINE_IRQ       : 29
+//PIN: nPORTS_IRQ        : 65
+//PIN: ENGINE_ACTIVE     : 69
+//PIN: ENGINE_WAITING    : 52
+//PIN: CF_INTRQ          : 46
+//PIN: CF_IORDY          : 63
+//PIN: nSUPERVISOR_RESET : 84
+//PIN: nENGINE_SELECT    : 60
+//PIN: PS2_CLK           : 24
+//PIN: PS2_DATA          : 79
