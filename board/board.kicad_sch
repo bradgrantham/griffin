@@ -425,7 +425,7 @@
 		)
 	)
 	(sheet
-		(at 152.4 138.43)
+		(at 215.9 25.4)
 		(size 40 20)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -439,9 +439,9 @@
 		(fill
 			(color 0 0 0 0.0000)
 		)
-		(uuid "e2d268ce-e8ff-40b5-8bcd-edc0ec06e755")
-		(property "Sheetname" "VIDEO1"
-			(at 152.4 137.7184 0)
+		(uuid "ebcf2f6d-ed04-4a6f-b414-2229e9d7ec5f")
+		(property "Sheetname" "PORTS"
+			(at 215.9 24.6884 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -449,8 +449,8 @@
 				(justify left bottom)
 			)
 		)
-		(property "Sheetfile" "composite.kicad_sch"
-			(at 152.4 165.6846 0)
+		(property "Sheetfile" "glue.kicad_sch"
+			(at 215.9 50.1146 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -461,7 +461,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "13")
+					(page "7")
 				)
 			)
 		)
