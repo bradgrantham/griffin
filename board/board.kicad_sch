@@ -449,7 +449,7 @@
 				(justify left bottom)
 			)
 		)
-		(property "Sheetfile" "glue.kicad_sch"
+		(property "Sheetfile" "ports.kicad_sch"
 			(at 215.9 50.1146 0)
 			(effects
 				(font

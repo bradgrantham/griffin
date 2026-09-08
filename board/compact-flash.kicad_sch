@@ -2131,7 +2131,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "3e187f6a-8fd6-4df0-b14a-261203da81aa")
-		(property "Reference" "#PWR061"
+		(property "Reference" "#PWR0144"
 			(at 181.61 88.9 0)
 			(effects
 				(font
@@ -2181,7 +2181,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/4a375e65-a69e-4a1a-b605-646ac9dfc1ea"
-					(reference "#PWR061")
+					(reference "#PWR0144")
 					(unit 1)
 				)
 			)
@@ -2197,7 +2197,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "9ec9f514-3240-4d25-ad91-a8a8c1384df1")
-		(property "Reference" "J8"
+		(property "Reference" "J7"
 			(at 143.51 55.88 0)
 			(effects
 				(font
@@ -2446,7 +2446,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/4a375e65-a69e-4a1a-b605-646ac9dfc1ea"
-					(reference "J8")
+					(reference "J7")
 					(unit 1)
 				)
 			)
@@ -2462,7 +2462,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "cdfe1da4-416d-4bae-94f7-302b0af1f991")
-		(property "Reference" "#PWR070"
+		(property "Reference" "#PWR0143"
 			(at 170.18 134.62 0)
 			(effects
 				(font
@@ -2512,7 +2512,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/4a375e65-a69e-4a1a-b605-646ac9dfc1ea"
-					(reference "#PWR070")
+					(reference "#PWR0143")
 					(unit 1)
 				)
 			)
@@ -2528,7 +2528,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f45fee10-2207-402b-abb0-990f81a85af7")
-		(property "Reference" "#PWR069"
+		(property "Reference" "#PWR0142"
 			(at 116.84 111.76 0)
 			(effects
 				(font
@@ -2578,7 +2578,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/4a375e65-a69e-4a1a-b605-646ac9dfc1ea"
-					(reference "#PWR069")
+					(reference "#PWR0142")
 					(unit 1)
 				)
 			)
@@ -2594,7 +2594,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f4d7a1bb-99fc-4827-9634-8b434d14f65b")
-		(property "Reference" "#PWR075"
+		(property "Reference" "#PWR0141"
 			(at 113.03 82.55 0)
 			(effects
 				(font
@@ -2644,7 +2644,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/4a375e65-a69e-4a1a-b605-646ac9dfc1ea"
-					(reference "#PWR075")
+					(reference "#PWR0141")
 					(unit 1)
 				)
 			)

@@ -1179,7 +1179,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "83e5d337-0251-4549-bc61-b5280f1f4259")
-		(property "Reference" "TP1"
+		(property "Reference" "TP16"
 			(at 119.38 73.6599 90)
 			(effects
 				(font
@@ -1230,7 +1230,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/bdc81d7c-79d5-4e62-af29-5c413dc9363f"
-					(reference "TP1")
+					(reference "TP16")
 					(unit 1)
 				)
 			)
@@ -1378,7 +1378,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "dc540d96-d59e-4319-be57-cc2ca0a39615")
-		(property "Reference" "TP2"
+		(property "Reference" "TP17"
 			(at 119.38 83.8199 90)
 			(effects
 				(font
@@ -1429,7 +1429,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/bdc81d7c-79d5-4e62-af29-5c413dc9363f"
-					(reference "TP2")
+					(reference "TP17")
 					(unit 1)
 				)
 			)
