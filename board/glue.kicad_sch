@@ -3759,7 +3759,7 @@
 			)
 		)
 	)
-	(global_label "~{VSYNC}"
+	(global_label "~{VSYNC_IRQ}"
 		(shape input)
 		(at 118.11 128.27 0)
 		(fields_autoplaced yes)

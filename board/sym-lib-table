@@ -4,4 +4,5 @@
   (lib (name "SAMTEC")(type "KiCad")(uri "${KIPRJMOD}/library/CFT-125-01-L-D-RA-01-SL.kicad_sym")(options "")(descr ""))
   (lib (name "SS_AUDIO")(type "KiCad")(uri "${KIPRJMOD}/library/SJ3-35063B.kicad_sym")(options "")(descr ""))
   (lib (name "HD15")(type "KiCad")(uri "${KIPRJMOD}/library/ICD15S13E4GX00LF.kicad_sym")(options "")(descr ""))
+  (lib (name "Griffin")(type "KiCad")(uri "${KIPRJMOD}/library/ATF1504AS_PLCC44.kicad_sym")(options "")(descr "Griffin CPLD package variants"))
 )
