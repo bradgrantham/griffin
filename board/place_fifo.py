@@ -40,10 +40,20 @@ NAME_ALIASES = {'WR': '~{W}', 'RD': '~{R}', 'CLR': '~{RS}', 'XI': '~{XI}', 'FL':
 
 PAIRS = {
     'pixels': dict(
-        w='~{PIXELS_FIFO_W}', rs='~{RS}', q='PIXELS_Q', series='47R', pwr_start=153,
+        w='~{PIXELS_FIFO_W}', rs='~{RS}', q='PIXELS_Q', series='0R', pwr_start=153,
         chips=[
             dict(ref='U22', at=(210.82, 55.88), d_lo=8, re='~{PIXELS_RE_EVEN}', res='R28', cap='C29', cap_at=(177.8, 78.74)),
             dict(ref='U23', at=(210.82, 129.54), d_lo=0, re='~{PIXELS_RE_ODD}', res='R29', cap='C30', cap_at=(177.8, 152.4)),
+        ]),
+    # Ganged 16-bit pair: HIGH holds D[15:8] -> Q8..15, LOW holds D[7:0] -> Q0..7,
+    # one read strobe from COMPOSITOR through one series resistor to both /R pins
+    # (local net on the FIFO side), empty flag taken from the LOW chip.
+    'vidcmd': dict(
+        w='~{VIDCMD_FIFO_W}', rs='~{RS}', q='VIDCMD_Q', series='0R', pwr_start=167,
+        shared_re=dict(net='~{VIDCMD_RE}', res='R30', local='~{VIDCMD_RE_FIFO_SIDE}', at=(233.68, 92.71)),
+        chips=[
+            dict(ref='U24', at=(210.82, 55.88), d_lo=8, q_lo=8, cap='C31', cap_at=(177.8, 78.74)),
+            dict(ref='U25', at=(210.82, 129.54), d_lo=0, q_lo=0, ef='~{VIDCMD_EF}', cap='C32', cap_at=(177.8, 152.4)),
         ]),
 }
 
@@ -155,6 +165,22 @@ def instance_block(lib_id, x, y, rot, ref, props, pin_numbers, path):
     return out
 
 
+def local_label_block(name, x, y, angle):
+    justify = 'right bottom' if angle == 180 else 'left bottom'
+    return f'''	(label "{name}"
+		(at {fmt(x)} {fmt(y)} {angle})
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify {justify})
+		)
+		(uuid "{uuid.uuid4()}")
+	)
+'''
+
+
 def power_block(kind, x, y, rot, ref, path):
     """kind '+5V' or 'GND'; glyph hangs off the connection point (x, y)."""
     up = kind == '+5V'
@@ -215,7 +241,10 @@ def main():
         used |= set(re.findall(r'\(reference "([^"]+)"', open(f).read()))
     # per chip: VCC, GND, /XI, D8, /FL ties, plus the bypass cluster's +5V and GND
     pwr_refs = [f"#PWR{cfg['pwr_start'] + i:04d}" for i in range(7 * len(cfg['chips']))]
-    wanted = [c['ref'] for c in cfg['chips']] + [c['res'] for c in cfg['chips']] + [c['cap'] for c in cfg['chips']]
+    wanted = [c['ref'] for c in cfg['chips']] + [c['cap'] for c in cfg['chips']]
+    wanted += [c['res'] for c in cfg['chips'] if 'res' in c]
+    if 'shared_re' in cfg:
+        wanted.append(cfg['shared_re']['res'])
     clash = sorted(set(wanted + pwr_refs) & used)
     if clash:
         sys.exit(f"references already in use: {clash}")
@@ -259,12 +288,16 @@ def main():
                 continue
             m = re.fullmatch(r'Q(\d)', name)
             if m and int(m.group(1)) < 8:
-                out += [wire_block(px, py, ex, py), label_block(f"{cfg['q']}{m.group(1)}", 'tri_state', ex, py, angle)]
+                out += [wire_block(px, py, ex, py), label_block(f"{cfg['q']}{chip.get('q_lo', 0) + int(m.group(1))}", 'tri_state', ex, py, angle)]
                 continue
             if name == '~{W}':
                 out += [wire_block(px, py, ex, py), label_block(cfg['w'], 'input', ex, py, angle)]
             elif name == '~{RS}':
                 out += [wire_block(px, py, ex, py), label_block(cfg['rs'], 'input', ex, py, angle)]
+            elif name == '~{R}' and 're' not in chip:
+                out += [wire_block(px, py, ex, py), local_label_block(cfg['shared_re']['local'], ex, py, angle)]
+            elif name == '~{EF}' and 'ef' in chip:
+                out += [wire_block(px, py, ex, py), label_block(chip['ef'], 'output', ex, py, angle)]
             elif name == '~{R}':
                 # pin -> 2.54 wire -> resistor (7.62 long, horizontal) -> 2.54 wire -> label
                 x1 = px + away * 2.54
@@ -294,6 +327,16 @@ def main():
                 power_block('+5V', cx, cy - 3.81, 0, next(pwr), path),
                 power_block('GND', cx, cy + 3.81, 0, next(pwr), path)]
 
+    if 'shared_re' in cfg:
+        # driver-side global label -> series resistor -> FIFO-side local net
+        sr = cfg['shared_re']
+        x0, y0 = sr['at']
+        out += [label_block(sr['net'], 'input', x0, y0, 180),
+                wire_block(x0, y0, x0 + 2.54, y0),
+                two_pin_block(RES, x0 + 2.54 + 3.81, y0, 90, sr['res'], cfg['series'], path),
+                wire_block(x0 + 2.54 + 7.62, y0, x0 + 2.54 + 7.62 + 2.54, y0),
+                local_label_block(sr['local'], x0 + 2.54 + 7.62 + 2.54, y0, 0)]
+
     if next(pwr, None) is not None:
         sys.exit("power reference count mismatch")
     used_pwr = pwr_refs
@@ -302,7 +345,7 @@ def main():
     sheet = sheet[:i] + generated + sheet[i:]
     open(args.sch, 'w').write(sheet)
     print(f"placed {args.pair}: {[c['ref'] for c in cfg['chips']]}, caps {[c['cap'] for c in cfg['chips']]}, "
-          f"resistors {[c['res'] for c in cfg['chips']]}, power {used_pwr[0]}..{used_pwr[-1]} into {args.sch}")
+          f"resistors {wanted[2 * len(cfg['chips']):]}, power {used_pwr[0]}..{used_pwr[-1]} into {args.sch}")
 
 
 if __name__ == '__main__':

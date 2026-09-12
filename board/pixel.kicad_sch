@@ -6293,7 +6293,7 @@
 				)
 			)
 		)
-		(property "Value" "47R"
+		(property "Value" "0R"
 			(at 234.95 110.744 90)
 			(effects
 				(font
@@ -6427,7 +6427,7 @@
 				)
 			)
 		)
-		(property "Value" "47R"
+		(property "Value" "0R"
 			(at 234.95 37.084 90)
 			(effects
 				(font

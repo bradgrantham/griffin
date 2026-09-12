@@ -37,7 +37,7 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 
 ## FIFOs
 
-- [ ] PIXELS FIFO pair: 2x IDT7200
+- [x] PIXELS FIFO pair: 2x IDT7200
 - [ ] VIDCMD FIFO pair: 2x IDT7200 (new)
 - [ ] AUDIO FIFO pair: 2x IDT7200
 

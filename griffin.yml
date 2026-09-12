@@ -995,8 +995,9 @@ interfaces:
     (AUDIO_CONTROL.RESET), AUDIO /EF to PORTS, /HF unconnected.  XI/XO cascade is an
     unpopulated-footprint option if depth is ever needed.
   - |
-    FIFO control strobes: series source termination at the driver end on
-    every /RE and /W line of every 7200 (PIXELS, VIDCMD, AUDIO).
+    FIFO control strobes: every 7200 /RE and /W line (PIXELS, VIDCMD,
+    AUDIO) has a series axial footprint at its driver, stuffed 0R; 33-47R
+    only if a strobe rings on the bench.
   - |
     TIMING nVSYNC_IRQ -> GLUE nVSYNC: the level-6 frame IRQ, edge-latched
     in GLUE with W1C ack (VSYNC_STATUS/VSYNC_CLEAR).

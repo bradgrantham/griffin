@@ -32,7 +32,8 @@ Rev 1 bring-up (undated) -- GLUE bit-bang serial and GLUE_TIMER removed
 Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   Unterminated bodge wires on the video FIFO /RE lines rang and doubled
   reads (image creep); 10 pF to GND at the FIFO pins was the stopgap.  Rev 2
-  terminates every FIFO /RE and /W at the source instead.
+  terminates every FIFO /RE and /W at the source instead (revised
+  2026-09-12: footprint only, 0R default).
 
 2026-07-24 -- possible new hardware features
   PS/2 mouse port: does not fit GLUE (grouping failure, every fitter lever
@@ -514,3 +515,22 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   griffin.md GLUE pin numbers (nENGINE_SELECT, nVSYNC, nENGINE_IRQ)
   replaced by signal names per the one-source-of-truth rule;
   schematic-checklist.md pin 63 -> 84 and spare list updated.
+
+2026-09-12 -- FIFO strobe termination downgraded to a 0R-stuffed footprint
+  The Rev 1 /RE ringing came from the FIFOs sitting in a solderless
+  breadboard, fed by 20-30 cm jumpers soldered to VIDEO's pads: no return
+  plane under the wire, a few hundred nH of loop plus breadboard contact
+  inductance, driven by a 2-3 ns 5 V CMOS edge.  That explains the double
+  reads on its own.  Rev 1 was a 4-layer board and Rev 2 stays 4-layer, so
+  a strobe trace over a plane is a 50-70 ohm line a few cm long, well
+  inside the lumped regime for a 2-3 ns edge (critical length ~15-20 cm);
+  the residual LC of socket leads plus two ~8 pF inputs is damped by the
+  driver's output resistance.  Decision: route the strobes as plain copper
+  but keep a series axial footprint at each driver, stuffed with a 0R
+  jumper (eight: three /W at ENGINE, /RE at PIXEL x2, COMPOSITOR x1,
+  PORTS x2), so a bench observation becomes a resistor swap instead of a
+  capacitor bodge.  Failure mode being hedged is silent image creep.
+  Not measured: the ATF1508 output edge rate (datasheet gives tPD only)
+  and 7200 input hysteresis (unspecified).  griffin.yml FIFO control
+  strobes entry, griffin.md FIFO bullet and SI checklist, R28-R30 on the
+  PIXEL and COMPOSITOR sheets updated.
