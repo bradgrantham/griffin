@@ -1486,6 +1486,14 @@
     [
       "4a375e65-a69e-4a1a-b605-646ac9dfc1ea",
       "COMPACT_FLASH"
+    ],
+    [
+      "0bee51a0-ed43-4d9d-8301-adc0e1db0cb3",
+      "PIXEL"
+    ],
+    [
+      "7d03131b-c256-4c19-849a-f7fee587bca0",
+      "COMPOSITOR"
     ]
   ],
   "text_variables": {}

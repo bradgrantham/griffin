@@ -28,11 +28,11 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 
 - [x] GLUE ATF1508 PLCC84 (rev-2 pinout re-frozen 2026-09-04; spares 64 (I/O) and 2 (input-only) to bodge pads)
 - [x] PORTS ATF1508 PLCC84 (new chip)
-- [ ] ENGINE ATF1508 PLCC84 (pins 40/41/46/81 released, unconnected)
-- [ ] ENGINE -> GLUE status wires: ENGINE_ACTIVE 80->35, ENGINE_WAITING 4->36
-- [ ] PIXEL ATF1508 PLCC84 (new chip; replaces VIDEO)
-- [ ] COMPOSITOR ATF1508 PLCC84 (new chip)
-- [ ] TIMING ATF1504AS PLCC44 (new chip)
+- [x] ENGINE ATF1508 PLCC84 (pins 40/41/46/81 released, unconnected)
+- [x] ENGINE -> GLUE status wires: ENGINE_ACTIVE 80->35, ENGINE_WAITING 4->36
+- [x] PIXEL ATF1508 PLCC84 (new chip; replaces VIDEO)
+- [x] COMPOSITOR ATF1508 PLCC84 (new chip)
+- [x] TIMING ATF1504AS PLCC44 (new chip)
 - [ ] TIMING spare-I/O access (header / test points for the 13 spares)
 
 ## FIFOs

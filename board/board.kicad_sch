@@ -48,6 +48,48 @@
 		)
 	)
 	(sheet
+		(at 215.9 101.6)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "0bee51a0-ed43-4d9d-8301-adc0e1db0cb3")
+		(property "Sheetname" "PIXEL"
+			(at 215.9 100.8884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "pixel.kicad_sch"
+			(at 215.9 125.0446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "13")
+				)
+			)
+		)
+	)
+	(sheet
 		(at 88.9 101.6)
 		(size 40 20)
 		(exclude_from_sim no)
@@ -209,6 +251,48 @@
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
 					(page "2")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 215.9 138.43)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "7d03131b-c256-4c19-849a-f7fee587bca0")
+		(property "Sheetname" "COMPOSITOR"
+			(at 215.9 137.7184 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "compositor.kicad_sch"
+			(at 215.9 161.8746 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "14")
 				)
 			)
 		)
