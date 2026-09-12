@@ -77,13 +77,14 @@ def sheet_block(sheet_uuid, root_uuid, name, fname, x, y, w, h, page):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--template', required=True)
+    ap.add_argument('--template', help='sheet to clone; omit with --blank')
+    ap.add_argument('--blank', action='store_true', help='create an empty sheet instead of cloning a template')
     ap.add_argument('--out', required=True, help='new sheet file, e.g. pixel.kicad_sch (must not exist)')
     ap.add_argument('--root', required=True, help='root schematic, e.g. board.kicad_sch')
     ap.add_argument('--sheetname', required=True)
-    ap.add_argument('--value', required=True, help='Value for the template symbol whose Value is --old-value')
+    ap.add_argument('--value', help='Value for the template symbol whose Value is --old-value')
     ap.add_argument('--old-value', default=None, help='template Value to replace (default: the first U reference symbol)')
-    ap.add_argument('--refs', required=True, help='comma list OLD=NEW for every reference in the template')
+    ap.add_argument('--refs', help='comma list OLD=NEW for every reference in the template')
     ap.add_argument('--at', nargs=2, type=float, required=True, metavar=('X', 'Y'))
     ap.add_argument('--size', nargs=2, type=float, default=(40, 20), metavar=('W', 'H'))
     ap.add_argument('--page', required=True)
@@ -91,9 +92,19 @@ def main():
 
     if os.path.exists(args.out):
         sys.exit(f"{args.out} already exists")
-    text = open(args.template).read()
     root = open(args.root).read()
     root_uuid = re.search(r'^\t\(uuid "([0-9a-f-]+)"\)', root, re.M).group(1)
+    new_sheet = str(uuid.uuid4())
+
+    if args.blank:
+        text = (f'(kicad_sch\n\t(version 20250114)\n\t(generator "eeschema")\n\t(generator_version "9.0")\n'
+                f'\t(uuid "{uuid.uuid4()}")\n\t(paper "USLetter")\n\t(lib_symbols)\n)\n')
+        open(args.out, 'w').write(text)
+        register(args, root, root_uuid, new_sheet)
+        return
+    if not (args.template and args.value and args.refs):
+        sys.exit("--template, --value and --refs are required unless --blank")
+    text = open(args.template).read()
 
     refmap = dict(kv.split('=', 1) for kv in args.refs.split(','))
     used = set()
@@ -111,7 +122,6 @@ def main():
     paths = set(re.findall(r'\(path "(/[0-9a-f-]+/[0-9a-f-]+)"', text))
     if len(paths) != 1:
         sys.exit(f"expected one instance path in the template, found {paths}")
-    new_sheet = str(uuid.uuid4())
     text = text.replace(paths.pop(), f'/{root_uuid}/{new_sheet}')
 
     # Fresh uuid for every element (file uuid included)
@@ -136,8 +146,11 @@ def main():
         sys.exit(f"Value {args.old_value!r}: {n} matches")
 
     open(args.out, 'w').write(text)
+    register(args, root, root_uuid, new_sheet)
 
-    # Root sheet block
+
+def register(args, root, root_uuid, new_sheet):
+    """Append the (sheet ...) block to the root and the entry to the project file."""
     fname = os.path.basename(args.out)
     if f'"{fname}"' in root:
         sys.exit(f"{args.root} already references {fname}")

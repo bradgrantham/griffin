@@ -2061,7 +2061,7 @@
 		(uuid "cbe28719-23e0-4d4b-94c7-a23457469b5b")
 	)
 	(no_connect
-		(at 118.11 82.55)
+		(at 118.11 80.01)
 		(uuid "d7ee2e6b-d1d4-47ee-b8ef-9eee1bf7b9e2")
 	)
 	(no_connect
@@ -3176,7 +3176,7 @@
 	)
 	(global_label "~{AUDIO_FIFO_EF}"
 		(shape input)
-		(at 118.11 80.01 0)
+		(at 118.11 82.55 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -3186,7 +3186,7 @@
 		)
 		(uuid "6bf7d169-131c-4a7c-b79b-084678171e79")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 135.0049 80.01 0)
+			(at 135.0049 82.55 0)
 			(effects
 				(font
 					(size 1.27 1.27)

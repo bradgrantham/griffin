@@ -55,6 +55,16 @@ PAIRS = {
             dict(ref='U24', at=(210.82, 55.88), d_lo=8, q_lo=8, cap='C31', cap_at=(177.8, 78.74)),
             dict(ref='U25', at=(210.82, 129.54), d_lo=0, q_lo=0, ef='~{VIDCMD_EF}', cap='C32', cap_at=(177.8, 152.4)),
         ]),
+    # One chip per channel, L on D[15:8] and R on D[7:0]; PORTS owns the shared
+    # read strobe, the reset and the empty flag (taken from the R chip).
+    # Q buses AUDIO_L0..7 / AUDIO_R0..7 feed the AUDIO_DAC sheet.
+    'audio': dict(
+        w='~{AUDIO_FIFO_W}', rs='~{AUDIO_FIFO_RS}', series='0R', pwr_start=181,
+        shared_re=dict(net='~{AUDIO_FIFO_RE}', res='R31', local='~{AUDIO_FIFO_RE_FIFO_SIDE}', at=(124.46, 92.71)),
+        chips=[
+            dict(ref='U26', at=(101.6, 55.88), d_lo=8, q='AUDIO_L', cap='C33', cap_at=(68.58, 78.74)),
+            dict(ref='U27', at=(101.6, 129.54), d_lo=0, q='AUDIO_R', ef='~{AUDIO_FIFO_EF}', cap='C34', cap_at=(68.58, 152.4)),
+        ]),
 }
 
 FIFO = dict(lib='Memory_RAM', name='IDT7201', value='IDT7200L15P',
@@ -117,6 +127,8 @@ def ensure_lib_symbol(sheet, libname, name):
         return sheet
     s, e = block_span(sheet, r'^\t\(lib_symbols')
     blk = lib_symbol_block(libname, name)
+    if sheet[s:e].strip() == '(lib_symbols)':   # empty sheet
+        return sheet[:s] + '\t(lib_symbols\n' + blk + '\t)' + sheet[e:]
     # insert before the closing paren of lib_symbols (which sits on its own line "\t)")
     close = sheet.rfind('\n\t)', s, e)
     return sheet[:close + 1] + blk.rstrip('\n') + sheet[close:]
@@ -231,9 +243,20 @@ def main():
 
     # instance path of this sheet, from any existing symbol
     paths = set(re.findall(r'\(path "(/[0-9a-f-]+/[0-9a-f-]+)"', sheet))
-    if len(paths) != 1:
+    if len(paths) == 1:
+        path = paths.pop()
+    elif not paths:
+        # empty sheet: derive the path from the root's (sheet ...) block naming this file
+        root_file = os.path.join(os.path.dirname(os.path.abspath(args.sch)), 'board.kicad_sch')
+        rtext = open(root_file).read()
+        root_uuid = re.search(r'^\t\(uuid "([0-9a-f-]+)"\)', rtext, re.M).group(1)
+        m = re.search(r'\(uuid "([0-9a-f-]+)"\)\n\t\t\(property "Sheetname" "[^"]*"\n(?:[^\n]*\n)*?\t\t\(property "Sheetfile" "'
+                      + re.escape(os.path.basename(args.sch)) + '"', rtext)
+        if not m:
+            sys.exit(f"{root_file} has no sheet block for {os.path.basename(args.sch)}")
+        path = f'/{root_uuid}/{m.group(1)}'
+    else:
         sys.exit(f"expected one instance path in {args.sch}, found {paths}")
-    path = paths.pop()
 
     # reference clash check across the project
     used = set()
@@ -288,7 +311,7 @@ def main():
                 continue
             m = re.fullmatch(r'Q(\d)', name)
             if m and int(m.group(1)) < 8:
-                out += [wire_block(px, py, ex, py), label_block(f"{cfg['q']}{chip.get('q_lo', 0) + int(m.group(1))}", 'tri_state', ex, py, angle)]
+                out += [wire_block(px, py, ex, py), label_block(f"{chip.get('q', cfg.get('q'))}{chip.get('q_lo', 0) + int(m.group(1))}", 'tri_state', ex, py, angle)]
                 continue
             if name == '~{W}':
                 out += [wire_block(px, py, ex, py), label_block(cfg['w'], 'input', ex, py, angle)]
