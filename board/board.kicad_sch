@@ -131,6 +131,48 @@
 		)
 	)
 	(sheet
+		(at 152.4 138.43)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "23a2da96-f3cf-4097-8875-3ba1f54f4712")
+		(property "Sheetname" "DEBUG_HEADER"
+			(at 152.4 137.7184 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "debug-header.kicad_sch"
+			(at 152.4 161.8746 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "16")
+				)
+			)
+		)
+	)
+	(sheet
 		(at 25.4 101.6)
 		(size 40 20)
 		(exclude_from_sim no)
@@ -382,48 +424,6 @@
 		)
 	)
 	(sheet
-		(at 25.4 138.43)
-		(size 40.64 20.32)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(stroke
-			(width 0.1524)
-			(type solid)
-		)
-		(fill
-			(color 0 0 0 0.0000)
-		)
-		(uuid "bdc81d7c-79d5-4e62-af29-5c413dc9363f")
-		(property "Sheetname" "TESTPOINTS"
-			(at 25.4 137.7184 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left bottom)
-			)
-		)
-		(property "Sheetfile" "test-points.kicad_sch"
-			(at 25.4 159.3346 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left top)
-			)
-		)
-		(instances
-			(project "board"
-				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "11")
-				)
-			)
-		)
-	)
-	(sheet
 		(at 88.9 25.4)
 		(size 40 20)
 		(exclude_from_sim no)
@@ -639,46 +639,4 @@
 		)
 	)
 	(embedded_fonts no)
-	(sheet
-		(at 152.4 138.43)
-		(size 40 20)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(stroke
-			(width 0.1524)
-			(type solid)
-		)
-		(fill
-			(color 0 0 0 0.0000)
-		)
-		(uuid "23a2da96-f3cf-4097-8875-3ba1f54f4712")
-		(property "Sheetname" "DEBUG_HEADER"
-			(at 152.4 137.7184 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left bottom)
-			)
-		)
-		(property "Sheetfile" "debug-header.kicad_sch"
-			(at 152.4 161.8746 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left top)
-			)
-		)
-		(instances
-			(project "board"
-				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "16")
-				)
-			)
-		)
-	)
 )

@@ -86,11 +86,11 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [ ] Second serial TTL header (DUART Ch B; behind isolation jumpers)
 - [ ] JTAG programming header 1x6
 - [x] Debug/LA headers: 2x 2x16 shrouded (gusmanb LogicAnalyzer V2 J2 pinout) — DEBUG_HEADER sheet
-- [ ] SYSCLK buffered/series-R tap for LA header
+- [x] SYSCLK buffered/series-R tap for LA header
 - [ ] Debug LED(s) (DEBUG_OUT also blinks ~1.9 Hz while CPU halted)
 - [ ] ENGINE spare-strobe header near FIFOs: nSIGNAL_SPARE (pin 9), GND, +5V
 - [ ] PORTS spare header: pins 34, 41, GND
-- [ ] GLUE bodge pads: pins 64 (I/O) and 2 (input-only, OE1/IN) (unassigned)
+- [x] GLUE bodge pads: pins 64 (I/O) and 2 (input-only, OE1/IN) (unassigned)
 - [x] MATE-N-LOK 4-pin Molex power male
 
 ## Remove from rev-1 schematic
@@ -102,4 +102,4 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [x] Audio 74HC373 latch
 - [ ] 2x 74HCT245 joystick buffers
 - [ ] 2x 74HC590 paddle counters
-- [ ] Reset RC (R2/C3)
+- [x] Reset RC (R2/C3)
