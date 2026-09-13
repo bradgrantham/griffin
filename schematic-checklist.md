@@ -38,8 +38,8 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 ## FIFOs
 
 - [x] PIXELS FIFO pair: 2x IDT7200
-- [ ] VIDCMD FIFO pair: 2x IDT7200 (new)
-- [ ] AUDIO FIFO pair: 2x IDT7200
+- [x] VIDCMD FIFO pair: 2x IDT7200 (new)
+- [x] AUDIO FIFO pair: 2x IDT7200
 
 ## Video output
 
@@ -72,8 +72,8 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [ ] 2N7000 for RTC SDA
 - [ ] CF socket (16-bit True IDE)
 - [ ] CF sideband: INTRQ -> GLUE 40 (pull-down), IORDY -> GLUE 2 (pull-up)
-- [ ] PS/2 keyboard connector (to GLUE)
-- [ ] PS/2 mouse connector (to PORTS)
+- [ ] PS/2 DIN-5 keyboard connector (to GLUE)
+- [ ] PS/2 DIN-5 mouse connector (to PORTS)
 - [ ] 2x DE-9 joystick connectors
 - [ ] Joystick +5V polyfuse
 - [ ] Joystick ESD series R + clamps
@@ -85,7 +85,7 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [ ] Console TTL header (DUART Ch A, FTDI pinout; behind isolation jumpers)
 - [ ] Second serial TTL header (DUART Ch B; behind isolation jumpers)
 - [ ] JTAG programming header 1x6
-- [ ] Debug/LA headers: 2x 2x15 (gusmanb pinout)
+- [x] Debug/LA headers: 2x 2x16 shrouded (gusmanb LogicAnalyzer V2 J2 pinout) — DEBUG_HEADER sheet
 - [ ] SYSCLK buffered/series-R tap for LA header
 - [ ] Debug LED(s) (DEBUG_OUT also blinks ~1.9 Hz while CPU halted)
 - [ ] ENGINE spare-strobe header near FIFOs: nSIGNAL_SPARE (pin 9), GND, +5V
@@ -99,7 +99,7 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [x] USB-C power entry
 - [x] Composite/NTSC jack + NTSC clock provisions
 - [x] VIDEO CPLD
-- [ ] Audio 74HC373 latch
+- [x] Audio 74HC373 latch
 - [ ] 2x 74HCT245 joystick buffers
 - [ ] 2x 74HC590 paddle counters
 - [ ] Reset RC (R2/C3)

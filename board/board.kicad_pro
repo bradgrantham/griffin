@@ -1498,6 +1498,10 @@
     [
       "c356e90a-b764-466c-afb0-c4518c1ee9bb",
       "AUDIO_FIFO"
+    ],
+    [
+      "23a2da96-f3cf-4097-8875-3ba1f54f4712",
+      "DEBUG_HEADER"
     ]
   ],
   "text_variables": {}

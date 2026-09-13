@@ -534,3 +534,24 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   and 7200 input hysteresis (unspecified).  griffin.yml FIFO control
   strobes entry, griffin.md FIFO bullet and SI checklist, R28-R30 on the
   PIXEL and COMPOSITOR sheets updated.
+
+2026-09-12 -- Debug headers drawn to the LogicAnalyzer V2 2x16 pinout
+  The analyzer in hand is the gusmanb V2 board (level shifters + 3V3/5V/ext
+  VREF switch on the analyzer), whose input connector J2 is a shrouded 2x16
+  male header, not the 2x15 of the original board: pins 1,2 GND, 3 EXT_VREF,
+  4 EXT_TRIG, 5,6 the analyzer's 5 V, 7,8 its 3V3, then DIN12/DIN13 at 9/10
+  out to DIN1/DIN24 at 31/32 (DINk = channel k), read from
+  Electronics/LogicAnalyzer/LogicAnalyzerV2 main.stanza and the JITX KiCad
+  export.  Griffin side: same box header (board.pretty
+  IDC-Header_2x16_P2.54mm_Vertical, derived from KiCad's 2x15) and a straight
+  32-way ribbon; EXT_VREF fed from +5 V so the switch's ext position
+  references the target; 4-8 left open.  J8 = D0-D15 + ~AS ~UDS ~LDS R/~W
+  ~DTACK ~RESET ~HALT (ch 24 spare), J9 = A1-A23 + SYSCLK through R32 100R.
+  Note: 32-way IDC sockets are less common than 34-way; buy the ribbon with
+  the analyzer's connector in mind.
+  Tooling note: kicad-cli's netlist export silently drops an unnamed net
+  whose only members are two passive pins (J9 pin 32 <-> R32), although ERC
+  and the connectivity are fine; a local label (SYSCLK_TAP) makes it export.
+  Same session: the AUDIO_FIFO sheet had been re-saved with every reference
+  cleared to "?" after its first placement; regenerated from blank
+  (U26/U27, C33/C34, R31, #PWR0181-0194 restored).
