@@ -27,7 +27,7 @@
         (stroke (width 0.254)) (fill (type background))
       )
       (pin passive line (at -12.7 30.48 0) (length 5.08)
-        (name "01"
+        (name "GND"
           (effects (font (size 1.016 1.016)))
         )
         (number "01"
@@ -35,7 +35,7 @@
         )
       )
       (pin passive line (at -12.7 27.94 0) (length 5.08)
-        (name "02"
+        (name "D3"
           (effects (font (size 1.016 1.016)))
         )
         (number "02"
@@ -43,7 +43,7 @@
         )
       )
       (pin passive line (at -12.7 25.4 0) (length 5.08)
-        (name "03"
+        (name "D4"
           (effects (font (size 1.016 1.016)))
         )
         (number "03"
@@ -51,7 +51,7 @@
         )
       )
       (pin passive line (at -12.7 22.86 0) (length 5.08)
-        (name "04"
+        (name "D5"
           (effects (font (size 1.016 1.016)))
         )
         (number "04"
@@ -59,7 +59,7 @@
         )
       )
       (pin passive line (at -12.7 20.32 0) (length 5.08)
-        (name "05"
+        (name "D6"
           (effects (font (size 1.016 1.016)))
         )
         (number "05"
@@ -67,7 +67,7 @@
         )
       )
       (pin passive line (at -12.7 17.78 0) (length 5.08)
-        (name "06"
+        (name "D7"
           (effects (font (size 1.016 1.016)))
         )
         (number "06"
@@ -75,7 +75,7 @@
         )
       )
       (pin passive line (at -12.7 15.24 0) (length 5.08)
-        (name "07"
+        (name "~{CS0}"
           (effects (font (size 1.016 1.016)))
         )
         (number "07"
@@ -83,7 +83,7 @@
         )
       )
       (pin passive line (at -12.7 12.7 0) (length 5.08)
-        (name "08"
+        (name "A10"
           (effects (font (size 1.016 1.016)))
         )
         (number "08"
@@ -91,7 +91,7 @@
         )
       )
       (pin passive line (at -12.7 10.16 0) (length 5.08)
-        (name "09"
+        (name "~{ATASEL}"
           (effects (font (size 1.016 1.016)))
         )
         (number "09"
@@ -99,7 +99,7 @@
         )
       )
       (pin passive line (at -12.7 7.62 0) (length 5.08)
-        (name "10"
+        (name "A9"
           (effects (font (size 1.016 1.016)))
         )
         (number "10"
@@ -107,7 +107,7 @@
         )
       )
       (pin passive line (at -12.7 5.08 0) (length 5.08)
-        (name "11"
+        (name "A8"
           (effects (font (size 1.016 1.016)))
         )
         (number "11"
@@ -115,7 +115,7 @@
         )
       )
       (pin passive line (at -12.7 2.54 0) (length 5.08)
-        (name "12"
+        (name "A7"
           (effects (font (size 1.016 1.016)))
         )
         (number "12"
@@ -123,7 +123,7 @@
         )
       )
       (pin passive line (at -12.7 0.0 0) (length 5.08)
-        (name "13"
+        (name "VCC"
           (effects (font (size 1.016 1.016)))
         )
         (number "13"
@@ -131,7 +131,7 @@
         )
       )
       (pin passive line (at -12.7 -2.54 0) (length 5.08)
-        (name "14"
+        (name "A6"
           (effects (font (size 1.016 1.016)))
         )
         (number "14"
@@ -139,7 +139,7 @@
         )
       )
       (pin passive line (at -12.7 -5.08 0) (length 5.08)
-        (name "15"
+        (name "A5"
           (effects (font (size 1.016 1.016)))
         )
         (number "15"
@@ -147,7 +147,7 @@
         )
       )
       (pin passive line (at -12.7 -7.62 0) (length 5.08)
-        (name "16"
+        (name "A4"
           (effects (font (size 1.016 1.016)))
         )
         (number "16"
@@ -155,7 +155,7 @@
         )
       )
       (pin passive line (at -12.7 -10.16 0) (length 5.08)
-        (name "17"
+        (name "A3"
           (effects (font (size 1.016 1.016)))
         )
         (number "17"
@@ -163,7 +163,7 @@
         )
       )
       (pin passive line (at -12.7 -12.7 0) (length 5.08)
-        (name "18"
+        (name "A2"
           (effects (font (size 1.016 1.016)))
         )
         (number "18"
@@ -171,7 +171,7 @@
         )
       )
       (pin passive line (at -12.7 -15.24 0) (length 5.08)
-        (name "19"
+        (name "A1"
           (effects (font (size 1.016 1.016)))
         )
         (number "19"
@@ -179,7 +179,7 @@
         )
       )
       (pin passive line (at -12.7 -17.78 0) (length 5.08)
-        (name "20"
+        (name "A0"
           (effects (font (size 1.016 1.016)))
         )
         (number "20"
@@ -187,7 +187,7 @@
         )
       )
       (pin passive line (at -12.7 -20.32 0) (length 5.08)
-        (name "21"
+        (name "D0"
           (effects (font (size 1.016 1.016)))
         )
         (number "21"
@@ -195,7 +195,7 @@
         )
       )
       (pin passive line (at -12.7 -22.86 0) (length 5.08)
-        (name "22"
+        (name "D1"
           (effects (font (size 1.016 1.016)))
         )
         (number "22"
@@ -203,7 +203,7 @@
         )
       )
       (pin passive line (at -12.7 -25.4 0) (length 5.08)
-        (name "23"
+        (name "D2"
           (effects (font (size 1.016 1.016)))
         )
         (number "23"
@@ -211,7 +211,7 @@
         )
       )
       (pin passive line (at -12.7 -27.94 0) (length 5.08)
-        (name "24"
+        (name "~{IOCS16}"
           (effects (font (size 1.016 1.016)))
         )
         (number "24"
@@ -219,7 +219,7 @@
         )
       )
       (pin passive line (at -12.7 -30.48 0) (length 5.08)
-        (name "25"
+        (name "~{CD2}"
           (effects (font (size 1.016 1.016)))
         )
         (number "25"
@@ -227,7 +227,7 @@
         )
       )
       (pin passive line (at 12.7 30.48 180.0) (length 5.08)
-        (name "26"
+        (name "~{CD1}"
           (effects (font (size 1.016 1.016)))
         )
         (number "26"
@@ -235,7 +235,7 @@
         )
       )
       (pin passive line (at 12.7 27.94 180.0) (length 5.08)
-        (name "27"
+        (name "D11"
           (effects (font (size 1.016 1.016)))
         )
         (number "27"
@@ -243,7 +243,7 @@
         )
       )
       (pin passive line (at 12.7 25.4 180.0) (length 5.08)
-        (name "28"
+        (name "D12"
           (effects (font (size 1.016 1.016)))
         )
         (number "28"
@@ -251,7 +251,7 @@
         )
       )
       (pin passive line (at 12.7 22.86 180.0) (length 5.08)
-        (name "29"
+        (name "D13"
           (effects (font (size 1.016 1.016)))
         )
         (number "29"
@@ -259,7 +259,7 @@
         )
       )
       (pin passive line (at 12.7 20.32 180.0) (length 5.08)
-        (name "30"
+        (name "D14"
           (effects (font (size 1.016 1.016)))
         )
         (number "30"
@@ -267,7 +267,7 @@
         )
       )
       (pin passive line (at 12.7 17.78 180.0) (length 5.08)
-        (name "31"
+        (name "D15"
           (effects (font (size 1.016 1.016)))
         )
         (number "31"
@@ -275,7 +275,7 @@
         )
       )
       (pin passive line (at 12.7 15.24 180.0) (length 5.08)
-        (name "32"
+        (name "~{CS1}"
           (effects (font (size 1.016 1.016)))
         )
         (number "32"
@@ -283,7 +283,7 @@
         )
       )
       (pin passive line (at 12.7 12.7 180.0) (length 5.08)
-        (name "33"
+        (name "~{VS1}"
           (effects (font (size 1.016 1.016)))
         )
         (number "33"
@@ -291,7 +291,7 @@
         )
       )
       (pin passive line (at 12.7 10.16 180.0) (length 5.08)
-        (name "34"
+        (name "~{IORD}"
           (effects (font (size 1.016 1.016)))
         )
         (number "34"
@@ -299,7 +299,7 @@
         )
       )
       (pin passive line (at 12.7 7.62 180.0) (length 5.08)
-        (name "35"
+        (name "~{IOWR}"
           (effects (font (size 1.016 1.016)))
         )
         (number "35"
@@ -307,7 +307,7 @@
         )
       )
       (pin passive line (at 12.7 5.08 180.0) (length 5.08)
-        (name "36"
+        (name "~{WE}"
           (effects (font (size 1.016 1.016)))
         )
         (number "36"
@@ -315,7 +315,7 @@
         )
       )
       (pin passive line (at 12.7 2.54 180.0) (length 5.08)
-        (name "37"
+        (name "INTRQ"
           (effects (font (size 1.016 1.016)))
         )
         (number "37"
@@ -323,7 +323,7 @@
         )
       )
       (pin passive line (at 12.7 0.0 180.0) (length 5.08)
-        (name "38"
+        (name "VCC"
           (effects (font (size 1.016 1.016)))
         )
         (number "38"
@@ -331,7 +331,7 @@
         )
       )
       (pin passive line (at 12.7 -2.54 180.0) (length 5.08)
-        (name "39"
+        (name "~{CSEL}"
           (effects (font (size 1.016 1.016)))
         )
         (number "39"
@@ -339,7 +339,7 @@
         )
       )
       (pin passive line (at 12.7 -5.08 180.0) (length 5.08)
-        (name "40"
+        (name "~{VS2}"
           (effects (font (size 1.016 1.016)))
         )
         (number "40"
@@ -347,7 +347,7 @@
         )
       )
       (pin passive line (at 12.7 -7.62 180.0) (length 5.08)
-        (name "41"
+        (name "~{RESET}"
           (effects (font (size 1.016 1.016)))
         )
         (number "41"
@@ -355,7 +355,7 @@
         )
       )
       (pin passive line (at 12.7 -10.16 180.0) (length 5.08)
-        (name "42"
+        (name "IORDY"
           (effects (font (size 1.016 1.016)))
         )
         (number "42"
@@ -363,7 +363,7 @@
         )
       )
       (pin passive line (at 12.7 -12.7 180.0) (length 5.08)
-        (name "43"
+        (name "~{INPACK}"
           (effects (font (size 1.016 1.016)))
         )
         (number "43"
@@ -371,7 +371,7 @@
         )
       )
       (pin passive line (at 12.7 -15.24 180.0) (length 5.08)
-        (name "44"
+        (name "~{REG}"
           (effects (font (size 1.016 1.016)))
         )
         (number "44"
@@ -379,7 +379,7 @@
         )
       )
       (pin passive line (at 12.7 -17.78 180.0) (length 5.08)
-        (name "45"
+        (name "~{DASP}"
           (effects (font (size 1.016 1.016)))
         )
         (number "45"
@@ -387,7 +387,7 @@
         )
       )
       (pin passive line (at 12.7 -20.32 180.0) (length 5.08)
-        (name "46"
+        (name "~{PDIAG}"
           (effects (font (size 1.016 1.016)))
         )
         (number "46"
@@ -395,7 +395,7 @@
         )
       )
       (pin passive line (at 12.7 -22.86 180.0) (length 5.08)
-        (name "47"
+        (name "D8"
           (effects (font (size 1.016 1.016)))
         )
         (number "47"
@@ -403,7 +403,7 @@
         )
       )
       (pin passive line (at 12.7 -25.4 180.0) (length 5.08)
-        (name "48"
+        (name "D9"
           (effects (font (size 1.016 1.016)))
         )
         (number "48"
@@ -411,7 +411,7 @@
         )
       )
       (pin passive line (at 12.7 -27.94 180.0) (length 5.08)
-        (name "49"
+        (name "D10"
           (effects (font (size 1.016 1.016)))
         )
         (number "49"
@@ -419,7 +419,7 @@
         )
       )
       (pin passive line (at 12.7 -30.48 180.0) (length 5.08)
-        (name "50"
+        (name "GND"
           (effects (font (size 1.016 1.016)))
         )
         (number "50"

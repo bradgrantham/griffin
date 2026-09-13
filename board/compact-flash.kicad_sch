@@ -129,7 +129,7 @@
 				(pin bidirectional line
 					(at -12.7 27.94 0)
 					(length 5.08)
-					(name "D03"
+					(name "D3"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -147,7 +147,7 @@
 				(pin bidirectional line
 					(at -12.7 25.4 0)
 					(length 5.08)
-					(name "D04"
+					(name "D4"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -165,7 +165,7 @@
 				(pin bidirectional line
 					(at -12.7 22.86 0)
 					(length 5.08)
-					(name "D05"
+					(name "D5"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -183,7 +183,7 @@
 				(pin bidirectional line
 					(at -12.7 20.32 0)
 					(length 5.08)
-					(name "D06"
+					(name "D6"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -201,7 +201,7 @@
 				(pin bidirectional line
 					(at -12.7 17.78 0)
 					(length 5.08)
-					(name "D07"
+					(name "D7"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -219,7 +219,7 @@
 				(pin input line
 					(at -12.7 15.24 0)
 					(length 5.08)
-					(name "-CE1"
+					(name "~{CS0}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -255,7 +255,7 @@
 				(pin input line
 					(at -12.7 10.16 0)
 					(length 5.08)
-					(name "-OE"
+					(name "~{ATASEL}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -273,7 +273,7 @@
 				(pin input line
 					(at -12.7 7.62 0)
 					(length 5.08)
-					(name "A09"
+					(name "A9"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -291,7 +291,7 @@
 				(pin input line
 					(at -12.7 5.08 0)
 					(length 5.08)
-					(name "A08"
+					(name "A8"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -309,7 +309,7 @@
 				(pin input line
 					(at -12.7 2.54 0)
 					(length 5.08)
-					(name "A07"
+					(name "A7"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -345,7 +345,7 @@
 				(pin input line
 					(at -12.7 -2.54 0)
 					(length 5.08)
-					(name "A06"
+					(name "A6"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -363,7 +363,7 @@
 				(pin input line
 					(at -12.7 -5.08 0)
 					(length 5.08)
-					(name "A05"
+					(name "A5"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -381,7 +381,7 @@
 				(pin input line
 					(at -12.7 -7.62 0)
 					(length 5.08)
-					(name "A04"
+					(name "A4"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -399,7 +399,7 @@
 				(pin input line
 					(at -12.7 -10.16 0)
 					(length 5.08)
-					(name "A03"
+					(name "A3"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -417,7 +417,7 @@
 				(pin input line
 					(at -12.7 -12.7 0)
 					(length 5.08)
-					(name "A02"
+					(name "A2"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -435,7 +435,7 @@
 				(pin input line
 					(at -12.7 -15.24 0)
 					(length 5.08)
-					(name "A01"
+					(name "A1"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -453,7 +453,7 @@
 				(pin input line
 					(at -12.7 -17.78 0)
 					(length 5.08)
-					(name "A00"
+					(name "A0"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -471,7 +471,7 @@
 				(pin bidirectional line
 					(at -12.7 -20.32 0)
 					(length 5.08)
-					(name "D00"
+					(name "D0"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -489,7 +489,7 @@
 				(pin bidirectional line
 					(at -12.7 -22.86 0)
 					(length 5.08)
-					(name "D01"
+					(name "D1"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -507,7 +507,7 @@
 				(pin bidirectional line
 					(at -12.7 -25.4 0)
 					(length 5.08)
-					(name "D02"
+					(name "D2"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -525,7 +525,7 @@
 				(pin output line
 					(at -12.7 -27.94 0)
 					(length 5.08)
-					(name "WP"
+					(name "~{IOCS16}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -543,7 +543,7 @@
 				(pin output line
 					(at -12.7 -30.48 0)
 					(length 5.08)
-					(name "-CD2"
+					(name "~{CD2}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -561,7 +561,7 @@
 				(pin output line
 					(at 12.7 30.48 180)
 					(length 5.08)
-					(name "-CD1"
+					(name "~{CD1}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -579,7 +579,7 @@
 				(pin bidirectional line
 					(at 12.7 27.94 180)
 					(length 5.08)
-					(name "D111"
+					(name "D11"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -597,7 +597,7 @@
 				(pin bidirectional line
 					(at 12.7 25.4 180)
 					(length 5.08)
-					(name "D121"
+					(name "D12"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -615,7 +615,7 @@
 				(pin bidirectional line
 					(at 12.7 22.86 180)
 					(length 5.08)
-					(name "D131"
+					(name "D13"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -633,7 +633,7 @@
 				(pin bidirectional line
 					(at 12.7 20.32 180)
 					(length 5.08)
-					(name "D141"
+					(name "D14"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -651,7 +651,7 @@
 				(pin bidirectional line
 					(at 12.7 17.78 180)
 					(length 5.08)
-					(name "D151"
+					(name "D15"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -669,7 +669,7 @@
 				(pin input line
 					(at 12.7 15.24 180)
 					(length 5.08)
-					(name "-CE21"
+					(name "~{CS1}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -687,7 +687,7 @@
 				(pin output line
 					(at 12.7 12.7 180)
 					(length 5.08)
-					(name "-VS1"
+					(name "~{VS1}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -705,7 +705,7 @@
 				(pin input line
 					(at 12.7 10.16 180)
 					(length 5.08)
-					(name "-IORD"
+					(name "~{IORD}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -723,7 +723,7 @@
 				(pin input line
 					(at 12.7 7.62 180)
 					(length 5.08)
-					(name "-IOWR"
+					(name "~{IOWR}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -741,7 +741,7 @@
 				(pin input line
 					(at 12.7 5.08 180)
 					(length 5.08)
-					(name "-WE"
+					(name "~{WE}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -759,7 +759,7 @@
 				(pin output line
 					(at 12.7 2.54 180)
 					(length 5.08)
-					(name "READY"
+					(name "INTRQ"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -795,7 +795,7 @@
 				(pin input line
 					(at 12.7 -2.54 180)
 					(length 5.08)
-					(name "-CSEL5"
+					(name "~{CSEL}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -813,7 +813,7 @@
 				(pin output line
 					(at 12.7 -5.08 180)
 					(length 5.08)
-					(name "-VS2"
+					(name "~{VS2}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -831,7 +831,7 @@
 				(pin input line
 					(at 12.7 -7.62 180)
 					(length 5.08)
-					(name "RESET"
+					(name "~{RESET}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -849,7 +849,7 @@
 				(pin output line
 					(at 12.7 -10.16 180)
 					(length 5.08)
-					(name "-WAIT"
+					(name "IORDY"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -867,7 +867,7 @@
 				(pin output line
 					(at 12.7 -12.7 180)
 					(length 5.08)
-					(name "-INPACK"
+					(name "~{INPACK}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -885,7 +885,7 @@
 				(pin output line
 					(at 12.7 -15.24 180)
 					(length 5.08)
-					(name "-REG"
+					(name "~{REG}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -903,7 +903,7 @@
 				(pin output line
 					(at 12.7 -17.78 180)
 					(length 5.08)
-					(name "BVD2"
+					(name "~{DASP}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -921,7 +921,7 @@
 				(pin output line
 					(at 12.7 -20.32 180)
 					(length 5.08)
-					(name "BVD1"
+					(name "~{PDIAG}"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -939,7 +939,7 @@
 				(pin bidirectional line
 					(at 12.7 -22.86 180)
 					(length 5.08)
-					(name "D081"
+					(name "D8"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -957,7 +957,7 @@
 				(pin bidirectional line
 					(at 12.7 -25.4 180)
 					(length 5.08)
-					(name "D091"
+					(name "D9"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -975,7 +975,7 @@
 				(pin bidirectional line
 					(at 12.7 -27.94 180)
 					(length 5.08)
-					(name "D101"
+					(name "D10"
 						(effects
 							(font
 								(size 1.016 1.016)
@@ -1388,24 +1388,12 @@
 		(uuid "1d6cdab3-80e9-43f5-8127-8794eea17a69")
 	)
 	(no_connect
-		(at 156.21 73.66)
-		(uuid "292ba8cd-559f-47a4-b1b4-28433499d791")
-	)
-	(no_connect
 		(at 147.32 129.54)
 		(uuid "4b70efb8-b060-4c31-a268-9fb68ea0c728")
 	)
 	(no_connect
 		(at 130.81 124.46)
 		(uuid "56c72e2d-cdb0-48c7-878c-5a85a7d0ecc9")
-	)
-	(no_connect
-		(at 156.21 71.12)
-		(uuid "62eb0a7e-46d0-42ab-8e48-87c785f814c4")
-	)
-	(no_connect
-		(at 156.21 121.92)
-		(uuid "7827ca60-35de-46f8-a6eb-667211747db8")
 	)
 	(no_connect
 		(at 156.21 63.5)
@@ -1420,14 +1408,6 @@
 		(uuid "7bb7c962-1277-4530-ac59-7276d947d49b")
 	)
 	(no_connect
-		(at 156.21 91.44)
-		(uuid "83875a50-5fe6-45fa-8fc8-6d310bfeed4e")
-	)
-	(no_connect
-		(at 156.21 76.2)
-		(uuid "85182e3e-e9ba-4b5a-9a07-e5677b498509")
-	)
-	(no_connect
 		(at 138.43 129.54)
 		(uuid "89081087-69a0-4b17-9045-00867b25a6ae")
 	)
@@ -1436,32 +1416,12 @@
 		(uuid "8c29a875-8a62-467f-a9de-9c24fe5e8b11")
 	)
 	(no_connect
-		(at 156.21 68.58)
-		(uuid "8c3f491b-34c7-4f3a-9b8d-9d842f22c707")
-	)
-	(no_connect
 		(at 156.21 81.28)
 		(uuid "8cda3131-0e77-4996-b6ca-91358cbe3465")
 	)
 	(no_connect
 		(at 156.21 106.68)
 		(uuid "96e2708f-578f-45a7-824d-67a21aa0f9b4")
-	)
-	(no_connect
-		(at 156.21 104.14)
-		(uuid "a3c25f7f-41fb-4224-848f-d3765573516d")
-	)
-	(no_connect
-		(at 156.21 66.04)
-		(uuid "a6472f35-fd53-47f3-8d1d-c26b5498032a")
-	)
-	(no_connect
-		(at 156.21 116.84)
-		(uuid "deb614e5-5994-45cb-bbb8-ba363b2cf525")
-	)
-	(no_connect
-		(at 156.21 119.38)
-		(uuid "f0cc08b9-320d-49f4-9796-f554c6974ebf")
 	)
 	(no_connect
 		(at 156.21 99.06)
@@ -2131,7 +2091,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "3e187f6a-8fd6-4df0-b14a-261203da81aa")
-		(property "Reference" "#PWR0144"
+		(property "Reference" "#PWR0139"
 			(at 181.61 88.9 0)
 			(effects
 				(font
@@ -2181,7 +2141,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/4a375e65-a69e-4a1a-b605-646ac9dfc1ea"
-					(reference "#PWR0144")
+					(reference "#PWR0139")
 					(unit 1)
 				)
 			)
@@ -2462,7 +2422,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "cdfe1da4-416d-4bae-94f7-302b0af1f991")
-		(property "Reference" "#PWR0143"
+		(property "Reference" "#PWR0138"
 			(at 170.18 134.62 0)
 			(effects
 				(font
@@ -2512,7 +2472,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/4a375e65-a69e-4a1a-b605-646ac9dfc1ea"
-					(reference "#PWR0143")
+					(reference "#PWR0138")
 					(unit 1)
 				)
 			)
@@ -2528,7 +2488,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f45fee10-2207-402b-abb0-990f81a85af7")
-		(property "Reference" "#PWR0142"
+		(property "Reference" "#PWR0137"
 			(at 116.84 111.76 0)
 			(effects
 				(font
@@ -2578,7 +2538,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/4a375e65-a69e-4a1a-b605-646ac9dfc1ea"
-					(reference "#PWR0142")
+					(reference "#PWR0137")
 					(unit 1)
 				)
 			)
@@ -2594,7 +2554,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f4d7a1bb-99fc-4827-9634-8b434d14f65b")
-		(property "Reference" "#PWR0141"
+		(property "Reference" "#PWR0136"
 			(at 113.03 82.55 0)
 			(effects
 				(font
@@ -2644,9 +2604,229 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d/4a375e65-a69e-4a1a-b605-646ac9dfc1ea"
-					(reference "#PWR0141")
+					(reference "#PWR0136")
 					(unit 1)
 				)
+			)
+		)
+	)
+	(global_label "D8"
+		(shape bidirectional)
+		(at 156.21 116.84 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "f09eed2c-1930-40d8-a58e-9f8179708f21")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 162.782 116.84 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "D9"
+		(shape bidirectional)
+		(at 156.21 119.38 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "f41006e3-7f4a-4abf-9476-a696f3a37683")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 162.782 119.38 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "D10"
+		(shape bidirectional)
+		(at 156.21 121.92 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "cadbb1b0-dfa2-4df7-936a-ed0df231ab28")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 163.588 121.92 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "D11"
+		(shape bidirectional)
+		(at 156.21 66.04 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "9a672e66-2a4c-4379-a7e2-1852c5390be2")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 163.588 66.04 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "D12"
+		(shape bidirectional)
+		(at 156.21 68.58 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "07684abc-2b57-400d-b321-61950eee3d5f")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 163.588 68.58 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "D13"
+		(shape bidirectional)
+		(at 156.21 71.12 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "031d543a-aa5e-4816-a8f3-823c007952a7")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 163.588 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "D14"
+		(shape bidirectional)
+		(at 156.21 73.66 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "001b5466-eea3-4114-86f7-ddf6899cf499")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 163.588 73.66 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "D15"
+		(shape bidirectional)
+		(at 156.21 76.2 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "ce72bf9d-1e25-4183-8afa-ebd61a996886")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 163.588 76.2 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "CF_INTRQ"
+		(shape output)
+		(at 156.21 91.44 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "cdeeec94-f595-4be2-99e7-8838294feb94")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 167.618 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "CF_IORDY"
+		(shape output)
+		(at 156.21 104.14 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "643a4577-01a3-4fbe-bc4c-091779832517")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 167.618 104.14 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
 			)
 		)
 	)
