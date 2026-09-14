@@ -70,8 +70,8 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [ ] DS3231 RTC
 - [ ] Coin-cell holder
 - [ ] 2N7000 for RTC SDA
-- [ ] CF socket (16-bit True IDE)
-- [ ] CF sideband: INTRQ -> GLUE 40 (pull-down), IORDY -> GLUE 2 (pull-up)
+- [x] CF socket (16-bit True IDE)
+- [x] CF sideband: INTRQ -> GLUE (pull-down), IORDY -> GLUE (pull-up)
 - [ ] PS/2 DIN-5 keyboard connector (to GLUE)
 - [ ] PS/2 DIN-5 mouse connector (to PORTS)
 - [ ] 2x DE-9 joystick connectors
