@@ -292,7 +292,7 @@ static constexpr uint32_t CF_STATUS = 0xF4000FUL;  // READ: Status register
 static constexpr uint32_t CF_COMMAND = 0xF4000FUL;  // WRITE: Command register
 
 // ------------------------------------------------------------
-// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C
+// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / MCP7940N RTC I2C
 static constexpr uint32_t DUART_BASE = 0xF80000UL;
 static constexpr uint32_t DUART_SIZE = 0x040000UL;
 inline constexpr MemoryRange DUART(0xF80000UL, 0x040000UL);
@@ -405,10 +405,10 @@ static constexpr uint32_t PADDLE_TICKS_PER_SECOND = 0x3D76U;
 static constexpr uint32_t DUART_OP_RTC_SCL = 0x04U;
 static constexpr uint32_t DUART_OP_RTC_SDA_DRIVE = 0x08U;
 static constexpr uint32_t DUART_IP_RTC_SDA = 0x04U;
-static constexpr uint32_t DUART_IP_RTC_NINT = 0x08U;
+static constexpr uint32_t DUART_IP_RTC_MFP = 0x08U;
 static constexpr uint32_t DUART_IP_DCD_B = 0x10U;
 static constexpr uint32_t DUART_IP_RI_B = 0x20U;
-static constexpr uint32_t RTC_I2C_ADDR = 0x68U;
+static constexpr uint32_t RTC_I2C_ADDR = 0x6FU;
 static constexpr uint32_t PS2_TX_DATA_PARITY = 0x02U;
 static constexpr uint32_t ENGINE_WORDS_PER_BURST = 0x14U;
 static constexpr uint32_t VSYNC_IRQ_LEVEL = 0x06U;

@@ -437,7 +437,7 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   +++ATH, a GLUE bodge spare can drive DTR later.  TTL bench headers
   retained: TX fans out harmlessly; the four receiver outputs (RXD/CTS
   x2) pass through series isolation jumpers so header and port never
-  fight.  MC1488 drivers rejected: they need +-12 V rails the 5 V-only
+  fight (superseded 2026-09-14: no jumpers, see below).  MC1488 drivers rejected: they need +-12 V rails the 5 V-only
   supply doesn't have; the MAX232 charge pump is the whole reason to
   accept a 1987 part inside a declared reproduction.  No CPLD, firmware
   or emulator impact; DUART_IP_DCD_B/DUART_IP_RI_B masks generated for
@@ -555,3 +555,67 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   Same session: the AUDIO_FIFO sheet had been re-saved with every reference
   cleared to "?" after its first placement; regenerated from blank
   (U26/U27, C33/C34, R31, #PWR0181-0194 restored).
+
+2026-09-14 -- USB-C power entry with a CC-advertisement gate (stuffing option)
+  Rev 2 is now explicitly one PCB stuffed two ways: the display build with
+  1984 connectors and the kit build (brother, friends) with modern ones.  The
+  FTDI header already covers serial; PS/2 gets a DIN-5 / mini-DIN-6 union
+  footprint (still owed: the single-port right-angle mini-DIN drawing, to
+  check its shell holes against DIN pin 1 on the 12.5 mm row -- Kycon
+  KCDX-5S-N: tabs x=+/-5 at 3.0 mm, pins 3/2/1 at 12.5, 5/4 at 15.0, all
+  D1.40; recess the mini-DIN 1.5-2 mm if they touch).  Power: the earlier
+  "why not USB-C" objection (a plain-Rd sink is entitled to 500 mA) is
+  answered by gating rather than negotiating: LM339 A/B read CC1/CC2 against
+  1.25 V (TL431/2; the 1.23 V sink threshold between the 1.5 A and 3 A Rp
+  bands), wire-OR nGATE closes two back-to-back NDP6020P (load switch and
+  backfeed block in one), section C lights WEAK_SOURCE.  Bench brick
+  measured 1.69 V on CC2 with PCB 1 running, i.e. the 3 A advertisement, so
+  the user-facing rule is "15 W or larger USB-C wall charger".  The display
+  build omits the Rd pair (socket dead); the harness build omits the LM339.
+  Rejected: undervolt LED on section D (DS1233-5 + halt blink already show
+  a sagging rail); CH224K PD sink (SMT, negotiates what the gate merely
+  checks); series Schottky backfeed block (0.3-0.4 V, outside the DS1233-5
+  budget); castellated USB-C module or the rev-1 Adafruit 4090 BOB header
+  as the power input (insertion force through header pins / fillets, no
+  advertisement check); board-edge barrel jack + PD-to-barrel cable (still
+  valid, but the socket-plus-gate keeps the negotiation on the board).
+  Bench gate still owed: FET pair drop at 1.7 A against the 4.85 V rule.
+
+2026-09-14 -- RTC is the MCP7940N, not the DS3231
+  Reason: a through-hole part was wanted; the DS3231 exists only as a
+  wide SOIC and in practice arrives on a module.  Candidates from a
+  DigiKey DIP-8 I2C RTC search: DS1307 (same 0x68 address and timekeeping
+  register layout as the DS3231, 56 B NVRAM, but 5 V only, no alarm, 12.5
+  pF crystal, ~$7.8), DS1337 and MCP7940M (no VBAT pin, would need an
+  external diode-OR for backup), MCP7940N (VBAT switchover built in, 1.8-
+  5.5 V, alarm/square wave on MFP, power-fail timestamps, OSCTRIM digital
+  trim, industrial, ~$0.92).  MCP7940N chosen; no firmware exists yet, so
+  the address (0x6F) and register-map change cost nothing.  Wiring is
+  unchanged: SCL = OP2 push-pull, SDA open-drain through the 2N7000 from
+  OP3 with IP2 readback, MFP -> IP3 (was DS3231 ~INT; constant renamed
+  DUART_IP_RTC_MFP).  Needs a 32.768 kHz crystal specified for a 6-9 pF
+  load (not the common 12.5 pF part) and a CR2032 holder.  Firmware must
+  set ST and VBATEN once.  Accuracy drops from the DS3231's 2 ppm TCXO to
+  a plain crystal, trimmable in OSCTRIM after measuring drift; the lore
+  repo's "41 minutes in 41 years" avionics line (CANON.md 234, the
+  whitelist in AGENTS_SNIPPET.md / CLAUDE.md) no longer holds and is to
+  be reworked into the Monarch prototype-parts thread.
+
+
+2026-09-14 -- Serial isolation jumpers dropped; pull-ups and series resistors
+  Real RS-232 use will be rare (the VCF table, an occasional PC or
+  modem), so the MAX232s and the 75189 stay unstuffed on bench builds
+  and the TTL headers are the only drivers into the DUART.  Consequences
+  handled: (1) 10k pull-ups to +5 V on RXD_A, RXD_B, ~CTS_A, ~CTS_B, IP4
+  and IP5, because unstuffed level stages leave those XR68C681 inputs
+  floating (garbage characters and break detection on RXD, spurious
+  change-of-state IRQs on IP0/IP1); with the level stages populated their
+  push-pull outputs drive through the pull-ups unaffected.  (2) 1k series
+  resistors in the headers' RXD and CTS lines into the DUART: if a bench
+  cable is ever left plugged in while a stuffed MAX232 port is live, the
+  MAX232 receiver wins through the resistor at ~5 mA and nothing is
+  stressed; at serial speeds the resistor is invisible.  The four
+  2026-09-01 series jumpers are gone (griffin.yml RS-232 entry, griffin.md
+  Serial, checklist, reminders.md, and the lore repo's rear-apron line).
+  Not drawn yet: io.kicad_sch has uncommitted edits open in KiCad, so the
+  resistors and pull-ups go in by hand there.

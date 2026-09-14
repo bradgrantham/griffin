@@ -17,7 +17,8 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [x] Reset isolation diode: Schottky, anode on ~RESET net, cathode at RST
 - [ ] nSUPERVISOR_RESET net: DS1233 RST -> GLUE pin 84 (sources ~HALT)
 - [x] Reset button
-- [x] 6-pin power header - https://www.digikey.com/en/products/detail/te-connectivity-amp-connectors/640500-1/187758?fbclid=IwY2xjawUG6vZwZG9mAWV4dG4DYWVtAjEwAGJyaWQRMVMxVzh6bW9WUkdEcHlBaktzcnRjBmFwcF9pZBAyMjIwMzkxNzg4MjAwODkyAAEeWl4eztEJP8iR58QZ9OmAJ92TIHq7s3BUc4BR4RiXnqa1eGCCplmakONtw0Q_aem_Bxny1SMMt7ad0dHB6OfFug
+- [ ] USB-C power entry (stuffing option): 6-pin power-only receptacle, 2x 5.1k Rd, LM339 + TL431 CC gate, 2x NDP6020P back-to-back switch, WEAK_SOURCE LED — griffin.yml "USB-C power entry" - https://claude.ai/code/artifact/b8235433-803e-4c21-8ebb-259b60a3a63f
+- [x] 6-pin power header - https://www.digikey.com/en/products/detail/te-connectivity-amp-connectors/640500-1/187758
 
 ## Memory
 
@@ -33,6 +34,7 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 - [x] PIXEL ATF1508 PLCC84 (new chip; replaces VIDEO)
 - [x] COMPOSITOR ATF1508 PLCC84 (new chip)
 - [x] TIMING ATF1504AS PLCC44 (new chip)
+- [x] TIMING to PORTS 4 pin bus for timing commands
 - [ ] TIMING spare-I/O access (header / test points for the 13 spares)
 
 ## FIFOs
@@ -59,21 +61,21 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 
 ## Peripherals
 
-- [ ] XR68C681 DUART DIP-40, native (retires DIP-carrier bodge); RESET direct on ~RESET net
-- [ ] 3.6864 MHz DUART crystal
+- [x] XR68C681 DUART DIP-40, native (retires DIP-carrier bodge); RESET direct on ~RESET net
+- [x] 3.6864 MHz DUART crystal
 - [ ] 2x MAX232 + 1uF charge-pump caps (one per channel: TXD/RXD + RTS/CTS)
 - [ ] 75189 quad receiver: ch B DCD -> IP4, RI -> IP5 (unused inputs grounded)
 - [ ] DB-25F console connector, wired DCE; DSR+DCD strapped to DTR at connector
 - [ ] DB-25M modem connector, wired DTE; DTR-DSR strap (Hayes &D0)
-- [ ] 4x isolation jumpers on MAX232 receiver outputs (RXD/CTS, both channels)
+- [ ] 4x 1k series resistors on the TTL headers' RXD/CTS lines; 6x 10k pull-ups on DUART RXD_A/B, ~CTS_A/B, IP4, IP5; no isolation jumpers
 - [ ] 74HCT155 direct-bus decoder
-- [ ] DS3231 RTC
+- [ ] MCP7940N RTC (DIP-8) + 32.768 kHz crystal, 6–9 pF load
 - [ ] Coin-cell holder
 - [ ] 2N7000 for RTC SDA
 - [x] CF socket (16-bit True IDE)
 - [x] CF sideband: INTRQ -> GLUE (pull-down), IORDY -> GLUE (pull-up)
-- [ ] PS/2 DIN-5 keyboard connector (to GLUE)
-- [ ] PS/2 DIN-5 mouse connector (to PORTS)
+- [x] PS/2 DIN-5 keyboard connector (to GLUE)
+- [x] PS/2 DIN-5 mouse connector (to PORTS)
 - [ ] 2x DE-9 joystick connectors
 - [ ] Joystick +5V polyfuse
 - [ ] Joystick ESD series R + clamps
@@ -82,12 +84,12 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 
 ## Headers & debug
 
-- [ ] Console TTL header (DUART Ch A, FTDI pinout; behind isolation jumpers)
-- [ ] Second serial TTL header (DUART Ch B; behind isolation jumpers)
+- [ ] Console TTL header (DUART Ch A, FTDI pinout; 1k series on RXD/CTS)
+- [ ] Second serial TTL header (DUART Ch B; 1k series on RXD/CTS)
 - [ ] JTAG programming header 1x6
 - [x] Debug/LA headers: 2x 2x16 shrouded (gusmanb LogicAnalyzer V2 J2 pinout) — DEBUG_HEADER sheet
 - [x] SYSCLK buffered/series-R tap for LA header
-- [ ] Debug LED(s) (DEBUG_OUT also blinks ~1.9 Hz while CPU halted)
+- [x] Debug LED(s) (DEBUG_OUT also blinks ~1.9 Hz while CPU halted)
 - [ ] ENGINE spare-strobe header near FIFOs: nSIGNAL_SPARE (pin 9), GND, +5V
 - [ ] PORTS spare header: pins 34, 41, GND
 - [x] GLUE bodge pads: pins 64 (I/O) and 2 (input-only, OE1/IN) (unassigned)
@@ -96,7 +98,7 @@ Pull-ups, pull-downs, and decoupling/supply caps deliberately not listed.
 ## Remove from rev-1 schematic
 
 - [ ] AT89S52 IO MCU (and its crystal/support)
-- [x] USB-C power entry
+- [x] USB-C BOB header J3 (replaced by the receptacle + CC gate under Core)
 - [x] Composite/NTSC jack + NTSC clock provisions
 - [x] VIDEO CPLD
 - [x] Audio 74HC373 latch

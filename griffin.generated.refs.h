@@ -56,7 +56,7 @@ inline volatile uint8_t &CF_DRIVE_HEAD = *reinterpret_cast<volatile uint8_t *>(0
 inline volatile uint8_t &CF_STATUS = *reinterpret_cast<volatile uint8_t *>(0xF4000FUL);  // READ: Status register
 inline volatile uint8_t &CF_COMMAND = *reinterpret_cast<volatile uint8_t *>(0xF4000FUL);  // WRITE: Command register
 
-// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C
+// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / MCP7940N RTC I2C
 inline volatile uint8_t &DUART_MR1A = *reinterpret_cast<volatile uint8_t *>(0xF80001UL);  // RW: Channel A mode register 1
 inline volatile uint8_t &DUART_MR2A = *reinterpret_cast<volatile uint8_t *>(0xF80001UL);  // RW: Channel A mode register 2
 inline volatile uint8_t &DUART_SRA = *reinterpret_cast<volatile uint8_t *>(0xF80003UL);  // READ: Channel A status register

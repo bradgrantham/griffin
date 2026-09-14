@@ -227,7 +227,7 @@
 .equ CF_STATUS, 0xF4000F  | READ
 .equ CF_COMMAND, 0xF4000F  | WRITE
 
-| DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C
+| DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / MCP7940N RTC I2C
 .equ DUART_BASE, 0xF80000
 .equ DUART_SIZE, 0x040000
 .equ DUART_IRQ_LEVEL, 5
@@ -334,10 +334,10 @@
 .equ DUART_OP_RTC_SCL, 0x04
 .equ DUART_OP_RTC_SDA_DRIVE, 0x08
 .equ DUART_IP_RTC_SDA, 0x04
-.equ DUART_IP_RTC_NINT, 0x08
+.equ DUART_IP_RTC_MFP, 0x08
 .equ DUART_IP_DCD_B, 0x10
 .equ DUART_IP_RI_B, 0x20
-.equ RTC_I2C_ADDR, 0x68
+.equ RTC_I2C_ADDR, 0x6F
 .equ PS2_TX_DATA_PARITY, 0x02
 .equ ENGINE_WORDS_PER_BURST, 0x14
 .equ VSYNC_IRQ_LEVEL, 0x06

@@ -98,7 +98,7 @@ How to reduce chance of spin and reduce likelihood of bodge?  Use golden referen
 * Game ports: 2× DE-9 male, Atari convention; paddles on port 1
 * Audio: RCA stereo pair (line out, fixed level) + 3.5 mm stereo headphone jack; volume knob governs headphones and the internal speaker; plugging in headphones mutes the speaker
 * CF card slot, behind a sprung door.  The card wears a printed cap (top, sides, grip; open bottom) so it handles as a cartridge; the cap rides rails in a printed bay over the board and the card's nose rides the CF header's own guides — the slot itself is unchanged.  Keep the top side clear under the card footprint plus the cap's travel, ~40 × 45 mm at the rear edge.
-* Power: barrel jack + inline switch; reset button
+* Power: barrel jack + inline switch; reset button.  Kit builds: USB-C socket at the board edge with the WEAK_SOURCE LED beside it (dead on the display build)
 * Cosmetics: diffused LEDs (power, DEBUG), real toggle/momentary switches, plain D-sub hoods
 
 # Software
@@ -158,7 +158,7 @@ The logic board is **+5 V only**.  Nothing on the board consumes another rail or
 * Board connector: keyed 6-position AMP MATE-N-LOK in the **Apple II pinout**.  +5 V and GND feed the board; +12 V, −12 V and −5 V are passed through, untouched, to a 4-pin drive power connector (AMP 1-480424-0 style) at the bay.  An Apple II supply is exactly what the connector expects.  **Verify the Apple II pinout before silk.**  Never a bare pin header.  Silkscreen the rails at both connectors.
 * Panel: 5.5mm x 2.1mm center-positive barrel jack + inline switch, harnessed to the +5 V positions.  Regulated 5V ≥2.5A adapter.  Have adapters, can make/buy more; a CH224K-style PD trigger module with a barrel pigtail turns any PD charger into a compliant supply if ever wanted.  The pass-through pins are dead on a 5 V brick; anything in the bay wants a multi-rail supply (an Apple II supply, or a triple-output open-frame in the case).
 * Budget is ~1.3–1.7 A typ (see rev2-electrical-review.md §8).  Harness and contact drop count against the DS1233-5 trip budget below.
-* Why not USB-C: a plain-Rd USB-C sink is only *entitled* to 500 mA without reading the source's Rp advertisement or negotiating PD.
+* USB-C entry (stuffing option, kit builds): a 6-pin power-only receptacle at the rear edge behind a CC-advertisement gate (griffin.yml "USB-C power entry").  A plain-Rd sink is only *entitled* to 500 mA, so the gate reads the source's Rp on CC1/CC2 with an LM339 and closes a back-to-back P-FET switch only for a 3 A advertisement; otherwise the WEAK_SOURCE LED lights and the board never draws.  Users need a 5 V USB-C source advertising 3 A, which is any 15 W or larger wall charger; a computer port may not qualify.  The display build leaves the two 5.1k Rd off, which makes the socket electrically dead (a source never applies VBUS without seeing Rd).  Background: reminders.md, USB-C power.
 
 ## Power-on reset and user reset button
 
@@ -188,12 +188,12 @@ MC68010 at 14 MHz, zero wait states to RAM; a 68000 is a drop-in.  64-pin DIP.
 
 ## RTC
 
-DS3231 (TCXO) on I²C via the DUART's spare OP/IP pins — off the bus, zero GLUE logic (no A17, no chip-select/strobes/wait-states), 5 V so no level translation.
+MCP7940N (DIP-8, battery-backed, 32.768 kHz crystal with a 6–9 pF load spec, CR2032 holder) on I²C via the DUART's spare OP/IP pins — off the bus, zero GLUE logic (no A17, no chip-select/strobes/wait-states), 5 V so no level translation.  Chosen 2026-09-14 over the DS3231 because it is a through-hole part; see griffin.log.
 
-* SCL = OP2 (push-pull is fine; DS3231 doesn't clock-stretch)
+* SCL = OP2 (push-pull is fine; the MCP7940N doesn't clock-stretch)
 * SDA is open-drain via OP3 → 2N7000 pull-down (drain on SDA), IP2 reads it back
-* INT#/SQW → IP3 (change-detect) for a 1 Hz/alarm IRQ
-* Coin-cell holder
+* MFP → IP3 (change-detect) for a 1 Hz/alarm IRQ; polarity is set by the chip's ALMPOL bit
+* Coin-cell holder; firmware must set ST (seconds bit 7) to start the oscillator and VBATEN (weekday bit 3) to enable the backup switchover, and can trim the crystal in the OSCTRIM register
 * Chosen over the BQ3285, whose 146818-style multiplexed bus would have cost GLUE A17 + AS/DS strobes + 3 pins
 
 ## Address map
@@ -281,9 +281,9 @@ VGA only; NTSC/composite dropped.  The path is four chips: **ENGINE → {PIXELS,
   * Real RS-232 on a DB-25 female wired DCE, so a terminal (DTE) uses a straight cable.  Pin 2 → receiver → RXDA; TXDA → driver → pin 3; terminal RTS (pin 4) → receiver → IP0 (~CTS_A); OP0 (~RTS_A) → driver → pin 5 (terminal CTS); strap DSR (6) and DCD (8) to the terminal's DTR (20) at the connector; pin 7 signal ground.
 * **Channel B = modem / second serial.**  Real RS-232 on a DB-25 male wired DTE — straight cable to a Hayes-style modem, null modem to a computer peer.  TXDB → driver → pin 2; pin 3 → receiver → RXDB; OP1 (~RTS_B) → driver → pin 4; pin 5 → receiver → IP1 (~CTS_B); pin 8 (DCD) → 75189 → IP4; pin 22 (RI) → 75189 → IP5; DTR (20) strapped to DSR (6) at the connector (modem set &D0; hang-up via +++ATH; a GLUE bodge spare can drive DTR later if ever wanted); pin 7 signal ground.  DCD/RI are poll-only: the 68681 change-of-state IRQ covers only IP0–IP3.
 * **Level stage:** one MAX232 per channel (2 drivers + 2 receivers = TXD/RXD + RTS/CTS; 1 µF charge-pump caps); ch B's DCD and RI through a 75189 quad receiver (2 of 4 sections, unused inputs grounded).  All stages invert, which lands every polarity correctly.  Deliberately not routed through USB.
-* **TTL bench headers remain.**  The DUART TX pins drive header and MAX232 driver inputs in parallel (no conflict); each receiver output (RXD_A, CTS_A, RXD_B, CTS_B) reaches the DUART through a 2-pin series jumper — jumper in = RS-232 port live, jumper out = the TTL header owns the line.  Four jumpers, silk-labeled.
+* **TTL bench headers remain, no isolation jumpers.**  The DUART TX pins drive header and MAX232 driver inputs in parallel (no conflict).  The MAX232 receiver outputs go straight to the DUART; the headers' RXD/CTS lines get 1 kΩ series resistors so a stuffed MAX232 wins any collision, and 10 kΩ pull-ups on RXD_A/B, ~CTS_A/B, IP4 and IP5 hold the DUART inputs at idle while the MAX232s and 75189 are unstuffed, which they will be on bench builds.  Rule: no bench cable while the RS-232 port is in use.  (Jumpers dropped 2026-09-14; griffin.log.)
 * **C/T = 100 Hz systick** (level 5) + a configurable timer ISR.
-* OP/IP allocation (table in griffin.yml): RTS/CTS on both channels, the DS3231 I²C (OP2/OP3/IP2/IP3), DCD_B/RI_B on IP4/IP5, OP4..OP7 → TIMING pins 20/21/24/25 as a reserved mode/rate selector (no logic yet; OPR reset state 1111 must remain today's behaviour).
+* OP/IP allocation (table in griffin.yml): RTS/CTS on both channels, the MCP7940N I²C (OP2/OP3/IP2/IP3), DCD_B/RI_B on IP4/IP5, OP4..OP7 → TIMING pins 20/21/24/25 as a reserved mode/rate selector (no logic yet; OPR reset state 1111 must remain today's behaviour).
 * Bus: ~CS from GLUE (nDUART_SELECT), DTACKN back to GLUE, ~IACK tied high (autovectors), RESET directly on the system ~RESET net.  DIP-40 native.
 
 ## PS/2 keyboard and mouse
@@ -350,7 +350,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
   * 5V-reference pins fed from the Griffin rail (analyzer's onboard jumper removed → external reference); 3V3 pins NC; trigger pins NC/test pads
   * Roles: (1) *Observe:* whole-bus captures as above.  (2) *Backup bus-master:* every signal a master needs is on these same two headers — hold ~RESET+~HALT (68000 tri-states A/D/strobes; GLUE still does its normal decode, so the flash sees ordinary write cycles).  Bus-cycle mechanics for whoever masters: bit-banged/PIO read_word/write_word (honor ~DTACK or run conservatively slow).
 * **DEBUG LED** via a separate NPN driver (2N3904 / SOT-23 MMBT3904; base via 1–10 K to DEBUG_OUT) — boot codes / video-ISR heartbeat / double-fault / halted-CPU blink
-* Console UART TTL header and the channel B TTL header, behind the isolation jumpers (see Serial)
+* Console UART TTL header and the channel B TTL header, through 1 kΩ series resistors on RXD/CTS (see Serial)
 * Test header: every inter-IC signal (GND, +5V, D, A, WRITE_LO/HI, RAM/ROM/IO/ENGINE/PORTS selects, nVPA) on a 2×N header with the signal silk-screened per pin; GLUE spare pins 24 and 64 on pads; lots of ground test-point holes
 
 # Board changes
@@ -368,8 +368,8 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 - [ ] VGA: DE-15 connector; remove the composite/NTSC jack and any NTSC clock provisions — Rev 2 is VGA-only
 - [ ] CF: CFT-125 header at the rear board edge, card over the board; top-side keep-out ~40 × 45 mm under the card + cartridge-cap travel; bay rails and sprung door are case parts
 - [ ] DUART: XR68C681 DIP-40 native (retires the DIP-carrier bodge); A1-A4→RS1-RS4, D0-7 + R/~W direct, ~RESET from ~RESET net, ~IACK tied high (autovectors), 3.6864 MHz crystal on X1/X2 (clearance if ZIF)
-- [ ] Serial: 2× MAX232 (bin) + 75189 (bin) level stages; DB-25F console wired DCE (DSR+DCD strapped to DTR), DB-25M modem port wired DTE (DTR–DSR strap; DCD pin 8 → IP4, RI pin 22 → IP5); TTL bench headers retained behind 4 isolation jumpers on the receiver outputs
-- [ ] RTC: DS3231 + coin-cell holder; SCL=OP2, SDA via OP3→2N7000 (drain on SDA) + IP2 readback
+- [ ] Serial: 2× MAX232 (bin) + 75189 (bin) level stages; DB-25F console wired DCE (DSR+DCD strapped to DTR), DB-25M modem port wired DTE (DTR–DSR strap; DCD pin 8 → IP4, RI pin 22 → IP5); TTL bench headers retained through 1 kΩ series resistors on their RXD/CTS lines; 10 kΩ pull-ups on DUART RXD_A/B, ~CTS_A/B, IP4, IP5; no jumpers (MAX232s may stay unstuffed)
+- [ ] RTC: MCP7940N DIP-8 + 32.768 kHz crystal (6–9 pF load) + coin-cell holder; SCL=OP2, SDA via OP3→2N7000 (drain on SDA) + IP2 readback, MFP → IP3
 - [ ] PS/2: **two ports**, full-size DIN-5 pair; fix footprint + pin mapping (Rev 1 mini-DIN-6 was wrong); keyboard CLK/DATA to GLUE, mouse CLK/DATA to PORTS
 - [ ] PORTS: ATF1508AS PLCC84 socket + JTAG chain; nets ~PORTS_SELECT / ~PORTS_IRQ / A4-A1 / ~LDS / R~W / D7-D0 to GLUE and the bus, **PADDLE_TICK (TIMING 17 → PORTS 44) and AUDIO_TICK (TIMING 18 → PORTS 45)** as its only time bases, ~R, ~RS and ~EF to the 7200 pair, mouse PS/2, both DE-9s, PADDLE_DUMP to the FET gates — pin numbers from the frozen `//PIN:` block in cpld/ports/ports.v
 - [ ] TIMING fan-out (pins from the `//PIN:` block in cpld/pixel/timing.v): HBLANK (pin 19) → ENGINE pin 2; nVSYNC_IRQ (pin 31) → GLUE nVSYNC (VGA_VSYNC no longer tee'd); VGA_HSYNC/VGA_VSYNC only to the 74AC541s; DUART OP4/OP5/OP6/OP7 → TIMING pins 20/21/24/25 (reserved, no logic yet — route them anyway); leave GCLK2 (pin 44) free with an optional oscillator footprint; the remaining TIMING spares are bitfile-usable later only if routed to reachable copper (header or test points)
@@ -384,6 +384,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 ### Power & decoupling
 - [ ] Keyed 6-position AMP MATE-N-LOK power connector on the board in the Apple II pinout — verify before silk; +5 V/GND to the board, +12/−12/−5 passed through as bare copper to a 4-pin drive power connector (AMP 1-480424-0 style) placed at the bay; silkscreen the rails at both; +5 V connector/traces rated ≥2 A
 - [ ] Panel harness: 5.5mm x 2.1mm center-positive barrel jack + inline switch to the +5 V positions (replaces rev-1 USB-C); the harness drop is inside the DS1233-5 trip budget
+- [ ] USB-C entry (stuffing option): 6-pin power-only receptacle (the one SMT part; KiCad Connector_USB GCT USB4125 class, THT shell legs) + 2× 5.1k Rd + LM339 DIP-14 + TL431 TO-92 + 2× NDP6020P TO-220 back-to-back + WEAK_SOURCE LED, per griffin.yml "USB-C power entry"; rev-1 J3 BOB header goes.  Bench gate: measure the FET pair's drop at 1.7 A against the 4.85 V supervisor rule
 - [ ] bulk 220–470 µF at entry + 10 µF per CPLD/FIFO cluster; consider reverse-polarity protection (P-FET ideal-diode style — a series Schottky costs ~0.3–0.4 V the DS1233-5 trip budget can't afford)
 - [ ] decoupling cap on every +5V/GND pair, especially the CPLDs
 

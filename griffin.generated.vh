@@ -237,7 +237,7 @@
 `define CF_STATUS 24'hF4000F  // READ
 `define CF_COMMAND 24'hF4000F  // WRITE
 
-// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C
+// DUART: Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / MCP7940N RTC I2C
 `define DUART_BASE 24'hF80000
 `define DUART_SIZE 24'h040000
 `define DUART_IRQ_LEVEL 5
@@ -344,10 +344,10 @@
 `define DUART_OP_RTC_SCL 8'h04
 `define DUART_OP_RTC_SDA_DRIVE 8'h08
 `define DUART_IP_RTC_SDA 8'h04
-`define DUART_IP_RTC_NINT 8'h08
+`define DUART_IP_RTC_MFP 8'h08
 `define DUART_IP_DCD_B 8'h10
 `define DUART_IP_RI_B 8'h20
-`define RTC_I2C_ADDR 8'h68
+`define RTC_I2C_ADDR 8'h6F
 `define PS2_TX_DATA_PARITY 8'h02
 `define ENGINE_WORDS_PER_BURST 8'h14
 `define VSYNC_IRQ_LEVEL 8'h06

@@ -1498,6 +1498,10 @@
     [
       "23a2da96-f3cf-4097-8875-3ba1f54f4712",
       "DEBUG_HEADER"
+    ],
+    [
+      "98cc160f-0016-4ffd-8efd-13e0c67036f7",
+      "PANEL"
     ]
   ],
   "text_variables": {}

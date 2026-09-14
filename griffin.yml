@@ -670,16 +670,16 @@ peripherals:
 
   DUART:
     part: "XR68C681"
-    description: "Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / DS3231 I2C"
+    description: "Console (Ch A) and second serial (Ch B), 100 Hz systick C/T, GP pins for flow control / MCP7940N RTC I2C"
     clock: 3686400
     # OP/IP pin wiring.  OP pins drive the COMPLEMENT of their OPR bits
     # (OPR_SET drives the pin LOW); levels below are PIN levels.
     #   OP0: ~RTS_A                              IP0: ~CTS_A
     #   OP1: ~RTS_B                              IP1: ~CTS_B
-    #   OP2: RTC_SCL (DS3231 I2C clock, push-pull)
+    #   OP2: RTC_SCL (MCP7940N I2C clock, push-pull)
     #   OP3: RTC_SDA_DRIVE (N-FET gate: pin high pulls SDA low)
     #                                            IP2: RTC_SDA readback
-    #                                            IP3: DS3231 ~INT
+    #                                            IP3: RTC_MFP (MCP7940N alarm/square-wave output)
     #   OP4..OP7: -> TIMING pins 20, 21, 24, 25  IP4: DCD_B (ch B carrier)
     #                                            IP5: RI_B (ch B ring)
     # IP4/IP5 come from the ch B RS-232 receivers; the 68681
@@ -832,10 +832,10 @@ constants:
   DUART_OP_RTC_SCL:        0x04   # OP2
   DUART_OP_RTC_SDA_DRIVE:  0x08   # OP3
   DUART_IP_RTC_SDA:        0x04   # IP2
-  DUART_IP_RTC_NINT:       0x08   # IP3
+  DUART_IP_RTC_MFP:        0x08   # IP3: MCP7940N MFP (alarm or square wave; polarity per its ALMPOL bit)
   DUART_IP_DCD_B:          0x10   # IP4: ch B carrier detect (poll-only)
   DUART_IP_RI_B:           0x20   # IP5: ch B ring indicate (poll-only)
-  RTC_I2C_ADDR:            0x68   # DS3231 7-bit I2C address
+  RTC_I2C_ADDR:            0x6F   # MCP7940N 7-bit I2C address
 
   # PS/2 TX parity is carried in address bit 1 of the TX_DATA registers.
   PS2_TX_DATA_PARITY:   0x02
@@ -1009,6 +1009,26 @@ interfaces:
     the case's single half-height bay.  Panel side: 5.5mm x 2.1mm
     center-positive barrel jack + inline switch to +5V and GND.
     Regulated 5V >= 2.5A brick.
+  - |
+    USB-C power entry, a stuffing option (the display build leaves the Rd
+    pair off, so the socket is dead: a source never applies VBUS without
+    seeing Rd).  6-pin power-only receptacle: VBUS, GND, CC1, CC2; 5.1k Rd
+    on each CC; VBUS reaches +5V_IN only through the CC gate.  The gate
+    admits a source only when one CC reads the 3 A advertisement (>= 1.25 V,
+    the sink threshold between the 1.5 A and 3 A Rp bands): LM339 sections
+    A and B compare CC1 and CC2 against 1.25 V from a halved TL431, their
+    open-collector outputs wire-ORed as nGATE (low = admit).  nGATE drives
+    two back-to-back logic-level P-FETs (NDP6020P, common source, gates
+    tied) between VBUS and +5V_IN; the pair is both the load switch and
+    the backfeed block, so a harness-powered board never drives VBUS.
+    nGATE's 100k pull-up and 100 nF soft-start cap return to the FET
+    common-source node, not to VBUS.  Section C lights the WEAK_SOURCE LED
+    while nGATE is high (cable present, advertisement below 3 A); section
+    D is unused, inputs tied off.  LM339, TL431 and LED are powered from
+    VBUS, so nothing in the gate is live without a cable.  No capacitor on
+    CC1 or CC2.  A harness-powered build leaves the LM339 out (a plugged
+    cable would otherwise parallel the two supplies).  Background:
+    reminders.md, USB-C power.
     Supervisor: DS1233-5 (the plain part, not the D variant: its RST pin
     doubles as a debounced pushbutton input).  The user button hangs on
     RST with no RC of its own.  RST reaches the system ~RESET net through
@@ -1100,7 +1120,10 @@ interfaces:
     GLUE bodge spare can drive DTR later if ever wanted); pin 7 signal
     ground.
     Header/port coexistence: the DUART TX pins drive TTL header and
-    MAX232 driver inputs in parallel; each receiver
-    output (RXD_A, CTS_A, RXD_B, CTS_B) reaches the DUART through a
-    2-pin series jumper -- jumper in = RS-232 port live, jumper out =
-    the TTL header owns the line.  Four jumpers, silk-labeled.
+    MAX232 driver inputs in parallel.  The MAX232 receiver outputs
+    (RXD_A, CTS_A, RXD_B, CTS_B) go straight to the DUART; the headers'
+    RXD and CTS lines reach the DUART through 1k series resistors, so a
+    stuffed MAX232 wins any collision.  10k pull-ups to +5 V on RXD_A,
+    RXD_B, ~CTS_A, ~CTS_B, IP4 and IP5 hold the inputs at idle when the
+    level stages are unstuffed.  No isolation jumpers; a bench cable is
+    simply not plugged in while the RS-232 port is in use.

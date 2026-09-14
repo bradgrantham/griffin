@@ -382,6 +382,48 @@
 		)
 	)
 	(sheet
+		(at 25.4 138.43)
+		(size 40.64 20.32)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "98cc160f-0016-4ffd-8efd-13e0c67036f7")
+		(property "Sheetname" "PANEL"
+			(at 25.4 137.7184 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "panel.kicad_sch"
+			(at 25.4 159.3346 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "17")
+				)
+			)
+		)
+	)
+	(sheet
 		(at 152.4 101.6)
 		(size 40 20)
 		(exclude_from_sim no)
