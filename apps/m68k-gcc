@@ -7,9 +7,12 @@
 # same inside the container as on the host — from any app subdirectory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # .../apps
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-REL="$(python3 -c 'import os,sys; print(os.path.relpath(os.getcwd(), sys.argv[1]))' "$REPO_ROOT")"
+# An app outside the repo (a sibling repository) sets GRIFFIN_MOUNT_ROOT to a
+# common ancestor of itself and this repo; the container mounts that instead.
+MOUNT_ROOT="${GRIFFIN_MOUNT_ROOT:-$REPO_ROOT}"
+REL="$(python3 -c 'import os,sys; print(os.path.relpath(os.getcwd(), sys.argv[1]))' "$MOUNT_ROOT")"
 exec podman run --platform linux/amd64 --rm \
-    -v "$REPO_ROOT:/work" \
+    -v "$MOUNT_ROOT:/work" \
     -w "/work/$REL" \
     -u "$(id -u):$(id -g)" \
     m68k-toolchain \

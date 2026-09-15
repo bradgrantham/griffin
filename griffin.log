@@ -619,3 +619,12 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   Serial, checklist, reminders.md, and the lore repo's rear-apron line).
   Not drawn yet: io.kicad_sch has uncommitted edits open in KiCad, so the
   resistors and pull-ups go in by hand there.
+
+2026-09-15 -- Audio: is the 256-entry FIFO the right primitive? (idea, Brad)
+  Prompted by the game-port work: the ports' audio is a handful of
+  square/noise voices updated per frame or per line (SN76489, TIA, POKEY
+  style), not sample streams.  A 256-pair FIFO forces the CPU to render
+  and DMA every sample; an alternative is to replace that circuitry with
+  a small hardware mixer of 0 to 4 voices whose parameters the CPU updates
+  every other line, mixed down to the DAC in hardware.  Form not decided;
+  keep in mind when the rev 2 audio section is revisited.

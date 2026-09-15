@@ -14,7 +14,9 @@
 # nothing here overrides them, because they do not include this file.
 #
 # Requires from the including Makefile: LIB, M68K_GCC, M68K_GXX, CXXFLAGS,
-# ASFLAGS.
+# ASFLAGS.  GRIFFIN is the path to the repo root (default: two levels up,
+# i.e. an app directory inside apps/); apps/app.mk sets it for external apps.
+GRIFFIN ?= ../..
 
 # Everything an app needs to start up and reach the firmware.  crt0.o must stay
 # first: app.ld puts .text.start at the load base and asserts on it.
@@ -34,7 +36,7 @@ $(LIB)/%.o: $(LIB)/%.s
 # app Makefile that forgets to rebuild after a griffin.yml change gets a stale
 # object with the old register addresses baked in.
 $(LIB)/syscalls.o:      $(LIB)/griffin_app.h $(LIB)/griffin_syscall.h
-$(LIB)/griffin_video.o: $(LIB)/griffin_video.h $(LIB)/griffin_syscall.h ../../griffin_abi.h
+$(LIB)/griffin_video.o: $(LIB)/griffin_video.h $(LIB)/griffin_syscall.h $(GRIFFIN)/griffin_abi.h
 $(LIB)/griffin_input.o: $(LIB)/griffin_input.h
 
 griffin-lib-clean:
