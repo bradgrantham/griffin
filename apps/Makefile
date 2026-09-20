@@ -21,12 +21,9 @@ stage: all
 	cp basic/basic.bin        $(STAGE)/BASIC.BIN
 	cp dtest/dtest.bin        $(STAGE)/DTEST.BIN
 	cp smurf/smurf.bin        $(STAGE)/SMURF.BIN
-	cp $(SMURF_ASSETS)/backdrop1-meadow.ham    $(STAGE)/MEADOW.HAM
-	cp $(SMURF_ASSETS)/backdrop1-meadow.pal    $(STAGE)/MEADOW.PAL
-	cp $(SMURF_ASSETS)/backdrop2-forest.ham    $(STAGE)/FOREST.HAM
-	cp $(SMURF_ASSETS)/backdrop2-forest.pal    $(STAGE)/FOREST.PAL
-	cp $(SMURF_ASSETS)/backdrop3-clearing.ham  $(STAGE)/CLEARING.HAM
-	cp $(SMURF_ASSETS)/backdrop3-clearing.pal  $(STAGE)/CLEARING.PAL
+	cp $(SMURF_ASSETS)/backdrop1-meadow.gc4    $(STAGE)/MEADOW.GC4
+	cp $(SMURF_ASSETS)/backdrop2-forest.gc4    $(STAGE)/FOREST.GC4
+	cp $(SMURF_ASSETS)/backdrop3-clearing.gc4  $(STAGE)/CLEARING.GC4
 	@ls -l $(STAGE)
 
 cf: stage

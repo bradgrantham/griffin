@@ -1,0 +1,2 @@
+PASS C1: 76.1 % of no-DMA throughput (expect 74..78, 640x480 1bpp console, analytic 76.2 %)
+PASS C2: 55.9 % of no-DMA throughput (expect 54..58, pure-VIDCMD MASK text, analytic 56.1 %)

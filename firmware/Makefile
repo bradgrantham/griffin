@@ -70,8 +70,22 @@ flash-odd: rom_odd.bin
 	minipro -s -b -p "W27C512@DIP28" -w rom_odd.bin
 
 
+# The ROM is a PAIR of W27C512s, even and odd bytes: 2 x 65,536 = 131,072 bytes
+# and not one byte more.  This has overflowed before (a throwing new[] dragging
+# in the libstdc++ exception machinery), and the failure is silent unless it is
+# checked here -- linker.ld's ROM region is the 1 MB the decode covers, not the
+# 128 KB that is actually stuffed.
+ROM_BYTES_MAX := 131072
+
 rom.bin: rom.elf
 	$(M68K_OBJCOPY) -O binary -S $< $@
+	@size=$$(wc -c < $@); \
+	if [ $$size -gt $(ROM_BYTES_MAX) ]; then \
+		echo "$@: $$size bytes, over the $(ROM_BYTES_MAX)-byte W27C512 pair by $$(($$size - $(ROM_BYTES_MAX)))" >&2; \
+		exit 1; \
+	else \
+		echo "$@: $$size bytes, $$(($(ROM_BYTES_MAX) - $$size)) free of $(ROM_BYTES_MAX)"; \
+	fi
 
 # 11025 8-bit mono signed(?)
 startup_audio.o: startup.raw

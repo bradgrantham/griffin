@@ -632,6 +632,7 @@ static uint32_t parse_hex(const char *s, const char **end)
 // ---------------------------------------------------------------------------
 
 #include "../super-engine/descriptor.h"
+#include "../image-tools/gc4_target.h"
 
 namespace se   = SuperEngine;
 namespace gtxt = griffin::textport;
@@ -644,9 +645,10 @@ static constexpr unsigned FB_BYTES       = FB_LINES * FB_STRIDE;          // 384
 
 // MICRO-HAM IS RETIRED (2026-09-20, the indexed PIXEL).  PIXEL is index-only
 // now: there is no HAM decoder, no pal_fg/pal_bg/ham_held, and a `.ham` file has
-// no mode to be displayed in.  The viewer refuses one with a message rather than
-// painting garbage; a 4bpp or attribute-mode viewer is the replacement and is
-// package 3's business, along with image-tools.
+// no mode to be displayed in.  Its replacement is the .gc4 VIEWER below --
+// 320x480 4bpp half rate out of the sixteen-entry palette RAM, built by
+// image-tools/clut_encode -- and `view` refuses a .ham plane by name rather than
+// painting garbage.
 
 // Console colours, as R4G4B4 palette entries.  The console's 1bpp plane at
 // pix_base 0 selects ENTRY 1 for a set bit and ENTRY 0 for a clear one, and the
@@ -677,12 +679,14 @@ static constexpr unsigned   CONSOLE_PIX_BASE = 0;
 //            | holding direct video access   |  SYS_VIDEO_DIRECT_START
 //   0x400000 +-------------------------------+
 //
-// While no app holds direct access the firmware uses the WHOLE 40 KB: the
-// image viewer's list is 1475 descriptors (11800 bytes) plus 1440 VIDCMD words
-// (2880 bytes) for a 1bpp image, and 1956 descriptors (15648 bytes) plus 1441
-// words for a micro-HAM one, neither of which fits under 0x3F8000.  All the
-// lists start at dl_table_base, so engine_desc_word_addr never changes; only
-// the region sizes differ, and dl_reset() takes them.
+// While no app holds direct access the firmware uses the WHOLE 40 KB: the 1bpp
+// viewer's list is 1476 descriptors (11808 bytes) plus 3360 VIDCMD words
+// (6720 bytes), and the .gc4 viewer's is 1957 descriptors (15656 bytes) plus a
+// 50-word preamble, neither of which fits under 0x3F8000.  All the lists start
+// at dl_table_base, so engine_desc_word_addr never changes; only the region
+// sizes differ, and dl_reset() takes them.  (The .gc4 viewer's per-line VIDCMD
+// packets are an ordinary malloc, not part of this window: 480 lines of up to
+// 25 words is 24 KB, and only the descriptor TABLE has to be in edma3's page.)
 // ---------------------------------------------------------------------------
 extern "C" char _displaylist_start[];
 
@@ -890,13 +894,19 @@ static void dl_build_console_list()
 }
 
 // ---------------------------------------------------------------------------
-// Per-line-palette image viewer
+// Image viewers
 //
-// TWO on-CF formats, told apart by the image file's SIZE and nothing else --
-// both planes are headerless and neither carries a magic number:
+// `view IMAGE`           a .gc4 picture: 320x480 4bpp half rate out of the
+//                        sixteen-entry palette RAM, with up to K palette
+//                        reloads per line.  image-tools/clut_encode writes it
+//                        and image-tools/gc4_target.h is its layout.
+// `view IMAGE PALETTE`   the older 1bpp pair, unchanged.
+//
+// TWO on-CF 1bpp-pair formats, told apart by the image file's SIZE and nothing
+// else -- both planes are headerless and neither carries a magic number:
 //
 //   38400 bytes   1bpp       480 x 40 words, palette 480 x {fg,bg} R3G3B2 bytes
-//   76800 bytes   micro-HAM  480 x 80 words, palette 480 x {fg,bg} R4G4B4 words
+//   76800 bytes   micro-HAM  RETIRED; refused by name
 //
 // The palette file is then required to be the size that mode implies, so a
 // mismatched pair is refused rather than rendered half right.
@@ -909,20 +919,19 @@ static void dl_build_console_list()
 // palette has its own path now.  The pixel plane loads straight into the
 // framebuffer and the palette words become one VIDCMD packet per line.
 //
-// The list gains one VIDCMD descriptor per line — two three-word PALETTE
-// ENTRIES plus RUN(passthrough,1), seven words — which is the JIT discipline:
-// they land during the line's HBLANK, the writes commit and complete there at
-// zero slot cost (a palette write disturbs four PIXEL slots, and in blanking
-// there are none), and the 1-slot RUN plus COMPOSITOR's hold covers the line.
+// Both lists gain one VIDCMD descriptor per line, and both are the same JIT
+// discipline: the packet lands during the line's HBLANK, its palette writes
+// commit and complete there at zero slot cost (a write disturbs four PIXEL
+// slots, and in blanking there are none), and a 1-slot passthrough RUN plus
+// COMPOSITOR's hold covers the line.
 // ---------------------------------------------------------------------------
 
 // On-CF image geometry.  Not hardware; just the file layout, and it happens to
 // match the framebuffer exactly now that neither has a header.
 static constexpr unsigned IMG_PIXEL_BYTES = 2 * Griffin::PIXELS_WORDS_PER_LINE_1BPP;  // 80
 
-// The four file sizes `view` recognises, all derived from the raster geometry
-// above rather than written out.  See image-tools/smurf-assets/README.md for
-// the micro-HAM pair's layout.
+// The file sizes `view` recognises, all derived from the raster geometry above
+// rather than written out.
 static constexpr uint32_t LEGACY_IMAGE_BYTES   = FB_BYTES;                        // 38400
 static constexpr uint32_t LEGACY_PALETTE_BYTES = FB_LINES * sizeof(uint16_t);     // 960
 // The size a retired micro-HAM plane happens to be, kept only so `view` can
@@ -930,9 +939,9 @@ static constexpr uint32_t LEGACY_PALETTE_BYTES = FB_LINES * sizeof(uint16_t);   
 static constexpr uint32_t RETIRED_HAM_IMAGE_BYTES = FB_LINES * 160;               // 76800
 
 // R3G3B2 (the image file's palette encoding) widened to R4G4B4 by field
-// replication — the same rule the DAC uses to widen 4 bits to 8, and the same
-// rule RUN_COLOR and the micro-HAM chroma codes use, one step earlier in the
-// chain.  3 bits into 4 borrows the top bit; 2 bits into 4 is the pair twice.
+// replication -- the same rule the DAC uses to widen 4 bits to 8, and the same
+// rule RUN_COLOR uses, one step earlier in the chain.  3 bits into 4 borrows the
+// top bit; 2 bits into 4 is the pair twice.
 static constexpr se::Rgb444 r3g3b2_to_rgb444(uint8_t c)
 {
     const unsigned r3 = (c >> 5) & 0x7;
@@ -994,6 +1003,131 @@ static void dl_build_viewer_list(const uint16_t *palettes)
     dl_emit_pacer(true);
 }
 
+// ---------------------------------------------------------------------------
+// The .gc4 viewer: 320x480 4bpp half rate
+//
+// 80 PIXELS words a line, streamed STRAIGHT OUT OF THE LOADED FILE -- the
+// format's pixel section is contiguous and fixed stride precisely so no copy is
+// needed -- under a per-line VIDCMD packet of that line's palette loads.
+//
+// A load costs three VIDCMD words (SET clut_index, SET clut_data, the same-value
+// filler, vidcmd-spec.md §3.2) and the packet is capped by the HBLANK delivery
+// deadline the smurf app derives: 20 + 2W + 15 <= HBLANK_SYSCLK - 2, i.e.
+// W <= 26.  K = 8 makes 8*3 + 1 = 25, so the format's ceiling and the packet
+// budget are the same number, checked below.
+//
+// THE PACKETS DO NOT LIVE IN THE DISPLAY-LIST WINDOW.  Only the descriptor
+// TABLE has to be inside edma3's hard-wired page; a descriptor's `src` is a full
+// 24-bit address, so the packets are an ordinary malloc.  480 lines of 25 words
+// is 24 KB, three times the window's whole payload region.
+// ---------------------------------------------------------------------------
+
+static constexpr unsigned GC4_PIXEL_DESCS_PER_LINE = 3;   // 32 + 32 + 16
+static constexpr unsigned GC4_PREAMBLE_WORDS =
+    se::PALETTE_ENTRIES * se::PALETTE_WORDS_PER_ENTRY + 2;   // 50
+static constexpr unsigned GC4_PREAMBLE_DESCS =
+    (GC4_PREAMBLE_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;
+static constexpr unsigned GC4_DESCRIPTORS =
+    GC4_PREAMBLE_DESCS + VBLANK_WALK_LINES
+    + FB_LINES * (1 + GC4_PIXEL_DESCS_PER_LINE) + 1;
+static constexpr unsigned GC4_PACKET_MAX_WORDS =
+    Gc4Target::MAX_K * se::PALETTE_WORDS_PER_ENTRY + 1;      // 25
+
+static_assert(GC4_DESCRIPTORS * se::DESC_BYTES <= DL_VIEWER_TABLE_BYTES,
+              "the .gc4 viewer's display list outgrew the table region");
+static_assert(GC4_PREAMBLE_WORDS * 2 <= DL_VIEWER_VIDCMD_BYTES,
+              "the .gc4 viewer's frame preamble outgrew the payload region");
+static_assert(20 + 2 * GC4_PACKET_MAX_WORDS + 15 <= se::HBLANK_SYSCLK - 2,
+              "a K=8 packet must still leave the line's first PIXELS word inside HBLANK");
+static_assert(Gc4Target::WORDS_PER_LINE == se::PIXELS_WORDS_4BPP_HALF,
+              "the .gc4 line length must be the mode's record");
+
+// The one buffer the .gc4 viewer builds: 480 packets of a fixed stride, so a
+// line's packet is a multiply.
+static uint16_t *gc4_packets = nullptr;
+static unsigned  gc4_packet_stride = 0;
+
+// `n` words from `src` into one FIFO, split into descriptors of at most
+// DESC_MAX_COUNT words; only the first may wait for the HBLANK edge.
+static void dl_emit_stream(uint32_t src, unsigned n, uint8_t signal_mask, bool wait_first)
+{
+    unsigned done = 0;
+    while (done < n)
+    {
+        const unsigned left  = n - done;
+        const unsigned count = (left > se::DESC_MAX_COUNT) ? se::DESC_MAX_COUNT : left;
+        se::Descriptor d;
+        d.src         = src + done * 2;
+        d.count       = static_cast<uint16_t>(count);
+        d.signal_mask = signal_mask;
+        d.wait_hblank = wait_first && (done == 0);
+        dl_emit(d);
+        done += count;
+    }
+}
+
+static void dl_build_gc4_list(const Gc4Target::Picture &pic)
+{
+    dl_reset(DL_VIEWER_TABLE_BYTES, DL_VIEWER_VIDCMD_BYTES);
+
+    // The frame preamble, in vertical blanking with no wait_hblank: all sixteen
+    // entries (fifty words is more than an HBLANK delivers) plus the mode and
+    // base /RS clears at every vsync.  The palette RAM itself is never reset.
+    //
+    // STATIC, not a local.  As a 50-word stack array its copy into the payload
+    // region came out SHIFTED BY ONE WORD -- the region's first word read back
+    // as zero and its last word, SET(pix_mode), was never deposited, so PIXEL
+    // stayed in its /RS 1bpp mode and the picture came out as noise.  The same
+    // code with the same dl_put_vidcmd() call and a static array is correct,
+    // reproducibly, on -O3 with the project toolchain.  The mechanism is not
+    // understood (PACKAGE3-NOTES.md); .bss is the right home for it regardless.
+    static uint16_t preamble[GC4_PREAMBLE_WORDS];
+    unsigned n = 0;
+    for (unsigned i = 0; i < se::PALETTE_ENTRIES; i++)
+    {
+        const se::PaletteEntryWords e = se::vidcmd_palette_entry(i, pic.palette()[i]);
+        for (unsigned w = 0; w < se::PALETTE_WORDS_PER_ENTRY; w++)
+        {
+            preamble[n++] = e.w[w];
+        }
+    }
+    preamble[n++] = se::vidcmd_set(se::SET_PIX_BASE, 0);
+    preamble[n++] = se::vidcmd_set(se::SET_PIX_MODE, pic.pix_mode());
+
+    const uint32_t pre_at = dl_put_vidcmd(preamble, n);
+    dl_emit_stream(pre_at, n, se::SIGNAL_VIDCMD_FIFO_W, false);
+
+    for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
+    {
+        dl_emit_pacer(false);
+    }
+
+    for (unsigned line = 0; line < pic.height; line++)
+    {
+        uint16_t *const packet = &gc4_packets[line * gc4_packet_stride];
+        const uint16_t *slots  = pic.loads(line);
+        const unsigned  loads  = slots[0];
+        unsigned        k      = 0;
+        for (unsigned i = 0; i < loads; i++)
+        {
+            const se::PaletteEntryWords e = se::vidcmd_palette_entry(
+                Gc4Target::load_index(slots[1 + i]),
+                static_cast<se::Rgb444>(Gc4Target::load_colour(slots[1 + i])));
+            for (unsigned w = 0; w < se::PALETTE_WORDS_PER_ENTRY; w++)
+            {
+                packet[k++] = e.w[w];
+            }
+        }
+        packet[k++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1);
+
+        // VIDCMD first in the line's group: its loads must commit before pixel 0.
+        dl_emit_stream(reinterpret_cast<uint32_t>(packet), k, se::SIGNAL_VIDCMD_FIFO_W, true);
+        dl_emit_stream(reinterpret_cast<uint32_t>(pic.pixels(line)),
+                       Gc4Target::WORDS_PER_LINE, se::SIGNAL_PIXELS_FIFO_W, false);
+    }
+    dl_emit_pacer(true);
+}
+
 // Read a file f_stat() has already measured at exactly `bytes` long.
 static bool view_read_exact(const char *path, void *dst, uint32_t bytes)
 {
@@ -1012,6 +1146,44 @@ static bool view_read_exact(const char *path, void *dst, uint32_t bytes)
         return false;
     }
     return true;
+}
+
+// Block until a fresh key arrives on EITHER console (interrupts stay enabled),
+// then restore the console list.
+//
+// Deliberately keyboard_ready(), not ps2_received_ready(): the raw scancode
+// queue also carries key RELEASES, and the Enter that launched this command
+// lands its break code (F0 xx) tens of milliseconds AFTER the wait begins --
+// waiting on the raw queue exits immediately and the image flashes for one
+// frame (the original bug).  keyboard_ready() sits above the make/break
+// decoder, so releases never satisfy it.  The DUART side is accepted too so a
+// serial-only session can dismiss the image; both queues are drained first so
+// stale type-ahead cannot end the wait either.
+static void view_wait_and_restore()
+{
+    while (keyboard_ready())
+    {
+        (void)keyboard_getchar();
+    }
+    while (duart_received_ready())
+    {
+        (void)duart_getchar();
+    }
+    while (!keyboard_ready() && !duart_received_ready())
+    {
+        // idle; ENGINE refreshes the screen from the list
+    }
+    if (keyboard_ready())
+    {
+        (void)keyboard_getchar();
+    }
+    else
+    {
+        (void)duart_getchar();
+    }
+
+    dl_build_console_list();
+    gtxt::g_textport.clear();
 }
 
 static void view_image(const char *image_path, const char *palette_path)
@@ -1109,43 +1281,81 @@ static void view_image(const char *image_path, const char *palette_path)
         return;
     }
 
-    // Block until a fresh key arrives on EITHER console (interrupts stay
-    // enabled), then restore the console list.
-    //
-    // Deliberately keyboard_ready(), not ps2_received_ready(): the raw
-    // scancode queue also carries key RELEASES, and the Enter that launched
-    // this command lands its break code (F0 xx) tens of milliseconds AFTER
-    // this wait begins — waiting on the raw queue exits immediately and the
-    // image flashes for one frame (the original bug).  keyboard_ready()
-    // sits above the make/break decoder, so releases never satisfy it.
-    // The DUART side is accepted too so a serial-only session can dismiss
-    // the image; both queues are drained first so stale type-ahead cannot
-    // end the wait either.
-    while (keyboard_ready())
+    view_wait_and_restore();
+}
+
+// Show a .gc4 picture: 320x480 4bpp half rate.  The file is read whole into one
+// malloc and the display list streams its pixel section IN PLACE, so nothing is
+// copied into the framebuffer and the console's plane survives the viewing.
+static void view_gc4(const char *path)
+{
+    FILINFO info;
+    if (f_stat(path, &info) != FR_OK)
     {
-        (void)keyboard_getchar();
+        printf("view_image: cannot open %s\n", path);
+        return;
     }
-    while (duart_received_ready())
+    const uint32_t bytes = static_cast<uint32_t>(info.fsize);
+    if (bytes < 2u * Gc4Target::HEADER_WORDS || (bytes & 1u) != 0
+        || bytes > Gc4Target::file_bytes(Gc4Target::MAX_K, Gc4Target::MAX_HEIGHT))
     {
-        (void)duart_getchar();
+        printf("view_image: %s is %lu bytes; not a .gc4 picture\n", path,
+               static_cast<unsigned long>(bytes));
+        return;
     }
-    while (!keyboard_ready() && !duart_received_ready())
+
+    // malloc, not new[]: the throwing array-new drags in libstdc++ exception
+    // machinery and overflows ROM; newlib malloc/free keeps the image lean.
+    uint16_t *file = static_cast<uint16_t *>(malloc(bytes));
+    if (!file)
     {
-        // idle; ENGINE refreshes the screen from the list
+        printf("view_image: out of memory for %s (%lu bytes)\n", path,
+               static_cast<unsigned long>(bytes));
+        return;
     }
-    if (keyboard_ready())
+    if (!view_read_exact(path, file, bytes))
     {
-        (void)keyboard_getchar();
+        free(file);
+        return;
+    }
+
+    Gc4Target::Picture pic;
+    const char        *why = nullptr;
+    if (!Gc4Target::open_picture(file, bytes / 2, &pic, &why))
+    {
+        printf("view_image: %s: %s\n", path, why);
+        free(file);
+        return;
+    }
+
+    gc4_packet_stride = pic.k * se::PALETTE_WORDS_PER_ENTRY + 1;
+    gc4_packets = static_cast<uint16_t *>(malloc(pic.height * gc4_packet_stride * 2));
+    if (!gc4_packets)
+    {
+        printf("view_image: out of memory for %u VIDCMD packets\n", pic.height);
+        free(file);
+        return;
+    }
+
+    // Swap the display list under the running raster.  The vsync ISR re-arms
+    // from engine_desc_word_addr every frame and every list starts at the same
+    // table base, so rebuilding in place and letting the next vsync pick it up
+    // is the whole handshake.  Single-buffered: one frame may tear.
+    dl_build_gc4_list(pic);
+    if (dl_overflow)
+    {
+        printf("view_image: display list overflowed the reserved window\n");
+        dl_build_console_list();
     }
     else
     {
-        (void)duart_getchar();
+        printf("view_image: %s, 320x%u 4bpp half rate, K=%u\n", path, pic.height, pic.k);
+        view_wait_and_restore();
     }
 
-    // Back to the console list.  The 1bpp plane lives in the framebuffer, which
-    // the console list reads too, so there is nothing to hand back.
-    dl_build_console_list();
-    gtxt::g_textport.clear();
+    free(gc4_packets);
+    gc4_packets = nullptr;
+    free(file);
 }
 
 // ---------------------------------------------------------------------------
@@ -1583,8 +1793,9 @@ static void monitor_help()
     printf("ls [PATH]                  list directory (default /)\n");
     printf("time                       print time since boot\n");
     printf("run FILE [ARGS...]         load and run FILE from CF\n");
-    printf("view IMAGE PALETTE         show a 1bpp (.bin) image\n");
-    printf("                           image until a key is pressed\n");
+    printf("view IMAGE                 show a .gc4 image (320x480 4bpp, 16 colours)\n");
+    printf("view IMAGE PALETTE         show a 1bpp (.bin) image + per-line palette\n");
+    printf("                           either holds until a key is pressed\n");
     printf("help                 (?)   this text\n");
     printf("CMD [ARGS...]              run CMD.bin from CF with those args\n");
 }
@@ -1729,15 +1940,19 @@ static bool monitor_run_cf_command(int argc, char *argv[])
         }
         else if (strcmp(cmd, "view") == 0)
         {
-            if (argc < 3)
+            if (argc == 2)
             {
-                printf("usage: view IMAGE PALETTE\n");
-                printf("  38400-byte 1bpp plane + 960-byte palette, or\n");
-                printf("  (micro-HAM planes are retired: PIXEL is index-only)\n");
+                view_gc4(argv[1]);
+            }
+            else if (argc >= 3)
+            {
+                view_image(argv[1], argv[2]);
             }
             else
             {
-                view_image(argv[1], argv[2]);
+                printf("usage: view IMAGE            .gc4, 320x480 4bpp half rate\n");
+                printf("       view IMAGE PALETTE    38400-byte 1bpp plane + 960-byte palette\n");
+                printf("  (micro-HAM planes are retired: PIXEL is index-only)\n");
             }
         }
         else if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0)

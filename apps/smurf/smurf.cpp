@@ -1,10 +1,27 @@
 // smurf -- a playable flip-screen rescue game on the display-list pipeline.
 //
 // This is the first application that puts a REAL PICTURE through the direct
-// video surface: three micro-HAM backdrops off the CF card, sprite overlays
+// video surface: three 4bpp half-rate backdrops off the CF card, sprite overlays
 // composed as VIDCMD span lists on top of them, and a square/noise soundtrack
 // deposited into the audio FIFO by the same display list that draws the frame.
 // apps/dtest proved the surface; this proves it carries a game.
+//
+// THE BACKDROPS ARE 320x480 4BPP HALF RATE out of a SIXTEEN-ENTRY PALETTE, one
+// palette per screen (image-tools/clut_encode --k 0, .gc4 files).  They were
+// micro-HAM until 2026-09-20, when PIXEL became index-only and micro-HAM was
+// retired; 4bpp half rate is the mode that replaced it at the SAME 80 words per
+// line, so every descriptor count, every budget and the whole 15712-byte table
+// below are unchanged.  The alternative, attribute mode, is 640-wide but only
+// two colours per eight-pixel cell, and these backdrops are painted scenery with
+// soft gradients rather than tiles: it would have banded them badly and bought
+// nothing, since the sprites are a COMPOSITOR overlay and never wanted the extra
+// horizontal resolution.
+//
+// The palette is loaded ONCE PER FRAME in vertical blanking (sixteen three-word
+// entries, fifty words with the mode and base SETs) rather than per line: the
+// palette RAM is never reset by anything, but /RS clears pix_mode and pix_base
+// every vsync, so the preamble has to run anyway and the entries ride along for
+// nothing.  That is what frees the whole per-line packet for sprite spans.
 //
 // ===========================================================================
 // WHY THE LIST IS SHAPED THE WAY IT IS
@@ -12,10 +29,11 @@
 //
 // A 14 MHz 68000 has ~233,000 SYSCLK in a frame and the ENGINE is already
 // spending ~228 of every 445 SYSCLK line on DMA, so roughly half of that is
-// left for the CPU.  A full-screen micro-HAM frame is
+// left for the CPU.  A full-screen 4bpp half-rate frame is
 //
+//   2 preamble descriptors          the frame's palette, mode and base, in vblank
 //   34 pacers                       walk from the vsync line (490) to line 0
-//   480 x (1 VIDCMD + 3 PIXELS)     80 words of HAM per line = 32+32+16
+//   480 x (1 VIDCMD + 3 PIXELS)     80 words of pixels per line = 32+32+16
 //   9 audio bursts                  262 or 263 stereo pairs per frame
 //   1 trailing stop_after pacer
 //   -------------------------------------------------------------------
@@ -25,11 +43,11 @@
 // STATIC SKELETON, built once when a screen is entered (that build takes about
 // 300 ms, and a blank flip between screens is authentic anyway):
 //
-//   * every line's PIXELS descriptors point straight at the .ham plane in the
-//     heap and never change while a screen is up;
+//   * every line's PIXELS descriptors point straight at the .gc4 file's pixel
+//     plane in the heap and never change while a screen is up;
 //   * every line's VIDCMD descriptor points at that line's packet in a pool,
-//     {SET pix_mode, SET pix_pal_fg, SET pix_pal_bg, RUN(passthrough,1)},
-//     which paints the whole line from the HAM plane;
+//     just {RUN(passthrough,1)} for a line nothing covers, which paints the
+//     whole line from the pixel plane;
 //   * screen furniture that does not move -- the meadow's fence hazard,
 //     Smurfette by her house, the title text, the lives indicator -- is drawn
 //     INTO those static packets, so it costs nothing per frame;
@@ -51,6 +69,11 @@
 // SPAN ARITHMETIC (the part that is easy to get one pixel wrong)
 // ===========================================================================
 //
+// Sprite spans live in the COMPOSITOR's 640-pixel domain whatever the playfield
+// underneath is doing, so halving the backdrop's horizontal resolution changed
+// none of the arithmetic below: a sprite is still placed and clipped in whole
+// screen pixels.
+//
 // COMPOSITOR gives every record one slot per pixel, INCLUDING a SET.  A span
 // in one of the eight saturated colours is a single RUN_COLOR word and costs
 // exactly its own width; any other colour needs SET(cmp_held_fg) then
@@ -61,7 +84,7 @@
 //
 // A packet is capped at 24 words, and that number is a TIMING result, not a
 // guess.  A line's VIDCMD descriptor must be the first thing in the line's
-// descriptor group -- its palette SETs have to commit before pixel 0, and a
+// descriptor group -- its records have to commit before pixel 0, and a
 // packet deposited any EARLIER than the preceding HBLANK would be eaten by the
 // previous line's spare slots instead (COMPOSITOR holds only while nothing is
 // staged).  But the same group's first PIXELS descriptor has to land word 0
@@ -76,12 +99,14 @@
 //   20 + 2W + 15 <= 87  =>  W <= 26
 //
 // 24 leaves four SYSCLK of margin, and it is enough: the widest packet any
-// sprite pair in this game can produce is 23 words and the widest text line is
-// 22 (both measured over every frame, row and offset).  A line that somehow
-// wants more is truncated on the right and counted, not allowed to slide.
+// sprite pair in this game can produce is 20 words and the widest text line is
+// 19 (both were three words longer when every packet opened with SET pix_mode,
+// SET pal_fg and SET pal_bg; the palette moved to the frame preamble and those
+// three words came back).  A line that somehow wants more is truncated on the
+// right and counted, not allowed to slide.
 //
 // Everything on a sprite line's packet must end by pixel 638 so the trailing
-// RUN(passthrough,1) can hand the rest of the line back to the HAM plane; the
+// RUN(passthrough,1) can hand the rest of the line back to the pixel plane; the
 // PIXEL decoder runs underneath the whole time, so the backdrop is never
 // disturbed by an overlay, on either side of it.
 //
@@ -113,6 +138,7 @@
 #include "../../griffin.generated.h"
 #include "../../griffin.generated.refs.h"
 #include "../../super-engine/descriptor.h"
+#include "../../image-tools/gc4_target.h"
 #include "../../image-tools/smurf-assets/smurf_sprites.h"
 #include "../lib/griffin_app.h"
 #include "../lib/griffin_input.h"
@@ -130,14 +156,22 @@ namespace
 
 constexpr unsigned LINES               = se::V_ACTIVE;              // 480
 constexpr unsigned VBLANK_WALK_LINES   = 34;                        // 491..524
-constexpr unsigned HAM_WORDS_PER_LINE  = se::PIXELS_WORDS_MICROHAM; // 80
-constexpr unsigned HAM_BYTES_PER_LINE  = HAM_WORDS_PER_LINE * 2;    // 160
-constexpr unsigned PIXEL_DESCS_PER_LINE = 3;                        // 32 + 32 + 16
+constexpr unsigned PIX_WORDS_PER_LINE  = se::PIXELS_WORDS_4BPP_HALF;  // 80
+constexpr unsigned PIX_BYTES_PER_LINE  = PIX_WORDS_PER_LINE * 2;      // 160
+constexpr unsigned PIXEL_DESCS_PER_LINE = 3;                          // 32 + 32 + 16
 constexpr unsigned AUDIO_BURSTS        = 9;
+
+// The frame preamble: sixteen three-word palette entries plus SET pix_base and
+// SET pix_mode, deposited in vertical blanking with no wait_hblank.  Fifty words
+// is over DESC_MAX_COUNT, so it takes two descriptors.
+constexpr unsigned PREAMBLE_WORDS =
+    se::PALETTE_ENTRIES * se::PALETTE_WORDS_PER_ENTRY + 2;            // 50
+constexpr unsigned PREAMBLE_DESCS =
+    (PREAMBLE_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;   // 2
 
 constexpr unsigned DESCS_PER_LINE = 1 + PIXEL_DESCS_PER_LINE;
 constexpr unsigned FRAME_DESCRIPTORS =
-    VBLANK_WALK_LINES + LINES * DESCS_PER_LINE + AUDIO_BURSTS + 1;
+    PREAMBLE_DESCS + VBLANK_WALK_LINES + LINES * DESCS_PER_LINE + AUDIO_BURSTS + 1;
 
 // Two tables in the 32 KB app carve, so frame N+1 is authored while frame N is
 // still being walked.
@@ -247,25 +281,26 @@ constexpr unsigned FRAME_LIMIT = 60u * 60u * 12u;   // 12 minutes
 // Assets
 // ===========================================================================
 
+// One screen's picture: the .gc4 file as loaded, addressed rather than copied.
+// K is 0 for these, so the file's per-line palette records are all empty and the
+// header's sixteen entries are the whole palette.
 struct Backdrop
 {
-    const uint16_t *ham = nullptr;   // 480 x 80 big-endian words
-    const uint16_t *pal = nullptr;   // 480 x {pal_fg, pal_bg}
+    Gc4Target::Picture pic;
 };
 
 Backdrop g_backdrop[SCREEN_COUNT];
 
-struct AssetName
-{
-    const char *ham;
-    const char *pal;
+constexpr const char *ASSET_NAMES[SCREEN_COUNT] = {
+    "MEADOW.GC4",
+    "FOREST.GC4",
+    "CLEARING.GC4",
 };
 
-constexpr AssetName ASSET_NAMES[SCREEN_COUNT] = {
-    { "MEADOW.HAM",   "MEADOW.PAL"   },
-    { "FOREST.HAM",   "FOREST.PAL"   },
-    { "CLEARING.HAM", "CLEARING.PAL" },
-};
+// The files this game will accept: K = 0, full height.  An asset built with any
+// other K would want per-line loads the packet budget is not reserved for.
+constexpr unsigned BACKDROP_K     = 0;
+constexpr uint32_t BACKDROP_BYTES = Gc4Target::file_bytes(BACKDROP_K, LINES);
 
 const uint16_t *load_file(const char *path, unsigned bytes)
 {
@@ -300,10 +335,21 @@ bool load_assets()
 {
     for (unsigned i = 0; i < SCREEN_COUNT; i++)
     {
-        g_backdrop[i].ham = load_file(ASSET_NAMES[i].ham, LINES * HAM_BYTES_PER_LINE);
-        g_backdrop[i].pal = load_file(ASSET_NAMES[i].pal, LINES * 4);
-        if (!g_backdrop[i].ham || !g_backdrop[i].pal)
+        const uint16_t *data = load_file(ASSET_NAMES[i], BACKDROP_BYTES);
+        if (!data)
         {
+            return false;
+        }
+        const char *why = nullptr;
+        if (!Gc4Target::open_picture(data, BACKDROP_BYTES / 2, &g_backdrop[i].pic, &why))
+        {
+            printf("smurf: %s: %s\n", ASSET_NAMES[i], why);
+            return false;
+        }
+        if (g_backdrop[i].pic.k != BACKDROP_K || g_backdrop[i].pic.height != LINES)
+        {
+            printf("smurf: %s: needs K=%u and %u lines, has K=%u and %u\n", ASSET_NAMES[i],
+                   BACKDROP_K, LINES, g_backdrop[i].pic.k, g_backdrop[i].pic.height);
             return false;
         }
     }
@@ -419,14 +465,15 @@ bool saturated_code(uint16_t rgb, unsigned &code)
 // colour that recurs on the same line (the smurf's skin either side of his
 // black eyes, say) costs one word instead of two while every packet stays
 // independent of whatever the previous line left in the register.
-unsigned emit_packet(uint16_t *out, const Span *spans, unsigned n,
-                     uint16_t pal_fg, uint16_t pal_bg)
+//
+// The packet carries NO palette or mode SETs: the frame preamble loads all
+// sixteen entries in vertical blanking and re-sends pix_mode and pix_base there
+// (/RS clears those two every vsync; it never touches the palette RAM).  A
+// mid-screen palette WRITE would be illegal here anyway -- the four pixel clocks
+// after one are disturbed, and on an active line nothing covers them.
+unsigned emit_packet(uint16_t *out, const Span *spans, unsigned n)
 {
     unsigned k = 0;
-    out[k++] = se::vidcmd_set(se::SET_PIX_MODE, se::PIXEL_MODE_MICRO_HAM);
-    out[k++] = se::vidcmd_set(se::SET_PIX_PAL_FG, pal_fg);
-    out[k++] = se::vidcmd_set(se::SET_PIX_PAL_BG, pal_bg);
-
     int cursor = 0;
     int32_t held_fg = -1;      // no cmp_held_fg SET issued in this packet yet
     for (unsigned i = 0; i < n; i++)
@@ -498,7 +545,7 @@ unsigned emit_packet(uint16_t *out, const Span *spans, unsigned n,
         cursor = x + w;
     }
 
-    // Hand the rest of the line back to the HAM plane; COMPOSITOR holds the
+    // Hand the rest of the line back to the pixel plane; COMPOSITOR holds the
     // last source for every remaining slot.
     out[k++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1);
     return k;
@@ -801,6 +848,30 @@ unsigned group_end(unsigned g)
     return ((g + 1) * LINES) / AUDIO_BURSTS;
 }
 
+// The frame's VIDCMD preamble, built once per screen: sixteen palette entries,
+// then pix_base and pix_mode.  It is deposited with NO wait_hblank, so it runs
+// the instant the vsync ISR arms the list -- inside vertical blanking, which is
+// the only place a sixteen-entry load fits (fifty words is more than an HBLANK
+// delivers) and the only place a palette write's four disturbed pixel slots do
+// not exist.
+uint16_t g_preamble[PREAMBLE_WORDS];
+
+void build_preamble(const Backdrop &bd)
+{
+    const uint16_t *palette = bd.pic.palette();
+    unsigned        n       = 0;
+    for (unsigned i = 0; i < se::PALETTE_ENTRIES; i++)
+    {
+        const se::PaletteEntryWords e = se::vidcmd_palette_entry(i, palette[i]);
+        for (unsigned w = 0; w < se::PALETTE_WORDS_PER_ENTRY; w++)
+        {
+            g_preamble[n++] = e.w[w];
+        }
+    }
+    g_preamble[n++] = se::vidcmd_set(se::SET_PIX_BASE, 0);
+    g_preamble[n++] = se::vidcmd_set(se::SET_PIX_MODE, bd.pic.pix_mode());
+}
+
 void init_list_layout()
 {
     se::Descriptor d;
@@ -810,7 +881,7 @@ void init_list_layout()
     d.wait_hblank = true;
     g_pacer = se::encode_descriptor(d);
 
-    unsigned idx = VBLANK_WALK_LINES;
+    unsigned idx = PREAMBLE_DESCS + VBLANK_WALK_LINES;
     unsigned g   = 0;
     for (unsigned line = 0; line < LINES; line++)
     {
@@ -973,16 +1044,31 @@ bool build_scene(const SceneSpec &spec)
             printf("smurf: static packet pool exhausted at line %u\n", line);
             return false;
         }
-        const unsigned k = emit_packet(&g_static_pool[pool], spans, n,
-                                       bd.pal[2 * line], bd.pal[2 * line + 1]);
+        const unsigned k = emit_packet(&g_static_pool[pool], spans, n);
         g_static_src[line]   = reinterpret_cast<uint32_t>(&g_static_pool[pool]);
         g_static_count[line] = static_cast<uint8_t>(k);
         pool += k;
     }
 
+    build_preamble(bd);
+
     for (unsigned which = 0; which < 2; which++)
     {
         uint16_t *p = table_at(which, 0);
+        for (unsigned part = 0, done = 0; part < PREAMBLE_DESCS; part++)
+        {
+            const unsigned count = (PREAMBLE_WORDS - done > se::DESC_MAX_COUNT)
+                                       ? se::DESC_MAX_COUNT
+                                       : (PREAMBLE_WORDS - done);
+            se::Descriptor pd;
+            pd.src         = reinterpret_cast<uint32_t>(&g_preamble[done]);
+            pd.count       = static_cast<uint16_t>(count);
+            pd.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+            pd.wait_hblank = false;
+            put_desc(p, se::encode_descriptor(pd));
+            p += se::DESC_WORDS;
+            done += count;
+        }
         for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
         {
             put_desc(p, g_pacer);
@@ -993,14 +1079,14 @@ bool build_scene(const SceneSpec &spec)
         {
             put_line_vidcmd(which, line, g_static_src[line], g_static_count[line]);
 
-            const uint32_t src = reinterpret_cast<uint32_t>(bd.ham) + line * HAM_BYTES_PER_LINE;
+            const uint32_t src = reinterpret_cast<uint32_t>(bd.pic.pixels(line));
             uint16_t *d = table_at(which, g_line_desc_word[line] + se::DESC_WORDS);
             unsigned  done = 0;
             for (unsigned part = 0; part < PIXEL_DESCS_PER_LINE; part++)
             {
-                const unsigned count = (HAM_WORDS_PER_LINE - done > se::DESC_MAX_COUNT)
+                const unsigned count = (PIX_WORDS_PER_LINE - done > se::DESC_MAX_COUNT)
                                            ? se::DESC_MAX_COUNT
-                                           : (HAM_WORDS_PER_LINE - done);
+                                           : (PIX_WORDS_PER_LINE - done);
                 se::Descriptor pd;
                 pd.src         = src + done * 2;
                 pd.count       = static_cast<uint16_t>(count);
@@ -1055,9 +1141,7 @@ void update_hud(const SceneSpec &spec)
     {
         bool has_text = false;
         const unsigned n = scene_static_spans(spans, spec, line, &has_text);
-        const unsigned k = emit_packet(packet, spans, n,
-                                       g_backdrop[spec.screen].pal[2 * line],
-                                       g_backdrop[spec.screen].pal[2 * line + 1]);
+        const unsigned k = emit_packet(packet, spans, n);
         if (k > g_static_count[line])
         {
             continue;   // would run into the next line's packet; leave it be
@@ -1173,7 +1257,6 @@ void build_frame(unsigned which, const SceneSpec &spec,
         all[j] = v;
     }
 
-    const uint16_t *pal = g_backdrop[spec.screen].pal;
     Span spans[MAX_SPANS];
     for (unsigned i = 0; i < dirty; i++)
     {
@@ -1187,10 +1270,7 @@ void build_frame(unsigned which, const SceneSpec &spec,
         // Fast path: paste each covering row's precompiled records behind a
         // passthrough gap.  Bails out to the general emitter if two sprites
         // overlap, if one runs off an edge, or if the packet would not fit.
-        out[0] = se::vidcmd_set(se::SET_PIX_MODE, se::PIXEL_MODE_MICRO_HAM);
-        out[1] = se::vidcmd_set(se::SET_PIX_PAL_FG, pal[2 * line]);
-        out[2] = se::vidcmd_set(se::SET_PIX_PAL_BG, pal[2 * line + 1]);
-        unsigned k = 3;
+        unsigned k = 0;
         int  cursor = 0;
         bool fast   = true;
         for (unsigned j = 0; j < nall; j++)
@@ -1234,7 +1314,7 @@ void build_frame(unsigned which, const SceneSpec &spec,
             const unsigned n = gather_sprite_spans(spans, MAX_SPANS, all, nall,
                                                    static_cast<int>(line));
             sort_spans(spans, n);
-            k = emit_packet(out, spans, n, pal[2 * line], pal[2 * line + 1]);
+            k = emit_packet(out, spans, n);
             g_slow_lines++;
         }
         put_line_vidcmd(which, line, reinterpret_cast<uint32_t>(out), k);
@@ -1731,14 +1811,14 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("smurf: micro-HAM flip-screen game on the display-list pipeline\n");
+    printf("smurf: 4bpp half-rate flip-screen game on the display-list pipeline\n");
 
     if (!load_assets())
     {
         return 1;
     }
     printf("smurf: 3 backdrops loaded (%u bytes each plane)\n",
-           LINES * HAM_BYTES_PER_LINE);
+           LINES * PIX_BYTES_PER_LINE);
 
     GriffinVideoDirectInfo info;
     info.desc_table_base  = 0;

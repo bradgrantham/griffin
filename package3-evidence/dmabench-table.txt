@@ -1,0 +1,48 @@
+Griffin!
+ROM shadow disabled.
+Vector table copied.
+Memory: 4MB
+RAM test OK
+Firmware Build: 2026-09-20 13:40:10, GIT indexed-pixel f39178b+
+DUART: runtime init (RX irq + 100 Hz tick)
+DUART: SRA=0x0C TXRDY
+DUART TX
+Console on DUART Channel A, 115200 8N1
+VIDEO: framebuffer at 0x3857F0 (480 lines x 80 bytes, headerless)
+ENGINE: list at 0x3F6000, 996 descriptors (7968 bytes), 9 VIDCMD words
+ENGINE: armed at DESC=0x3000
+Memory: 4096 KB
+CF: init OK
+CF: GRIFFIN CF EMULATOR, firmware EMU 1.0, serial GRIFFIN00001
+CF: sectors:  32768, capacity: 16384 KB
+CF: filesystem mounted
+Volume: GRIFFIN (S/N 48EF-1601)
+  16286 KB free / 16334 KB total
+Root directory:
+  -   48056  DMABENCH.BIN
+PS/2 mouse: ready, 4-byte packets
+Monitor ready; 'help' for commands
+> DMABENCH 40
+loader: loaded 'DMABENCH.bin' (48056 bytes) at 0x001000; running...
+dmabench: 40 fields per configuration, kernel = 256-word RMW pass over 1024 bytes of RAM
+dmabench: carve 0x3F8000 + 32768 bytes (4096 descriptors), frame = 233625 SYSCLK
+cfg   desc  words   SYSCLK   DMA/fr    units  vs C0      ms
+C0       0      0        0     0.0%      3026   100.0%    670
+C0B      2      2       38     0.0%      3024    99.9%    670
+C1     996  19244    55522    23.8%      2303    76.1%    670
+C2    1475  39397   102534    43.9%      1693    55.9%    660
+C3    1956  41329   113132    48.4%      1555    51.4%    670
+C4    1476  38443   100640    43.1%      1717    56.7%    670
+
+C0   ENGINE never armed (no DMA at all)
+C0B  blank screen, smallest legal list (2 desc)
+C1   640x480 1bpp PIXEL console, as firmware does
+C2   pure-VIDCMD MASK text, 82 words/line
+C3   2bpp, 80 PIXELS + 6 VIDCMD per line
+C4   half-rate 1bpp, 20 PIXELS + 60 VIDCMD/line
+
+dmabench: a MASK text console leaves the CPU 73.5% of the throughput a 1bpp console leaves it
+dmabench: console restored
+loader: app exited (code 0)
+DMABENCH: exited with status 0
+> 

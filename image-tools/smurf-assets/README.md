@@ -2,74 +2,69 @@
 
 Generated art for the smurf demo, plus everything the target needs to display
 it.  Nothing in this directory is hand-drawn: `make_smurf_assets` writes the
-source PNGs in `src/`, `microham_encode` turns the backdrops into micro-HAM
-planes, and `sprite2spans` turns the sprite sheets into a header.  Regenerate
-the lot with
+source PNGs in `src/`, `clut_encode` turns the backdrops into `.gc4` pictures,
+and `sprite2spans` turns the sprite sheets into a header.  Regenerate the lot
+with
 
     make -C image-tools all assets check
+
+**2026-09-20: the backdrops were micro-HAM and are now 4bpp half rate.**  PIXEL
+became index-only behind a sixteen-entry palette RAM; micro-HAM, `pal_fg`,
+`pal_bg` and `ham_held` went with it, and `microham_encode` / `microham.h` /
+`microham_roundtrip` are deleted.  The replacement is the same 80 words per
+line, so nothing about the demo's descriptor budget moved.
 
 ## What is here
 
 | file | what it is |
 | --- | --- |
 | `src/*.png` | generated source art, 8-bit RGB(A) |
-| `backdropN-*.ham` | micro-HAM pixel plane, 76800 bytes |
-| `backdropN-*.pal` | per-line palette pairs, 1920 bytes |
-| `backdropN-*-preview.png` | the decoded plane, for eyeballing quality |
+| `backdropN-*.gc4` | 4bpp half-rate picture + palette, 77808 bytes |
+| `backdropN-*-preview.png` | what the hardware will show, for eyeballing quality |
 | `smurf_sprites.h` | span lists for every sprite frame |
 
-## Micro-HAM, in one screen
+## The backdrop mode, in one screen
 
-640x480 with 12-bit R4G4B4 output.  PIXEL consumes exactly **two stream bits per
-pixel clock**, MSB first out of consecutive 16-bit words, so a line is 1280 bits
-= **80 words** and a frame is 480 x 80 words.  The codes are
+**320 x 480, four bits per group, half rate.**  Each group is a four-bit index
+into the sixteen-entry palette RAM and is held two pixel clocks, so 320 groups
+cover the 640-clock line and a line is **80 words** — the same bandwidth
+micro-HAM used.  Words are consumed MSB first out of consecutive big-endian
+16-bit words; the first group of a line is bits 15..12 of word 0.
 
-    0 p        1 clock,  1 pixel   held <- p ? pal_fg : pal_bg
-    1 0  g r   2 clocks, 2 pixels  held.green <- {4{g}}, held.red  <- {4{r}}
-    1 1  g b   2 clocks, 2 pixels  held.green <- {4{g}}, held.blue <- {4{b}}
+The backdrops are encoded with **K = 0**: ONE sixteen-colour palette for the
+whole screen, carried in the file's header and loaded once per frame in vertical
+blanking as sixteen three-word VIDCMD palette entries.  That is the right
+trade for this demo and not a limitation of the format — `clut_encode --k 1..8`
+reloads up to eight entries per LINE, which is what a photograph wants
+(`image-tools/gc4_format.h`).  The game spends its per-line VIDCMD packet on
+sprite spans and has nothing left to pay per-line palette loads with.
 
-Two things about the 4-bit codes matter to anyone reading a plane by hand:
+Why not attribute mode, the other 80-word-per-line option?  It keeps 640
+horizontal resolution but allows only two colours per eight-pixel cell.  These
+backdrops are painted scenery with soft vertical gradients, not tiles; the
+gradients are exactly what an attribute cell cannot hold, and the sprites are a
+COMPOSITOR overlay that never wanted the extra horizontal resolution.
 
-* **They span two pixel clocks and commit on the second.**  The decoder cannot
-  see the chroma pair until the second clock, so the first pixel of the code
-  shows the OLD held colour and the second shows both channels updated at once.
-  This is the source of HAM's characteristic one-pixel fringe on a colour edge.
-* **A chroma code saturates what it writes.**  A channel touched by a chroma
-  code becomes `0x0` or `0xF` and nothing in between.  Every intermediate level
-  in a picture arrives through `pal_fg` / `pal_bg`, which is why the palette
-  pair is chosen per line and why the encoder spends most of its effort there.
+The normative statement of the mode is `cpld/pixel/pixel.v` and
+`cpld/pixel/pixel_tb.v`; the model is `super-engine/render.cpp`, and
+`clut_roundtrip` fails the build if `clut_encode` and that model ever disagree.
 
-`held` reloads from `pal_fg` at the start of every visible line, so the palette
-SETs must land before pixel 0 — i.e. in that line's horizontal blanking, where
-a SET costs no active slot.
+## `.gc4` — the picture
 
-The normative statement of all of this is `super-engine/render.cpp`
-(`PixelUnit::next_pixel`) and `cpld/pixel/pixel.v`.  `image-tools/microham.h`
-mirrors it, and `microham_roundtrip` fails the build if the mirror ever drifts.
+`image-tools/gc4_format.h` is the specification and
+`image-tools/gc4_target.h` is the 68000 reader.  In brief, all fields
+big-endian:
 
-## `.ham` — pixel plane
+    0   48 bytes   header: magic 'GCL4', version, K, 320, height, 80,
+                   pix_mode, then the sixteen-entry initial palette
+    48             palette section: height x (1 + K) words
+                   (a load count, then K slots of {index[15:12], colour[11:0]})
+    +              pixel section: height x 80 words, contiguous
 
-Headerless.  480 lines of 80 **big-endian** 16-bit words in scanline order,
-76800 bytes total.  Big-endian because that is a 68000 memory image: load the
-file at a word-aligned address and ENGINE can DMA it into the PIXELS FIFO
-verbatim, 80 words per line, no fixups.  This is the same layout
-`super-engine/author.cpp`'s `BitPacker` writes into RAM.
-
-    word 0 bit 15   is the first stream bit of pixel 0
-    word 79 bit 0   is the last stream bit of pixel 639
-    line stride     160 bytes
-
-## `.pal` — per-line palette
-
-Headerless.  480 entries of two **big-endian** 16-bit words, 1920 bytes total:
-
-    line y, byte 4*y + 0..1   pal_fg   (0x0RGB, 12-bit R4G4B4)
-    line y, byte 4*y + 2..3   pal_bg
-
-The app turns each pair into two VIDCMD SETs — target 2 (`SET_PIX_PAL_FG`) and
-target 3 (`SET_PIX_PAL_BG`) — emitted in that line's horizontal blanking.  Both
-must be committed before the line's pixel 0, since `held` reloads from `pal_fg`
-there.
+Both sections are fixed stride and word aligned on purpose: a program reads the
+pixel section straight into RAM and points ENGINE descriptors at it without
+touching a word, and line n's palette record is a multiply rather than a walk.
+At K = 0 the palette section is 480 words of zero counts and costs 960 bytes.
 
 ## `smurf_sprites.h` — sprite spans
 
@@ -104,33 +99,26 @@ overlay art; none of the shipped frames exceed it.
 
 ## Regeneration
 
-    make -C image-tools assets        # art -> .ham/.pal/-preview.png + header
+    make -C image-tools assets        # art -> .gc4/-preview.png + header
     make -C image-tools check         # round trip vs the super-engine model
 
 or by hand, which is what the Makefile runs:
 
     ./make_smurf_assets smurf-assets/src
-    ./microham_encode smurf-assets/src/backdrop1-meadow.png \
-        smurf-assets/backdrop1-meadow.ham smurf-assets/backdrop1-meadow.pal \
-        smurf-assets/backdrop1-meadow-preview.png
+    ./clut_encode --k 0 --dither fs \
+        --preview smurf-assets/backdrop1-meadow-preview.png \
+        smurf-assets/src/backdrop1-meadow.png smurf-assets/backdrop1-meadow.gc4
     ./sprite2spans -o smurf-assets/smurf_sprites.h --key FF00FF --max-spans 6 \
         smurf-assets/src/smurf.png,24,32,smurf_walk0,smurf_walk1,smurf_jump,smurf_duck,smurf_death \
         smurf-assets/src/smurfette.png,24,32,smurfette_walk0,smurfette_walk1 \
         smurf-assets/src/bat.png,24,16,bat_flap0,bat_flap1 \
         smurf-assets/src/fence.png,32,40,fence
 
-## Encoder quality, measured
+## Encoder quality
 
-Mean squared RGB444 error of the decoded plane against the quantized source,
-from `microham_encode`:
-
-| backdrop | mean | worst pixel |
-| --- | --- | --- |
-| meadow | 0.53 | 89 |
-| forest | 1.80 | 29 |
-| clearing | 1.08 | 153 |
-
-The worst-pixel figures are chroma fringes on hard colour edges (the mushroom
-cap against the sunset, the hill against the sky).  That is inherent to HAM, not
-an encoder defect: the first pixel of a 4-bit code is required to show the old
-colour.
+`clut_encode` prints the palette-load count; the picture itself is judged by
+eye against `backdropN-*-preview.png`, which `clut_roundtrip` proves is exactly
+what the hardware model renders from the file.  The micro-HAM error table that
+used to be here measured a retired encoder and is not comparable; the numbers
+that ranked the candidate modes against each other are
+`image-tools/clut-experiment/out/results.csv`.

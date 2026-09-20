@@ -144,7 +144,7 @@ Clean everything up for Rev 2, get as much tested as possible
 * Booter & apps
   * Have a shell in the ROM
   * Image viewer app
-  * Movie player app with audio - microham mode
+  * Movie player app with audio — 4bpp half rate (320×480 out of a 16-entry palette)
   * BASIC (finish up your basic.cpp)
 
 # Components
@@ -177,7 +177,7 @@ DS1233-5 reset supervisor.  Datasheet (041002) facts: open-drain RST with intern
 Three oscillators; no CPLD re-drives a clock.
 
 * SYSCLK — 14 MHz can → CPU CLK and pin 83 (GCLK1) of GLUE, ENGINE and PORTS.  Okay to change and reflash bitfiles if the clock is changed; DTACK tables in griffin.yml cover 12 / 14 / 14.318 / 16 MHz.
-* Pixel — 25.175 MHz can → TIMING pin 43 (GCLK1, PLCC44) and pin 83 (GCLK1) of PIXEL and COMPOSITOR.  TIMING pin 44 (GCLK2) stays free for an optional second oscillator.
+* Pixel — 25.175 MHz can → pin 83 (GCLK1) of PIXEL and COMPOSITOR.
 * The DUART runs its own 3.6864 MHz crystal on X1/X2.
 
 ## CPU
@@ -242,7 +242,7 @@ Dedicated ATF1508 CPLD for:
 * ~ROM_WE for in-circuit flash programming (word writes only, gated by CONFIG.FLASH_WE_EN)
 * Boot ROM overlay + the CONFIG register
 * Autovectors: GLUE asserts ~VPA instead of ~DTACK during IACK cycles (FC=111)
-* Priority encoder for the IRQ nets (see Interrupts); ~ENGINE_IRQ is a level-3 input, ~PORTS_IRQ a level-2 input; nVSYNC from TIMING is edge-latched here with W1C ack (VSYNC_STATUS / VSYNC_CLEAR) because TIMING has no bus to host one
+* Priority encoder for the IRQ nets (see Interrupts); ~ENGINE_IRQ is a level-3 input, ~PORTS_IRQ a level-2 input; nVSYNC from PIXEL is edge-latched here with W1C ack (VSYNC_STATUS / VSYNC_CLEAR) because PIXEL has no bus to host one
 * PS/2 **keyboard** frame engine: assembles a full 11-bit PS/2 frame in hardware and raises one level-4 IRQ per byte on RX (byte in PS2\_RX\_DATA, parity/framing flags in PS2\_STATUS for firmware to check); on TX shifts a host-to-device frame out on the device clock (the PS2\_TX\_DATA write presents the start bit and releases CLK; ACK sampled into PS2\_STATUS.TX\_ACK; TX\_DONE IRQ on completion).  Firmware-computed odd parity is carried in PS2\_TX\_DATA address bit 1 (0x09 = parity 0, 0x0B = parity 1).  Half-duplex, one shared shifter.  The mouse is a second copy of this engine over in PORTS.
 * Reset and halt: nSUPERVISOR_RESET in from the DS1233; ~HALT asserted while it is (see Power-on reset)
 * DEBUG\_OUT
@@ -256,14 +256,17 @@ Dedicated ATF1508 CPLD for:
 
 [Griffin Video Mode Throughput](https://docs.google.com/spreadsheets/d/1jpam0LNxlgqLVfV4WW1wBMNDqXu4QpefYhichfac1WE/edit?usp=sharing)
 
-VGA only; NTSC/composite dropped.  The path is four chips: **ENGINE → {PIXELS, VIDCMD} FIFOs → PIXEL (+TIMING) → COMPOSITOR → resistor DAC**.  Semantics live in vidcmd-spec.md; the executable model + budget checker is super-engine/; shared numbers and board support parts are in griffin.yml `constants:` and `interfaces:`.
+VGA only; NTSC/composite dropped.  The path is three chips and a RAM: **ENGINE → {PIXELS, VIDCMD} FIFOs → PIXEL → 16×12 palette RAM → COMPOSITOR → resistor DAC**.  Semantics live in vidcmd-spec.md; the executable model + budget checker is super-engine/; shared numbers and board support parts are in griffin.yml `constants:` and `interfaces:`.
 
 * **ENGINE** (engine.v, Rev-1 pinout): walks 4-word descriptors from the top 64K of RAM.  Each descriptor says: wait for hblank or don't, read N words from this address, and pulse this FIFO's write strobe (PIXELS / VIDCMD / AUDIO, one-hot) — or strobe nothing, which just burns bus time to place a later deposit.  The last one raises the level-3 IRQ and stops; the CPU's vsync ISR re-arms with the other buffer.  Rule learned twice: *any* RAM a list points at is frame-owned — double-buffer the lists and their data.
-* **PIXEL** (pixel.v): unpacks the PIXELS FIFO — pure pixel bits, no in-band header — in 1bpp (40 words/line) or 2-bits-per-clock micro-HAM (80 words/line), through 12-bit palette/held registers, out as R4G4B4.  On FIFO underrun it re-shifts the last word rather than erroring, which turns short fills into a compression feature: one 0x0000 word paints background to end-of-line, or end-of-frame.
-* **TIMING** (timing.v, ATF1504 PLCC44, testbench timing_tb.v): raster counters, syncs, /RS at vsync, the three event strobes PIXEL consumes, and the board's other time bases — HBLANK to ENGINE, nVSYNC_IRQ to GLUE, and the PADDLE_TICK / AUDIO_TICK square waves (toggle per line; PORTS counts falling edges: 15.734 kHz) — plus four pins reserved for DUART OP4..OP7 as a future mode/rate selector.  Split out because PIXEL+TIMING together do not fit one ATF1508 (pixel_combined.v is the kept negative result).  Every stage's fixed pipeline delay is cancelled here by firing comparators early: the lead constants (COMPOSITOR_LEAD 2, DAC_LEAD 4, …) are *derived* in griffin.yml, not tuned on hardware.
-* **COMPOSITOR** (compositor.v; its iverilog testbench is the timing-semantics spec): executes the VIDCMD instruction stream — RUN spans (passthrough, two held colors, or eight saturated RUN_COLOR literals) and SET, which writes its own held colors or forwards a 12-bit value into PIXEL's registers over a valid/target/commit handshake.  Per-line palettes, pixel-exact mid-line color changes, sprites-as-spans, and full-screen RLE images are all just authored stream content.  When the FIFO runs dry at a record boundary the current span continues to end of line — so lines with nothing to say cost zero words.
-* **No CPU bus on PIXEL, TIMING, or COMPOSITOR.**  Every register they have is reached only by SET instructions the CPU authors into RAM and ENGINE DMAs into the VIDCMD FIFO.  vsync IRQ (level 6) comes from TIMING; ENGINE's level-3 IRQ is the list-completion handshake.
-* **FIFOs:** all three streams use 2× IDT7200 (256×9) — PIXELS byte-interleaved shared-Q pair (/RE from PIXEL), VIDCMD ganged 16-bit (/RE from COMPOSITOR), AUDIO one per channel (/RE from PORTS).  Each pair's /W is one ENGINE deposit strobe; data pins sit directly on D[15:0] (no transceivers — loading accepted, 2026-08 electrical review).  Series axial footprint at the driver end of every /RE and /W line, stuffed 0R (33–47 Ω only if a strobe rings on the bench).  XI/XO cascade is an unpopulated-footprint option.
+* **PIXEL** (pixel.v, testbenches pixel_tb.v / timing_tb.v / clut_pair_tb.v): both the raster time base and the indexed unpacker, in one ATF1508.
+  * **Unpacker.**  Reads the PIXELS FIFO as ONE ganged 16-bit port with one /RE, MSB first, and emits a FOUR-BIT PALETTE INDEX per pixel — it holds no colour register at all.  Four depths (1bpp 40 words/line, 2bpp 80, 4bpp 80 at half rate only, attribute `{fg4,bg4,pattern8}` 80) plus a half-rate flag that holds every consumed group two pixel clocks; `pixel_skip` is a start position inside the line's first word, clamped, and adds exactly one word.  On FIFO underrun it re-shifts the last word rather than erroring, which turns short fills into a compression feature: one word paints to end-of-line, or end-of-frame.
+  * **Raster.**  Counters, syncs, /RS at vsync, the three event strobes the unpacker consumes (internal nets now, not pins), and the board's other time bases — HBLANK to ENGINE, nVSYNC_IRQ to GLUE, and the PADDLE_TICK / AUDIO_TICK square waves (toggle per line; PORTS counts falling edges: 15.734 kHz).  Every stage's fixed pipeline delay is cancelled here by firing comparators early: the lead constants (COMPOSITOR_LEAD 2, DAC_LEAD 4, …) are *derived* in griffin.yml, not tuned on hardware.
+  * `timing.v`'s Timing module is INSTANTIATED INSIDE pixel.v.  There is no TIMING chip: PIXEL+raster fits one ATF1508 now that PIXEL carries no colour.
+* **Palette RAM** (16 × 12, three 16×4 separate-I/O parts): PIXEL drives the address and the write pulse, COMPOSITOR's `set_pix_value[11:0]` drives the data, and the outputs are COMPOSITOR's RGB_IN, combinational, costing no pipeline clock.  **Nothing ever resets it** — not /RS, not power-up — so a display list must load every entry it shows; the model and the emulator fill it with random values so a list that forgets one fails loudly.  A table entry is THREE VIDCMD words (SET clut_index, SET clut_data, a same-value filler that holds the bus), and the four pixel clocks after the data SET are disturbed, so a write belongs in blanking or under a non-passthrough span.
+* **COMPOSITOR** (compositor.v; its iverilog testbench is the timing-semantics spec): executes the VIDCMD instruction stream — RUN spans (passthrough, two held colors, or eight saturated RUN_COLOR literals) and SET, which writes its own held colors or forwards a 12-bit value into PIXEL's registers — and, on the way, onto the palette RAM's data inputs — over a valid/target/commit handshake.  Per-line palettes, pixel-exact mid-line color changes, sprites-as-spans, and full-screen RLE images are all just authored stream content.  When the FIFO runs dry at a record boundary the current span continues to end of line — so lines with nothing to say cost zero words.
+* **No CPU bus on PIXEL or COMPOSITOR.**  Every register they have is reached only by SET instructions the CPU authors into RAM and ENGINE DMAs into the VIDCMD FIFO.  vsync IRQ (level 6) comes from PIXEL; ENGINE's level-3 IRQ is the list-completion handshake.
+* **FIFOs:** all three streams use 2× IDT7200 (256×9) — PIXELS ganged 16-bit (one /RE from PIXEL), VIDCMD ganged 16-bit (/RE from COMPOSITOR), AUDIO one per channel (/RE from PORTS).  Each pair's /W is one ENGINE deposit strobe; data pins sit directly on D[15:0] (no transceivers — loading accepted, 2026-08 electrical review).  Series axial footprint at the driver end of every /RE and /W line, stuffed 0R (33–47 Ω only if a strobe rings on the bench).  XI/XO cascade is an unpopulated-footprint option.
 * **DAC:** binary-weighted resistor ladders from COMPOSITOR's R[3:0], G[3:0], B[3:0] through 74AC541 buffers; ladders and shunts at the DE-15, not at the buffers.  Syncs: buffer → 100R series → DE-15 pins 13/14, no termination.  DE-15: R=1, G=2, B=3, HS=13, VS=14; 5,6,7,8,10 + shell → GND.  Values and BOM in the griffin.yml VGA interfaces entry.
 
 ## Compact Flash interface
@@ -283,7 +286,7 @@ VGA only; NTSC/composite dropped.  The path is four chips: **ENGINE → {PIXELS,
 * **Level stage:** one MAX232 per channel (2 drivers + 2 receivers = TXD/RXD + RTS/CTS; 1 µF charge-pump caps); ch B's DCD and RI through a 75189 quad receiver (2 of 4 sections, unused inputs grounded).  All stages invert, which lands every polarity correctly.  Deliberately not routed through USB.
 * **TTL bench headers remain, no isolation jumpers.**  The DUART TX pins drive header and MAX232 driver inputs in parallel (no conflict).  The MAX232 receiver outputs go straight to the DUART; the headers' RXD/CTS lines get 1 kΩ series resistors so a stuffed MAX232 wins any collision, and 10 kΩ pull-ups on RXD_A/B, ~CTS_A/B, IP4 and IP5 hold the DUART inputs at idle while the MAX232s and 75189 are unstuffed, which they will be on bench builds.  Rule: no bench cable while the RS-232 port is in use.  (Jumpers dropped 2026-09-14; griffin.log.)
 * **C/T = 100 Hz systick** (level 5) + a configurable timer ISR.
-* OP/IP allocation (table in griffin.yml): RTS/CTS on both channels, the MCP7940N I²C (OP2/OP3/IP2/IP3), DCD_B/RI_B on IP4/IP5, OP4..OP7 → TIMING pins 20/21/24/25 as a reserved mode/rate selector (no logic yet; OPR reset state 1111 must remain today's behaviour).
+* OP/IP allocation (table in griffin.yml): RTS/CTS on both channels, the MCP7940N I²C (OP2/OP3/IP2/IP3), DCD_B/RI_B on IP4/IP5, OP4..OP7 reserved as a mode/rate selector into PIXEL (no logic yet; OPR reset state 1111 must remain today's behaviour).  **The four pins are not settled**: pixel.v's header reserves 54–57 for them while its `//PIN:` block already places PIXELS_Q_0 on 56 and H_ACTIVE on 57 — see PACKAGE3-NOTES.md.
 * Bus: ~CS from GLUE (nDUART_SELECT), DTACKN back to GLUE, ~IACK tied high (autovectors), RESET directly on the system ~RESET net.  DIP-40 native.
 
 ## PS/2 keyboard and mouse
@@ -295,11 +298,11 @@ VGA only; NTSC/composite dropped.  The path is four chips: **ENGINE → {PIXELS,
 
 ## PORTS — the fourth CPLD
 
-The PS/2 mouse gets its own CPLD, PORTS, together with the joysticks, the paddle counters and the audio FIFO pop: two PS/2 frame engines do not share one ATF1508, so the keyboard stays in GLUE and the mouse leaves; reading the DE-9s and counting the paddle ramps costs almost nothing in a CPLD that already exists, which retires the 74HCT245 / 74HC590 chips and the DUART OP4/OP5 dump dance; and a programmable audio divider is not worth a chip when a line-rate tick from the timing chip gives the sample rate the design already assumed.  Rev 2 is therefore GLUE, ENGINE, PORTS, PIXEL and COMPOSITOR on ATF1508AS PLCC84 plus TIMING on an ATF1504AS PLCC44, all with frozen pinouts.  Headroom: ENGINE has the only real logic reserve and spare I/O (a generalized COPY-FIFO or a second DMA channel goes there); PORTS has spare pins but little logic, so a small connector-facing addition goes there and anything larger wants ENGINE.  Fit measurements: griffin.log (2026-07-28, 2026-07-30); the experiment that chose the feature set is pcbv2-ports-design.md.
+The PS/2 mouse gets its own CPLD, PORTS, together with the joysticks, the paddle counters and the audio FIFO pop: two PS/2 frame engines do not share one ATF1508, so the keyboard stays in GLUE and the mouse leaves; reading the DE-9s and counting the paddle ramps costs almost nothing in a CPLD that already exists, which retires the 74HCT245 / 74HC590 chips and the DUART OP4/OP5 dump dance; and a programmable audio divider is not worth a chip when a line-rate tick from PIXEL's raster gives the sample rate the design already assumed.  Rev 2 is therefore GLUE, ENGINE, PORTS, PIXEL and COMPOSITOR on ATF1508AS PLCC84, all with frozen pinouts.  Headroom: ENGINE has the only real logic reserve and spare I/O (a generalized COPY-FIFO or a second DMA channel goes there); PORTS has spare pins but little logic, so a small connector-facing addition goes there and anything larger wants ENGINE.  Fit measurements: griffin.log (2026-07-28, 2026-07-30); the experiment that chose the feature set is pcbv2-ports-design.md.
 
 * At 0xFC0000: the PS/2 **mouse** frame engine, both **joystick** ports read as bytes, both **paddle** counters + the dump control, and the **audio FIFO pop** strobe, ~RS control and ~EF status
 * Carries no bus timing of its own: GLUE hands it a cycle-qualified ~PORTS_SELECT and answers DTACK, exactly as for CF
-* Time bases are two nets from TIMING — **PADDLE_TICK and AUDIO_TICK**, square waves toggling once per line, synchronized on arrival and counted on falling edges (15.734 kHz events for both).  No prescaler, no programmable divider, anywhere.
+* Time bases are two nets from PIXEL — **PADDLE_TICK and AUDIO_TICK**, square waves toggling once per line, synchronized on arrival and counted on falling edges (15.734 kHz events for both).  No prescaler, no programmable divider, anywhere.
 * ~PORTS_IRQ (level 2) — mouse only
 * cpld/ports/ports.v takes its register decode from the generated griffin.yml defines; pinout frozen in its `//PIN:` block; does not use `xor_synthesis` (measured to make no difference)
 * Registers: see [griffin.yml](griffin.yml).
@@ -322,7 +325,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 
 * **FIFO:** 2× 7200 (256×9; 256 pairs = 16 ms of buffer, cascadable via XI/XO if depth is ever wanted), one per channel; L = D[15:8], R = D[7:0] straight to the FIFOs.
   * ~W is ENGINE's AUDIO_FIFO_W descriptor strobe: the display list deposits sample words by DMA; there is no CPU-mapped write path
-  * **PORTS** generates ~R once per AUDIO_TICK event from TIMING and drives both ~RS (AUDIO_CONTROL.RESET, held from power-on until released; also the flush); ~EF goes to PORTS as pollable EMPTY status; ~HF unconnected
+  * **PORTS** generates ~R once per AUDIO_TICK event from PIXEL and drives both ~RS (AUDIO_CONTROL.RESET, held from power-on until released; also the flush); ~EF goes to PORTS as pollable EMPTY status; ~HF unconnected
   * No audio interrupt — the level is dead-reckoned and a missed frame is detected from the vsync latch; no mono packing
   * Samples are **two's complement** (0x00 = silence): CD4049 inverters flip each channel's Q7 into the unsigned ladders.  The inverter must be CMOS-output; a TTL high would shrink the MSB weight ~25% at the zero crossing.
 * **Output stage, per channel:** 7200 Q[7:0] → CD4049 on Q7 → 4610X-R2R-103LF 10k ladder → 10k to GND (with the ladder's 10k Thevenin this IS the 2:1 divider: 0–2.5 V, 5k source) → 3.3 nF to GND (single pole ~9.7 kHz) → LM358 half as unity buffer → 4.7k to GND at the output (class-A bias against crossover) → 100 µF AC coupling → the LINE node.  Three consumers hang on LINE, so the level there is knob-independent:
@@ -335,7 +338,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 
 ## Interrupts (autovector)
 
-* 6: vsync — TIMING's dedicated nVSYNC_IRQ output (pin 31) to GLUE nVSYNC, polarity fixed regardless of raster mode, edge-latched in GLUE, W1C via VSYNC_CLEAR
+* 6: vsync — PIXEL's dedicated nVSYNC_IRQ output to GLUE nVSYNC, polarity fixed regardless of raster mode, edge-latched in GLUE, W1C via VSYNC_CLEAR
 * 5: DUART (systick + serial)
 * 4: PS/2 keyboard (GLUE)
 * 3: ENGINE (list completion)
@@ -344,7 +347,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 
 ## Debug and programming access
 
-* **JTAG programming header 1×6** (TCK/TMS/TDI/TDO + 5 V + GND) — the primary CPLD programming path, external dongle.  All six CPLDs (GLUE/ENGINE/PORTS/PIXEL/COMPOSITOR/TIMING) in the chain; chain order in cpld/Makefile still describes the Rev 1 two-TAP chain until the board is routed.
+* **JTAG programming header 1×6** (TCK/TMS/TDI/TDO + 5 V + GND) — the primary CPLD programming path, external dongle.  All five CPLDs (GLUE → PORTS → ENGINE → PIXEL → COMPOSITOR) in the chain; chain order in cpld/Makefile still describes the Rev 1 two-TAP chain until the board is routed.
 * **Debug headers — LA access + "PCB design failed" backup:** two 2×16 shrouded 0.1" box headers laid out to **mirror the LogicAnalyzer V2 board's own 2×16 input connector** (24 channels + 2 GND + EXT_VREF + EXT_TRIG + the analyzer's own 5 V and 3V3 pairs; straight 32-way IDC ribbon, Griffin pin n = analyzer pin n), so the two on-hand 5 V-tolerant analyzers plug straight on and daisy-chain via their own 3-pin chain connectors into one synchronized 48-channel capture.  Channel-to-pin mapping taken from the gusmanb LogicAnalyzerV2 JITX design (board/place_headers.py, DEBUG_HEADER sheet); the level shifters and the 3V3/5V/ext VREF switch live on the analyzer board, Griffin only feeds EXT_VREF from +5 V.
   * Channel plan (47 bus/control signals + SYSCLK = 48, an exact fit): **header 1 "what happened"** = D0–D15, ~AS, ~UDS, ~LDS, R/~W, ~DTACK, ~RESET, ~HALT (exactly 23; spare-channel candidates: audio line clock or paddle DUMP); **header 2 "where"** = A1–A23 + SYSCLK (24, via a buffered/series-R tap — do not stub the raw clock net)
   * 5V-reference pins fed from the Griffin rail (analyzer's onboard jumper removed → external reference); 3V3 pins NC; trigger pins NC/test pads
@@ -357,7 +360,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 
 *(KiCad watch-list — footprints, pinouts, nets, placement, SI.  Function lives in Components above; link, don't restate.)*
 
-**CPLD pin numbers are not in this document.**  The authoritative Rev 2 pinout for each part is the `//PIN:` block at the bottom of its Verilog — cpld/glue/glue.v, cpld/ports/ports.v, cpld/compositor/compositor.v, cpld/pixel/pixel.v and cpld/pixel/timing.v (all **FROZEN**), and cpld/engine/engine.v (carried from the Rev 1 hand assignment).  Route from those files, not from a copy — a copy drifts.  A netlist change that makes the fitter want a different placement on GLUE or PORTS is a respin, not a re-fit.
+**CPLD pin numbers are not in this document.**  The authoritative Rev 2 pinout for each part is the `//PIN:` block at the bottom of its Verilog — cpld/glue/glue.v, cpld/ports/ports.v, cpld/compositor/compositor.v, cpld/pixel/pixel.v (**FROZEN**; timing.v is a module inside it and has no pinout of its own), and cpld/engine/engine.v (carried from the Rev 1 hand assignment).  Route from those files, not from a copy — a copy drifts.  A netlist change that makes the fitter want a different placement on GLUE or PORTS is a respin, not a re-fit.
 
 ### Footprints & sockets
 - [ ] ROM: 2× SST39SF040 DIP-32 in sockets (one per byte lane, 1 MB ×16 — note DIP-32, **not** the Rev 1 DIP-28 W27C512 footprint); /OE←nR_W, /CE←nROM_SELECT, WE#←~ROM_WE (new net, both chips in parallel); initial images via the bench programmer, thereafter self-reflash
@@ -371,8 +374,9 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 - [ ] Serial: 2× MAX232 (bin) + 75189 (bin) level stages; DB-25F console wired DCE (DSR+DCD strapped to DTR), DB-25M modem port wired DTE (DTR–DSR strap; DCD pin 8 → IP4, RI pin 22 → IP5); TTL bench headers retained through 1 kΩ series resistors on their RXD/CTS lines; 10 kΩ pull-ups on DUART RXD_A/B, ~CTS_A/B, IP4, IP5; no jumpers (MAX232s may stay unstuffed)
 - [ ] RTC: MCP7940N DIP-8 + 32.768 kHz crystal (6–9 pF load) + coin-cell holder; SCL=OP2, SDA via OP3→2N7000 (drain on SDA) + IP2 readback, MFP → IP3
 - [ ] PS/2: **two ports**, full-size DIN-5 pair; fix footprint + pin mapping (Rev 1 mini-DIN-6 was wrong); keyboard CLK/DATA to GLUE, mouse CLK/DATA to PORTS
-- [ ] PORTS: ATF1508AS PLCC84 socket + JTAG chain; nets ~PORTS_SELECT / ~PORTS_IRQ / A4-A1 / ~LDS / R~W / D7-D0 to GLUE and the bus, **PADDLE_TICK (TIMING 17 → PORTS 44) and AUDIO_TICK (TIMING 18 → PORTS 45)** as its only time bases, ~R, ~RS and ~EF to the 7200 pair, mouse PS/2, both DE-9s, PADDLE_DUMP to the FET gates — pin numbers from the frozen `//PIN:` block in cpld/ports/ports.v
-- [ ] TIMING fan-out (pins from the `//PIN:` block in cpld/pixel/timing.v): HBLANK (pin 19) → ENGINE pin 2; nVSYNC_IRQ (pin 31) → GLUE nVSYNC (VGA_VSYNC no longer tee'd); VGA_HSYNC/VGA_VSYNC only to the 74AC541s; DUART OP4/OP5/OP6/OP7 → TIMING pins 20/21/24/25 (reserved, no logic yet — route them anyway); leave GCLK2 (pin 44) free with an optional oscillator footprint; the remaining TIMING spares are bitfile-usable later only if routed to reachable copper (header or test points)
+- [ ] PORTS: ATF1508AS PLCC84 socket + JTAG chain; nets ~PORTS_SELECT / ~PORTS_IRQ / A4-A1 / ~LDS / R~W / D7-D0 to GLUE and the bus, **PADDLE_TICK and AUDIO_TICK from PIXEL** as its only time bases, ~R, ~RS and ~EF to the 7200 pair, mouse PS/2, both DE-9s, PADDLE_DUMP to the FET gates — pin numbers from the frozen `//PIN:` block in cpld/ports/ports.v
+- [ ] PIXEL raster fan-out (pins from the `//PIN:` block in cpld/pixel/pixel.v): HBLANK → ENGINE pin 2; nVSYNC_IRQ → GLUE nVSYNC (VGA_VSYNC no longer tee'd); VGA_HSYNC/VGA_VSYNC only to the 74AC541s; PADDLE_TICK / AUDIO_TICK → PORTS; DUART OP4..OP7 reserved but **in conflict with the block's own PIXELS_Q_0 / H_ACTIVE** (PACKAGE3-NOTES.md) — settle before routing; PIXEL's remaining spares are bitfile-usable later only if routed to reachable copper (header or test points)
+- [ ] the palette RAM: three 16×4 separate-I/O parts, IDX[3:0] and nCLUT_WE from PIXEL, /CS tied low, data in from COMPOSITOR's set_pix_value[11:0], outputs to COMPOSITOR's RGB_IN — tAA is the selection criterion (one pixel clock is 39.7 ns)
 - [ ] ~ENGINE_IRQ: ENGINE pin 5 → GLUE nENGINE_IRQ; needs a pull-up like the other IRQ nets (see Pull-ups)
 - [ ] No 74155 and no direct-bus region in Rev 2 (deleted with the CPU audio path); ~ENGINE_SELECT *is* a net (GLUE pin 39 → ENGINE pin 84); CF CS1 stays routed from GLUE
 - [ ] Joysticks: 2× DE-9 male PCB-mount, switch lines **straight into PORTS** — no '245s; bussed pull-up networks, polyfuse on pin-7 +5V, optional series R + clamps between connector and the CPLD
@@ -393,7 +397,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 - [ ] ~AS, ~UDS, ~LDS, R/~W (and ~DTACK if ever tri-stated) — strobes must idle deasserted while the CPU is tri-stated (~RESET+~HALT bus-master mode via the debug headers), else GLUE sees phantom cycles; also cleans up LA captures
 - [ ] PS/2 CLK & DATA — **both ports**: keyboard on GLUE, mouse on PORTS
 - [ ] ~IPL2:0 and ~VPA, 10 K each — GLUE drives them push-pull, but every GLUE→CPU control input floats during GLUE JTAG/ISP or with a blank GLUE, and a floating IPL reading 000 is a level-7 interrupt, which is non-maskable; pulled, the idle reads 111 / VPA deasserted and a half-programmed board fails quiet.  Same ISP-float reasoning as the ~BR/~BGACK pulls (ENGINE side)
-- [ ] the IRQ nets into GLUE's priority encoder — nVSYNC (from TIMING), ~DUART_IRQ, ~PORTS_IRQ and **~ENGINE_IRQ** (inert until ENGINE stops tying it high, so without a pull-up it is exactly the kind of net that floats into a phantom level-3)
+- [ ] the IRQ nets into GLUE's priority encoder — nVSYNC (from PIXEL), ~DUART_IRQ, ~PORTS_IRQ and **~ENGINE_IRQ** (inert until ENGINE stops tying it high, so without a pull-up it is exactly the kind of net that floats into a phantom level-3)
 - [ ] joystick switch lines (bussed resistor networks to +5 V) — except DE-9 pins 5/9 on the paddle port: weak 1 MΩ discretes there, since the paddle pot parallels the pull-up (still fine for reading SMS button 2, just slow edges)
 - [ ] I²C SCL/SDA to 5 V
 - [ ] JTAG lines
@@ -410,7 +414,7 @@ Stereo 8-bit sampled, ~15.7 kS/s, DMA-fed.
 - [ ] bring every inter-IC signal (GND, +5V, D, A, WRITE_LO/HI, RAM/ROM/IO/ENGINE/PORTS selects, nVPA) to a 2×N test header with the signal silk-screened per pin
 - [ ] female header sized for Dr. Guzman's analyzer (try two ganged); lots of ground test-point holes
 - [x] spare GLUE pins — pins 24 and 64 released as bodge spares, routed to pads (griffin.yml interfaces)
-- [ ] wire all CPLDs (GLUE/ENGINE/PORTS/PIXEL/COMPOSITOR/TIMING) into the JTAG chain
+- [ ] wire all CPLDs (GLUE → PORTS → ENGINE → PIXEL → COMPOSITOR) into the JTAG chain
 - [x] separate DEBUG LED + NPN driver (2N3904 / SOT-23 MMBT3904; base via 1–10 K to DEBUG_OUT)
 
 ### Carryover bug fixes
@@ -515,7 +519,7 @@ Bodging between ENGINE and VIDEO and piggybacked 7200s a la video-fifo-wiring.md
 
 ## Possible new hardware features (July 24 2026)
 
-Video through a CLUT RAM?  For 640 pixels wide need a ~15-25ns part, don't have one in my kit
+~~Video through a CLUT RAM?~~ DONE 2026-09-20: PIXEL is index-only behind a 16×12 RAM (three 16×4 parts), reloadable per line through VIDCMD.  tAA has to beat a 39.7 ns pixel clock; the part is still to be chosen (griffin.yml `issues:`)
 
 ## Strategy
 

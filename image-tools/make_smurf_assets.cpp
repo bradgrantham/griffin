@@ -10,8 +10,11 @@
 // per row, so the sprites stay inside the overlay's per-row VIDCMD budget by
 // construction rather than by luck.
 //
-// Backdrops are 640x480 and lean on vertical gradients, which is what micro-HAM
-// is good at (one palette pair per line, chroma steps for everything else).
+// Backdrops are 640x480 and lean on vertical gradients, which is what a small
+// palette is good at: a gradient walks through few distinct colours, so sixteen
+// entries chosen over the whole screen hold it with the dither carrying the
+// rest.  (They leaned on it for micro-HAM's reasons before 2026-09-20 and they
+// survived the move to 4bpp half rate unchanged.)
 // Sprite sheets are keyed on magenta 0xFF00FF, which sprite2spans treats as
 // transparent.
 
@@ -121,8 +124,9 @@ public:
     }
 
     // A gentle left-to-right tint, laid over whatever is already there.  This is
-    // the part of a backdrop that micro-HAM has to solve with chroma codes
-    // rather than with the line's palette pair, so it is deliberately present.
+    // the part of a backdrop a per-line palette cannot solve by itself -- the
+    // colours vary ALONG the line, not down the frame -- so it is deliberately
+    // present as work for the quantiser and the dither.
     void htint(int y0, int y1, int amount)
     {
         for (int y = y0; y < y1; y++)

@@ -1,0 +1,7 @@
+out/
+clut_prepare
+clut_encode
+clut_decode
+clut_compare
+clut_corrupt
+.DS_Store

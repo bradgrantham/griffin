@@ -1,0 +1,3 @@
+clut_encode preview vs emulator screenshot, pixel compare (stb):
+/tmp/p3run/shx_MAYA0.png vs out/viewgate/maya0-preview.png: 0 of 307200 pixels differ
+/tmp/p3run/fin_v.png vs out/viewgate/maya2-preview.png: 0 of 307200 pixels differ
