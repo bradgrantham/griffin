@@ -1,12 +1,20 @@
-// timing.v — Griffin TIMING CPLD (ATF1504AS PLCC44)
+// timing.v — Griffin raster generator, a MODULE OF THE PIXEL CPLD
+//
+// Not a chip of its own any more: pixel.v `include's this file and
+// instantiates Timing, so PIX_CONSUME / PIX_PRELOAD / PIX_LAST are internal
+// nets and every other output below is a PIXEL pin.  The pin numbers and the
+// DUART OP4..OP7 reservation live in pixel.v's //PIN block, which is the one
+// home for them.  (The standalone ATF1504AS PLCC44 TIMING chip is the
+// pre-merge design, reachable at the rev1-video tag.)
 //
 // The system's one time base.  It owns the VGA raster and every signal the
 // rest of the board derives from it: counters, syncs, the per-frame /RS,
-// COMPOSITOR's H_ACTIVE, the three strobes that hand PIXEL the raster events
-// it cannot see for itself, ENGINE's HBLANK pacing edge, GLUE's frame-IRQ
-// VSYNC, and the two PORTS time bases (paddle and audio ticks).  No CPU bus;
-// no inputs but clock and reset.  The output laws are stated in griffin.yml
-// ("TIMING output contracts") and enforced by timing_tb.v (`make timing-sim`).
+// COMPOSITOR's H_ACTIVE, the three strobes that hand the decoder the raster
+// events it cannot see for itself, ENGINE's HBLANK pacing edge, GLUE's
+// frame-IRQ VSYNC, and the two PORTS time bases (paddle and audio ticks).  No
+// CPU bus; no inputs but clock and reset.  The output laws are stated in
+// griffin.yml ("TIMING output contracts") and enforced by timing_tb.v
+// (`make timing-sim`), which runs them against the merged top level.
 //
 // TICKS ARE SQUARE WAVES, NOT PULSES.  PORTS lives in the SYSCLK domain and
 // synchronizes whatever it is handed; a one-clock pulse here (39.7 ns) is
@@ -19,26 +27,31 @@
 // doubles the product terms of every paddle-counter bit and PORTS stops
 // routing.)  They are separate registers on separate pins so the audio rate
 // can diverge later without a board change — the four DUART OP4..OP7 pins
-// reserved in the //PIN block are the intended selector, not yet consumed by
-// any logic.
+// reserved in pixel.v's //PIN block are the intended selector, not yet
+// consumed by any logic.
 //
-// SPLIT COSTS ONE PIPELINE STAGE.  Every output here is registered, so PIXEL
-// sees PIX_CONSUME one clock after the h_cnt position that produced it and
-// consumes pixel k during h_cnt == k+1.  H_ACTIVE is therefore emitted one
-// clock later still, and the DAC lead grows from 3 to 4:
+// THE REGISTER STAGE IS KEPT, AND THAT IS WHY THE LEADS DO NOT MOVE.  Every
+// output here is registered.  That was forced when TIMING was a separate
+// package and it is deliberate now that it is not: the decoder sees
+// PIX_CONSUME one clock after the h_cnt position that produced it and consumes
+// pixel k during h_cnt == k+1, so
 //
-//   h_cnt == k     TIMING registers PIX_CONSUME for pixel k
-//   h_cnt == k+1   PIXEL consumes pixel k ; TIMING registers H_ACTIVE
-//   h_cnt == k+2   PIXEL's ham_held = pixel k ; COMPOSITOR opens slot k
-//   h_cnt == k+3   PIXEL's RGB_OUT = pixel k, read by COMPOSITOR's mux
+//   h_cnt == k     Timing registers PIX_CONSUME for pixel k
+//   h_cnt == k+1   the decoder consumes pixel k ; Timing registers H_ACTIVE
+//   h_cnt == k+2   grp = pixel k's group ; COMPOSITOR opens slot k
+//   h_cnt == k+3   IDX = pixel k's index ; the palette RAM drives its RGB
 //   h_cnt == k+4   COMPOSITOR's RGB_OUT = pixel k, i.e. the DAC
 //
-// so the sync compares shift later by SPLIT_DAC_LEAD = 4 instead of 3.
+// and the sync compares sit SPLIT_DAC_LEAD = 4 clocks late.  De-registering
+// them inside the merged chip would change every one of those compares, so
+// merging buys pins and a package, not a pipeline stage.  The palette RAM is
+// combinational and costs no clock.
 //
-// CROSS-CHIP TIMING STATUS: these are registered-output to registered-input
-// hops with a full 39.7 ns period less one tCO and one tSU.  The ATF1508AS /
-// ATF1504AS -15 tCO and tSU were NOT verified against the datasheet in this
-// task; the margin is asserted, not proven.
+// CROSS-CHIP TIMING STATUS: the surviving hops (H_ACTIVE and /RS to
+// COMPOSITOR, HBLANK to ENGINE, nVSYNC_IRQ to GLUE, the two ticks to PORTS)
+// are registered-output to registered-input with a full 39.7 ns period less
+// one tCO and one tSU.  The ATF1508AS -15 tCO and tSU were NOT verified
+// against the datasheet in this task; the margin is asserted, not proven.
 
 module Timing
 (
@@ -191,31 +204,5 @@ module Timing
 
 endmodule
 
-// TIMING ATF15xx - Griffin board, Rev 2
-// Pin assignment FROZEN 2026-08-26: harvested from the feature-complete
-// -preassign ignore fit (production strategy flags incl. JTAG) and
-// re-verified under -preassign keep.  The board is routed from these
-// numbers; a change here is a respin, not a re-fit.
-// Appended 2026-08-26 (same day, before capture): HBLANK, nVSYNC_IRQ,
-// PADDLE_TICK, AUDIO_TICK placed by a -preassign keep fit with power_reset
-// on; the original nine did not move.  Fit ladder that day: 31/64 LC
-// (frozen) -> 31 (+power_reset, pins unchanged) -> 36 (+4 outputs with a
-// line-parity flop) -> 35 (ticks toggle every line; parity flop removed).  Pins 20, 21, 24, 25 are RESERVED for
-// DUART OP4..OP7 (future TIMING mode/rate select, no logic yet): the
-// schematic must route them, and no future output may be placed there.
-// GCLK2 (pin 44) is deliberately left free for an optional second oscillator.
-//PIN: CHIP "timing" ASSIGNED TO AN PLCC44
-//PIN: PIX_LAST     : 9
-//PIN: VGA_VSYNC    : 8
-//PIN: nRS          : 6
-//PIN: VGA_HSYNC    : 5
-//PIN: PIX_PRELOAD  : 4
-//PIN: H_ACTIVE     : 16
-//PIN: PIX_CONSUME  : 14
-//PIN: PIXEL_CLK    : 43
-//PIN: nRESET       : 1
-//PIN: PADDLE_TICK  : 17
-//PIN: AUDIO_TICK   : 18
-//PIN: HBLANK       : 19
-//PIN: nVSYNC_IRQ   : 31
-// RESERVED (not fitted): DUART OP4 -> pin 20, OP5 -> pin 21, OP6 -> pin 24, OP7 -> pin 25
+// NO //PIN BLOCK HERE.  This is a module of the PIXEL chip; its pins, and the
+// DUART OP4..OP7 reservation that used to sit in this block, are in pixel.v.

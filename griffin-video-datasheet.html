@@ -187,8 +187,9 @@
       <div class="sub">Two-stream display subsystem &mdash; mechanism reference and screen-mode application notes</div>
     </div>
     <div class="docmeta">
-      REV 2 &middot; DRAFT 2026-08-26<br>
-      sources: compositor.v / pixel.v / timing.v,<br>
+      REV 3 PROPOSAL &middot; DRAFT 2026-09-20<br>
+      branch indexed-pixel; rev-1 state = tag rev1-video<br>
+      sources: indexed-pixel-spec-draft.md, compositor.v,<br>
       griffin.yml interfaces, vidcmd-spec.md, super-engine suite
     </div>
   </div>
@@ -198,25 +199,27 @@
       <h2>Features</h2>
       <ul>
         <li>VGA 640&times;480@59.94, R4G4B4 (12-bit) color throughout</li>
-        <li>Fixed-rate indexed pixel stream + beam-locked RLE command stream</li>
+        <li>Fixed-rate indexed pixel stream through a 16&times;12-bit palette RAM + beam-locked RLE command stream</li>
         <li>Pixel-exact mid-line register writes (SET, banked-pair law)</li>
-        <li>Per-line palettes at zero slot cost (hblank-eager SETs)</li>
-        <li>Micro-HAM 2bpp mode for high-fidelity still images</li>
-        <li>No CPU bus on PIXEL / TIMING / COMPOSITOR &mdash; all state in-band</li>
+        <li>Palette entries reloadable per line in hblank (3 words per entry, 8 per line)</li>
+        <li>1 / 2 / 4 bpp and an attribute-word tile mode (TMS9918 Graphics II, inline)</li>
+        <li>No CPU bus on PIXEL / COMPOSITOR &mdash; all state in-band, palette included</li>
       </ul>
     </div>
     <div>
       <h2>Device Complement</h2>
       <ul>
         <li>ENGINE &mdash; ATF1508AS, descriptor DMA master (123/128 LC)</li>
-        <li>PIXEL &mdash; ATF1508AS, stream unpacker (105/128 LC)</li>
+        <li>PIXEL + TIMING &mdash; one ATF1508AS: stream unpacker, palette writer, raster + syncs + board time bases (122/128 LC, 43 I/O in the fit experiment; production fit pending)</li>
         <li>COMPOSITOR &mdash; ATF1508AS, VIDCMD playback (122/128 LC)</li>
-        <li>TIMING &mdash; ATF1504AS PLCC44, raster + syncs + board time bases (35/64 LC, 15/32 I/O)</li>
-        <li>2&times;2 IDT7200L15 FIFOs (256&times;9): PIXELS and VIDCMD streams</li>
+        <li>Palette &mdash; 3&times; 16&times;4 separate-I/O bipolar RAM, 74F219 pinout (non-inverting; &le;22.7 ns address access required)</li>
+        <li>2&times;2 IDT7200L15 FIFOs (256&times;9): PIXELS and VIDCMD streams, both read as ganged 16-bit ports</li>
         <li>2&times; 74AC541 + R4G4B4 ladder DAC to DE-15</li>
       </ul>
     </div>
   </div>
+
+  <p class="note" style="border:1px solid var(--prelim);background:var(--prelim-bg);padding:8px 12px;max-width:none;margin-top:16px"><b>Proposal revision.</b> This sheet describes the indexed-PIXEL pipeline being landed on branch <code>indexed-pixel</code>: micro-HAM and PIXEL&rsquo;s 12-bit colour registers retire, a palette RAM sits between PIXEL and COMPOSITOR, TIMING folds into the PIXEL chip, and the PIXELS FIFO is read 16 bits wide. COMPOSITOR and the VIDCMD word formats are unchanged. Sections stamped PRELIMINARY are fitted and simulated as experiments but not yet production RTL, model, suite or emulator; rev-1 boards cannot take this bitfile. The shipped rev-1 description is this file at tag <code>rev1-video</code>.</p>
 
   <section>
     <div class="secbar"><span>General Description</span><span class="no">1</span></div>
@@ -225,7 +228,8 @@
       (128 flip-flops per device), so no line buffer, tile fetch, or sprite shifter bank
       can exist on-chip. The only line-scale memory is the FIFO pair on each stream, and a
       FIFO&rsquo;s contract is <em>sequential delivery</em>. The architecture therefore carries
-      everything as two streams: <b>PIXELS</b>, a fixed-rate indexed data plane, and
+      everything as two streams: <b>PIXELS</b>, a fixed-rate indexed data plane whose 4-bit indices
+      address a small external palette RAM, and
       <b>VIDCMD</b>, a variable-rate control plane executed in lockstep with the beam.
       COMPOSITOR merges them per pixel slot; TIMING cancels every stage&rsquo;s fixed latency
       by firing its comparators early (derived leads, not tuned).
@@ -234,9 +238,11 @@
       <div class="bd-row">
         <div class="bd-box"><b>ENGINE</b><span>descriptor DMA<br>4-word records<br>top 64K of RAM</span></div>
         <div class="bd-arrow">D[15:0]<br>&rarr;</div>
-        <div class="bd-box"><b>PIXELS FIFO</b><span>2&times;7200 byte-interleaved<br>shared 8-bit Q</span></div>
-        <div class="bd-arrow">Q[7:0]<br>&rarr;</div>
-        <div class="bd-box"><b>PIXEL</b><span>1bpp / &micro;HAM unpack<br>pal_fg pal_bg ham_held<br>mode, pixel_skip</span></div>
+        <div class="bd-box"><b>PIXELS FIFO</b><span>2&times;7200 ganged 16-bit<br>one registered /RE</span></div>
+        <div class="bd-arrow">Q[15:0]<br>&rarr;</div>
+        <div class="bd-box"><b>PIXEL</b><span>1/2/4bpp / attr unpack<br>pix_base, mode, pixel_skip<br>clut_index, /CLUT_WE</span></div>
+        <div class="bd-arrow">IDX[3:0]<br>&rarr;</div>
+        <div class="bd-box"><b>PALETTE</b><span>3&times; 74F219<br>16 &times; R4G4B4<br>never reset</span></div>
         <div class="bd-arrow">RGB[11:0]<br>&rarr;</div>
         <div class="bd-box"><b>COMPOSITOR</b><span>VIDCMD playback<br>4 sources / slot<br>fetch: 2 clk/word</span></div>
         <div class="bd-arrow">RGB_OUT<br>&rarr;</div>
@@ -244,13 +250,14 @@
       </div>
       <div class="bd-row" style="margin-top:8px">
         <div class="bd-box" style="border-style:dashed"><b>VIDCMD FIFO</b><span>2&times;7200 ganged 16-bit<br>Q[15:0] &rarr; COMPOSITOR only<br>/EF sync&rsquo;d, /RE registered</span></div>
-        <div class="bd-arrow">set_pix_value[11:0]<br>+ target/valid/commit<br>&larr; (17 registered nets)</div>
-        <div class="bd-box" style="border-style:dashed"><b>TIMING</b><span>H_ACTIVE (+2 lead), nRS<br>PIX_CONSUME/PRELOAD/LAST<br>HSYNC/VSYNC out<br>HBLANK &rarr; ENGINE, nVSYNC_IRQ &rarr; GLUE<br>PADDLE_TICK/AUDIO_TICK &rarr; PORTS</span></div>
+        <div class="bd-arrow">set_pix_value[11:0] &rarr; palette data in,<br>[3:0] + target/valid/commit &rarr; PIXEL<br>&larr; (registered nets)</div>
+        <div class="bd-box" style="border-style:dashed"><b>TIMING (inside the PIXEL chip)</b><span>H_ACTIVE (+2 lead), nRS<br>PIX_CONSUME/PRELOAD/LAST<br>HSYNC/VSYNC out<br>HBLANK &rarr; ENGINE, nVSYNC_IRQ &rarr; GLUE<br>PADDLE_TICK/AUDIO_TICK &rarr; PORTS</span></div>
       </div>
       <div class="bd-under">
         ENGINE fills both FIFOs by DMA (one-hot /W strobes from descriptors).
-        The COMPOSITOR&rarr;PIXEL register path is the only upstream signal group;
-        all 17 nets are flop-to-flop, same clock, full-cycle setup.
+        The COMPOSITOR&rarr;PIXEL register path is the only upstream signal group, flop-to-flop,
+        same clock, full-cycle setup; its 12 value bits also sit on the palette RAM&rsquo;s data inputs,
+        so a palette write needs no bus turnaround.
       </div>
     </div>
   </section>
@@ -265,6 +272,9 @@
       <tr><td>Peak DMA delivery</td><td class="num">222 words/line</td><td>&asymp;1 word per 3.6 pixel clocks, 100% bus</td></tr>
       <tr><td>Delivery at 66% bus cap</td><td class="num">&asymp;147 words/line</td><td>CPU retains &ge;34% of memory bandwidth</td></tr>
       <tr><td>Effective (burst overhead)</td><td class="num">&asymp;120&ndash;145 words/line</td><td>~10-cycle BR/BG/BGACK handshake per 20-word burst</td></tr>
+      <tr><td>Palette</td><td class="num">16 &times; 12 bits</td><td>every playfield pixel in every mode; COMPOSITOR&rsquo;s own colours bypass it</td></tr>
+      <tr><td>Palette reload</td><td class="num">3 words / entry</td><td>SET clut_index, SET clut_data, same-value filler; 8 entries per hblank packet, 16 in vblank = 48 words</td></tr>
+      <tr><td>CPU left under DMA</td><td class="num">76% / 56% / 52%</td><td>1bpp console / pure-VIDCMD text / 80-word playfield &mdash; emulator cost model, not hardware (apps/dmabench)</td></tr>
       <tr><td>Stream FIFO capacity</td><td class="num">256 words each</td><td>hblank/vblank pre-banking cushion</td></tr>
       <tr><td>VIDCMD fetch cadence</td><td class="num">2 px clk / word</td><td>registered /RE; pinned worst-case table, &sect;5</td></tr>
       <tr><td>Output pipeline</td><td class="num">4 clocks total</td><td>absorbed by TIMING leads (DAC_LEAD 4); invisible on screen</td></tr>
@@ -281,23 +291,37 @@
       <span class="st adv">ADVANCE</span> = concept; specification may change.
     </p>
 
-    <h3><span class="mnum">3.1</span> PIXELS stream &mdash; indexed data plane <span class="st prod">PRODUCTION</span></h3>
+    <h3><span class="mnum">3.1</span> PIXELS stream &mdash; indexed data plane <span class="st prelim">PRELIMINARY</span></h3>
     <div class="twrap"><table>
-      <tr><th>Mode</th><th class="num">Rate</th><th class="num">Words/line</th><th>Pixel meaning</th></tr>
-      <tr><td>1bpp direct</td><td class="num">1 bit/clk</td><td class="num">40</td><td>bit selects pal_fg / pal_bg</td></tr>
-      <tr><td>2bpp micro-HAM</td><td class="num">2 bits/clk</td><td class="num">80</td><td>dibit ops: <code>0_p</code> held&larr;pal[p]; <code>10_g_r</code>, <code>11_g_b</code> modify held chroma</td></tr>
+      <tr><th>Depth</th><th class="mono">mode[1:0]</th><th>Palette index</th><th class="num">Words/line full</th><th class="num">half rate</th></tr>
+      <tr><td>1bpp</td><td class="mono">00</td><td><code>{pix_base[3:1], bit}</code> &mdash; one of 8 colour pairs</td><td class="num">40</td><td class="num">20</td></tr>
+      <tr><td>2bpp</td><td class="mono">01</td><td><code>{pix_base[3:2], dibit}</code> &mdash; one of 4 colour quads</td><td class="num">80</td><td class="num">40</td></tr>
+      <tr><td>4bpp</td><td class="mono">10</td><td>nibble &mdash; the whole table</td><td class="num">undefined</td><td class="num">80</td></tr>
+      <tr><td>attribute word</td><td class="mono">11</td><td><code>{fg4, bg4, pattern8}</code> per 8-group cell: bit ? fg : bg</td><td class="num">80</td><td class="num">40</td></tr>
     </table></div>
     <p>
-      Pure pixel bits &mdash; no in-band header (retired with rev 1). Palettes, mode, and
-      pixel_skip arrive as VIDCMD SETs. On underrun PIXEL re-shifts its last word: one
-      <code>0x0000</code> word paints background to end of line or frame (a compression feature,
-      not an error path).
+      <code>mode[2]</code> is half rate (&sect;3.7). Words are consumed MSB first; pure pixel bits, no
+      in-band header. With the TMS9918 palette loaded, the attribute word is the Graphics II colour
+      byte followed by the pattern byte: a tile background is words copied from tables, scrolled by
+      moving descriptor pointers. At full rate the same mode is 80-column cell-coloured text.
+      4bpp at full rate is over the line budget and desynchronizes the frame; do not select it.
+      Mode, base and skip arrive as VIDCMD SETs in blanking; mode may differ line to line.
+      On underrun PIXEL re-shifts zeros: index 0 of the current base.
+    </p>
+    <p>
+      <b>pixel_skip</b> (4 bits, stream bits) is a start position inside the line&rsquo;s first word;
+      coarser scrolling moves the source pointer by words. Clamps: 2bpp to even, 4bpp to multiples
+      of 4, attribute mode ignores skip. Recorded limits: 1bpp 15 acts as 14; 2bpp full rate 14/15
+      act as 12. A line with non-zero skip consumes <b>one extra word</b> (the author supplies it)
+      and its tail shows real data. Skip is sampled at the line&rsquo;s preload &mdash; set it before
+      the line.
     </p>
 
     <h3><span class="mnum">3.2</span> VIDCMD playback &mdash; beam-locked control plane <span class="st prod">PRODUCTION</span></h3>
     <pre>RUN        { 2'b00, src[1:0],  ~count[11:0] }   src: 00 passthrough  01 held_fg  10 held_bg
 RUN_COLOR  { 2'b00, 2'b11, colour[2:0], ~count[8:0] }   8 saturated corners, inline
-SET        { 1'b1,  target[2:0], value[11:0] }  0 held_fg  1 held_bg  2..6 &rarr; PIXEL regs
+SET        { 1'b1,  target[2:0], value[11:0] }  0 held_fg  1 held_bg  2 clut_index  3 clut_data
+                                                4 pix_base  5 pix_mode  6 pixel_skip  7 filler (ignored)
 reserved   { 2'b01, ... }                       1-slot no-op (mask record candidate, &sect;3.5)</pre>
     <p>
       Every active pixel clock is one <b>slot</b>; a record occupies exactly one slot when it
@@ -355,25 +379,30 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
       Full-line coverage: 80 words/line, under the delivery cap.
     </p>
 
-    <h3><span class="mnum">3.6</span> 2bpp indexed mode <span class="st prod">PRODUCTION</span></h3>
+    <h3><span class="mnum">3.6</span> Palette RAM &mdash; load and reload <span class="st prelim">PRELIMINARY</span></h3>
     <p>
-      Mode register bit 1 (bitwise decode; 11 reserved, HAM wins): PIXELS consumed 2 bits/clock
-      as a direct index &mdash; <b>zero new registers</b>: 00&rarr;pal_bg, 01&rarr;pal_fg,
-      10&rarr;ham_held, 11&rarr;constant black. Four colors, three per-line settable via free
-      hblank SETs. 80 words/line. Odd pixel_skip clamps to even (as HAM). One order rule:
-      <b>SET mode before SET ham_held</b> &mdash; indexed mode locks the stream out of ham_held so
-      code 10 shows the SET-loaded value. Fitted (PIXEL 105/128 incl. &sect;3.7); tb + suite +
-      emulator all express it (m8-indexed2 pixel-exact, 89 words/line with recolors vs the cap).
+      <code>SET clut_index</code> names an entry; <code>SET clut_data</code> writes its 12-bit colour:
+      PIXEL puts <code>clut_index</code> on IDX and pulses <code>/CLUT_WE</code> for one clock while the
+      value is still on <code>set_pix_value</code>, which is wired to the RAM&rsquo;s data inputs.
+      COMPOSITOR re-registers that bus from every staged word, so each data SET is followed by one
+      filler that leaves it unchanged: <code>SET target 7</code> with the same value. Three words per
+      entry. The RAM is <b>never reset</b> and powers up undefined &mdash; software loads what it uses
+      (16 entries in vblank = 48 words); contents persist across frames.
+    </p>
+    <p>
+      A write takes over the pixel bus for a few clocks (RAM outputs float while /WE is low, then
+      need write recovery), so it is legal <b>only in blanking or under a non-passthrough RUN / opaque
+      MASK</b>. The exact hold and disturbed-window clock counts are being pinned by the chip-pair
+      testbench (COMPOSITOR + PIXEL + RAM model).
     </p>
 
-    <h3><span class="mnum">3.7</span> Half-rate flag &mdash; 320-wide modes <span class="st prod">PRODUCTION</span></h3>
+    <h3><span class="mnum">3.7</span> Half-rate flag &mdash; 320-wide modes <span class="st prelim">PRELIMINARY</span></h3>
     <p>
       Mode register bit 2: each consumed group held 2 pixel clocks &mdash; 320 effective pixels.
-      1bpp drops to 20 words/line, 2bpp indexed to 40; hardware-masked off in micro-HAM (the
-      flag does nothing there, by one deliberate literal). <b>COMPOSITOR never learns the
-      rate</b>: MASK dibits and SET boundaries stay full 640-px resolution over the chunky
-      playfield (m9-halfrate: 0 split playfield groups, 1-px sprite detail on top). Vertical
-      analog is free via line-repeat descriptors (&sect;3.9).
+      1bpp drops to 20 words/line, 2bpp and the attribute word to 40; 4bpp exists only at half
+      rate (80). <b>COMPOSITOR never learns the rate</b>: MASK dibits and SET boundaries stay full
+      640-px resolution over the chunky playfield. Vertical analog is free via line-repeat
+      descriptors (&sect;3.9).
     </p>
 
     <h3><span class="mnum">3.8</span> LITERAL record &mdash; direct-color spans <span class="st adv">ADVANCE</span></h3>
@@ -392,7 +421,8 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
       (<code>AUDIO_FIFO_W</code> strobe) are all authoring, not silicon.
     </p>
 
-    <h3><span class="mnum">3.10</span> TIMING fan-out &mdash; the board&rsquo;s one time base <span class="st prod">PRODUCTION</span></h3>
+    <h3><span class="mnum">3.10</span> TIMING fan-out &mdash; the board&rsquo;s one time base <span class="st prelim">PRELIMINARY (relocating)</span></h3>
+    <p class="note"><b>Rev 3:</b> the TIMING logic moves unchanged into the PIXEL chip; the laws below and <code>timing_tb.v</code> still govern it. Pin numbers in this section are the retired ATF1504 part&rsquo;s; the merged chip&rsquo;s pinout is &ldquo;proposed rev-2, not frozen&rdquo; until the board is routed. The DUART OP4..OP7 reservation follows the logic.</p>
     <p>
       TIMING has no CPU bus and no input but clock and reset, so every output is a closed-form
       function of (h_cnt, v_cnt), and every one is registered &mdash; the extra pipeline stage the
@@ -429,26 +459,40 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
     <p class="note">Words/line includes typical hblank SET preambles. Budget reference: &asymp;147 words/line at the 66% bus cap (&sect;2).</p>
 
     <div class="recipe">
-      <div class="recipe-head"><b>Text console &mdash; 640&times;480, 2 colors/line</b><span class="cost">&asymp;43 words/line &middot; 19% bus</span><span class="st prod">PRODUCTION</span></div>
+      <div class="recipe-head"><b>Text console &mdash; 640&times;480, 2 colors/line</b><span class="cost">&asymp;43 words/line &middot; CPU keeps 76%</span><span class="st prelim">PRELIMINARY</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> 1bpp stream (&sect;3.1) + per-line SET pal_fg/pal_bg in hblank (&sect;3.2, free) + RUN(passthrough, 640).</p>
-        <p><b>Notes:</b> the shipping firmware console. Software font render into the framebuffer; attributes = per-line palette.</p>
+        <p><b>Recipe:</b> 1bpp stream (&sect;3.1) + two palette entries loaded in vblank + RUN(passthrough, 640). Per-line colour = <code>SET pix_base</code> in hblank picking one of 8 preloaded pairs (1 word), or palette rewrites (3 words each).</p>
+        <p><b>Notes:</b> the firmware console. Software font render into the framebuffer. An ST-style mono desktop is the same recipe with entries 0/1 swapped.</p>
       </div>
     </div>
 
     <div class="recipe">
-      <div class="recipe-head"><b>4-color bitmap &mdash; 640&times;480</b><span class="cost">&asymp;85 words/line &middot; 38% bus</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-head"><b>Cell-coloured text &mdash; 80 columns, fg/bg per character</b><span class="cost">&asymp;83 words/line</span><span class="st prelim">PRELIMINARY</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> 2bpp indexed mode (&sect;3.6) + hblank SETs for the three live entries.</p>
-        <p><b>Notes:</b> per-line 4-color paint program / basic graphics target. Colors change per line for free.</p>
+        <p><b>Recipe:</b> attribute word at full rate (&sect;3.1): one word per 8-pixel cell per line carries both colours and the glyph row.</p>
+        <p><b>Notes:</b> any 2 of 16 colours per character cell; no character generator &mdash; software writes glyph rows into the words.</p>
       </div>
     </div>
 
     <div class="recipe">
-      <div class="recipe-head"><b>Game mode &mdash; 320-wide, 4 colors + sprites</b><span class="cost">&asymp;60&ndash;80 words/line &middot; &le;36% bus</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-head"><b>4-color bitmap &mdash; 640&times;480</b><span class="cost">&asymp;83 words/line &middot; CPU keeps ~52%</span><span class="st prelim">PRELIMINARY</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> half-rate 2bpp playfield (&sect;3.7 + &sect;3.6, 40 w/line) + MASK sprites (&sect;3.5) + SET pairs for per-object color (L5 places them pixel-exact after any &ge;4-px span).</p>
-        <p><b>Notes:</b> &ldquo;a step past Colecovision&rdquo;: CV gives 4 single-color sprites/line; this gives delivery-bound sprite coverage (8 head-first / 32 interleaved spans/line measured), 12-bit color, arbitrary widths &mdash; color granularity per 16-px mask word rather than per sprite pixel. Line-repeat descriptors for 320&times;240 halve the stream again.</p>
+        <p><b>Recipe:</b> 2bpp (&sect;3.1); <code>pix_base</code> selects which quad of the palette, switchable per line with one SET.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Tile game &mdash; 320-wide, 16 colors, static background + sprites</b><span class="cost">40 words/line + sprite records</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> attribute word at half rate (&sect;3.1, &sect;3.7) built once per screen from tile tables; scroll by descriptor pointer; the VIDCMD line program carries only sprites (MASK / RUN, &sect;3.5) in direct 12-bit colour.</p>
+        <p><b>Notes:</b> the ColecoVision-port shape (Smurf): nothing is re-encoded when a sprite moves except that sprite&rsquo;s own records. 16-colour alternative: 4bpp half rate at 80 words/line.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>16-color bitmap &mdash; 320&times;480 (or 320&times;240 by line repeat)</b><span class="cost">&asymp;83 words/line &middot; CPU keeps ~52%</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> 4bpp half rate; fine horizontal scroll by pixel_skip 0/4/8/12 plus the word pointer; vertical scroll by descriptors.</p>
       </div>
     </div>
 
@@ -464,23 +508,23 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
       <div class="recipe-head"><b>Pure-VIDCMD screens &mdash; the display list is the framebuffer</b><span class="cost">console 82 w/line worst, 51 typical &middot; kiosk 30</span><span class="st prod">PRODUCTION (modeled)</span></div>
       <div class="recipe-body">
         <p><b>Recipe:</b> no PIXELS fills at all &mdash; text and UI as MASK groups + RUN gaps + hblank SETs. m6-console: 80&times;60 text, two glyphs per record, pixel-exact vs reference. m7-kiosk: large text (15&times;28 glyphs in 16&times;32 cells &mdash; the implicit px0 dictates &le;15-px art), per-item colors, RUN_COLOR highlight bar.</p>
-        <p><b>Notes:</b> with PIXELS empty, dibit-00 resolves to pal_bg in the model &mdash; a third settable color (hardware verification OPEN, &sect;7). Every-group recoloring is impossible by construction (160 w/line &gt; cap AND 800 slots &gt; 640); sparse recoloring fits easily. Also the staged bring-up path: a working display before PIXEL is ever socketed.</p>
+        <p><b>Notes:</b> with PIXELS empty, dibit-00 resolves to palette entry <code>{pix_base, 0}</code> &mdash; a third settable color (hardware verification OPEN, &sect;7). Every-group recoloring is impossible by construction (160 w/line &gt; cap AND 800 slots &gt; 640); sparse recoloring fits easily. Also the staged bring-up path: a working display before PIXEL is ever socketed.</p>
       </div>
     </div>
 
     <div class="recipe">
       <div class="recipe-head"><b>Dual playfield &mdash; 2bpp under + 1bpp over</b><span class="cost">&asymp;125 words/line &middot; 56% bus (worst case)</span><span class="st prelim">PRELIMINARY</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> 2bpp playfield in PIXELS + sustained full-line MASKs in VIDCMD (40 w/line, cadence-immune per &sect;3.5).</p>
+        <p><b>Recipe:</b> 2bpp (or half-rate 4bpp) playfield in PIXELS + sustained full-line MASKs in VIDCMD (40 w/line, cadence-immune per &sect;3.5).</p>
         <p><b>Notes:</b> exceeds the 66% cap only with every line dense; drop either plane to 320-wide to halve its cost.</p>
       </div>
     </div>
 
     <div class="recipe">
-      <div class="recipe-head"><b>Image viewer &mdash; high-fidelity stills</b><span class="cost">&asymp;80 words/line &middot; 36% bus</span><span class="st prod">PRODUCTION</span></div>
+      <div class="recipe-head"><b>Image viewer &mdash; stills</b><span class="cost">&asymp;85&ndash;130 words/line</span><span class="st prelim">PRELIMINARY (host experiment)</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> micro-HAM stream (&sect;3.1) + per-line palette SETs. Suite-exact encoder in image-tools (ordered dither default, FS for photos).</p>
-        <p><b>Notes:</b> chroma saturates (2 colors/line + 8 corners); infrequent update by design.</p>
+        <p><b>Recipe:</b> 4bpp half rate with 2&ndash;5 palette entries rewritten per line in hblank, optionally refined by up to 16 exact-colour RUN spans per line.</p>
+        <p><b>Notes:</b> replaces micro-HAM. On four test photographs the 4x4-box error is 3&ndash;5&times; lower than micro-HAM&rsquo;s best at the same 80 pixel words (image-tools/clut-experiment; span placement there is a conservative stand-in for the planner).</p>
       </div>
     </div>
 
@@ -545,18 +589,23 @@ VIDCMD_Q     ----------&lt;==word==&gt;-  valid &le; 25.0 ns after a (tCO 8.0 + 
       <tr><td>MASK record (&sect;3.5)</td><td>fitted 121/128; tb + suite model + plan sim + author + 2 pure-VIDCMD screen cases</td><td class="mono">PASS 2026-08-24</td></tr>
       <tr><td>Pure-VIDCMD screens (&sect;4)</td><td>m6-console (82 w/line worst, pixel-exact) + m7-kiosk (30 w/line, measured seams)</td><td class="mono">PASS 2026-08-24</td></tr>
       <tr><td>Passthrough-as-third-color (empty PIXELS &rarr; dibit 00 = pal_bg)</td><td>model behavior only &mdash; verify pixel.v post-/RS re-shift + 7200 Q with no writes on hardware</td><td class="mono">OPEN</td></tr>
-      <tr><td>2bpp indexed + half-rate (&sect;3.6&ndash;3.7)</td><td>fitted (PIXEL 105/128, pinout frozen); pixel_tb 9 cases; model + suite (m8/m9) + emulator</td><td class="mono">PASS 2026-08-26</td></tr>
+      <tr><td>Indexed PIXEL + TIMING in one chip, 16-bit PIXELS port (&sect;3.1, &sect;3.6)</td><td>fit ladder cpld/experiments/indexed-pixel: 122/128 LC, 43 I/O, pass 1; 136 hand-derived line-runs incl. full skip matrix; mutants fail</td><td class="mono">EXPERIMENT PASS 2026-09-20</td></tr>
+      <tr><td>Production pixel.v, pixel_tb, timing_tb on merged top, chip-pair palette-write bench</td><td>package 1, branch indexed-pixel</td><td class="mono">IN PROGRESS</td></tr>
+      <tr><td>Shared model, suite cases, emulator, firmware console, apps, griffin.yml / vidcmd-spec</td><td>packages 2&ndash;4, gated on package 1</td><td class="mono">TO DO</td></tr>
+      <tr><td>Palette RAM read path</td><td>PIXEL tCO 8.0 + flight + RAM tAA &le; 32.7 ns &rArr; tAA &le; 22.7 ns over 0&ndash;70&nbsp;&deg;C, from the purchased part&rsquo;s datasheet (Fairchild 74F219 at 27 ns fails); write timing table likewise</td><td class="mono">OPEN</td></tr>
+      <tr><td>Micro-HAM; pal_fg / pal_bg / ham_held; byte-interleaved PIXELS read</td><td>superseded; with them go the skip&ge;8 mis-pairing bug and the adjacent-clock FIFO bus turnover found 2026-09-19</td><td class="mono">RETIRED (rev 3)</td></tr>
+      <tr><td>2bpp indexed + half-rate, rev-1 form (tag rev1-video)</td><td>fitted (PIXEL 105/128, pinout frozen); pixel_tb 9 cases; model + suite (m8/m9) + emulator</td><td class="mono">PASS 2026-08-26</td></tr>
       <tr><td>TIMING testbench (timing_tb.v): closed-form laws + 12 relations + 10 negative controls</td><td>every output vs its griffin.yml-derived law on every clock of two frames (0 mismatches / 841,600 clocks); 12 relation checks between outputs; 10 mutations each required to FAIL (<code>make timing-sim</code>)</td><td class="mono">PASS 2026-08-26</td></tr>
       <tr><td>TIMING fan-out outputs (&sect;3.10)</td><td>fitted 35/64 LC, 15/32 I/O under -preassign keep with production flags; four pins appended to the frozen //PIN block, original nine unmoved</td><td class="mono">PASS 2026-08-26</td></tr>
-      <tr><td>Pinout freeze: COMPOSITOR / PIXEL / TIMING</td><td>//PIN blocks harvested from production-flag fits, re-verified IDENTICAL under -preassign keep; TIMING&rsquo;s HBLANK / nVSYNC_IRQ / PADDLE_TICK / AUDIO_TICK appended same day, plus pins 20/21/24/25 reserved for DUART OP4..OP7</td><td class="mono">FROZEN 2026-08-26</td></tr>
+      <tr><td>Pinout freeze: COMPOSITOR (still frozen); PIXEL / TIMING superseded by the merged chip&rsquo;s proposed rev-2 pinout</td><td>//PIN blocks harvested from production-flag fits, re-verified IDENTICAL under -preassign keep; TIMING&rsquo;s HBLANK / nVSYNC_IRQ / PADDLE_TICK / AUDIO_TICK appended same day, plus pins 20/21/24/25 reserved for DUART OP4..OP7</td><td class="mono">COMPOSITOR FROZEN 2026-08-26</td></tr>
       <tr><td>LITERAL record (&sect;3.8)</td><td>specify after MASK verdict</td><td class="mono">CONCEPT</td></tr>
       <tr><td>Dual-playfield delivery margin</td><td>suite case at 66% bus model</td><td class="mono">TO WRITE</td></tr>
     </table></div>
   </section>
 
   <div class="footer">
-    <span>Griffin rev 2 &mdash; working design record; normative sources are the RTL headers and griffin.yml.</span>
-    <span>DRAFT &middot; 2026-08-26</span>
+    <span>Griffin video, rev 3 proposal &mdash; working design record; normative sources are the RTL headers, griffin.yml and, until landed, indexed-pixel-spec-draft.md.</span>
+    <span>DRAFT &middot; 2026-09-20</span>
   </div>
 
 </div>

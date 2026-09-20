@@ -34,14 +34,15 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "adapter speed 2000" \
     -c init
 
-.PHONY: all glue video engine audio ports compositor compositor-sim pixel pixel-sim timing timing-sim clean
+.PHONY: all glue video engine audio ports compositor compositor-sim \
+        pixel pixel-sim pixel-mutants timing-sim clut-pair-sim clean
 
 # The default set is the Rev 2 super-engine video path: display-list ENGINE,
-# TIMING + PIXEL + COMPOSITOR.  VIDEO is the Rev 1 in-band-header design,
+# PIXEL (with TIMING folded in) + COMPOSITOR.  VIDEO is the Rev 1 in-band-header design,
 # retired from `all` when ENGINE was promoted to the display-list model the
 # two can't interoperate with; `make video` still builds it for the Rev 1
 # board.
-all: glue engine ports compositor pixel timing
+all: glue engine ports compositor pixel
 
 # Single source of truth: regenerate ../griffin.generated.vh (a prereq of the
 # .edif targets below) by delegating to the root, keyed to griffin.yml/codegen.py.
@@ -185,54 +186,80 @@ compositor-sim: compositor/compositor_tb.v compositor/compositor.v
 	cd compositor && iverilog -g2012 -o compositor_tb.vvp compositor_tb.v compositor.v && vvp compositor_tb.vvp
 
 # ------------------------------------------------------------
-# PIXEL (ATF1508AS) and TIMING (ATF1504AS PLCC44)
+# PIXEL (ATF1508AS PLCC84) — the indexed decoder WITH TIMING FOLDED IN
 #
-# VIDEO's successors on the super-engine path.  The combined PIXEL+TIMING
-# needs ~153 logic cells and does not fit an ATF1508AS (pixel_combined.v,
-# kept as the measured negative result), so the raster lives in TIMING —
-# which fits the smaller ATF1504AS PLCC44 at 48% with room to grow — and
-# PIXEL takes the raster as the PIX_CONSUME/PIX_PRELOAD/PIX_LAST event
-# strobes.  No boards yet: free placement, no //PIN: blocks, placements
-# feed the Rev 2 layout.  Self-contained like compositor.v for now.
+# One chip: pixel.v `include's timing.v and instantiates Timing, so the three
+# raster strobes are internal nets and TIMING's other outputs are PIXEL pins.
+# There is no separate `timing` fit target any more — the standalone
+# ATF1504AS PLCC44 TIMING chip is the pre-merge design and is reachable at the
+# rev1-video tag.  The 2026-08-13 measurement that forced the split
+# (pixel_combined.v, ~153 logic cells) was of the MICRO-HAM, 12-bit-colour
+# PIXEL; index-only is a different-sized chip and the merge fits with room to
+# spare (cpld/pixel/LANDING-NOTES.md).
+#
+# timing.v is NEVER compiled on its own: it has no //PIN block and no fit
+# target, and anything that compiles pixel.v already has it.
+#
+# Three testbenches, all of which must pass before a semantic change is done
+# (CLAUDE.md, video-chain discipline):
+#   pixel-sim      the decoder: modes, fetch cadence, skip law, words/line
+#   timing-sim     the raster laws, run against the MERGED top level
+#   clut-pair-sim  COMPOSITOR + PIXEL + a model of the three palette RAMs
 # ------------------------------------------------------------
 
 pixel: pixel/pixel.jed
 
-pixel/pixel.edif: pixel/pixel.v
+pixel/pixel.edif: pixel/pixel.v pixel/timing.v
 	cd pixel && $(YOSYS) pixel
 
 pixel/pixel.jed: pixel/pixel.edif
 	cd pixel && $(FITTER) pixel -preassign keep -strategy debug = on -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy power_reset on -strategy JTAG = on
 
 # `make pixel-sim` runs the iverilog testbench, which is the real
-# specification of the decoder's per-mode pixel semantics and of the byte
-# engine's fetch cadence; it exits nonzero if any check fails.
-pixel-sim: pixel/pixel_tb.v pixel/pixel.v
+# specification of the decoder's per-mode index semantics, the fetch cadence,
+# the skip law and the words-per-line rule; it exits nonzero if any check
+# fails.  It then recompiles the bench against each single-mistake mutant and
+# requires every one of those runs to FAIL — a bench that cannot fail is not a
+# spec.  The mutants are generated into pixel/mutants/ and are not checked in.
+pixel-sim: pixel/pixel_tb.v pixel/pixel.v pixel/timing.v
 	cd pixel && iverilog -g2012 -o pixel_tb.vvp pixel_tb.v pixel.v && vvp pixel_tb.vvp
 
-timing: pixel/timing.jed
-
-pixel/timing.edif: pixel/timing.v
-	cd pixel && $(YOSYS) timing
-
-pixel/timing.jed: pixel/timing.edif
-	cd pixel && $(FITTER) -d ATF1504AS -p PLCC44 timing -preassign keep -strategy debug = on -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy power_reset on -strategy JTAG = on
+pixel-mutants: pixel/pixel_tb.v pixel/pixel.v pixel/mutate.py
+	cd pixel && python3 mutate.py
+	@for m in `cd pixel/mutants && ls *.v | sed 's/\.v$$//'`; do \
+	    (cd pixel && iverilog -g2012 -o mutants/$$m.vvp pixel_tb.v mutants/$$m.v) || exit 1; \
+	    if (cd pixel && vvp mutants/$$m.vvp 2>&1 | grep -q "RESULT: FAIL"); then \
+	        echo "  good  $$m fails the bench, as a negative control must"; \
+	    else \
+	        echo "  BAD   $$m PASSES — the bench cannot see this mistake"; exit 1; \
+	    fi; \
+	done
 
 # `make timing-sim` runs the iverilog testbench, which is the executable form
-# of the griffin.yml "TIMING output contracts" entry; it exits nonzero if any
+# of the griffin.yml "TIMING output contracts" entry, against the MERGED top
+# level (the strobes are probed as internal nets).  It exits nonzero if any
 # check fails.  It then recompiles the bench with each -DMUTATE=n negative
 # control (one observed signal perturbed by one clock or one bit) and requires
-# every one of those runs to FAIL — a bench that cannot fail is not a spec.
+# every one of those runs to FAIL.
 TIMING_MUTATIONS := 1 2 3 4 5 6 7 8 9 10
-timing-sim: pixel/timing_tb.v pixel/timing.v
-	cd pixel && iverilog -g2012 -o timing_tb.vvp timing_tb.v timing.v && vvp timing_tb.vvp
+timing-sim: pixel/timing_tb.v pixel/pixel.v pixel/timing.v
+	cd pixel && iverilog -g2012 -o timing_tb.vvp timing_tb.v pixel.v && vvp timing_tb.vvp
 	@for n in $(TIMING_MUTATIONS); do \
-	    (cd pixel && iverilog -g2012 -DMUTATE=$$n -o timing_tb_mut.vvp timing_tb.v timing.v \
+	    (cd pixel && iverilog -g2012 -DMUTATE=$$n -o timing_tb_mut.vvp timing_tb.v pixel.v \
 	        && vvp timing_tb_mut.vvp > timing_tb_mut$$n.log 2>&1); \
 	    if [ $$? -eq 0 ]; then echo "NEGATIVE CONTROL MUTATE=$$n DID NOT FAIL"; exit 1; \
 	    else echo "negative control MUTATE=$$n fails as required"; fi; \
 	done
 	@rm -f pixel/timing_tb_mut.vvp pixel/timing_tb_mut*.log
+
+# `make clut-pair-sim` runs the CHIP-PAIR bench: production compositor.v
+# UNMODIFIED, the merged PIXEL, and a behavioural model of the three 16x4
+# separate-I/O palette RAMs with COMPOSITOR's set_pix_value on their data
+# inputs.  This is what pins the palette-write window rule that the
+# display-list author has to obey, and it is the only bench that can see an
+# unloaded palette entry reaching the DAC.
+clut-pair-sim: pixel/clut_pair_tb.v pixel/pixel.v pixel/timing.v compositor/compositor.v
+	cd pixel && iverilog -g2012 -o clut_pair_tb.vvp clut_pair_tb.v pixel.v ../compositor/compositor.v && vvp clut_pair_tb.vvp
 
 # ------------------------------------------------------------
 
@@ -308,4 +335,6 @@ clean:
 	rm -f ports/ports.edif ports/ports.fit ports/ports.jed ports/ports.vo ports/ports.svf
 	rm -f compositor/compositor.edif compositor/compositor.fit compositor/compositor.jed compositor/compositor_tb.vvp
 	rm -f pixel/pixel.edif pixel/pixel.fit pixel/pixel.jed pixel/pixel.vo pixel/pixel_tb.vvp
+	rm -f pixel/timing_tb.vvp pixel/clut_pair_tb.vvp
+	rm -rf pixel/mutants
 	rm -f glue/glue-verify.svf video/video-verify.svf

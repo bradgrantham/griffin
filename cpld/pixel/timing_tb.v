@@ -1,14 +1,24 @@
-// timing_tb.v — iverilog testbench for TIMING
+// timing_tb.v — iverilog testbench for the raster generator
 //
 // Self-checking.  Every named check prints PASS or FAIL; the run ends with
 // "TESTBENCH RESULT: PASS" (and exit status 0) only if no check failed.
+//
+// RUN AGAINST THE MERGED CHIP.  TIMING is no longer a package of its own: it
+// is a module of PIXEL, so `make timing-sim` compiles this bench against
+// pixel.v and it instantiates the MERGED TOP LEVEL (PixelTiming) with PIXEL's
+// own inputs tied off.  THE LAWS BELOW ARE UNCHANGED — only the harness moved.
+// PIX_CONSUME, PIX_PRELOAD and PIX_LAST are internal nets in the merged chip,
+// so they are probed where they live (dut.instTiming.*); that is legitimate
+// here precisely because they are no longer a board-level contract, and it
+// keeps the closed-form checks on them that sized PIXEL's fetch lead.
 //
 // ---------------------------------------------------------------------------
 // What this bench is
 // ---------------------------------------------------------------------------
 //
-// TIMING has no inputs but a clock and a reset, so the bench is a pure
-// observer: it runs the chip for two full frames and, on every clock, compares
+// The raster generator has no inputs but a clock and a reset, so the bench is
+// a pure observer: it runs the chip for two full frames and, on every clock,
+// compares
 // every output against a closed-form expectation derived from the RASTER LAWS
 // in griffin.yml (video_timing block + the "TIMING output contracts" interfaces
 // entry), NOT from the structure of timing.v.  The expectation for clock m is a
@@ -155,22 +165,42 @@ module TimingTb;
 
     integer errors;
 
-    Timing dut
+    // PIXEL's side of the merged chip, unused here: its inputs are tied off
+    // and its outputs are left to wiggle.  The raster does not depend on any
+    // of them, and the whole point of the closed-form checks below is that
+    // they are functions of the clock count alone.
+    wire [3:0] IDX;
+    wire       nCLUT_WE;
+    wire       nPIXELS_RE;
+
+    PixelTiming dut
     (
-        .PIXEL_CLK   (clk),
-        .nRESET      (nRESET),
-        .VGA_HSYNC   (VGA_HSYNC),
-        .VGA_VSYNC   (VGA_VSYNC),
-        .nRS         (nRS),
-        .H_ACTIVE    (H_ACTIVE),
-        .PIX_CONSUME (PIX_CONSUME),
-        .PIX_PRELOAD (PIX_PRELOAD),
-        .PIX_LAST    (PIX_LAST),
-        .HBLANK      (HBLANK),
-        .nVSYNC_IRQ  (nVSYNC_IRQ),
-        .PADDLE_TICK (PADDLE_TICK),
-        .AUDIO_TICK  (AUDIO_TICK)
+        .PIXEL_CLK      (clk),
+        .nRESET         (nRESET),
+
+        .PIXELS_Q       (16'h0000),
+        .nPIXELS_RE     (nPIXELS_RE),
+        .set_pix_value  (4'h0),
+        .set_pix_valid  (1'b0),
+        .set_pix_target (3'd0),
+        .set_pix_commit (1'b0),
+        .IDX            (IDX),
+        .nCLUT_WE       (nCLUT_WE),
+
+        .VGA_HSYNC      (VGA_HSYNC),
+        .VGA_VSYNC      (VGA_VSYNC),
+        .nRS            (nRS),
+        .H_ACTIVE       (H_ACTIVE),
+        .HBLANK         (HBLANK),
+        .nVSYNC_IRQ     (nVSYNC_IRQ),
+        .PADDLE_TICK    (PADDLE_TICK),
+        .AUDIO_TICK     (AUDIO_TICK)
     );
+
+    // The three strobes used to be pins; inside the merged chip they are nets.
+    assign PIX_CONSUME = dut.instTiming.PIX_CONSUME;
+    assign PIX_PRELOAD = dut.instTiming.PIX_PRELOAD;
+    assign PIX_LAST    = dut.instTiming.PIX_LAST;
 
     // ------------------------------------------------------------------
     // Observed signals, with the negative-control mutations applied here
