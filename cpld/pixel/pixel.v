@@ -213,31 +213,43 @@
 //
 // The RAM's data inputs are COMPOSITOR's set_pix_value[11:0], so PIXEL has no
 // data path: it muxes clut_index onto IDX and pulses nCLUT_WE with the address
-// stable either side.  Counting pixel clocks from the clock in which
-// set_pix_commit is high for the clut_data SET (clock 0):
+// AND THE DATA stable for a full clock either side.  Counting pixel clocks from
+// the clock in which set_pix_commit is high for the clut_data SET (clock 0):
 //
-//   clock 2   IDX = clut_index
-//   clock 3   nCLUT_WE low        (one clock, exactly)
-//   clock 4   nCLUT_WE high, IDX still clut_index
-//   clock 5   IDX back to the pixel index
+//   clock 1   IDX = clut_index                       address + data setup
+//   clock 2   nCLUT_WE low        (one clock, exactly)
+//   clock 3   nCLUT_WE high, IDX still clut_index    address + data hold
+//   clock 4   IDX back to the pixel index
 //
-// TWO CONSEQUENCES FOR THE LIST AUTHOR, both pinned by clut_pair_tb.v:
+// WHY THE PULSE SITS THERE AND NOWHERE ELSE.  COMPOSITOR re-registers
+// set_pix_value from every word it stages, and both its blanking and its
+// active-video cadence stage one every TWO clocks, so the clut_data SET's own
+// payload owns the bus for clocks 0 and 1 ONLY and the word after it owns
+// clocks 2 and 3.  The three-clock window 1..3 is therefore the ONLY placement
+// in which a one-clock pulse gets a full clock of setup and a full clock of
+// hold out of a two-word-deep stream, and it is why a table entry is THREE
+// WORDS: SET clut_index, SET clut_data, and a SAME-VALUE SET target 7 filler
+// which carries the bus through clocks 2 and 3.  (An earlier draft put IDX at
+// 2..4 and the pulse at 3.  The data then changed on the very edge /WE rose —
+// zero hold, met only by whatever skew there happened to be between PIXEL's
+// /WE output and COMPOSITOR's data outputs, in different packages.  That is not
+// a timing argument, so the sequence moved one clock earlier; wr3 went with it.)
 //
-//   WHERE.  The pixel bus is disturbed for clocks 2..5 after the commit (the
-//   address is stolen for 2..4, the RAM's outputs are high-Z while /WE is low
-//   and need its write-recovery time afterwards).  A write is legal only in
-//   blanking, or where those pixel slots are covered by a non-passthrough RUN
-//   or an opaque MASK.
+// THE FILLER MUST BE TARGET 7.  Any other target either writes a PIXEL
+// register with the colour payload (2, 4, 5, 6), writes a COMPOSITOR colour
+// (0, 1) — neither of which protects the bus, because COMPOSITOR writes it from
+// every staged word whatever the target — or, if it is a second clut_data,
+// starts a second and mis-timed write.
 //
-//   HOLD.  set_pix_value must still carry the payload during clock 3.
-//   COMPOSITOR re-registers that bus from every word it stages and its
-//   blanking cadence stages one every two clocks, so the clut_data SET's own
-//   value covers clocks 0 and 1 only: THE NEXT WORD IS ON THE BUS DURING THE
-//   WRITE PULSE.  A table entry is therefore THREE WORDS — SET clut_index,
-//   SET clut_data, and a same-value SET target 7 filler — and the filler is
-//   necessary, not decorative.  It must be target 7: any other target either
-//   writes a PIXEL register with the colour payload or (a second clut_data)
-//   starts a second, mis-timed write.
+// WHERE A WRITE IS LEGAL.  IDX is stolen for clocks 1, 2 and 3, so the pixel
+// bus carries the entry being written (clock 1) and then nothing at all while
+// /WE is low and the RAM recovers (clocks 2, 3).  With one clock of guard for a
+// write-recovery time nobody has read off a datasheet yet, THE FOUR PIXEL
+// CLOCKS 1..4 AFTER THE COMMIT must be in blanking or covered by a
+// non-passthrough source — a cmp_color / RUN_COLOR RUN or an opaque MASK dibit.
+// In active video that means the word after the filler, which takes effect at
+// clock 4, must not be the RUN that resumes passthrough: leave one more record
+// between them.  All of this is measured clock by clock in clut_pair_tb.v.
 //
 // ---------------------------------------------------------------------------
 // THE PIPELINE, and why the TIMING constants do not move
@@ -639,9 +651,13 @@ module Pixel
     // Clock numbers and the display-list rule are in the header.
     // ----------------------------------------------------------------
 
-    reg wr1, wr2, wr3;
+    // Two flip-flops and the live set_cdata: the address window is
+    // set_cdata | wr1 | wr2 (clocks 1, 2, 3) and the pulse is ~wr1 (clock 2
+    // alone), so the pulse is centred in the window and gets a whole clock of
+    // setup and hold on both the address and the data.
+    reg wr1, wr2;
 
-    wire clut_seq = wr1 | wr2 | wr3;
+    wire clut_seq = set_cdata | wr1 | wr2;
 
     always @(posedge PIXEL_CLK or posedge RESET)
     begin
@@ -649,16 +665,14 @@ module Pixel
         begin
             wr1 <= 1'b0;
             wr2 <= 1'b0;
-            wr3 <= 1'b0;
             nCLUT_WE <= 1'b1;
         end
         else
         begin
             wr1 <= set_cdata;
             wr2 <= wr1;
-            wr3 <= wr2;
 
-            nCLUT_WE <= ~wr2;
+            nCLUT_WE <= ~wr1;
         end
     end
 
@@ -717,7 +731,15 @@ endmodule
 // deliberate) — and then re-fitted with this block under -preassign keep to
 // confirm it reproduces the same result.  Freeze it when the layout starts;
 // until then a re-harvest is legitimate.  See cpld/pixel/LANDING-NOTES.md for
-// the ladder (kept-pin fit vs free fit) and the numbers.
+// the ladder and the numbers.
+//
+// RE-HARVESTED once already, and that is the warning this block carries: moving
+// the palette write pulse one clock earlier (three product terms of live
+// set_cdata onto the four IDX macrocells) would NOT route against the first
+// harvest — three fitter passes, routing fail on each — and needed a fresh free
+// fit.  A pinout harvested from a near-full chip is a fit of ONE netlist, not a
+// contract the next netlist inherits.  Do not freeze this until the RTL is
+// finished.
 //
 // The signals are a new set: the indexed decoder has no RGB_OUT bus, the PIXELS
 // port is sixteen pins wide with ONE strobe (PIXELS_Q[15:8] is the old EVEN
@@ -739,40 +761,40 @@ endmodule
 //PIN: VGA_HSYNC          : 4
 //PIN: nRS                : 5
 //PIN: VGA_VSYNC          : 6
-//PIN: set_pix_value_0    : 8
-//PIN: PIXELS_Q_10        : 9
-//PIN: PIXELS_Q_0         : 10
-//PIN: PIXELS_Q_9         : 11
-//PIN: PIXELS_Q_6         : 12
+//PIN: set_pix_target_1   : 8
+//PIN: PIXELS_Q_11        : 9
+//PIN: PIXELS_Q_7         : 10
+//PIN: set_pix_value_3    : 11
+//PIN: set_pix_value_2    : 12
 //PIN: nPIXELS_RE         : 15
-//PIN: set_pix_target_2   : 16
-//PIN: PIXELS_Q_14        : 17
-//PIN: PIXELS_Q_13        : 18
-//PIN: set_pix_valid      : 20
-//PIN: PIXELS_Q_12        : 21
-//PIN: PIXELS_Q_11        : 22
-//PIN: IDX_0              : 24
-//PIN: set_pix_target_0   : 25
-//PIN: IDX_1              : 27
-//PIN: IDX_2              : 28
-//PIN: IDX_3              : 29
-//PIN: nCLUT_WE           : 30
-//PIN: set_pix_target_1   : 31
-//PIN: PIXELS_Q_4         : 33
-//PIN: set_pix_value_3    : 34
-//PIN: PIXELS_Q_1         : 35
-//PIN: PIXELS_Q_3         : 36
-//PIN: PIXELS_Q_2         : 37
-//PIN: set_pix_value_2    : 39
-//PIN: set_pix_value_1    : 40
-//PIN: set_pix_commit     : 41
-//PIN: PIXELS_Q_15        : 44
-//PIN: PIXELS_Q_5         : 46
-//PIN: PIXELS_Q_7         : 63
-//PIN: HBLANK             : 69
-//PIN: AUDIO_TICK         : 70
-//PIN: PIXELS_Q_8         : 73
-//PIN: H_ACTIVE           : 79
-//PIN: nVSYNC_IRQ         : 80
-//PIN: PADDLE_TICK        : 81
+//PIN: IDX_0              : 16
+//PIN: PIXELS_Q_5         : 17
+//PIN: PIXELS_Q_4         : 18
+//PIN: set_pix_target_0   : 20
+//PIN: PIXELS_Q_9         : 21
+//PIN: PIXELS_Q_8         : 22
+//PIN: IDX_1              : 24
+//PIN: set_pix_valid      : 25
+//PIN: IDX_2              : 27
+//PIN: nVSYNC_IRQ         : 28
+//PIN: PIXELS_Q_6         : 29
+//PIN: PIXELS_Q_10        : 31
+//PIN: IDX_3              : 33
+//PIN: PIXELS_Q_2         : 35
+//PIN: PIXELS_Q_1         : 36
+//PIN: PIXELS_Q_3         : 39
+//PIN: PIXELS_Q_12        : 40
+//PIN: PIXELS_Q_13        : 41
+//PIN: set_pix_commit     : 44
+//PIN: set_pix_target_2   : 45
+//PIN: set_pix_value_1    : 46
+//PIN: set_pix_value_0    : 48
+//PIN: PIXELS_Q_15        : 49
+//PIN: PIXELS_Q_14        : 51
+//PIN: AUDIO_TICK         : 52
+//PIN: PIXELS_Q_0         : 56
+//PIN: H_ACTIVE           : 57
+//PIN: nCLUT_WE           : 58
+//PIN: PADDLE_TICK        : 60
+//PIN: HBLANK             : 61
 //PIN: PIXEL_CLK          : 83

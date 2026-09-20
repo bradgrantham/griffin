@@ -44,26 +44,40 @@
 // EXACTLY TWO CLOCKS, changing on the same edge the next commit rises.
 //
 // D2.  The write sequence, in clocks after the clock in which set_pix_commit is
-// high for the clut_data SET (clock 0), from pixel.v's wr1/wr2/wr3 chain:
+// high for the clut_data SET (clock 0), from pixel.v's set_cdata|wr1|wr2
+// address window and its ~wr1 pulse:
 //
-//   clock 0   set_cdata seen        clock 2   IDX = clut_index
-//   clock 3   nCLUT_WE LOW          clock 4   nCLUT_WE high, IDX still held
-//   clock 5   IDX back to the pixel index
+//   clock 0   set_cdata seen        clock 1   IDX = clut_index   (setup)
+//   clock 2   nCLUT_WE LOW          clock 3   nCLUT_WE high, IDX held (hold)
+//   clock 4   IDX back to the pixel index
+//
+// The pulse is CENTRED in the address window, so the address gets a full clock
+// of setup and a full clock of hold.  The point of putting it here rather than
+// one clock later — which is what the first draft of this package shipped — is
+// D3: the DATA gets the same treatment, out of a stream that can only hold a
+// value for two clocks at a time.
 //
 // D3.  THEREFORE THE FILLER IS NECESSARY, and this is the whole point.  The
-// clut_data SET's own payload owns the bus only for clocks 0 and 1 (D1).  The
-// data present while /WE is low — clock 3 — belongs to THE NEXT WORD IN THE
-// STREAM.  Predictions for item (1) of the brief, with "hold" = the number of
+// clut_data SET's own payload owns the bus only for clocks 0 and 1 (D1), so it
+// covers the SETUP clock and nothing else; the data present while /WE is low
+// (clock 2) and during the HOLD clock (3) belongs to THE NEXT WORD IN THE
+// STREAM.  Two words of bus ownership, three clocks of window, and they line up
+// exactly: 0-1 from the clut_data SET, 2-3 from the filler.  There is no slack
+// anywhere in this, which is why the pulse cannot be moved in either direction.
+// Predictions for item (1) of the brief, with "hold" = the number of
 // consecutive clocks from clock 0 on which set_pix_value still reads V:
 //
-//   (a) next word = another PIXEL-target SET, different value : hold 2, and
-//       the RAM stores THE WRONG VALUE.  Illegal.
+//   (a) next word = another PIXEL-target SET, different value : hold 2, so the
+//       data changes BEFORE the pulse: the bench must see both a setup
+//       violation (the data differs between the setup clock and the pulse) and
+//       a wrong value in the RAM.  Illegal.
 //   (b) next word = a COMPOSITOR-target SET (target 0/1), different value:
-//       hold 2, wrong value stored.  Illegal — and worth stating separately,
-//       because set_pix_value is written from every staged word regardless of
-//       target, so "it is not a PIXEL SET" buys nothing.
+//       identical to (a).  Worth stating separately, because set_pix_value is
+//       written from every staged word regardless of target, so "it is not a
+//       PIXEL SET" buys nothing.
 //   (c) next word = SET target 7 carrying THE SAME twelve bits : hold 4
-//       (clocks 0..3), /WE sees V, the RAM stores V.  Legal.
+//       (clocks 0..3), so the data is stable across the setup clock, the pulse
+//       and the hold clock, and the RAM stores V.  Legal.
 //   (d) nothing (FIFO empty): staged_word holds, so the bus holds V
 //       indefinitely.  Legal, but it is starvation, not a contract.
 //   Active video behind a RUN: the same two-clock cadence, with one wrinkle —
@@ -76,24 +90,24 @@
 //   too, and clocks 0/1 = V from the data SET, clocks 2/3 = V from the filler.
 //
 // D4.  THE DISTURBED WINDOW.  IDX is stolen from the pixel index for clocks
-// 2, 3 and 4.  During clock 2 the RAM reads the entry being written (a wrong
-// but defined colour); during clock 3 its outputs are high-Z because /WE is
-// low; during clock 4 the model holds them undefined for one clock of WRITE
-// RECOVERY.  From clock 5 IDX is the pixel index again and the RAM is
+// 1, 2 and 3.  During clock 1 the RAM reads the entry being written (a wrong
+// but defined colour); during clock 2 its outputs are high-Z because /WE is
+// low; during clock 3 the model holds them undefined for one clock of WRITE
+// RECOVERY.  From clock 4 IDX is the pixel index again and the RAM is
 // combinational, so RGB_IN is correct.  So the MEASURED disturbance on RGB_IN
-// is clocks 2..4, and COMPOSITOR registers RGB_OUT one clock later, so the
-// pixels it paints wrong are clocks 3..5.
+// is clocks 1..3, and COMPOSITOR registers RGB_OUT one clock later, so the
+// pixels it paints wrong are clocks 2..4.
 //
 // THE RULE THE LIST AUTHOR FOLLOWS is stated one clock wider than that:
-// pixel clocks 2..5 after the commit must be covered by a non-passthrough
+// pixel clocks 1..4 after the commit must be covered by a non-passthrough
 // source (a cmp_color/RUN_COLOR RUN, or an opaque MASK dibit) or be in
 // blanking.  The fourth clock is the write-recovery guard: this model's
 // one-clock recovery is an ABSTRACTION of a datasheet parameter that is not
-// pinned yet (spec draft section 6), and the cost of the guard is nothing —
-// clock 4 is the filler's own hold slot and clock 5 is the next word's slot.
-// Its practical consequence in active video: the word after the filler is
-// consumed at clock 4 and takes effect from clock 5, so A PASSTHROUGH RUN
-// MUST NOT BE THE WORD IMMEDIATELY AFTER THE FILLER.
+// pinned yet (spec draft section 6), and the guard costs nothing, because
+// clocks 1..3 are the entry's own slots and clock 4 is the first clock of the
+// word after the filler.  Its practical consequence in active video: that word
+// takes effect at clock 4, so A PASSTHROUGH RUN MUST NOT BE THE WORD
+// IMMEDIATELY AFTER THE FILLER.
 //
 // D5.  Reset.  /RS clears PIXEL's SET registers (pixel_tb.v's case R) and
 // DOES NOT clear the palette RAM: nothing resets the RAM cells, and there is
@@ -108,29 +122,27 @@
 //   we_writes          number of write pulses seen
 //   we_addr_bad        IDX changed during the clock before, the clock of, or
 //                      the clock after /WE low            MUST BE 0
-//   we_data_setup_bad  set_pix_value differed during the clock before /WE low
-//                      or during it                       MUST BE 0 (legal cases)
-//   we_data_hold_bad   set_pix_value changed on the /WE RISING edge — measured
-//                      and asserted against the derivation, not assumed zero:
-//                      it is 1 per entry whenever a differently-valued word
-//                      follows the filler, which is the normal case
+//   we_data_setup_bad  set_pix_value differed between the clock before /WE low
+//                      and the /WE-low clock            MUST BE 0 (legal cases)
+//   we_data_hold_bad   set_pix_value changed ON THE SAME EDGE /WE ROSE — i.e.
+//                      zero data hold.  MUST BE 0.  This is the defect the
+//                      sequence was moved one clock earlier to remove, and the
+//                      old_pulse mutant is the negative control that trips it.
 //   passthru_x         clocks on which COMPOSITOR sampled an X on RGB_IN while
 //                      its source was passthrough and the slot was active
 //   rgb_out_x          clocks on which RGB_OUT itself carried an X (the same
 //                      event one clock later, seen at the pins)
 //
-// A note on we_data_hold_bad.  It is NOT a bench failure and NOT a design
-// defect in whole-clock terms: the data changes on the very edge /WE rises, so
-// in clock terms the data was valid for the whole of the write pulse.  It IS
-// the one place where the three-word entry leans on a datasheet number nobody
-// has read yet — the RAM's data hold time from write-disable — because PIXEL's
-// /WE and COMPOSITOR's data change on the same clock edge in different
-// packages.  Two cheap fixes exist if that number turns out to be positive and
-// they are recorded in LANDING-NOTES.md: a FOURTH word (a second same-value
-// filler), or moving PIXEL's pulse one clock earlier (IDX at clock 1, /WE low
-// at clock 2), which puts the whole pulse inside the two words that already
-// carry V and costs a flip-flop LESS.  Neither is done here: the spec draft
-// fixes the clock numbers and this package does not change the contract.
+// A note on we_data_hold_bad, because it is why this sequence looks the way it
+// does.  The first draft of this package pulsed /WE one clock later, at clock 3.
+// In whole-clock terms that was fine — the data was stable for the whole pulse —
+// but the data then changed ON THE VERY EDGE /WE ROSE, so the RAM's data hold
+// time from write-disable was met only by whatever skew there happened to be
+// between PIXEL's /WE output and COMPOSITOR's data outputs, in two different
+// packages.  That is not a timing argument, so the pulse moved to clock 2,
+// where the filler's two clocks of bus ownership straddle it.  we_data_hold_bad
+// is now a HARD FAILURE, and `make clut-pair-sim` recompiles the bench against
+// the old sequence (mutants/old_pulse.v) and requires it to trip.
 
 `timescale 1ns / 1ps
 
@@ -429,9 +441,12 @@ module ClutPairTb;
                          cycle, d_h2, d_h1);
             end
 
+            // ZERO DATA HOLD: the payload changed on the same edge /WE rose.
             if (d_h0 !== d_h1)
             begin
                 we_data_hold_bad = we_data_hold_bad + 1;
+                $display("  FAIL  write at cycle %0d: data changed on the /WE RISING edge (%3h then %3h) — no hold",
+                         cycle, d_h1, d_h0);
             end
 
             // STABLE IS NOT THE SAME AS CORRECT, and the difference is the
@@ -872,7 +887,12 @@ module ClutPairTb;
         repeat (24) @(posedge clk);
         hold_a = hold_last;
         check_int("S1a hold (clocks set_pix_value keeps the payload)", hold_a, 2);
-        check_int("S1a data stability around the pulse", we_data_setup_bad, 0);
+        // With the pulse at clock 2 the illegal third word owns the bus from
+        // clock 2, so it breaks SETUP (clock 1 holds V, clock 2 does not) as
+        // well as storing the wrong value.  Both must be seen.
+        check_int("S1a setup violations (expected: the data moves before the pulse)",
+                  we_data_setup_bad, 1);
+        check_int("S1a data hold violations", we_data_hold_bad, 0);
         check(we_writes == 1 && we_data_wrong == 1,
               "S1a: DETECTED - the pulse stored the third word's payload, not the entry's");
         check({ramR.store[3], ramG.store[3], ramB.store[3]} !== 12'hABC,
@@ -890,6 +910,7 @@ module ClutPairTb;
         repeat (24) @(posedge clk);
         hold_b = hold_last;
         check_int("S1b hold", hold_b, 2);
+        check_int("S1b setup violations", we_data_setup_bad, 1);
         check(we_data_wrong == 1,
               "S1b: DETECTED - a COMPOSITOR-target SET does not protect the bus either");
         check({ramR.store[4], ramG.store[4], ramB.store[4]} !== 12'h123,
@@ -914,10 +935,11 @@ module ClutPairTb;
         check_int("S1c wrong payload written", we_data_wrong, 0);
         check_int("S1c address violations", we_addr_bad, 0);
         check_int("S1c /WE pulse wider than one clock", we_pulse_bad, 0);
+        check_int("S1c data hold violations (data changing as /WE rises)",
+                  we_data_hold_bad, 0);
         check_cells("S1c");
-        $display("      data-hold-at-/WE-rise events: %0d (see the header: the word",
-                 we_data_hold_bad);
-        $display("      after the filler owns the bus from the clock /WE rises)");
+        $display("      the filler owns clocks 2 and 3, so the pulse at clock 2 has a");
+        $display("      full clock of data setup before it and a full clock of hold after");
 
         $display("");
         $display("CASE S1d — nothing follows (FIFO empty)");
@@ -953,6 +975,7 @@ module ClutPairTb;
         check_int("S2 writes", we_writes, 3);
         check_int("S2 data setup violations", we_data_setup_bad, 0);
         check_int("S2 wrong payload written", we_data_wrong, 0);
+        check_int("S2 data hold violations", we_data_hold_bad, 0);
         check_int("S2 address violations", we_addr_bad, 0);
         check_cells("S2");
 
@@ -981,6 +1004,7 @@ module ClutPairTb;
         check_int("S3 writes in one hblank", we_writes, 8);
         check_int("S3 data setup violations", we_data_setup_bad, 0);
         check_int("S3 wrong payload written", we_data_wrong, 0);
+        check_int("S3 data hold violations", we_data_hold_bad, 0);
         check_cells("S3");
         check_int("S3 X sampled on a passthrough pixel", passthru_x, 0);
         check_line_colours("S3 1bpp line", 0, 4'h0, 16'hA53C);
@@ -1013,6 +1037,7 @@ module ClutPairTb;
         check_int("S6 writes", we_writes, 1);
         check_int("S6 data setup violations", we_data_setup_bad, 0);
         check_int("S6 wrong payload written", we_data_wrong, 0);
+        check_int("S6 data hold violations", we_data_hold_bad, 0);
         check_int("S6 X sampled on a passthrough pixel", passthru_x, 0);
         check_int("S6 X reaching RGB_OUT", rgb_out_x, 0);
         check_cells("S6");
@@ -1063,16 +1088,18 @@ module ClutPairTb;
         repeat (300) @(posedge clk);
         check(log_k > 8, "S7: the write was observed inside the line");
         show_window();
-        check(log_idx[2] === 4'h2 && log_idx[3] === 4'h2 && log_idx[4] === 4'h2,
-              "S7: IDX is clut_index for clocks 2, 3 and 4 and no others");
-        check(log_idx[1] !== 4'h2 && log_idx[5] !== 4'h2,
-              "S7: clocks 1 and 5 carry the pixel index");
-        check(log_we[3] === 1'b0 && log_we[2] === 1'b1 && log_we[4] === 1'b1,
-              "S7: nCLUT_WE is low on clock 3 alone");
-        check(log_x[3] && log_x[4] && !log_x[5],
-              "S7: RGB_IN is undefined on clocks 3 and 4 (pulse + recovery), defined from 5");
-        check(!log_x[0] && !log_x[1] && !log_x[2],
-              "S7: clocks 0..2 are defined (clock 2 reads the entry, wrong but not X)");
+        check(log_idx[1] === 4'h2 && log_idx[2] === 4'h2 && log_idx[3] === 4'h2,
+              "S7: IDX is clut_index for clocks 1, 2 and 3 and no others");
+        check(log_idx[0] !== 4'h2 && log_idx[4] !== 4'h2,
+              "S7: clocks 0 and 4 carry the pixel index");
+        check(log_we[2] === 1'b0 && log_we[1] === 1'b1 && log_we[3] === 1'b1,
+              "S7: nCLUT_WE is low on clock 2 alone, centred in the address window");
+        check(log_x[2] && log_x[3] && !log_x[4],
+              "S7: RGB_IN is undefined on clocks 2 and 3 (pulse + recovery), defined from 4");
+        check(!log_x[0] && !log_x[1],
+              "S7: clocks 0..1 are defined (clock 1 reads the entry, wrong but not X)");
+        check(log_val[1] === log_val[2] && log_val[2] === log_val[3],
+              "S7: set_pix_value is the same on the setup, pulse and hold clocks");
 
         // ================================================================
         // S8  ITEM (4): A FULL SIXTEEN-ENTRY LOAD IN VERTICAL BLANK AFTER /RS,
@@ -1102,6 +1129,7 @@ module ClutPairTb;
         check_int("S8 writes (16 entries in vblank)", we_writes, 16);
         check_int("S8 data setup violations", we_data_setup_bad, 0);
         check_int("S8 wrong payload written", we_data_wrong, 0);
+        check_int("S8 data hold violations", we_data_hold_bad, 0);
         check_int("S8 address violations", we_addr_bad, 0);
         check_cells("S8 full load");
 

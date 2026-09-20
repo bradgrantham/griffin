@@ -221,12 +221,14 @@ pixel/pixel.jed: pixel/pixel.edif
 # fails.  It then recompiles the bench against each single-mistake mutant and
 # requires every one of those runs to FAIL — a bench that cannot fail is not a
 # spec.  The mutants are generated into pixel/mutants/ and are not checked in.
+# Only the mutN decoder mutants belong to this bench; mutants/old_pulse.v is a
+# whole-chip mutant and belongs to clut-pair-sim.
 pixel-sim: pixel/pixel_tb.v pixel/pixel.v pixel/timing.v
 	cd pixel && iverilog -g2012 -o pixel_tb.vvp pixel_tb.v pixel.v && vvp pixel_tb.vvp
 
 pixel-mutants: pixel/pixel_tb.v pixel/pixel.v pixel/mutate.py
 	cd pixel && python3 mutate.py
-	@for m in `cd pixel/mutants && ls *.v | sed 's/\.v$$//'`; do \
+	@for m in `cd pixel/mutants && ls mut[0-9]*.v | sed 's/\.v$$//'`; do \
 	    (cd pixel && iverilog -g2012 -o mutants/$$m.vvp pixel_tb.v mutants/$$m.v) || exit 1; \
 	    if (cd pixel && vvp mutants/$$m.vvp 2>&1 | grep -q "RESULT: FAIL"); then \
 	        echo "  good  $$m fails the bench, as a negative control must"; \
@@ -258,8 +260,18 @@ timing-sim: pixel/timing_tb.v pixel/pixel.v pixel/timing.v
 # inputs.  This is what pins the palette-write window rule that the
 # display-list author has to obey, and it is the only bench that can see an
 # unloaded palette entry reaching the DAC.
-clut-pair-sim: pixel/clut_pair_tb.v pixel/pixel.v pixel/timing.v compositor/compositor.v
+# It then recompiles the bench against mutants/old_pulse.v — the write sequence
+# one clock late, which is what this package's first draft shipped and which
+# leaves the RAM with ZERO data hold — and requires that run to FAIL.
+clut-pair-sim: pixel/clut_pair_tb.v pixel/pixel.v pixel/timing.v pixel/mutate.py compositor/compositor.v
 	cd pixel && iverilog -g2012 -o clut_pair_tb.vvp clut_pair_tb.v pixel.v ../compositor/compositor.v && vvp clut_pair_tb.vvp
+	@cd pixel && python3 mutate.py > /dev/null
+	@cd pixel && iverilog -g2012 -o mutants/old_pulse.vvp clut_pair_tb.v mutants/old_pulse.v timing.v ../compositor/compositor.v
+	@if (cd pixel && vvp mutants/old_pulse.vvp 2>&1 | grep -q "RESULT: FAIL"); then \
+	    echo "  good  old_pulse fails the pair bench, as a negative control must"; \
+	else \
+	    echo "  BAD   old_pulse PASSES — the bench cannot see a zero-data-hold write"; exit 1; \
+	fi
 
 # ------------------------------------------------------------
 

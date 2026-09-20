@@ -26,9 +26,12 @@ Flags on every row, the production `pixel:` target verbatim:
 | experiment `r8w` (reference) | standalone-PIXEL block | yes | 1 | 122 | 95 | 130 (101%) | 26 | 401 | 43 | 2 |
 | A1 merged, OLD production pins kept | explicit | yes | 1 | 116 | 95 | 141 (110%) | 36 | 372 | 43 | 2 |
 | A2 merged, FREE placement | none (empty .pin) | yes | 1 | 116 | 95 | 136 (106%) | 31 | 367 | 43 | 2 |
-| **A3 = A2 harvested into //PIN, re-fit** | explicit | **yes** | **1** | **116** | **95** | **140 (109%)** | 35 | **371** | **43** | **2** |
+| A3 = A2 harvested into //PIN, re-fit | explicit | yes | 1 | 116 | 95 | 140 (109%) | 35 | 371 | 43 | 2 |
+| A4 write pulse moved 1 clock earlier, A3's pins | explicit | **NO** | routing fail on 1, 2, 3 | — | — | — | — | — | — | — |
+| A5 same RTL, FREE placement | none (empty .pin) | yes | 1 | 123 | 94 | 123 (96%) | 17 | 388 | 43 | 2 |
+| **A6 = A5 re-harvested into //PIN, re-fit** | explicit | **yes** | **1** | **123** | **94** | **119 (92%)** | 13 | **384** | **43** | **2** |
 
-A3 is what `make pixel` builds today.  No levers were needed — no
+A6 is what `make pixel` builds today.  No levers were needed — no
 `xor_synthesis`, no restructuring, no ladder beyond these three rows — so none
 were spent.
 
@@ -49,10 +52,23 @@ were spent.
   the standalone-PIXEL //PIN block in force; A2/A3 let the fitter place all 41
   signals.  Six logic cells and thirty product terms are what that constraint
   was charging.
-* **Nodes+FB reads over 100% and the design fits.**  The fitter does not
-  enforce that line as a cap — production `compositor.v` reads 143/128 (112%)
-  today.  The resource with real headroom here is **twelve logic cells**
-  (116/128) and 33 flip-flops.
+* **Nodes+FB reads over 100% on A1-A3 and the design still fits.**  The fitter
+  does not enforce that line as a cap — production `compositor.v` reads 143/128
+  (112%) today.
+* **A4/A5/A6: moving the palette write pulse one clock earlier.**  It costs
+  **+7 LC and +13 PT and saves one flip-flop**, and — the part that was NOT
+  predicted — **it does not route against A3's harvested pinout at all**: three
+  fitter passes, `Routing fail` on each, `Design does not fit`.  A fresh free
+  fit places it on pass 1 at 123/128 LC, and re-harvesting that placement
+  reproduces it exactly (diff of the named pins empty) at 123 LC / 94 FF / 119
+  nodes+FB / 384 PT.  The cost is `set_cdata` — live, and a function of
+  `set_pix_valid`, `set_pix_commit` and the target decode — now feeding the four
+  IDX macrocells, where a registered `wr3` used to.  There is no way around that
+  for a pulse this early: at clock 0 no register knows a write has started yet.
+* **So the pinout is now on its second harvest, and that is the lesson to carry
+  into the freeze**: a placement harvested from a near-full chip is a fit of ONE
+  netlist, not a contract the next netlist inherits.  `pixel.v`'s pin block says
+  so.  **Remaining headroom: five logic cells (123/128), 34 flip-flops.**
 
 Per-LAB fill, A3 (macrocells / I/O / foldback / PT, cascades in brackets):
 
@@ -179,89 +195,120 @@ entry reaches the DAC as X.
 
 ## 4. THE PALETTE WRITE — the pinned rule (spec draft section 4)
 
+**Changed 2026-09-20 after the first draft of this package**: the sequence moved
+one clock earlier, so that the pulse is centred in the address window and the
+data gets a full clock of setup and a full clock of hold.  The old sequence
+(IDX 2..4, pulse at 3) is kept only as `mutants/old_pulse.v`, the negative
+control for the assertion that removed it.
+
 Clocks are counted from the clock in which `set_pix_commit` is high for the
-`clut_data` SET (clock 0).  Measured, clock by clock, by `clut_pair_tb.v`:
+`clut_data` SET (clock 0).  Measured clock by clock by `clut_pair_tb.v` (S7):
 
 | clock | IDX | nCLUT_WE | set_pix_value | RAM outputs (RGB_IN) |
 |---|---|---|---|---|
 | 0 | pixel index | high | V (the clut_data SET's own payload) | the pixel's colour |
-| 1 | pixel index | high | V | the pixel's colour |
-| 2 | **clut_index** | high | V (**from the filler**) | the ENTRY being written — wrong, but defined |
-| 3 | clut_index | **LOW** | V (from the filler) | **undefined** (high-Z) |
-| 4 | clut_index | high | the next word's payload | **undefined** (write recovery) |
-| 5 | pixel index | high | next word | the pixel's colour again |
+| 1 | **clut_index** | high | V — **setup** | the ENTRY being written: wrong, but defined |
+| 2 | clut_index | **LOW** | V (**from the filler**) | **undefined** (high-Z) |
+| 3 | clut_index | high | V (from the filler) — **hold** | **undefined** (write recovery) |
+| 4 | pixel index | high | the next word's payload | the pixel's colour again |
 
-**HOLD — and the filler is NECESSARY, not decoration.**  COMPOSITOR registers
-`set_pix_value` from every word it stages, and both its blanking cadence and its
-active-video cadence stage one every TWO clocks, so the `clut_data` SET's own
-payload owns the bus for clocks 0 and 1 ONLY.  **The data present while /WE is
-low belongs to the NEXT WORD IN THE STREAM.**  Measured hold, in clocks from
-clock 0, with the third word varied:
+**HOLD — the filler is NECESSARY, and this placement is the only one that
+works.**  COMPOSITOR registers `set_pix_value` from every word it stages, and
+both its blanking and its active-video cadence stage one every TWO clocks, so
+the `clut_data` SET's own payload owns the bus for clocks 0 and 1 and the word
+after it owns clocks 2 and 3.  Two words of ownership, three clocks of window,
+and they line up exactly — there is no slack in either direction.  Measured hold,
+in clocks from clock 0, with the third word varied:
 
-| third word | hold | the write stores |
+| third word | hold | what the write does |
 |---|---|---|
-| (a) another PIXEL-target SET, different value | **2** | that word's payload — WRONG |
-| (b) a COMPOSITOR-target SET (target 0/1), different value | **2** | that word's payload — WRONG |
-| (c) **same-value `SET target 7`** | **4** (clocks 0..3) | V — correct |
-| (d) nothing (FIFO empty) | indefinite | V — correct |
+| (a) another PIXEL-target SET, different value | **2** | breaks SETUP and stores that word's payload — WRONG |
+| (b) a COMPOSITOR-target SET (0/1), different value | **2** | identical to (a) — WRONG |
+| (c) **same-value `SET target 7`** | **4** (clocks 0..3) | stores V, full setup and full hold |
+| (d) nothing (FIFO empty) | indefinite | stores V |
 
-So a table entry is THREE WORDS and the third must be `SET target 7` carrying
-**the same twelve bits**.  It must be target 7 because every other target either
-writes a PIXEL register with the colour payload (2, 4, 5, 6), writes a
-COMPOSITOR colour (0, 1) — neither of which protects the bus, since the bus is
-written from every staged word regardless of target — or, if it is a second
-`clut_data`, starts a second mis-timed write.  Sufficient: yes, in whole-clock
-terms (setup and the whole pulse are covered).
+It must be target 7 because every other target either writes a PIXEL register
+with the colour payload (2, 4, 5, 6), writes a COMPOSITOR colour (0, 1) — neither
+of which protects the bus, since COMPOSITOR writes it from every staged word
+whatever the target — or, as a second `clut_data`, starts a second mis-timed
+write.  **Is a two-word entry legal now?  Only in case (d)**, i.e. when the FIFO
+happens to be empty behind the data SET, which ENGINE's prefill makes
+unpredictable; it is a measured behaviour, not a contract.  Any word that does
+arrive owns clocks 2-3, so it must carry the same twelve bits — which is the
+filler.  The word BEFORE the entry is unconstrained (clocks 0 and 1 belong to
+the data SET itself), so the entry is exactly three words and no more.
 
-**WHERE — the disturbed window.**  IDX is stolen for clocks 2, 3, 4.  RGB_IN is
-WRONG at clock 2 (it reads the entry being written) and UNDEFINED at clocks 3
-and 4 (pulse, then one clock of write recovery).  COMPOSITOR registers RGB_OUT
-one clock later, so the pixels it paints wrong are clocks 3..5.
+**WHERE — the disturbed window.**  IDX is stolen for clocks 1, 2, 3.  RGB_IN is
+WRONG at clock 1 (it reads the entry being written) and UNDEFINED at clocks 2
+and 3 (pulse, then one clock of write recovery).  COMPOSITOR registers RGB_OUT
+one clock later, so the pixels it paints wrong are clocks 2..4.
 
-> **THE RULE A LIST AUTHOR FOLLOWS: pixel clocks 2..5 after the commit must be
+> **THE RULE A LIST AUTHOR FOLLOWS: pixel clocks 1..4 after the commit must be
 > in blanking or covered by a non-passthrough source (a `cmp_color`/RUN_COLOR
-> RUN, or an opaque MASK dibit).  In active video that means the word after the
-> filler must not be a passthrough RUN — it is consumed at clock 4 and takes
-> effect from clock 5 — so put one more record (a second same-value `SET target
-> 7` does) between the filler and the RUN that resumes passthrough.**
+> RUN, or an opaque MASK dibit).  Clocks 1..3 are the entry's own slots; clock 4
+> is the first clock of the word after the filler, so THAT WORD MUST NOT BE THE
+> RUN THAT RESUMES PASSTHROUGH — put one more record between them.  It may
+> otherwise be anything at all, including a differently-valued SET: the write is
+> over by then.**
 
-The measured disturbance is clocks 2..4; the fourth clock in the rule is the
+The measured disturbance is clocks 1..3; the fourth clock in the rule is the
 write-recovery guard, because the model's one-clock recovery is an abstraction
-of a datasheet parameter that is **not pinned yet** (spec draft section 6) and
+of a datasheet parameter that is **not pinned yet** (spec draft section 6), and
 the guard costs nothing.
 
-**The one place the three-word entry leans on an unread datasheet number.**
-`set_pix_value` changes on the very edge /WE rises (measured: one such event per
-entry whenever a differently-valued word follows the filler).  In clock terms
-the data was valid for the whole pulse, but the RAM's **data hold time from
-write-disable** is then met only by whatever skew there happens to be between
-PIXEL's /WE output and COMPOSITOR's data outputs — two different packages.  Two
-cheap fixes exist, NEITHER APPLIED (the spec draft fixes the clock numbers and
-this package does not change the contract):
+### Exact wording proposed for spec draft section 4
 
-1. A **fourth word** — a second same-value `SET target 7` — which buys a full
-   clock of data hold and is what the "where" rule above already recommends for
-   active video anyway.
-2. **Move PIXEL's pulse one clock earlier**: `clut_seq = set_cdata | wr1 | wr2`
-   and `nCLUT_WE <= ~wr1`, giving IDX = clut_index on clocks 1, 2, 3 and /WE low
-   on clock 2.  The entire pulse then sits inside the two words that already
-   carry V, so address AND data are stable for the clock before, the clock of
-   and the clock after the pulse; the disturbed window becomes 1..4; and `wr3`
-   disappears, so it costs **one flip-flop less**.  The filler is still
-   necessary (clock 2's data comes from it).  This changes spec section 4's
-   clock numbers and the model, so it belongs to a decision, not to this
-   package.
-
----
+> ## 4. Palette write
+>
+> Sequence, in pixel clocks after the `clut_data` commit: clock 1 `IDX` =
+> `clut_index`; clock 2 `nCLUT_WE` low; clock 3 `nCLUT_WE` high with address and
+> data still stable; clock 4 `IDX` returns to the pixel index.  The one-clock
+> pulse is centred in the three-clock address window, so both the address and the
+> data are stable for a full clock before it falls and a full clock after it
+> rises.  RAM outputs are high-Z while `/WE` is low and need the part's
+> write-recovery time afterwards.
+>
+> Rules for the list author:
+>
+> 1. **Where.**  A write disturbs the pixel bus for clocks 1..4 after the commit
+>    (1..3 measured, plus one clock of guard for write recovery).  Legal only in
+>    blanking, or where those pixel slots are covered by a non-passthrough RUN /
+>    opaque MASK.  Clocks 1..3 are the entry's own three words; clock 4 is the
+>    first clock of the word after the filler, so that word must not be the RUN
+>    that resumes passthrough.
+> 2. **Hold.**  `set_pix_value` must carry the payload across clocks 1, 2 and 3.
+>    COMPOSITOR re-registers the bus from every staged word and stages one every
+>    two clocks, so the `clut_data` SET's own value covers clocks 0 and 1 only
+>    and the word after it covers 2 and 3: a `clut_data` SET is therefore
+>    followed by one filler word carrying the SAME 12-bit value, `SET target 7`.
+>    It must be target 7 — any other target either writes a register with the
+>    colour payload or starts a second write — and it is necessary, not
+>    decorative.  (Pinned by `cpld/pixel/clut_pair_tb.v`, which also carries the
+>    negative control for the one-clock-later sequence this replaced: that one
+>    gave the RAM zero data hold, met only by inter-chip skew.)
+> 3. Cost per entry: `SET clut_index`, `SET clut_data`, filler = 3 words.  A
+>    26-word hblank packet reloads 8 entries per line with room for the mode /
+>    base / skip SETs.  Photographs need 2-5 per line (`clut-experiment`).
+>    Consecutive entries could drop the index SET if `clut_index`
+>    post-incremented on each write (2 words/entry, 13 per line) — OPEN, costs
+>    LCs, not needed for Smurf.
 
 ## 5. Bench inventory
 
 | bench | make target | what it covers | result |
 |---|---|---|---|
 | `pixel_tb.v` | `make pixel-sim` | the decoder: modes, cadence, skip, words/line | **PASS**, 148 cases, 322 checks, 266 line-runs, 0 failures |
-| `mutate.py` | `make pixel-mutants` | 8 single-mistake mutants of `pixel.v` | all 8 FAIL as required (25 / 72 / 193 / 25 / 265 / 25 / 117 / 3 FAIL lines) |
+| `mutate.py` | `make pixel-mutants` | **9** single-mistake mutants of the decoder | all 9 FAIL as required |
 | `timing_tb.v` | `make timing-sim` | the raster laws, against the MERGED top level | **PASS**, 14 checks, 0 failures; all 10 `-DMUTATE=n` controls fail |
-| `clut_pair_tb.v` | `make clut-pair-sim` | COMPOSITOR + PIXEL + three RAM models | **PASS**, 11 cases, 57 checks, 0 failures |
+| `clut_pair_tb.v` | `make clut-pair-sim` | COMPOSITOR + PIXEL + three RAM models | **PASS**, 11 cases, **65** checks, 0 failures; the `old_pulse` whole-chip mutant FAILS as required |
+
+`mut9` is the write sequence one clock late — `pixel_tb.v` catches it on the
+clock numbers alone.  `mutants/old_pulse.v` is the same mistake as a WHOLE-FILE
+mutant, because `clut_pair_tb.v` instantiates the merged top level; it is what
+`make clut-pair-sim` requires to fail, and it fails on exactly the intended
+assertion (`data changed on the /WE RISING edge ... no hold`, in S1c and in both
+back-to-back entries of S2).  `mut8` is now "the pulse two clocks wide" against
+the new `~wr1`.
 
 `pixel_tb.v` is built from the experiment's `idxw_tb.v`; the retired cases
 (micro-HAM, the 2bpp fixed four colours, the shared-bus byte reads, the
@@ -288,7 +335,9 @@ would have produced a confident wrong answer:
 * "the data was stable around the write pulse" is NOT "the data was correct".
   An illegal third word leaves the bus perfectly stable at ITS OWN payload.  The
   criterion has to be "the data at the pulse is the payload the `clut_data` SET
-  committed", which is what the bench now asserts.
+  committed", which is what the bench now asserts.  (With the pulse moved
+  earlier the illegal cases also break setup, so the bench now sees them twice
+  over — but the correctness criterion is still the one that matters.)
 
 ---
 
@@ -351,6 +400,30 @@ as board nets.  The deliberate exception worth adding: **the write filler**.
 **Emulator** — inherits through `render.cpp`; it must rebuild clean and the
 palette must be random at power-up there too.
 
+**A REQUIREMENT ON THE MODEL AND THE EMULATOR: model COMPOSITOR's power-on
+reset.**  On the board COMPOSITOR's only reset input is TIMING's `/RS`, which
+pulses for eight clocks once per frame at the top of the vsync line.  Nothing
+resets it at power-up.  What keeps it sane until the first vsync is the
+ATF1508AS's own POWER_RESET feature — the `power_reset on` strategy flag every
+production fitter target carries — which initialises the macrocell registers when
+the supply comes up.  That flag is therefore LOAD-BEARING for COMPOSITOR, not
+cosmetic, and the same is true of PIXEL's own `nRESET` only because the board
+drives it.
+
+Consequences for packages 2+:
+
+* The model/emulator must apply a power-on reset to the COMPOSITOR unit at
+  construction, with the same effect as `/RS`: held colours to 0xFFF/0x000,
+  `run_count` terminal, source passthrough, nothing staged, machine clear.
+* Whatever does NOT model it sees an **undefined first frame**: everything from
+  power-up to the first `/RS` at line 490 runs with COMPOSITOR's state
+  unspecified.  `clut_pair_tb.v` has to AND a power-on pulse into `/RS`
+  explicitly for exactly this reason, and says so in a comment; without it the
+  whole first frame simulates as X and every measurement in it is worthless.
+* Firmware and display-list authors get the same warning in different words: the
+  first frame after power-up is not a defined picture, and the palette RAM is
+  undefined until software writes it.  Nothing in hardware clears either.
+
 ---
 
 ## 7. Open issues / not done
@@ -361,10 +434,12 @@ palette must be random at power-up there too.
   write recovery) are section 6's job and are NOT settled here.  Nor are the
   sixteen PIXELS inputs sampled on one GCLK edge.  The pair bench's one-clock
   write recovery is an abstraction, not a datasheet number.
-* **The data-hold-at-/WE-rise question** in section 4 needs the datasheet of the
-  part actually bought, and then a decision between the fourth word and the
-  earlier pulse.  Until then the rule in section 4 is written to be safe under
-  either.
+* **The data-hold-at-/WE-rise question is CLOSED on our side** (owner decision,
+  2026-09-20): the pulse moved one clock earlier, so the write now has a full
+  clock of address AND data setup and a full clock of hold, whatever the part's
+  numbers turn out to be.  What is still open is the arithmetic itself — /WE
+  pulse width against one 39.72 ns clock, and the actual tAS/tAH/tDS/tDH/tWR of
+  the part bought — which is spec section 6's job.
 * Per-equation worst PT: the fitter reports only per-LAB totals, so that column
   stays empty, as in the experiment.
 * The `clut_index` post-increment idea (2 words per entry instead of 3) is

@@ -80,13 +80,14 @@
 // THE PALETTE WRITE, in pixel clocks after the clock in which set_pix_commit
 // is high for the clut_data SET (clock 0):
 //
-//   clock 2   IDX = clut_index        clock 3   nCLUT_WE LOW (one clock)
-//   clock 4   nCLUT_WE high, IDX still clut_index
-//   clock 5   IDX back to the pixel index
+//   clock 1   IDX = clut_index        clock 2   nCLUT_WE LOW (one clock)
+//   clock 3   nCLUT_WE high, IDX still clut_index
+//   clock 4   IDX back to the pixel index
 //
-// so the address is stable one clock either side of the pulse.  What must be
-// on COMPOSITOR's set_pix_value during clock 3 — the reason a table entry
-// costs three words — is clut_pair_tb.v's subject, not this bench's.
+// so the pulse is CENTRED in the address window: a full clock of setup and a
+// full clock of hold.  What must be on COMPOSITOR's set_pix_value during
+// clocks 1..3 — the reason a table entry costs three words, and why the pulse
+// sits at 2 rather than at 3 — is clut_pair_tb.v's subject, not this bench's.
 //
 // RESET (/RS): pix_mode, pix_base, pixel_skip and clut_index all zero, IDX 0,
 // nCLUT_WE high, nPIXELS_RE high.  Case R re-asserts reset after the other
@@ -1712,9 +1713,9 @@ module PixelTb;
         seq_watch = 1'b0;
 
         check_int("W2 IDX=index clocks",  seq_idx_clocks, 3);
-        check_int("W2 first at cycle",    seq_first_idx,  2);
+        check_int("W2 first at cycle",    seq_first_idx,  1);
         check_int("W2 /CLUT_WE clocks",   seq_we_clocks,  1);
-        check_int("W2 /CLUT_WE at cycle", seq_first_we,   3);
+        check_int("W2 /CLUT_WE at cycle", seq_first_we,   2);
 
         if (IDX !== 4'd0)
         begin
@@ -1872,56 +1873,61 @@ module PixelTb;
 
         check_int("IDX latency from C0", idx_lat, 2);
 
+        // The write sequence, clock by clock, from INSIDE a line — so the
+        // stolen address is distinguishable from the pixel index (which is 1
+        // here) and clut_index's reset value of 0 is a real measurement.
+        // A read taken after `repeat (n)` edges is the value HELD DURING
+        // cycle n, by the offset rule above.
         set_reg(T_CLUT_DATA, 12'h789);
-        repeat (2) @(posedge clk);
+        @(posedge clk);
 
         if (IDX !== 4'd0 || nCLUT_WE !== 1'b1)
         begin
-            $display("  FAIL  write clock 2: IDX=%1h nCLUT_WE=%b, expected 0 (clut_index reset) and 1",
+            $display("  FAIL  write clock 1: IDX=%1h nCLUT_WE=%b, expected 0 (clut_index reset) and 1",
                      IDX, nCLUT_WE);
             errors = errors + 1;
         end
         else
         begin
-            $display("  pass  write clock 2: IDX = clut_index = 0 (reset value), nCLUT_WE still high");
+            $display("  pass  write clock 1: IDX = clut_index = 0 (reset value), nCLUT_WE still high");
         end
 
         @(posedge clk);
 
         if (IDX !== 4'd0 || nCLUT_WE !== 1'b0)
         begin
-            $display("  FAIL  write clock 3: IDX=%1h nCLUT_WE=%b, expected 0 and 0",
+            $display("  FAIL  write clock 2: IDX=%1h nCLUT_WE=%b, expected 0 and 0",
                      IDX, nCLUT_WE);
             errors = errors + 1;
         end
         else
         begin
-            $display("  pass  write clock 3: nCLUT_WE LOW with IDX held");
+            $display("  pass  write clock 2: nCLUT_WE LOW with IDX held");
         end
 
         @(posedge clk);
 
         if (IDX !== 4'd0 || nCLUT_WE !== 1'b1)
         begin
-            $display("  FAIL  write clock 4: IDX=%1h nCLUT_WE=%b, expected 0 and 1",
+            $display("  FAIL  write clock 3: IDX=%1h nCLUT_WE=%b, expected 0 and 1",
                      IDX, nCLUT_WE);
             errors = errors + 1;
         end
         else
         begin
-            $display("  pass  write clock 4: nCLUT_WE high, IDX still held");
+            $display("  pass  write clock 3: nCLUT_WE high, IDX still held (the hold clock)");
         end
 
         @(posedge clk);
 
         if (IDX !== 4'd1)
         begin
-            $display("  FAIL  write clock 5: IDX=%1h, expected the pixel index 1", IDX);
+            $display("  FAIL  write clock 4: IDX=%1h, expected the pixel index 1", IDX);
             errors = errors + 1;
         end
         else
         begin
-            $display("  pass  write clock 5: IDX back to the pixel index");
+            $display("  pass  write clock 4: IDX back to the pixel index");
         end
 
         @(posedge clk) PIX_CONSUME <= 1'b0;

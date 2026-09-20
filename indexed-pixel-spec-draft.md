@@ -22,7 +22,7 @@ palette RAM).
 * Skip limits below are accepted as recorded limitations.
 * A `clut_data` SET is followed by a same-value `SET target 7` filler; a table
   entry costs 3 words (accepted 2026-09-20).
-* TIMING is folded into the PIXEL chip (`R8w`: 122/128 LC, 43 I/O, pass 1).
+* TIMING is folded into the PIXEL chip (production fit 123/128 LC, 43 I/O, pass 1).
 
 Deferred, not part of this change: the COMPOSITOR `PIX_BIT` bypass and 74F374 hold registers (only needed
 if the RAM misses the read budget in §6).
@@ -95,22 +95,32 @@ power-up.)
 
 ## 4. Palette write
 
-Sequence, in pixel clocks after the `clut_data` commit: clock 2 `IDX` =
-`clut_index`; clock 3 `nCLUT_WE` low; clock 4 `nCLUT_WE` high with address and
-data still stable; then `IDX` returns to the pixel index.  RAM outputs are
-high-Z while `/WE` is low and need the part's write-recovery time afterwards.
+Sequence, in pixel clocks after the `clut_data` commit: clock 1 `IDX` =
+`clut_index`; clock 2 `nCLUT_WE` low; clock 3 `nCLUT_WE` high with address and
+data still stable; clock 4 `IDX` returns to the pixel index.  The one-clock
+pulse is centred in the three-clock address window, so both the address and the
+data are stable for a full clock before it falls and a full clock after it
+rises.  RAM outputs are high-Z while `/WE` is low and need the part's
+write-recovery time afterwards.
 
 Rules for the list author:
 
-1. **Where.**  A write disturbs the pixel bus for about clocks 2..5 after the
-   commit.  Legal only in blanking, or where those pixel slots are covered by a
-   non-passthrough RUN / opaque MASK.
-2. **Hold.**  `set_pix_value` must not change until the write pulse has ended.
-   COMPOSITOR re-registers the bus from every staged word, and blanking SETs
-   pop two clocks apart, so a `clut_data` SET is followed by one filler word
-   that leaves the bus unchanged: `SET target 7` carrying the same 12-bit
-   value.  (TO PIN in the chip-pair bench: exact hold requirement in slots, and
-   that a same-value filler is sufficient.)
+1. **Where.**  A write disturbs the pixel bus for clocks 1..4 after the commit
+   (1..3 measured, plus one clock of guard for write recovery).  Legal only in
+   blanking, or where those pixel slots are covered by a non-passthrough RUN /
+   opaque MASK.  Clocks 1..3 are the entry's own three words; clock 4 is the
+   first clock of the word after the filler, so that word must not be the RUN
+   that resumes passthrough.
+2. **Hold.**  `set_pix_value` must carry the payload across clocks 1, 2 and 3.
+   COMPOSITOR re-registers the bus from every staged word and stages one every
+   two clocks, so the `clut_data` SET's own value covers clocks 0 and 1 only
+   and the word after it covers 2 and 3: a `clut_data` SET is therefore
+   followed by one filler word carrying the SAME 12-bit value, `SET target 7`.
+   It must be target 7 — any other target either writes a register with the
+   colour payload or starts a second write — and it is necessary, not
+   decorative.  (Pinned by `cpld/pixel/clut_pair_tb.v`, which also carries the
+   negative control for the one-clock-later sequence this replaced: that one
+   gave the RAM zero data hold, met only by inter-chip skew.)
 3. Cost per entry: `SET clut_index`, `SET clut_data`, filler = 3 words.  A
    26-word hblank packet reloads 8 entries per line with room for the mode /
    base / skip SETs.  Photographs need 2-5 per line (`clut-experiment`).
@@ -129,7 +139,7 @@ Rules for the list author:
 | `RGB[11:0]` | RAM outputs -> COMPOSITOR `RGB_IN` | |
 | `set_pix_value[11:0]` | COMPOSITOR -> RAM data in; `[3:0]` also -> PIXEL | PIXEL drops `[11:4]` |
 
-PIXEL + TIMING in one ATF1508AS: 122 LC, 43 I/O (`R8w`); standalone PIXEL 85 LC, 38 I/O (`R5w`).  The TIMING chip, its JTAG position and its chip-to-chip nets retire; its external outputs move to the merged chip.  COMPOSITOR unchanged.
+PIXEL + TIMING in one ATF1508AS: production fit 123/128 LC, 94 FF, 384 PT, 43 I/O, pass 1 (`cpld/pixel/LANDING-NOTES.md`; experiment `R8w` was 122); standalone PIXEL 85 LC, 38 I/O (`R5w`).  The TIMING chip, its JTAG position and its chip-to-chip nets retire; its external outputs move to the merged chip.  COMPOSITOR unchanged.
 
 ## 6. Timing to pin before the board is routed (datasheet tables, not estimates)
 

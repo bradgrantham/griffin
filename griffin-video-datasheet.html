@@ -210,7 +210,7 @@
       <h2>Device Complement</h2>
       <ul>
         <li>ENGINE &mdash; ATF1508AS, descriptor DMA master (123/128 LC)</li>
-        <li>PIXEL + TIMING &mdash; one ATF1508AS: stream unpacker, palette writer, raster + syncs + board time bases (122/128 LC, 43 I/O in the fit experiment; production fit pending)</li>
+        <li>PIXEL + TIMING &mdash; one ATF1508AS: stream unpacker, palette writer, raster + syncs + board time bases (123/128 LC, 94 FF, 43 I/O, fitter pass 1; pinout proposed, not frozen)</li>
         <li>COMPOSITOR &mdash; ATF1508AS, VIDCMD playback (122/128 LC)</li>
         <li>Palette &mdash; 3&times; 16&times;4 separate-I/O bipolar RAM, 74F219 pinout (non-inverting; &le;22.7 ns address access required)</li>
         <li>2&times;2 IDT7200L15 FIFOs (256&times;9): PIXELS and VIDCMD streams, both read as ganged 16-bit ports</li>
@@ -382,18 +382,21 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
     <h3><span class="mnum">3.6</span> Palette RAM &mdash; load and reload <span class="st prelim">PRELIMINARY</span></h3>
     <p>
       <code>SET clut_index</code> names an entry; <code>SET clut_data</code> writes its 12-bit colour:
-      PIXEL puts <code>clut_index</code> on IDX and pulses <code>/CLUT_WE</code> for one clock while the
+      PIXEL puts <code>clut_index</code> on IDX for clocks 1&ndash;3 after the commit and pulses <code>/CLUT_WE</code> low on clock 2 alone &mdash; a full clock of address and data setup before the pulse and a full clock of hold after it &mdash; while the
       value is still on <code>set_pix_value</code>, which is wired to the RAM&rsquo;s data inputs.
-      COMPOSITOR re-registers that bus from every staged word, so each data SET is followed by one
-      filler that leaves it unchanged: <code>SET target 7</code> with the same value. Three words per
-      entry. The RAM is <b>never reset</b> and powers up undefined &mdash; software loads what it uses
+      COMPOSITOR re-registers that bus from every staged word and stages one every two clocks, so the
+      data SET covers clocks 0&ndash;1 only and must be followed by one filler that leaves the bus unchanged:
+      <code>SET target 7</code> with the same value (measured necessary and sufficient; any other following
+      word stores the wrong colour). Three words per entry. The RAM is <b>never reset</b> and powers up undefined &mdash; software loads what it uses
       (16 entries in vblank = 48 words); contents persist across frames.
     </p>
     <p>
       A write takes over the pixel bus for a few clocks (RAM outputs float while /WE is low, then
       need write recovery), so it is legal <b>only in blanking or under a non-passthrough RUN / opaque
-      MASK</b>. The exact hold and disturbed-window clock counts are being pinned by the chip-pair
-      testbench (COMPOSITOR + PIXEL + RAM model).
+      MASK</b>: clocks 1&ndash;4 after the commit (1&ndash;3 measured on RGB_IN, plus one guard clock for write
+      recovery), so the word after the filler must not be the RUN that resumes passthrough. Pinned by
+      <code>clut_pair_tb.v</code> (COMPOSITOR + PIXEL + RAM model), which also fails the rejected later pulse
+      for giving the RAM zero data hold.
     </p>
 
     <h3><span class="mnum">3.7</span> Half-rate flag &mdash; 320-wide modes <span class="st prelim">PRELIMINARY</span></h3>
@@ -590,7 +593,7 @@ VIDCMD_Q     ----------&lt;==word==&gt;-  valid &le; 25.0 ns after a (tCO 8.0 + 
       <tr><td>Pure-VIDCMD screens (&sect;4)</td><td>m6-console (82 w/line worst, pixel-exact) + m7-kiosk (30 w/line, measured seams)</td><td class="mono">PASS 2026-08-24</td></tr>
       <tr><td>Passthrough-as-third-color (empty PIXELS &rarr; dibit 00 = pal_bg)</td><td>model behavior only &mdash; verify pixel.v post-/RS re-shift + 7200 Q with no writes on hardware</td><td class="mono">OPEN</td></tr>
       <tr><td>Indexed PIXEL + TIMING in one chip, 16-bit PIXELS port (&sect;3.1, &sect;3.6)</td><td>fit ladder cpld/experiments/indexed-pixel: 122/128 LC, 43 I/O, pass 1; 136 hand-derived line-runs incl. full skip matrix; mutants fail</td><td class="mono">EXPERIMENT PASS 2026-09-20</td></tr>
-      <tr><td>Production pixel.v, pixel_tb, timing_tb on merged top, chip-pair palette-write bench</td><td>package 1, branch indexed-pixel</td><td class="mono">IN PROGRESS</td></tr>
+      <tr><td>Production pixel.v, pixel_tb, timing_tb on merged top, chip-pair palette-write bench</td><td>fit 123/128 LC pass 1; pixel_tb 148 cases / 322 checks, 9 mutants fail; timing_tb 14 checks, 10 controls fail; clut_pair_tb 65 checks incl. illegal-write and zero-hold negative controls</td><td class="mono">PASS 2026-09-20 (branch)</td></tr>
       <tr><td>Shared model, suite cases, emulator, firmware console, apps, griffin.yml / vidcmd-spec</td><td>packages 2&ndash;4, gated on package 1</td><td class="mono">TO DO</td></tr>
       <tr><td>Palette RAM read path</td><td>PIXEL tCO 8.0 + flight + RAM tAA &le; 32.7 ns &rArr; tAA &le; 22.7 ns over 0&ndash;70&nbsp;&deg;C, from the purchased part&rsquo;s datasheet (Fairchild 74F219 at 27 ns fails); write timing table likewise</td><td class="mono">OPEN</td></tr>
       <tr><td>Micro-HAM; pal_fg / pal_bg / ham_held; byte-interleaved PIXELS read</td><td>superseded; with them go the skip&ge;8 mis-pairing bug and the adjacent-clock FIFO bus turnover found 2026-09-19</td><td class="mono">RETIRED (rev 3)</td></tr>
