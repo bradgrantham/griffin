@@ -129,6 +129,11 @@ non-passthrough cover).  New:
   display costs no copying; filling the buffer (e.g. raw RGB444 words from CF,
   60x45 at 15 fps = ~40 KB/s) is the CPU's job with roughly 45% of the machine
   left on a 2bpp screen (cost-model estimate, not benchmarked).
+  Horizontal zoom = LITERAL + HOLD(n) per video pixel, width about 2 + n
+  clocks (4 minimum; to be measured): 2x costs the same words per screen pixel
+  as 1x, 3x saves a third, 4x half.  The stream is [LIT, HOLD, LIT, HOLD ...]
+  with the HOLD words written once and the CPU updating literals at stride 2.
+  Vertical zoom = several lines' descriptors naming the same row.
 * Any-colour vector dots and short segments (Tempest) in 1-2 words.
 * Bandwidth ceiling with PIXELS idle and ~10% CPU (estimate from the
   `descriptor.h` cost model, 2.44 SYSCLK per word in full descriptors): ~164
