@@ -3245,6 +3245,7 @@ public:
     uint32_t clock_hz = SYSCLK_HZ;
     bool exit_requested = false;
     uint64_t dma_stall_debt = 0;   // smooth DMA-stall model: unpaid stall cycles
+    uint64_t dma_stall_clock_mark = 0;  // clock at the end of the last pay-down
 
     // PIXEL and COMPOSITOR, held across scanlines exactly as the chips are.
     // Their state is the frame: FIFO contents, held colours, the run in
@@ -3998,7 +3999,7 @@ public:
         uint32_t dma_stall = static_cast<uint32_t>(engine_stall_pending);
         engine_stall_pending = 0;
 
-        video.check_timer(getClock(),
+        dma_stall += video.check_timer(getClock(),
             [this, &sink](int line, uint32_t &stall)
             {
                 // /RS.  TIMING pulses it during vertical sync: both FIFOs
@@ -4044,7 +4045,9 @@ public:
                 }
             });
 
-        if (!getenv("GRIFFIN_NO_DMA_STALL"))
+        static const bool no_dma_stall = getenv("GRIFFIN_NO_DMA_STALL") != nullptr;
+        static const bool dma_stall_lump = getenv("GRIFFIN_DMA_STALL_LUMP") != nullptr;
+        if (!no_dma_stall)
         {
             // How the descriptor list's bus time is charged to the CPU clock.
             //
@@ -4063,7 +4066,14 @@ public:
             //
             // The SMOOTH model (default) mirrors that: it accrues the stall as a
             // debt and pays it down a few cycles per CPU step, so getClock()
-            // never leaps between two whole instructions.
+            // never leaps between two whole instructions.  The rate is derived,
+            // not a constant — see the proportional pay-down below.  A constant
+            // rate is what made video DMA free to the guest for a year: a cap of
+            // STEP cycles per CPU step can charge at most
+            // STEP/(STEP + mean instruction cycles) of the bus no matter what
+            // the list costs, so with the old STEP=4 default and a ~7.6-cycle
+            // mean anything above 34 % of a line was deferred for ever instead
+            // of being charged.
             //
             // The LUMP model (GRIFFIN_DMA_STALL_LUMP) injects a whole line's
             // burst as one sync() in the gap between two instructions.  That is
@@ -4076,7 +4086,7 @@ public:
             // the CPU-vs-jiffies slowdown, is identical to SMOOTH.  Kept only
             // for A/B and intra-line tearing studies; do not use it to boot the
             // kernel.
-            if (getenv("GRIFFIN_DMA_STALL_LUMP"))
+            if (dma_stall_lump)
             {
                 if (dma_stall > 0)
                 {
@@ -4085,21 +4095,67 @@ public:
             }
             else
             {
+                // SMOOTH, proportional pay-down.  The invariant is that the
+                // unpaid debt is, at every moment, the engine's share of the
+                // guest cycles left before the next HBLANK edge: of the
+                // `line_left` cycles remaining, `dma_stall_debt` belong to the
+                // engine and `line_left - dma_stall_debt` to the CPU.  Holding
+                // that ratio means charging, for the `cpu_cycles` the CPU just
+                // executed, `cpu_cycles * debt / (line_left - debt)` cycles of
+                // stall, which retires a line's charge exactly at the line's
+                // last cycle — for any load, and without any assumption about
+                // the guest's instruction mix.  Nothing is capped, so the total
+                // charged per field is exactly what EngineWalker reported, and
+                // a charge bigger than the line can hold carries over to the
+                // next line rather than being dropped.
+                const uint64_t now = static_cast<uint64_t>(getClock());
+                const uint64_t cpu_cycles = now - dma_stall_clock_mark;
+                dma_stall_clock_mark = now;
+
                 dma_stall_debt += dma_stall;
                 if (dma_stall_debt > 0)
                 {
-                    // Pay at most STEP cycles per CPU step.  A scanline is ~445
-                    // sysclks of guest time and service_video() runs once per
-                    // instruction, so many steps elapse per line and the debt
-                    // drains well within a line at STEP=4 — keeping the clock
-                    // effectively continuous.  GRIFFIN_DMA_STALL_STEP overrides
-                    // for experiments.
+                    // check_timer() has just run, so the next line boundary is
+                    // strictly in the future; clamp anyway rather than trust it.
+                    const uint64_t line_left = video.clock_next_line > now
+                                             ? video.clock_next_line - now
+                                             : 1;
+                    uint64_t pay;
+                    if (dma_stall_debt >= line_left)
+                    {
+                        // The engine owes more than the line has left to give:
+                        // the bus is busy for all of it and the rest carries.
+                        pay = line_left;
+                    }
+                    else
+                    {
+                        const uint64_t cpu_left = line_left - dma_stall_debt;
+                        // ceil(), so a debt can never sit un-retired because the
+                        // proportional share rounded down to zero.
+                        pay = (cpu_cycles * dma_stall_debt + cpu_left - 1) / cpu_left;
+                        pay = std::min<uint64_t>(pay, dma_stall_debt);
+                    }
+
+                    // GRIFFIN_DMA_STALL_STEP=N replaces the proportional rate
+                    // with the pre-2026-09 fixed cap of N cycles per CPU step,
+                    // for A/B against older measurements and for studying how a
+                    // coarse charge cadence affects interrupt latency.  It
+                    // UNDER-CHARGES any list whose cost exceeds
+                    // N/(N + mean instruction cycles) of the bus.
                     static const char *stepenv = getenv("GRIFFIN_DMA_STALL_STEP");
-                    int step = stepenv ? atoi(stepenv) : 4;
-                    if (step <= 0) step = 4;
-                    int pay = static_cast<int>(std::min<uint64_t>(dma_stall_debt, step));
-                    sync(pay);
+                    if (stepenv != nullptr)
+                    {
+                        const int step = atoi(stepenv);
+                        if (step > 0)
+                        {
+                            pay = std::min<uint64_t>(dma_stall_debt,
+                                                     static_cast<uint64_t>(step));
+                        }
+                    }
+
+                    sync(static_cast<int>(pay));
                     dma_stall_debt -= pay;
+                    dma_stall_clock_mark += pay;
                 }
             }
         }

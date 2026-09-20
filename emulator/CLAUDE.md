@@ -23,3 +23,15 @@ printf 'help\r' | ./build/emulator --headless --console-stdio \
     --no-throttle --run-cycles 100000000 ../firmware/rom.bin
 ```
 With no automation flags the emulator behaves exactly as before (pty + SDL window, runs until QUIT/`~.`).
+
+## Environment knobs: how ENGINE's DMA is charged to the CPU
+
+The walker reports what each descriptor cost the bus (`super-engine/descriptor.h`: arbitration + assert + four descriptor words + 2 SYSCLK per payload word + release), and `service_video()` charges that to the guest clock. **The default is the only setting that charges the true total**; the others exist for A/B and all of them distort a benchmark.
+
+* *(default, no variable set)* — SMOOTH, proportional. The unpaid debt is held equal to the engine's share of the guest cycles left before the next HBLANK edge, so a line's charge is retired exactly at that line's last cycle, in payments of a few cycles between instructions. Nothing is capped: the SYSCLK charged per field equals the walker's total for any load, and a charge larger than a line carries into the next line.
+* `GRIFFIN_DMA_STALL_STEP=N` — the pre-2026-09 fixed cap of N cycles per CPU step. A fixed cap can charge at most `N/(N + mean instruction cycles)` of the bus however expensive the list is: at the old default of 4 and a typical ~7.6-cycle mean that is 34 %, so every list above a third of a line measured the cap and the rest was deferred for ever. Kept only to reproduce old measurements and to study a coarse charge cadence against interrupt latency.
+* `GRIFFIN_DMA_STALL_LUMP` — inject a whole line's charge as one `sync()` between two instructions. Total is right, cadence is unphysical; it wedges the nommu Linux fbcon boot (see the comment at the code).
+* `GRIFFIN_NO_DMA_STALL` — do not charge at all. Video becomes free to the guest, which is what the 2026-08/09 regression did by accident.
+* `GRIFFIN_PROFILE=START:END` — PC-sampling profiler over that SYSCLK window.
+
+`apps/dmabench/check-dma-stall.sh [FIELDS]` (default 40, ~30 s) is the regression check for all of this: it runs the dmabench app on the stock binary with those variables unset and fails unless the 1bpp console leaves the CPU 74-78 % of its no-DMA throughput and the pure-VIDCMD MASK console 54-58 %. The first bound catches "not charged at all" (reads 100 %), the second catches a clamped pay-down (reads 65.6 %).
