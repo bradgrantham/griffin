@@ -111,26 +111,23 @@
 `define ENGINE_CTRL_ENABLE_SHIFT 0
 `define ENGINE_CTRL_DEFAULT 8'h00
 
-// TIMING: Raster time base: VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, PIXEL strobes, ENGINE HBLANK, GLUE vsync IRQ, PORTS paddle/audio ticks
-`define TIMING_CLOCK 25175000
-`define TIMING_PIXEL_CLOCK_HZ 25175000  // pixel clock, Hz
-`define TIMING_H_ACTIVE 640  // pixel clocks
-`define TIMING_H_FRONT_PORCH 16  // pixel clocks
-`define TIMING_H_SYNC 96  // pixel clocks
-`define TIMING_H_BACK_PORCH 48  // pixel clocks
-`define TIMING_H_TOTAL 800  // pixel clocks
-`define TIMING_V_ACTIVE 480  // lines
-`define TIMING_V_FRONT_PORCH 10  // lines
-`define TIMING_V_SYNC 2  // lines
-`define TIMING_V_BACK_PORCH 33  // lines
-`define TIMING_V_TOTAL 525  // lines
-`define TIMING_HSYNC_ACTIVE_LOW 1  // HSYNC is asserted low during the sync interval
-`define TIMING_VSYNC_ACTIVE_LOW 1  // VSYNC is asserted low during the sync interval
-
-// PIXEL: PIXELS stream unpacker: 1bpp direct, 2bpp micro-HAM, 2bpp indexed, half rate; R4G4B4 to COMPOSITOR
+// PIXEL: Raster time base and indexed PIXELS unpacker: 4-bit palette index + palette-RAM write port, VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, ENGINE HBLANK, GLUE vsync IRQ, PORTS ticks
 `define PIXEL_CLOCK 25175000
+`define PIXEL_PIXEL_CLOCK_HZ 25175000  // pixel clock, Hz
+`define PIXEL_H_ACTIVE 640  // pixel clocks
+`define PIXEL_H_FRONT_PORCH 16  // pixel clocks
+`define PIXEL_H_SYNC 96  // pixel clocks
+`define PIXEL_H_BACK_PORCH 48  // pixel clocks
+`define PIXEL_H_TOTAL 800  // pixel clocks
+`define PIXEL_V_ACTIVE 480  // lines
+`define PIXEL_V_FRONT_PORCH 10  // lines
+`define PIXEL_V_SYNC 2  // lines
+`define PIXEL_V_BACK_PORCH 33  // lines
+`define PIXEL_V_TOTAL 525  // lines
+`define PIXEL_HSYNC_ACTIVE_LOW 1  // HSYNC is asserted low during the sync interval
+`define PIXEL_VSYNC_ACTIVE_LOW 1  // VSYNC is asserted low during the sync interval
 
-// COMPOSITOR: VIDCMD stream player: per-slot source select over PIXEL's R4G4B4, SET forwarding to PIXEL, MASK overlays
+// COMPOSITOR: VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, SET forwarding to PIXEL, MASK overlays
 `define COMPOSITOR_CLOCK 25175000
 
 // PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop/reset control
@@ -357,15 +354,32 @@
 `define ENGINE_SIGNAL_SPARE 8'h08
 `define VIDCMD_SET_CMP_COLOR1 8'h00
 `define VIDCMD_SET_CMP_COLOR0 8'h01
-`define VIDCMD_SET_PIX_PAL_FG 8'h02
-`define VIDCMD_SET_PIX_PAL_BG 8'h03
-`define VIDCMD_SET_PIX_HAM_HELD 8'h04
+`define VIDCMD_SET_PIX_CLUT_INDEX 8'h02
+`define VIDCMD_SET_PIX_CLUT_DATA 8'h03
+`define VIDCMD_SET_PIX_BASE 8'h04
 `define VIDCMD_SET_PIX_MODE 8'h05
 `define VIDCMD_SET_PIX_PIXEL_SKIP 8'h06
+`define VIDCMD_SET_FILLER 8'h07
+`define VIDCMD_WORDS_PER_CLUT_ENTRY 8'h03
+`define VIDCMD_PIX_MODE_1BPP 8'h00
+`define VIDCMD_PIX_MODE_2BPP 8'h01
+`define VIDCMD_PIX_MODE_4BPP 8'h02
+`define VIDCMD_PIX_MODE_ATTR 8'h03
+`define VIDCMD_PIX_MODE_HALF_RATE 8'h04
 `define PIXELS_FIFO_WORDS 9'h100
 `define VIDCMD_FIFO_WORDS 9'h100
 `define PIXELS_WORDS_PER_LINE_1BPP 8'h28
+`define PIXELS_WORDS_PER_LINE_1BPP_HALF 8'h14
 `define PIXELS_WORDS_PER_LINE_2BPP 8'h50
+`define PIXELS_WORDS_PER_LINE_2BPP_HALF 8'h28
+`define PIXELS_WORDS_PER_LINE_4BPP_HALF 8'h50
+`define PIXELS_WORDS_PER_LINE_ATTR 8'h50
+`define PIXELS_WORDS_PER_LINE_ATTR_HALF 8'h28
+`define PIXELS_SKIP_EXTRA_WORDS 8'h01
+`define PIXELS_SKIP_MAX_1BPP 8'h0E
+`define PIXELS_SKIP_MAX_2BPP 8'h0C
+`define PIXELS_SKIP_MAX_2BPP_HALF 8'h0E
+`define PIXELS_SKIP_MAX_4BPP_HALF 8'h0C
 `define COMPOSITOR_LEAD 8'h02
 `define PIXEL_OUT_LEAD 8'h01
 `define TIMING_SPLIT_LEAD 8'h01

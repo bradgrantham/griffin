@@ -36,25 +36,171 @@ void rgb444_to_rgb888(Rgb444 c, uint8_t &r, uint8_t &g, uint8_t &b)
 }
 
 // ---------------------------------------------------------------------------
-// PixelUnit
+// PaletteUnit — the external 16 x 12 RAM and its write sequencer
+// ---------------------------------------------------------------------------
+//
+// pixel.v drives the address (IDX) and the pulse (nCLUT_WE); COMPOSITOR drives
+// the twelve data inputs from set_pix_value.  Everything below is
+// clut_pair_tb.v's measured sequence, counted in clocks from the clock in which
+// set_pix_commit is high for the clut_data SET:
+//
+//   phase 1   IDX = clut_index                  RAM drives the entry being
+//                                               written: WRONG, but defined
+//   phase 2   nCLUT_WE low, one clock           RAM outputs high-Z: UNDEFINED
+//   phase 3   nCLUT_WE high, address still held RAM recovering: UNDEFINED
+//   phase 4   IDX back to the pixel index       correct again; the authoring
+//                                               guard for write recovery
+//
+// In the model's screen space those four phases are the four SLOTS after the
+// clut_data SET's own slot, which is the same window measured in clocks after
+// its commit (render.h).
+//
+// THE STORED VALUE IS WHAT IS ON THE BUS AT THE PULSE, and that is the criterion
+// clut_pair_tb.v settled on after its second harness bug: "the data was stable"
+// is not "the data was correct", because an illegal third word leaves the bus
+// perfectly stable at its own payload.  So a missing or wrong-valued filler
+// stores the wrong colour here exactly as it does on the bench (S1a/S1b), and
+// the model flags it rather than fixing it up.
+
+void PaletteUnit::reset_power_on(uint32_t seed)
+{
+    // Nothing on the board clears this RAM, so the model must not either.  A
+    // xorshift keeps it reproducible: the same seed gives the same "undefined"
+    // contents every run, so a suite case that forgets an entry fails the same
+    // way every time.
+    uint32_t x = seed | 1u;
+    for (uint32_t i = 0; i < PALETTE_ENTRIES; i++)
+    {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        entry_[i]   = static_cast<Rgb444>(x & 0x0FFFu);
+        written_[i] = false;
+    }
+    phase_            = 0;
+    wr_index_         = 0;
+    wr_value_         = 0;
+    wr_flagged_       = false;
+    bad_filler_       = 0;
+    unwritten_reads_  = 0;
+}
+
+void PaletteUnit::frame_reset()
+{
+    // /RS reaches PIXEL, not the RAM: the entries survive, the sequencer does
+    // not (pixel.v clears wr1/wr2 and drives nCLUT_WE high on reset).
+    phase_      = 0;
+    wr_flagged_ = false;
+}
+
+void PaletteUnit::begin_write(uint32_t index, uint32_t value)
+{
+    wr_index_   = index & 0xFu;
+    wr_value_   = value & 0xFFFu;
+    wr_flagged_ = false;
+    phase_      = 0;   // this clock is clock 0; phase 1 is the next one
+    pending_    = true;
+}
+
+void PaletteUnit::clock(uint32_t bus)
+{
+    if (phase_ == 2)
+    {
+        // The pulse clock: the RAM latches whatever the bus carries.
+        entry_[wr_index_]   = static_cast<Rgb444>(bus & 0x0FFFu);
+        written_[wr_index_] = true;
+        if (stats_ != nullptr && counting_)
+        {
+            stats_->palette_writes++;
+        }
+        if ((bus & 0x0FFFu) != wr_value_ && !wr_flagged_)
+        {
+            wr_flagged_ = true;
+            bad_filler_++;
+            if (stats_ != nullptr && counting_)
+            {
+                stats_->palette_bad_filler++;
+            }
+        }
+    }
+
+    if (phase_ > 0)
+    {
+        phase_++;
+        if (phase_ > PALETTE_WRITE_DISTURBED_SLOTS)
+        {
+            phase_ = 0;
+        }
+    }
+
+    if (pending_)
+    {
+        pending_ = false;
+        phase_   = 1;
+    }
+}
+
+void PaletteUnit::note_read(uint32_t index)
+{
+    if (!written_[index & 0xFu])
+    {
+        unwritten_reads_++;
+        if (stats_ != nullptr && counting_)
+        {
+            stats_->palette_unwritten_reads++;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PixelUnit — pixel.v's indexed decoder, register for register
 // ---------------------------------------------------------------------------
 
 void PixelUnit::reset()
 {
-    head_        = 0;
-    count_       = 0;
-    last_word_   = 0;
-    pal_fg_      = RGB444_WHITE;
-    pal_bg_      = RGB444_BLACK;
-    ham_held_    = RGB444_WHITE;
-    mode_        = PIXEL_MODE_DIRECT_1BPP;
-    pixel_skip_  = 0;
-    bitbuf_      = 0;
-    bits_avail_  = 0;
-    ham_pending_ = 0;
-    ham_type_    = 0;
-    half_phase_  = 0;
-    idx_code_    = 0;
+    // /RS at vsync.  pixel.v's async reset block, verbatim: the SET registers,
+    // the word engine, the output stage.  The FIFO's own /RS empties it.
+    head_       = 0;
+    count_      = 0;
+    last_word_  = 0;
+
+    mode_       = 0;
+    pix_base_   = 0;
+    pixel_skip_ = 0;
+    clut_index_ = 0;
+
+    shift_reg_        = 0;
+    bit_pos_          = 0;
+    align_cnt_        = 0xF;
+    half_phase_       = 0;
+    fifo_loading_     = false;
+    line_skipped_     = false;
+    extra_fetch_done_ = false;
+
+    attr_colour_  = 0;
+    col_transfer_ = false;
+
+    grp_           = 0;
+    pix_consume_d_ = false;
+    idx_           = 0;
+
+    h_phase_         = 0;
+    in_line_         = false;
+    preload_armed_   = false;
+    line_words_      = 0;
+    last_line_words_ = 0;
+
+    value_bus_       = 0;
+    disturbed_pixel_ = false;
+
+    // THE PALETTE RAM IS NOT PART OF THIS.  /RS does not reach it.
+    palette_.frame_reset();
+}
+
+void PixelUnit::power_on_reset()
+{
+    reset();
+    palette_.reset_power_on();
 }
 
 bool PixelUnit::push_word(uint16_t w)
@@ -75,81 +221,225 @@ bool PixelUnit::push_word(uint16_t w)
 // A 7200 ignores a read while empty and holds Q, so an exhausted FIFO simply
 // re-delivers the last word.  That makes a short PIXELS fill a bandwidth
 // compressor rather than an error — pixel.v has no empty flag to notice with.
-void PixelUnit::refill(uint32_t need)
+uint16_t PixelUnit::fifo_read()
 {
-    while (bits_avail_ < need)
+    uint16_t w = last_word_;
+    if (count_ > 0)
     {
-        uint16_t w = last_word_;
-        if (count_ > 0)
-        {
-            w = fifo_[head_];
-            head_ = (head_ + 1) % static_cast<uint32_t>(fifo_.size());
-            count_--;
-            last_word_ = w;
-        }
-        else if (counting_ && stats_ != nullptr)
-        {
-            stats_->pixels_tiled_words++;
-        }
-        bitbuf_ = (bitbuf_ << 16) | w;
-        bits_avail_ += 16;
+        w = fifo_[head_];
+        head_ = (head_ + 1) % static_cast<uint32_t>(fifo_.size());
+        count_--;
+        last_word_ = w;
+    }
+    else if (counting_ && stats_ != nullptr)
+    {
+        stats_->pixels_tiled_words++;
+    }
+    line_words_++;
+    return w;
+}
+
+// pixel.v's fetch_due, written the same way: the compares the step size makes
+// sufficient.  Attribute mode's cell is eight groups, so it compares the low
+// three bits of bit_pos only.
+bool PixelUnit::fetch_due() const
+{
+    const bool half = half_rate();
+    switch (depth())
+    {
+        case PIXEL_DEPTH_ATTR:
+            return ((bit_pos_ >> 1) & 3u) == 3u && (bit_pos_ & 1u) == (half ? 1u : 0u);
+        case PIXEL_DEPTH_4BPP:
+            return ((bit_pos_ >> 2) & 3u) == (half ? 3u : 2u);
+        case PIXEL_DEPTH_2BPP:
+            return ((bit_pos_ >> 1) & 7u) == (half ? 7u : 6u);
+        default:
+            return ((bit_pos_ >> 1) & 7u) == 7u && (bit_pos_ & 1u) == (half ? 1u : 0u);
     }
 }
 
-uint32_t PixelUnit::peek(uint32_t n) const
+// pixel.v's idx_value, off the REGISTERED group.  The model resolves the group
+// consumed on this very clock instead (screen space, render.h), which is the
+// same equation applied one clock earlier.
+uint32_t PixelUnit::idx_value() const
 {
-    return static_cast<uint32_t>((bitbuf_ >> (bits_avail_ - n)) & ((1u << n) - 1u));
+    switch (depth())
+    {
+        case PIXEL_DEPTH_ATTR:
+            return ((grp_ >> 3) & 1u) != 0 ? ((attr_colour_ >> 4) & 0xFu)
+                                           : (attr_colour_ & 0xFu);
+        case PIXEL_DEPTH_4BPP:
+            return grp_ & 0xFu;
+        case PIXEL_DEPTH_2BPP:
+            return (pix_base_ & 0xCu) | ((grp_ >> 2) & 3u);
+        default:
+            return (pix_base_ & 0xEu) | ((grp_ >> 3) & 1u);
+    }
 }
 
-uint32_t PixelUnit::take(uint32_t n)
+// ---------------------------------------------------------------------------
+// ONE PIXEL CLOCK OF THE DECODER
+// ---------------------------------------------------------------------------
+//
+// pixel.v's always blocks, in one function, all of them reading the state as it
+// stands at the start of the clock (non-blocking assignment) and writing it at
+// the end.  The priority chains are the RTL's, and their order is load bearing:
+// the engine's `fifo_loading` branch preempts its `step` branch, and the shifter
+// is deliberately OUTSIDE that chain.
+//
+// Returns the index this clock's consumed group resolves to.
+uint32_t PixelUnit::clock(bool pix_consume, bool preload, bool pix_last)
 {
-    const uint32_t v = peek(n);
-    bits_avail_ -= n;
-    bitbuf_ &= (bits_avail_ == 0) ? 0ull : ((1ull << bits_avail_) - 1ull);
-    return v;
+    const uint32_t sf           = skip_fine();
+    const bool     skip_nonzero = sf != 0;
+    const bool     aligning     = align_cnt_ != 0xF;
+    const bool     half         = half_rate();
+    const bool     step         = pix_consume && (!half || half_phase_ == 0);
+    const bool     attr         = depth() == PIXEL_DEPTH_ATTR;
+    const uint32_t w            = bits_per_group();
+    const bool     due          = fetch_due();
+    const bool     cutoff       = pix_last && (extra_fetch_done_ || !line_skipped_);
+
+    // The state this clock reads.
+    const uint32_t old_shift        = shift_reg_;
+    const bool     old_loading      = fifo_loading_;
+    const bool     old_col_transfer = col_transfer_;
+    const bool     old_consume_d    = pix_consume_d_;
+
+    // The group this clock consumes, i.e. what the RTL latches into grp at the
+    // end of it: {attr ? shift_reg[7] : shift_reg[15], shift_reg[14:12]}.
+    const uint32_t group = (((attr ? (old_shift >> 7) : (old_shift >> 15)) & 1u) << 3) |
+                           ((old_shift >> 12) & 7u);
+
+    // --- the word engine ----------------------------------------------------
+    if (preload)
+    {
+        fifo_loading_ = true;
+        align_cnt_    = (~sf) & 0xFu;
+        line_skipped_ = skip_nonzero;
+    }
+    else if (old_loading)
+    {
+        fifo_loading_ = false;
+    }
+    else if (aligning)
+    {
+        align_cnt_ = (align_cnt_ + 1u) & 0xFu;
+    }
+    else if (step)
+    {
+        if (due && !cutoff)
+        {
+            fifo_loading_ = true;
+        }
+    }
+
+    // --- the shifter, outside the chain above -------------------------------
+    if (old_loading)
+    {
+        shift_reg_ = fifo_read();
+    }
+    else if (aligning && !preload)
+    {
+        shift_reg_ = (old_shift << 1) & 0xFFFFu;
+    }
+    else if (step)
+    {
+        shift_reg_ = (old_shift << w) & 0xFFFFu;
+    }
+
+    // --- bit_pos ------------------------------------------------------------
+    if (preload)
+    {
+        bit_pos_ = sf;
+    }
+    else if (step)
+    {
+        bit_pos_ = (bit_pos_ + w) & 0xFu;
+    }
+
+    // --- half_phase ---------------------------------------------------------
+    if (preload)
+    {
+        half_phase_ = 0;
+    }
+    else if (pix_consume)
+    {
+        half_phase_ ^= 1u;
+    }
+
+    // --- the skipped line's one-word allowance ------------------------------
+    extra_fetch_done_ = pix_last && (extra_fetch_done_ || (step && due));
+
+    // --- the attribute cell's colour byte -----------------------------------
+    //
+    // col_transfer fires one clock AFTER the load, which is the only edge
+    // attr_colour may change on: any earlier and the previous cell's last pixel,
+    // resolved off the registered group, gets the new cell's colour.  In screen
+    // space that means the update happens BEFORE this clock's pixel resolves,
+    // which is why it sits here and not below.
+    col_transfer_ = attr && old_loading;
+    if (old_col_transfer)
+    {
+        attr_colour_ = (old_shift >> 8) & 0xFFu;
+    }
+
+    // --- the output stage ---------------------------------------------------
+    pix_consume_d_ = pix_consume;
+    if (step)
+    {
+        grp_ = group;
+    }
+
+    // IDX: clut_index while the write sequence owns the bus, 0 outside a line,
+    // the pixel's index otherwise.  Kept for observability; the colour this
+    // function returns is resolved in screen space below.
+    const uint32_t seq = palette_.write_phase();
+    idx_ = (seq >= 1 && seq <= 3) ? clut_index_ :
+           (!old_consume_d)       ? 0u
+                                  : idx_value();
+
+    // --- the palette's own clock, on COMPOSITOR's bus as it stands now ------
+    palette_.clock(value_bus_);
+
+    // The index this clock's pixel resolves to: idx_value() off grp, which was
+    // just updated if this was a step clock and holds its old group if it was
+    // the second clock of a half-rate pair.  THE HOLD IS grp's, NOT THE
+    // SHIFTER'S — the shifter has already moved on by the time the RTL's index
+    // mux reads it, which is why the model reads the register too.
+    return idx_value();
 }
 
-// held_init in pixel.v is `~pix_consume & ~mode_idx2`, i.e. a write that
-// happens on EVERY blank clock, not once at line start.  Modelling it per clock
-// is what makes the SET ORDERING RULE real here: in 1bpp and micro-HAM held
-// tracks pal_fg through blanking so every visible line begins at fg with no
-// cross-line state, while in indexed mode BOTH writers drop out and ham_held —
-// that mode's third palette entry — survives from its SET to the end of the
-// frame.  SET ham_held before SET mode and these clocks are what eat it.
+void PixelUnit::arm_preload()
+{
+    preload_armed_ = true;
+}
+
 void PixelUnit::blank_clock()
 {
-    half_phase_ = 0;   // preload clears the pairing phase; every line pairs alike
+    const bool preload = preload_armed_;
+    preload_armed_ = false;
 
-    if (!mode_idx2())
+    if (preload)
     {
-        ham_held_ = pal_fg_;
+        // The line's first read: roll the per-line word counter over here,
+        // because the preload's own read belongs to the line that follows.
+        last_line_words_ = line_words_;
+        line_words_      = 0;
+        in_line_         = false;
     }
+
+    (void)clock(false, preload, false);
+    disturbed_pixel_ = false;
 }
 
 void PixelUnit::begin_line()
 {
-    bitbuf_      = 0;
-    bits_avail_  = 0;
-    ham_pending_ = 0;
-    half_phase_  = 0;
-
-    if (!mode_idx2())
-    {
-        ham_held_ = pal_fg_;   // held reloads from pal_fg at every line start
-    }
-
-    // Hardware clamp (pixel.v, decided 2026-08-13, inherited by the indexed
-    // mode 2026-08-24): skip bit 0 is ignored in BOTH two-bit modes, applied at
-    // consumption so SET ordering cannot smuggle a stale odd bit in.  An odd
-    // two-bit skip would shift every code across its boundary and mis-parse the
-    // whole line.  Half rate needs no extra clamp — skip is in stream bits and
-    // a stream bit is still exactly one group.
-    const uint32_t effective_skip = pixels_skip_effective(mode_, pixel_skip_);
-    if (effective_skip > 0)
-    {
-        refill(effective_skip);
-        (void)take(effective_skip);
-    }
+    // The raster generator's business, not a register: the next clock is this
+    // line's first consumption clock.  Nothing is reset here — everything the
+    // line needs was set up at PIX_PRELOAD, PIXEL_FETCH_LEAD clocks ago.
+    in_line_ = true;
+    h_phase_ = 0;
 
     if (counting_ && stats_ != nullptr)
     {
@@ -164,114 +454,47 @@ void PixelUnit::begin_line()
     }
 }
 
-Rgb444 PixelUnit::idx_colour() const
-{
-    switch (idx_code_)
-    {
-        case IDX2_CODE_PAL_BG:   return pal_bg_;
-        case IDX2_CODE_PAL_FG:   return pal_fg_;
-        case IDX2_CODE_HAM_HELD: return ham_held_;
-        default:                 return RGB444_BLACK;   // code 11 is a constant
-    }
-}
-
 Rgb444 PixelUnit::next_pixel()
 {
-    // HALF RATE, pixel.v's one gate rather than a second cadence.  half_phase
-    // splits the 640 consumption clocks into pairs and `step` is the FIRST
-    // clock of each pair, which is what keeps PIXEL_OUT_LEAD at 1: pixel 0
-    // still reaches RGB_OUT on the clock it would at full rate.  A held clock
-    // re-reads the output mux and consumes nothing, so a line costs half the
-    // stream at half the horizontal resolution.  In micro-HAM half_rate is
-    // masked off in hardware, so `hold` is false there by construction.
-    const bool hold = half_rate() && half_phase_ != 0;
-    half_phase_ ^= 1u;
+    // PIX_LAST is the last eight consumption clocks of the line: the
+    // end-of-line fetch cutoff window (timing.v, h_cnt[9:3] == 79).
+    const bool pix_last = in_line_ && h_phase_ + PIXEL_LAST_CLOCKS >= H_ACTIVE;
+    const uint32_t index = clock(true, false, pix_last);
+    h_phase_++;
 
-    if (hold)
+    // What the RAM drives on this clock.  A write steals the address for three
+    // clocks and needs a fourth to recover, so the pixel that should have been
+    // painted here is lost: clut_pair_tb.v S6-neg measures exactly this reaching
+    // RGB_OUT when the slot is passthrough.
+    disturbed_pixel_ = palette_.bus_disturbed();
+
+    if (palette_.bus_undefined())
     {
-        // What the output register would show on the second clock of a group.
-        // Indexed re-evaluates the mux, because idx_colour is combinational off
-        // the three colour registers; 1bpp shows the registered ham_held, which
-        // the stream is not writing this clock.
-        return mode_idx2() ? idx_colour() : ham_held_;
+        return RGB444_UNDEFINED;
+    }
+    if (palette_.write_phase() == 1)
+    {
+        // The entry being written, read back before the pulse: wrong, defined.
+        return palette_.entry(clut_index_);
     }
 
-    // 2BPP INDEXED.  Two stream bits per clock like micro-HAM — same stream
-    // rate, same fetch cadence, same odd-skip clamp — but the dibit is a DIRECT
-    // palette index with no arithmetic and no multi-clock codes.  ham_held is
-    // NOT written here: it is this mode's third palette entry and SET is its
-    // only writer (pixel.v's load_pal and held_init both drop out), which is
-    // exactly what lets code 10 show the SET-loaded value.
-    //
-    // UNDERRUN: an exhausted FIFO re-shifts the last word.  From reset that
-    // word is zero, so every dibit reads 00 and the whole line renders pal_bg —
-    // the same substrate the pure-VIDCMD screens spend as a settable third
-    // colour, and finding 22's caveat applies here unchanged.
-    if (mode_idx2())
-    {
-        refill(2);
-        idx_code_ = take(2);
-        return idx_colour();
-    }
-
-    if (!mode_ham())
-    {
-        refill(1);
-        ham_held_ = take(1) != 0 ? pal_fg_ : pal_bg_;
-        return ham_held_;
-    }
-
-    // Exactly two bits leave the stream every clock.
-    //
-    // PAIR ORDERING, per pixel.v: the prefix pair (1x) and the chroma pair
-    // (g,r / g,b) land in different clocks, so the decoder cannot see g until
-    // the second.  The first pixel of a 4-bit code therefore shows the OLD held
-    // colour and the second shows both channels updated together.  video.v's
-    // serial decoder staggered the channels one pixel apart; that behaviour is
-    // not reproducible here and this matches the chip that exists.
-    if (ham_pending_ != 0)
-    {
-        ham_pending_ = 0;
-        (void)take(2);
-        if (ham_type_ == 0)
-        {
-            ham_held_ = rgb444(ham_v_, ham_g_, rgb444_b(ham_held_));   // 10_g_r
-        }
-        else
-        {
-            ham_held_ = rgb444(rgb444_r(ham_held_), ham_g_, ham_v_);   // 11_g_b
-        }
-        return ham_held_;
-    }
-
-    refill(1);
-    if (peek(1) == 0)
-    {
-        refill(2);
-        const uint32_t code = take(2);
-        ham_held_ = ((code & 1u) != 0) ? pal_fg_ : pal_bg_;
-        return ham_held_;
-    }
-
-    refill(4);
-    const uint32_t code = peek(4);   // look ahead at the whole code...
-    (void)take(2);                   // ...but only eat this clock's two bits
-    ham_type_    = (code >> 2) & 1u;
-    ham_g_       = ((code >> 1) & 1u) != 0 ? 0xFu : 0x0u;
-    ham_v_       = (code & 1u) != 0 ? 0xFu : 0x0u;
-    ham_pending_ = 1;
-    return ham_held_;   // the OLD held colour, per pixel.v
+    palette_.note_read(index);
+    return palette_.entry(index);
 }
 
 void PixelUnit::set_register(uint32_t target, uint32_t value)
 {
     switch (target)
     {
-        case SET_PIX_PAL_FG:     pal_fg_ = static_cast<Rgb444>(value); break;
-        case SET_PIX_PAL_BG:     pal_bg_ = static_cast<Rgb444>(value); break;
-        case SET_PIX_HAM_HELD:   ham_held_ = static_cast<Rgb444>(value); break;
-        case SET_PIX_MODE:       mode_ = value & PIXEL_MODE_BITS; break;
+        case SET_PIX_CLUT_INDEX: clut_index_ = value & 0xF; break;
+        case SET_PIX_BASE:       pix_base_   = value & 0xF; break;
+        case SET_PIX_MODE:       mode_       = value & PIXEL_MODE_BITS; break;
         case SET_PIX_PIXEL_SKIP: pixel_skip_ = value & 0xF; break;
+
+        // clut_data writes no register: it starts the RAM write sequence, whose
+        // DATA comes from COMPOSITOR's bus two clocks later and not from here.
+        case SET_PIX_CLUT_DATA:  palette_.begin_write(clut_index_, value & 0xFFF); break;
+
         default:                 break;
     }
 }
@@ -288,6 +511,7 @@ void CompositorUnit::reset()
     held_bg_       = VIDCMD_RESET_HELD_BG;
     staged_valid_  = false;
     staged_word_   = 0;
+    set_pix_value_ = 0;
     re_low_        = false;                 // /RE idles high
     ef_at_pop_     = false;
     q_word_        = 0;
@@ -299,6 +523,23 @@ void CompositorUnit::reset()
     mask_active_   = false;                 // mask playback abandoned
     sav_src_       = RUN_SRC_PASSTHROUGH;
     pending_n_     = 0;
+}
+
+// POWER-ON RESET, and it is load bearing rather than cosmetic.  On the board
+// COMPOSITOR's only reset input is PIXEL's /RS, which pulses once per frame at
+// the top of the vsync line — NOTHING resets it at power-up except the
+// ATF1508AS's own POWER_RESET feature (the fitter's power_reset strategy flag).
+// Whatever does not model that runs its whole first frame with undefined state.
+//
+// POWER_RESET clears the macrocell registers, so the power-on state is NOT the
+// /RS state: the held colours come up 0x000/0x000, not 0xFFF/0x000.  A list that
+// relies on cmp_color1 being white without ever setting it therefore works after
+// the first vsync and not before it, which is the honest model of the board.
+void CompositorUnit::power_on_reset()
+{
+    reset();
+    held_fg_ = RGB444_BLACK;
+    held_bg_ = RGB444_BLACK;
 }
 
 bool CompositorUnit::push_word(uint16_t w)
@@ -447,12 +688,10 @@ void CompositorUnit::blank_clock(PixelUnit &pix)
     const bool had_staged = staged_valid_;
     bool       consumed   = false;
 
-    // PIXEL's own blank-clock behaviour: held_init reloads ham_held from pal_fg
-    // on every clock PIX_CONSUME is low, unless the mode register reads
-    // indexed.  Running it BEFORE this clock's SET commit is what gives the
-    // ordering rule its teeth — a SET(ham_held) that arrives while mode is
-    // still 1bpp is overwritten on the very next blank clock.
-    pix.blank_clock();
+    // set_pix_value as it stands during THIS clock: compositor.v registers it
+    // from the staged word every clock, so it is one clock behind staging.  The
+    // palette RAM's data inputs are on it.
+    pix.set_value_bus(set_pix_value_);
 
     if (staged_valid_ && vidcmd_type_of(staged_word_) == VidcmdType::SET)
     {
@@ -469,16 +708,25 @@ void CompositorUnit::blank_clock(PixelUnit &pix)
     // blanking.  (compositor_tb MASKB_RESUME asserts exactly that.)
     const bool mask_holds = mask_active_ && run_remaining_ > 0;
 
+    // PIXEL advances after this clock's commit, so a clut_data SET committed
+    // here starts its write sequence on this very clock — the same order the
+    // RTL has, where set_cdata is live in the commit clock.
+    pix.blank_clock();
+
     // Blanking does not exempt the fetch from the cadence: a run of eager SETs
     // still executes at one per two clocks (a pair when one is parked).  With
     // H_BLANK = 160 clocks that is invisible to a cushioned list and exactly
     // what a starved one runs out of.
     fetch_edge(word_on_q, had_staged, consumed, mask_holds, false);
+    set_pix_value_ = static_cast<uint32_t>(staged_word_) & 0xFFFu;
 }
 
 Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
 {
     apply_pending(pix);
+
+    // The palette RAM's data inputs, one clock behind staging (see blank_clock).
+    pix.set_value_bus(set_pix_value_);
 
     // The fetch engine's pre-edge state, sampled before playback can disturb
     // it: compositor.v evaluates every fetch term from the registers plus this
@@ -642,6 +890,18 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
     {
         out = cur_colour_;
     }
+    else if (pix.pixel_disturbed())
+    {
+        // A palette write's four-clock window landed on a PASSTHROUGH slot, so
+        // the wrong colour (or nothing at all) reaches the DAC.  That is the
+        // authoring rule of vidcmd-spec.md §3.2 being broken, and it is a
+        // measured hardware behaviour, not a model assertion: clut_pair_tb.v's
+        // S6-neg sees exactly this and its S6 sees the legal arrangement pass.
+        if (counting_ && stats_ != nullptr)
+        {
+            stats_->palette_disturbed_visible++;
+        }
+    }
 
     // count_inc = load_run | (H_ACTIVE & ~terminal & ~mask_stall).
     if (run_remaining_ > 0 && !mask_stall)
@@ -654,6 +914,7 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
     }
 
     fetch_edge(word_on_q, had_staged, consumed, mask_holds, mask_reload);
+    set_pix_value_ = static_cast<uint32_t>(staged_word_) & 0xFFFu;
     abs_pixel_++;
     return out;
 }
@@ -674,10 +935,19 @@ void CompositorUnit::end_of_line()
 // Per-line helpers
 // ---------------------------------------------------------------------------
 
-void run_blanking(PixelUnit &pix, CompositorUnit &cmp)
+void run_blanking(PixelUnit &pix, CompositorUnit &cmp, bool next_line_visible)
 {
     for (uint32_t h = 0; h < H_BLANK; h++)
     {
+        // PIX_PRELOAD: one clock, PIXEL_FETCH_LEAD clocks before the first
+        // consumption clock of a VISIBLE line, and nowhere else.  Arming it in
+        // vertical blanking would read one PIXELS word per blank line that the
+        // chip never reads — which is exactly the kind of drift this model now
+        // exists to catch, so the caller has to say.
+        if (next_line_visible && h == H_BLANK - PIXEL_FETCH_LEAD)
+        {
+            pix.arm_preload();
+        }
         cmp.blank_clock(pix);
     }
 }
@@ -795,6 +1065,11 @@ RenderResult render(const std::vector<DepositEvent> &events, const RenderParams 
     cmp.attach_stats(&r.stats);
     cmp.set_skew(p.skew_pix, p.skew_cmp);
 
+    // POWER-ON, before any /RS: the palette RAM comes up with undefined
+    // contents and COMPOSITOR is held sane only by the ATF1508's POWER_RESET.
+    pix.power_on_reset();
+    cmp.power_on_reset();
+
     size_t         ev           = 0;
     const uint32_t total_frames = p.first_frame + p.frame_count;
 
@@ -809,6 +1084,12 @@ RenderResult render(const std::vector<DepositEvent> &events, const RenderParams 
         {
             const uint64_t abs_line    = static_cast<uint64_t>(frame) * V_TOTAL + line;
             const uint64_t line_pixel0 = abs_line * H_TOTAL;
+            // PIX_PRELOAD is armed for the line that FOLLOWS this one.  On the
+            // very last line of the run there is no such line — the raster just
+            // stops — so arming it would read a PIXELS word for a line nobody
+            // ever deposits, which the stats would (rightly) call a tiled word.
+            const bool last_of_run   = (frame + 1 == total_frames) && (line + 1 == V_TOTAL);
+            const bool next_visible  = !last_of_run && ((line + 1) % V_TOTAL) < V_ACTIVE;
 
             for (uint32_t h = 0; h < H_TOTAL; h++)
             {
@@ -879,6 +1160,12 @@ RenderResult render(const std::vector<DepositEvent> &events, const RenderParams 
                     cmp.end_of_line();
                 }
 
+                // PIX_PRELOAD, at the one h_cnt timing.v emits it on.
+                if (h == H_TOTAL - PIXEL_FETCH_LEAD && next_visible)
+                {
+                    pix.arm_preload();
+                }
+
                 if (keep)
                 {
                     if (pix.fifo_count() > r.stats.pixels_fifo_high)
@@ -936,6 +1223,9 @@ RenderResult render_line_at_a_time(const std::vector<DepositEvent> &events,
     pix.attach_stats(&r.stats);
     cmp.attach_stats(&r.stats);
     cmp.set_skew(p.skew_pix, p.skew_cmp);
+
+    pix.power_on_reset();
+    cmp.power_on_reset();
 
     size_t         ev           = 0;
     const uint32_t total_frames = p.first_frame + p.frame_count;
@@ -1009,7 +1299,11 @@ RenderResult render_line_at_a_time(const std::vector<DepositEvent> &events,
                     render_active_line(pix, cmp, scratch);
                 }
             }
-            run_blanking(pix, cmp);
+            // This blanking precedes the NEXT line, so that is the line whose
+            // visibility gates PIX_PRELOAD — and on the run's last line there is
+            // no next line to preload for.
+            const bool last_of_run = (frame + 1 == total_frames) && (line + 1 == V_TOTAL);
+            run_blanking(pix, cmp, !last_of_run && ((line + 1) % V_TOTAL) < V_ACTIVE);
         }
     }
 

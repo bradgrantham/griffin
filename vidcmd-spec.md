@@ -49,15 +49,43 @@ here).
 >   law, RUN / RUN_COLOR / SET.  MASK spends no new pins and no new counters
 >   — it reuses `staged_word` as its shifter and the shared playback counter.
 
+> **Addendum 2026-09-20 — PIXEL is INDEXED, the palette is a RAM chip, and
+> TIMING is inside PIXEL.**  Implemented in `cpld/pixel/pixel.v` and measured by
+> `cpld/pixel/{pixel_tb.v, timing_tb.v, clut_pair_tb.v}`; those three benches
+> are the executable spec and win any disagreement with this document.  §2, §3's
+> SET table, §3.2, §5, §6, §7 and §8 are **rewritten**, not annotated.
+>
+> * **Every playfield pixel is a four-bit palette index.**  PIXEL holds no
+>   colour register at all: `pal_fg`, `pal_bg`, `ham_held`, micro-HAM, the
+>   2bpp-indexed fixed four colours and the 12-bit `RGB_OUT` bus out of PIXEL
+>   are **retired**.  The colour comes from an external 16 x 12 palette RAM
+>   (§3.2) whose outputs are COMPOSITOR's `RGB_IN`.
+> * **Four depths, and the mode register is an ENUMERATION again**: 1bpp, 2bpp,
+>   4bpp, attribute, plus the half-rate flag.  The 2026-08-26 "mode is a bit
+>   field" addendum is gone with the modes it described.
+> * **The PIXELS FIFO is read as one ganged 16-bit port** with a single `/RE`;
+>   the byte-interleaved shared-Q pair and its two strobes are retired.
+> * **TIMING is not a chip.**  `timing.v`'s Timing module is instantiated inside
+>   `pixel.v`, so PIX_CONSUME / PIX_PRELOAD / PIX_LAST are internal nets and
+>   every other raster output is a PIXEL pin.
+> * **COMPOSITOR is untouched** — RTL, pins and every VIDCMD word format,
+>   including the SET encoding.  Only the meaning of targets 2, 3 and 4 moved.
+> * **Unchanged:** every K constant (the palette RAM is combinational and costs
+>   no clock), the 2-slot VIDCMD cadence, the banked-pair law, RUN / RUN_COLOR /
+>   MASK / SET, and `PIXEL_OUT_LEAD` = 1.
+
 ---
 
 ## 1. Architecture
 
 ```
-ENGINE (descriptor DMA) ──► PIXELS FIFO ──► PIXEL ──► COMPOSITOR ──► 12-bit DAC
-                       └──► VIDCMD FIFO ──────────────────┘
-                                  PIXEL ◄── set_pix_value[11:0] ── COMPOSITOR
-                     TIMING ──► PIXEL_CLK, LINE_START, H_ACTIVE, /RS
+ENGINE (descriptor DMA) ──► PIXELS FIFO ──► PIXEL ─IDX[3:0]─► PALETTE RAM
+                       └──► VIDCMD FIFO ──► COMPOSITOR ◄─RGB[11:0]─┘
+                                            COMPOSITOR ──► 12-bit DAC
+        COMPOSITOR ─set_pix_value[11:0]─► the RAM's data inputs; [3:0] ─► PIXEL
+        COMPOSITOR ─set_pix_target/valid/commit─► PIXEL
+        PIXEL ─nCLUT_WE─► the RAM's /WE   (its /CS is tied low)
+        PIXEL ──► PIXEL_CLK domain's raster: H_ACTIVE, /RS, syncs, HBLANK, ticks
 ```
 
 Two FIFOs decouple ENGINE's DMA from the video pipeline.  Neither PIXEL
@@ -72,114 +100,112 @@ in-band.  Everything runs in the shared 25.175 MHz PIXEL_CLK domain.
   write registers in both chips.  It is the out-of-band register-write
   path: PIXEL needs no bus port and ENGINE needs no register-write DMA op.
 
-Color is R4G4B4 (12-bit) throughout: PIXEL registers, the inter-chip RGB
-bus, COMPOSITOR held colors, and the resistor DAC (three 4-bit ladders;
-LSB ≈ 47 mV at VGA levels, 1% resistors adequate).
+Color is R4G4B4 (12-bit) throughout: the palette RAM's entries, the RAM-to-
+COMPOSITOR RGB bus, COMPOSITOR held colors, and the resistor DAC (three 4-bit
+ladders; LSB ≈ 47 mV at VGA levels, 1% resistors adequate).  **PIXEL is the one
+chip in the chain that never sees a colour**: it emits a four-bit index and, for
+a palette write, an address and a write pulse.
+
+The raster generator is inside PIXEL, so PIXEL_CLK, H_ACTIVE and /RS reach
+COMPOSITOR and the FIFOs from there; there is no TIMING chip.
 
 ## 2. PIXELS stream
 
-> **Addendum 2026-08-26 — two new modes, and the mode register is a BIT
-> FIELD.**  Both are implemented and committed in `cpld/pixel/pixel.v` and
-> measured by `cpld/pixel/pixel_tb.v` (cases `IDX2_ALL_FOUR`, `IDX2_SKIP*`,
-> `HALF_1BPP`, `HALF_IDX2`, plus the `*_2LINE_*` fetch-window regressions).
-> `super-engine/render.cpp`'s PixelUnit decodes them the same way and the
-> suite's `pixel-modes` traces reproduce that testbench's per-pixel
-> expectations and its per-line `/RE` counts (as words: 40 / 80 / 20 / 40).
->
-> **SET(pix_mode) is decoded BITWISE, not as an enumeration.**
->
-> | bit | meaning |
-> |---|---|
-> | `mode[0]` | 2bpp micro-HAM |
-> | `mode[1]` | 2bpp indexed |
-> | `mode[2]` | half rate |
->
-> * `mode[1:0] == 2'b11` is **RESERVED**, and micro-HAM wins it **by
->   construction**: indexed is `mode[1] & ~mode[0]`, so a buggy list gets one
->   whole known mode rather than two decoders fighting over `ham_held`.
-> * **Half rate is masked off in micro-HAM** — `half_rate = mode[2] &
->   ~mode[0]` — in hardware, not merely declared undefined.  A HAM code can
->   span two consumption clocks and `ham_second` is not phase-gated, so a
->   half-rate HAM line would mis-pair every 4-bit code: a whole garbage line
->   rather than a coarse one.  One literal makes the flag do nothing there,
->   which is a debuggable outcome.
-> * **The odd-skip clamp belongs to BOTH two-bit modes.**  `pixel_skip[0]` is
->   ignored in micro-HAM *and* in indexed, clamped at the point of consumption
->   (line-start preload) rather than at the SET write, so a list that sets
->   skip first and mode second cannot smuggle a stale odd bit in.
-> * **ORDER DEPENDENCE — SET mode BEFORE SET ham_held.**  See below.
+**Every playfield pixel in every mode is a four-bit palette index** (§3.2).
+PIXEL owns no colour, and COMPOSITOR's own sources — `cmp_color1`,
+`cmp_color0`, RUN_COLOR, MASK — are direct 12-bit values that never touch the
+palette.
 
-| mode | `mode[2:0]` | rate | words/line | meaning |
+The two IDT7200s are read as **one ganged 16-bit port with one registered
+`/RE`**, low for exactly one clock per word and never low on two consecutive
+clocks.  Words are consumed **MSB first, bit 15 down**, so every record written
+for the retired byte-interleaved port renders bit for bit the same (the byte it
+read first is `PIXELS_Q[15:8]`).  There is no empty flag and no half-full
+pacing: a 7200 ignores a read while empty and holds Q, so **an underrun tiles
+the last word** — a short fill is a bandwidth compressor, not an error.
+
+`SET pix_mode`: `mode[1:0]` is a **depth enumeration**, `mode[2]` is half rate
+(each consumed group held two pixel clocks, 320 groups across the same
+640-clock window), `mode[3]` is **reserved for the COMPOSITOR bypass and must
+be written 0**.
+
+| depth | `mode[1:0]` | index | words/line full | half |
 |---|---|---|---|---|
-| 1bpp direct | `000` | 1 bit/clock, 640 groups | 40 | bit selects pal_fg / pal_bg |
-| 2bpp micro-HAM | `001` | 2 bits/clock, 640 groups | 80 | dibit codes, below |
-| 2bpp indexed | `010` | 2 bits/clock, 640 groups | 80 | dibit is a direct palette index |
-| reserved | `011` | — | — | decodes as micro-HAM |
-| 1bpp half rate | `100` | 1 bit/clock, 320 groups | 20 | each group held 2 pixel clocks |
-| micro-HAM (flag ignored) | `101` | 2 bits/clock, 640 groups | 80 | half rate masked off |
-| 2bpp indexed half rate | `110` | 2 bits/clock, 320 groups | 40 | each group held 2 pixel clocks |
-| reserved | `111` | — | — | decodes as micro-HAM, flag ignored |
+| 1bpp | `00` | `{pix_base[3:1], bit}` | 40 | 20 |
+| 2bpp | `01` | `{pix_base[3:2], dibit}` | 80 | 40 |
+| 4bpp | `10` | the nibble (`pix_base` unused) | **UNDEFINED** | 80 |
+| attribute | `11` | `bit ? fg : bg` | 80 | 40 |
 
-### 2bpp indexed (`mode[1:0] == 2'b10`)
+**4bpp at full rate is undefined and must not be emitted**: four clocks per
+word puts two fetch triggers inside the eight-clock end-of-line window, which
+the cutoff cannot concede, so the line would end short of its record and every
+following line of the frame would be out of phase.  160 words/line is over the
+line's bus budget in any case.
 
-Two stream bits per pixel clock, exactly like micro-HAM — same stream rate,
-same fetch cadence, same odd-skip clamp — but the dibit is a **direct palette
-index** with no arithmetic and no multi-clock codes:
+**The attribute word** is `{fg[3:0], bg[3:0], pattern[7:0]}` — one word per
+eight-group cell, `PIXELS_Q[15:8]` the colour byte and the pattern MSB first.
+With a TMS9918 palette loaded it is the Graphics II colour byte followed by the
+pattern byte.  At full rate it is an 80-column cell-coloured text/tile mode; at
+half rate a 320-wide tile mode.  Attribute mode takes **no** `pixel_skip`.
+
+**Mode changes belong in blanking.**  A line's descriptors supply that line's
+word count, so the mode may differ line to line; a mid-line change is undefined
+and unspecified.
+
+### The fetch cadence (`pixel_tb.v`, measured)
+
+With W stream bits per group and R clocks per group (R = 2 at half rate), a
+16-bit word lasts 16R/W consumption clocks and the fetch trigger sits at stream
+position T:
+
+| mode | T full | T half | clocks/word full | half |
+|---|---|---|---|---|
+| 1bpp | 14 | 15 | 16 | 32 |
+| 2bpp | 12 | 14 | 8 | 16 |
+| 4bpp | 8 | 12 | 4 | 8 |
+| attribute | 6 | 7 | 8 | 16 |
+
+(Attribute mode's word carries eight pattern bits, so its cell is eight groups
+and its trigger compares the low three bits of the stream position only.)  The
+**floor over every defined mode and skip is 8 clocks between reads** — 318 ns
+at 25.175 MHz, against the 2 clocks COMPOSITOR already runs the same part at,
+so no tRR/tRC arithmetic is needed here.
+
+### pixel_skip — a start position inside the line's first word
+
+`pixel_skip` is four bits counting **stream bits**: skip *s* means pixel 0 is
+stream bit *s* of the line's first word.  There is no whole-word discard — a
+four-bit skip cannot leave the first word — and coarser scrolling moves the
+descriptor's source pointer by whole words.
+
+* **Depth clamp**, because a W-bit group can only shift by multiples of W:
+  1bpp honours all four bits, 2bpp ignores bit 0, 4bpp ignores bits [1:0],
+  attribute forces 0.
+* **Top-of-range clamp**, two independent bounds and the smaller bites: the
+  trigger's lead T (**full rate only**) and the preload's own lead, 14 at both
+  rates.  Net caps: **14** (1bpp either rate), **12** (2bpp full), **14** (2bpp
+  half), **12** (4bpp half).  Above the cap the value is clamped, not honoured —
+  a recorded limitation, not a fault.
+* The clamp is applied **at consumption** (the line's preload), so SET ordering
+  cannot smuggle a stale bit in, and **skip is sampled at that preload**: a
+  mid-line `SET(pixel_skip)` affects the next line only, its word count
+  included.
+
+### Words per line — the rule the display-list author must satisfy
 
 ```
-00  pal_bg      01  pal_fg      10  ham_held      11  12'h000 (black)
+words per line = record + (pixel_skip != 0 ? 1 : 0)
+
+record = 40 (1bpp full)   20 (1bpp half)   80 (2bpp full)   40 (2bpp half)
+         80 (4bpp half)   80 (attr full)   40 (attr half)
 ```
 
-**Zero new SET targets.**  The three colour entries are the registers 1bpp and
-micro-HAM already own, so a display list recolours four indices per line with
-the SETs it already emits, and black is a constant rather than a fourth
-register.
-
-**THE ONE ORDER DEPENDENCE IN THE CHIP: SET `pix_mode` BEFORE SET
-`pix_ham_held`.**  Index `10` has to show what SET *put* in `ham_held`, which
-cannot survive a decoder that overwrites it on every `00` and `01` — so in
-indexed mode the stream is locked out of `ham_held` entirely and the dibit is
-pipelined instead, selecting the colour at the output mux.  `ham_held` is then
-a plain third palette register whose only writer is SET.  The blanking reload
-drops out with it (`held_init = ~pix_consume & ~mode_idx2`), which is what
-makes the order matter: **a list that SETs `ham_held` and then SETs `mode` has
-its colour overwritten by `pal_fg` on the intervening blank clocks.**  SET mode
-first and every gap is safe.  The suite's `IDX2_SET_ORDER` trace asserts the
-wrong order really does lose the colour, and `m8-indexed2` SETs `ham_held`
-**once per frame** — surviving 479 blanking intervals is the assertion that the
-lockout is real.
-
-### Half rate (`mode[2]`, ignored in micro-HAM)
-
-Every consumed bit-group is held for **two pixel clocks**: 320 groups across
-the same 640-clock window, so a line costs half the stream at half the
-horizontal resolution.  It is a **stream-side gate only** — `RGB_OUT`'s window,
-`PIXEL_OUT_LEAD` and the SET path are untouched, and the pairing phase is
-cleared at preload so every line pairs alike.  `pixel_skip` needs no extra
-clamp: skip is measured in stream bits and a stream bit is still exactly one
-group.
-
-**Interop with MASK, and it is the reason half rate is usable as a game mode:**
-a MASK's dibits step **once per pixel-clock slot**, and COMPOSITOR never learns
-what rate PIXEL is running at.  Sprites, cursors and text therefore keep full
-640-pixel horizontal resolution over a 320-wide playfield, and dibit `00`
-(passthrough) shows the playfield's 2-pixel-wide groups underneath.
-`m9-halfrate` measures both halves at once: zero playfield groups spanning
-other than two slots, and adjacent pixels *inside* the sprite cells that do
-differ.
-
-Micro-HAM codes are unchanged from the 1bpp design, just consumed at
-2 bits/clock (so each op spans half as many pixels):
-
-```
-0_p     1 clk   held <- pal[p]           (p: 1 = fg, 0 = bg)
-10_g_r  2 clk   held green <- g, held red  <- r   (1-bit, replicated to 4)
-11_g_b  2 clk   held green <- g, held blue <- b
-```
-
-Line start: held <- pal_fg.  No cross-line state.  Full-precision colors
-enter via VIDCMD SET (pal_fg, pal_bg, ham_held), not via HAM codes —
-that is why the code space stays this small.
+A line entered at bit *s* > 0 gets only 16 − *s* bits out of its first word, so
+it needs **one more word** than an unskipped line, and **its tail shows real
+stream data** rather than zeros — which is what a horizontal scroll wanted.
+The author must supply that word; with the clamp in force exactly one extra word
+is ever read, never two.  `pixel_tb.v` asserts the whole 65-combination
+mode/skip matrix at the real 640-clock line width, two consecutive lines each.
 
 ## 3. VIDCMD instruction set
 
@@ -204,15 +230,23 @@ RUN_COLOR { 2'b00, 2'b11, colour[2:0], ~count[8:0] }         1 word
       The count field is 9 bits, so a span is at most 511 pixels.
 
 SET   { 1'b1, target[2:0], value[11:0] }                     1 word
-      target 0 = cmp_color1      4 = pix_ham_held
-             1 = cmp_color0      5 = pix_mode
-             2 = pix_pal_fg      6 = pix_pixel_skip
-             3 = pix_pal_bg      7 = spare
+      target 0 = cmp_color1      4 = pix_base[3:0]
+             1 = cmp_color0      5 = pix_mode[2:0] (+ reserved bit 3)
+             2 = pix_clut_index[3:0]
+             3 = pix_clut_data[11:0]  -- written to the palette (§3.2)
+             6 = pix_pixel_skip[3:0]
+             7 = ignored by both chips: THE PALETTE WRITE FILLER (§3.2)
 ```
+
+COMPOSITOR keeps targets 0 and 1 and forwards 2..6 to PIXEL; **7 is decoded
+nowhere**, which is exactly what makes it the filler.
 
 Held colors persist until rewritten; `/RS` at vsync resets them to
 `cmp_color1` = 0xFFF, `cmp_color0` = 0x000, abandons any mask playback,
-and clears all machine state.
+and clears all machine state.  `/RS` also clears PIXEL's `pix_mode`,
+`pix_base`, `pixel_skip` and `clut_index` to zero, so an untouched chip is 1bpp
+full rate out of palette entries 0 and 1.  **The palette RAM is never reset by
+anything** (§3.2).
 
 **Target 0 is colour 1 and target 1 is colour 0.**  Not a typo: the
 numbers and the colour names disagree, the wire encoding is frozen by
@@ -260,6 +294,74 @@ LOW, so no bit pattern of it can reach the SET/RUN decode or the PIXEL
 forwarding bus.  A stray `01` therefore paints sixteen junk pixels and
 eats the word behind it as dibits — frame-bounded, cleared by `/RS`, and
 the price of a two-word record in a stream with no framing.
+
+### 3.2 The palette — a 16 x 12 RAM and a THREE-WORD table entry
+
+The palette is sixteen 12-bit entries in an external separate-I/O RAM (three
+16x4 parts, 74F219 function table, `/CS` tied low).  **Its data inputs are
+COMPOSITOR's `set_pix_value[11:0]`**; PIXEL supplies only the address and the
+write pulse and taps `set_pix_value[3:0]` for its own registers.  The RAM's
+outputs are COMPOSITOR's `RGB_IN`, combinational, costing no clock — which is
+why no K constant moved.
+
+**THE RAM IS NEVER RESET.**  Not by `/RS`, not at power-up: it comes up
+undefined, software loads every entry it uses, and its contents persist across
+frames.  (The model and the emulator fill it with reproducible **random** values
+at power-up, so a display list that forgets an entry fails loudly instead of
+reading a convenient black.)
+
+**A table entry is three words**, and the third is not decoration:
+
+```
+SET pix_clut_index, i        the entry's address
+SET pix_clut_data,  V        the colour, and the trigger for the write
+SET 7 (filler),     V        the SAME twelve bits, to hold the bus
+```
+
+Sequence, in pixel clocks after the clock in which `set_pix_commit` is high for
+the `clut_data` SET (clock 0), measured clock by clock by
+`cpld/pixel/clut_pair_tb.v`:
+
+| clock | `IDX` | `nCLUT_WE` | `set_pix_value` | what the RAM drives |
+|---|---|---|---|---|
+| 0 | the pixel index | high | V (the data SET's own payload) | the pixel's colour |
+| 1 | **`clut_index`** | high | V — **setup** | the entry being written: wrong, but defined |
+| 2 | `clut_index` | **LOW** | V (**from the filler**) | **undefined** (high-Z) |
+| 3 | `clut_index` | high | V (from the filler) — **hold** | **undefined** (write recovery) |
+| 4 | the pixel index | high | the next word's payload | the pixel's colour again |
+
+The one-clock pulse is **centred in the three-clock address window**, so both
+the address and the data are stable for a full clock before it falls and a full
+clock after it rises.
+
+Two rules for the list author, and both are measured, not advisory:
+
+1. **HOLD — the filler is necessary, and target 7 is the only legal filler.**
+   COMPOSITOR re-registers `set_pix_value` from **every** staged word whatever
+   its target, and both its blanking and its active-video cadence stage one
+   every TWO clocks: the data SET's own payload owns clocks 0 and 1, and the
+   word behind it owns clocks 2 and 3.  Two words of ownership, three clocks of
+   window, no slack in either direction.  Any other third word — another
+   PIXEL-target SET, a COMPOSITOR colour SET — **stores its own payload in the
+   entry** (measured, both cases), and a second `clut_data` starts a second
+   mis-timed write.  An empty FIFO behind the data SET happens to work, because
+   nothing disturbs the bus, but ENGINE's prefill makes that unpredictable: it
+   is a measured behaviour, not a contract.  The word *before* the entry is
+   unconstrained.
+2. **WHERE — the disturbed window is the four pixel clocks 1..4.**  `IDX` is
+   stolen for clocks 1, 2 and 3, so `RGB_IN` is wrong at clock 1 and undefined
+   at 2 and 3; clock 4 is a guard for a write-recovery time nobody has read off
+   a datasheet yet (§6).  Those four pixel slots must be **in blanking, or
+   covered by a non-passthrough source** — a `cmp_color`/RUN_COLOR RUN or an
+   opaque MASK dibit.  Clocks 1..3 are the entry's own three words; clock 4 is
+   the first clock of the word after the filler, so **that word must not be the
+   RUN that resumes passthrough**: leave one more record between them.  It may
+   otherwise be anything at all, including a differently-valued SET — the write
+   is over.
+
+**Cost.**  Three words per entry, so a 26-word HBLANK packet reloads **eight
+entries per line** with room for the mode / base / skip SETs, and a vertical
+blank reloads all sixteen.  Photographic material wants two to five per line.
 
 ## 4. Execution model
 
@@ -465,30 +567,38 @@ masks do not fit a line at all.
 
 **Three colours per record, for free.**  Inside a mask a pixel is
 `cmp_color0`, `cmp_color1`, or passthrough.  With the PIXELS FIFO never
-written, PIXEL re-delivers its reset word — all zeroes, which in 1bpp
-direct mode selects `pix_pal_bg` — so passthrough resolves to `pal_bg`, a
-register a SET can write.  Dibit 00 then behaves as a **third settable
-colour**, available inside a group with no SET between groups.
+written, PIXEL re-delivers its reset word — all zeroes, which in 1bpp at
+`pix_base` 0 is **palette entry 0** — so passthrough resolves to one palette
+entry, which a three-word table entry can write.  Dibit 00 then behaves as a
+**third settable colour**, available inside a group with no SET between groups.
 
 > **This last paragraph is MODEL behaviour and is NOT yet verified against
 > hardware.**  `super-engine/render.cpp` follows `pixel.v`'s documented
 > tiling (no empty flag; a 7200 holds Q while empty, so an unfed stream
 > re-delivers its last word), but what a 7200 pair presents on Q after
 > `/RS` with no write at all, and what `pixel.v`'s shifter holds before its
-> first fetch, are both open.  Settle those two before designing art around
-> the third colour.
+> first fetch, are both open — and since 2026-09-20 there is a third: the
+> palette RAM powers up undefined, so a pure-VIDCMD screen **must** load the
+> entry its passthrough resolves to.  Settle all three before designing art
+> around the third colour.
 
 ## 5. Cross-chip mechanism (the SET conduit)
 
 **As built (decided 2026-08-13, `griffin.yml` `interfaces:` "COMPOSITOR
 -> PIXEL SET register path"): a dedicated 12-bit registered value bus.**
 
-* `set_pix_value[11:0]` — twelve point-to-point traces COMPOSITOR ->
-  PIXEL carrying the staged word's payload, alongside the existing
-  `set_pix_valid` / `set_pix_target[2:0]` / `set_pix_commit`.  All four
-  are registered off the same staged word, so they are one pipeline
-  stage.  PIXEL applies the bus **directly at the commit pulse** — no
-  shadow, no pending, no capture register.
+* `set_pix_value[11:0]` — twelve registered traces carrying the staged word's
+  payload, alongside `set_pix_valid` / `set_pix_target[2:0]` /
+  `set_pix_commit`.  All four are registered off the same staged word, so they
+  are one pipeline stage.  PIXEL applies the bus **directly at the commit
+  pulse** — no shadow, no pending, no capture register.
+* **Since the palette became a RAM the bus has two destinations**: all twelve
+  bits go to the RAM's data inputs, and PIXEL taps only `[3:0]` (it has no
+  register wider than four bits any more).  That is write form W2, and it is
+  what puts the *filler* rule in §3.2 rather than a data path in PIXEL.
+* **The bus is re-registered from EVERY staged word**, whatever the target.
+  That is the mechanism behind §3.2's hold analysis: a payload owns the bus for
+  two clocks and then the next word owns it.
 * **PIXEL no longer taps VIDCMD Q at all.**  Its twelve former Q taps
   repointed to this bus, which takes twelve loads off the shared FIFO
   data bus.
@@ -553,25 +663,47 @@ every capture edge by 8-15 ns in every phasing).  Every edge in
 COMPOSITOR is a GCLK rising edge, so nothing depends on the oscillator's
 duty cycle.
 
+**The palette RAM's budget is NOT settled, and it gates the part choice.**
+Two arithmetics are owed, both against datasheet tables rather than estimates:
+
+* **Read**, inside one pixel clock T = 39.72 ns: PIXEL tCO + flight + RAM
+  address access + flight <= T − COMPOSITOR tSU.  With the numbers already
+  pinned for the VIDCMD port (tCO 8.0, ~2 ns flight, T − tSU = 32.7) the RAM
+  gets about **22.7 ns of address access** over 0–70 C.  A 27 ns part fails.
+* **Write**: /WE pulse width against one clock, address and data setup and
+  hold against the §3.2 sequence, and write recovery against §3.2's fourth
+  guard clock — which is an abstraction of that unread parameter, not a
+  measurement.
+* Sixteen PIXELS inputs sampled on one GCLK edge is the same budget form as the
+  VIDCMD port (tA 15 ns).
+
 Board notes: series-terminate every /RE and /W at the driver end
 (promoted from the rev-1 ringing bodge to design); PIXEL_CLK skew between
-chips < ~2-3 ns (same net, matched routing).  PIXEL no longer senses /RE.
+chips < ~2-3 ns (same net, matched routing) — one net fewer now that the raster
+generator shares PIXEL's package.  PIXEL no longer senses /RE.
 
 ## 7. Chip summaries
 
-### PIXEL
+### PIXEL (and the raster generator, in the same chip)
 
-Drains PIXELS at 1 or 2 bits/clock; resolves each pixel to R4G4B4 from
-its register file; outputs one color/clock to COMPOSITOR.  Decodes no
-instructions.
+Drains PIXELS at 1, 2 or 4 bits per group; resolves each pixel to a FOUR-BIT
+palette index; drives the palette RAM's address and write pulse.  Decodes no
+instructions and holds no colour.  `timing.v`'s Timing module is instantiated
+in the same top level, so the chip is also the raster time base for the whole
+board.
 
-Registers: pal_fg, pal_bg, ham_held (12 each), mode, pixel_skip, HAM
-decode FSM, stream shifter.  (The shadow and pending registers went with
-the Q-tap conduit — the value bus is applied straight at the commit.)
+Registers: mode (3), pix_base (4), pixel_skip (4), clut_index (4), the 16-bit
+stream shifter with its bit position / alignment / half-phase / fetch state, the
+attribute colour byte, the two-deep palette-write pipeline, the registered IDX —
+plus the raster generator's counters and outputs.
 
-Pins: PIXELS Q[15:0] in, RGB[11:0] out, **set_pix_value[11:0] in**,
-set_pix_target[2:0] + set_pix_valid + set_pix_commit in, clocks/timing.
-No VIDCMD Q tap and no /RE sense.  ≈ 48 of 64.
+Pins: PIXELS Q[15:0] in + one /RE out, IDX[3:0] + nCLUT_WE out,
+**set_pix_value[3:0] in** (form W2 — the RAM takes all twelve from COMPOSITOR,
+so PIXEL has no data path), set_pix_target[2:0] + set_pix_valid +
+set_pix_commit in, and the raster outputs VGA_HSYNC, VGA_VSYNC, nRS, H_ACTIVE,
+HBLANK, nVSYNC_IRQ, PADDLE_TICK, AUDIO_TICK.  43 of 64 I/O; the pin map lives in
+`pixel.v`'s `//PIN` block and nowhere else.  DUART OP4..OP7 are reserved as
+future mode inputs.
 
 ### COMPOSITOR
 
@@ -601,28 +733,37 @@ accepted because the interface is architecturally complete.
 
 | signals | path | function |
 |---|---|---|
-| RGB[11:0] | PIXEL -> COMPOSITOR | composited input, one color/clock |
+| PIXELS_Q[15:0] | PIXELS FIFO -> PIXEL | one ganged 16-bit word; each 7200 on its own eight pins |
+| nPIXELS_RE | PIXEL -> both PIXELS 7200s | registered, one clock low per word, >= 8 clocks apart |
+| IDX[3:0] | PIXEL -> palette RAM | the pixel's palette index, or `clut_index` during a write |
+| nCLUT_WE | PIXEL -> palette RAM | one-clock write pulse, centred in the address window |
+| RGB[11:0] | palette RAM -> COMPOSITOR RGB_IN | the pixel's colour, combinational |
 | Q[15:0] | VIDCMD FIFO -> COMPOSITOR | instruction word (**no PIXEL tap**; high-Z between reads) |
 | /RE | COMPOSITOR -> FIFO | registered, one clock low per word, 2 clocks per word sustained |
 | /EF | FIFO -> COMPOSITOR | empty flag (2-FF sync'd rise, raw fall) |
-| set_pix_value[11:0] | COMPOSITOR -> PIXEL | the staged word's payload, registered |
+| set_pix_value[11:0] | COMPOSITOR -> palette RAM data in; [3:0] -> PIXEL | the staged word's payload, registered |
 | set_pix_target[2:0], set_pix_valid | COMPOSITOR -> PIXEL | "the bus is yours, register N" |
 | set_pix_commit | COMPOSITOR -> PIXEL | apply the bus now (leads its slot's pixel by 1 clock) |
 | RGB_OUT[11:0] | COMPOSITOR -> DAC | final color |
-| PIXEL_CLK, LINE_START, H_ACTIVE, /RS | TIMING -> all | clock, epoch, blanking gate, per-frame reset |
+| PIXEL_CLK | oscillator -> PIXEL, COMPOSITOR | the one clock domain |
+| H_ACTIVE, /RS | PIXEL -> COMPOSITOR (and /RS to the FIFOs) | blanking gate, per-frame reset |
+| VGA_HSYNC, VGA_VSYNC, HBLANK, nVSYNC_IRQ, PADDLE_TICK, AUDIO_TICK | PIXEL -> the rest of the board | see `griffin.yml` PIXEL |
 
 ## 9. What 12-bit color costs elsewhere (summary)
 
-* Zero memory bandwidth: pixel streams stay 1/2 bpp indexed; literals
-  ride SETs and HAM palette entries.
-* ENGINE: no change (word streamer).  Display-list builder writes wider
-  literals; VBLANK preamble re-establishes held colors and palettes.
-* Board: 12 DAC pins + three 4-bit ladders; PIXEL->COMPOSITOR RGB bus is
-  12 traces, and since 2026-08-13 there are 12 more the other way for
-  set_pix_value; new-board items alongside the COMPOSITOR/PIXEL chips.
-* Emulator/tools: 4-bit channel expansion (c*17), SET/target decode,
-  2bpp HAM, r4g4b4 quantizer; super-engine host suite re-run (word
-  counts unchanged).
+* Zero memory bandwidth: pixel streams stay 1, 2 or 4 bits per group and
+  indexed; literals ride SETs into the palette RAM.
+* ENGINE: no change (word streamer).  The display-list builder writes wider
+  literals and a three-word entry per palette colour; the VBLANK preamble
+  re-establishes held colours, mode, base and every palette entry the frame
+  uses — nothing in hardware remembers them across a power cycle.
+* Board: 12 DAC pins + three 4-bit ladders; the 12-bit RGB bus now comes out of
+  the palette RAM rather than PIXEL, PIXEL contributes IDX[3:0] + nCLUT_WE, and
+  COMPOSITOR's twelve `set_pix_value` traces fan out to the RAM's data inputs as
+  well as to PIXEL's four.
+* Emulator/tools: 4-bit channel expansion (c*17), SET/target decode, the four
+  depths, a palette unit with random power-up, r4g4b4 quantizer; super-engine
+  host suite re-run.
 
 ## 10. Open items
 
@@ -645,11 +786,20 @@ Kept with their original numbering; status stamped rather than deleted.
    emulator, `apps/` and the firmware, and is deliberately not bundled
    with the rename.
 8. **NEW, OPEN, and it gates a whole authoring technique.** §4.5's third
-   colour — passthrough resolving to `pix_pal_bg` when the PIXELS FIFO is
+   colour — passthrough resolving to one palette entry when the PIXELS FIFO is
    never written — is MODEL behaviour only.  Confirm against `pixel.v`
    what the shifter holds before its first fetch, and against the
    IDT7200 datasheet what Q presents after `/RS` with no write, before
-   any art depends on it.
+   any art depends on it.  The entry itself must be loaded either way.
+9. **NEW, OPEN, and it chooses a part.**  The palette RAM's read and write
+   arithmetic (§6): a 74F219-pinout 16x4 part fast enough for ~22.7 ns of
+   address access, its /WE pulse width, setup, hold and write recovery against
+   §3.2's one-clock pulse, and the supply current of three of them.  Until it
+   closes, §3.2's fourth guard clock stands in for the recovery time.
+10. **NEW, OPEN, cheap and not needed yet.**  `clut_index` does not
+   post-increment, so consecutive entries cost three words each rather than two
+   (13 per HBLANK packet instead of 8).  It costs logic cells in a chip with
+   five spare.
 5. ~~Pin down K constants from real RTL~~ **CLOSED**: measured by
    `compositor_tb.v`, propagated to the emulator and the super-engine
    model; unchanged by the 2026-08-19 cadence rework (§6).

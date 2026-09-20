@@ -155,28 +155,24 @@ static constexpr uint32_t ENGINE_CTRL_ENABLE_SHIFT = 0U;
 static constexpr uint32_t ENGINE_CTRL_DEFAULT = 0x00U;
 
 // ------------------------------------------------------------
-// TIMING: Raster time base: VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, PIXEL strobes, ENGINE HBLANK, GLUE vsync IRQ, PORTS paddle/audio ticks
-static constexpr uint32_t TIMING_CLOCK = 25175000UL;
-static constexpr uint32_t TIMING_PIXEL_CLOCK_HZ = 25175000UL;  // pixel clock, Hz
-static constexpr uint32_t TIMING_H_ACTIVE = 640UL;  // pixel clocks
-static constexpr uint32_t TIMING_H_FRONT_PORCH = 16UL;  // pixel clocks
-static constexpr uint32_t TIMING_H_SYNC = 96UL;  // pixel clocks
-static constexpr uint32_t TIMING_H_BACK_PORCH = 48UL;  // pixel clocks
-static constexpr uint32_t TIMING_H_TOTAL = 800UL;  // pixel clocks
-static constexpr uint32_t TIMING_V_ACTIVE = 480UL;  // lines
-static constexpr uint32_t TIMING_V_FRONT_PORCH = 10UL;  // lines
-static constexpr uint32_t TIMING_V_SYNC = 2UL;  // lines
-static constexpr uint32_t TIMING_V_BACK_PORCH = 33UL;  // lines
-static constexpr uint32_t TIMING_V_TOTAL = 525UL;  // lines
-static constexpr uint32_t TIMING_HSYNC_ACTIVE_LOW = 1UL;  // HSYNC is asserted low during the sync interval
-static constexpr uint32_t TIMING_VSYNC_ACTIVE_LOW = 1UL;  // VSYNC is asserted low during the sync interval
-
-// ------------------------------------------------------------
-// PIXEL: PIXELS stream unpacker: 1bpp direct, 2bpp micro-HAM, 2bpp indexed, half rate; R4G4B4 to COMPOSITOR
+// PIXEL: Raster time base and indexed PIXELS unpacker: 4-bit palette index + palette-RAM write port, VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, ENGINE HBLANK, GLUE vsync IRQ, PORTS ticks
 static constexpr uint32_t PIXEL_CLOCK = 25175000UL;
+static constexpr uint32_t PIXEL_PIXEL_CLOCK_HZ = 25175000UL;  // pixel clock, Hz
+static constexpr uint32_t PIXEL_H_ACTIVE = 640UL;  // pixel clocks
+static constexpr uint32_t PIXEL_H_FRONT_PORCH = 16UL;  // pixel clocks
+static constexpr uint32_t PIXEL_H_SYNC = 96UL;  // pixel clocks
+static constexpr uint32_t PIXEL_H_BACK_PORCH = 48UL;  // pixel clocks
+static constexpr uint32_t PIXEL_H_TOTAL = 800UL;  // pixel clocks
+static constexpr uint32_t PIXEL_V_ACTIVE = 480UL;  // lines
+static constexpr uint32_t PIXEL_V_FRONT_PORCH = 10UL;  // lines
+static constexpr uint32_t PIXEL_V_SYNC = 2UL;  // lines
+static constexpr uint32_t PIXEL_V_BACK_PORCH = 33UL;  // lines
+static constexpr uint32_t PIXEL_V_TOTAL = 525UL;  // lines
+static constexpr uint32_t PIXEL_HSYNC_ACTIVE_LOW = 1UL;  // HSYNC is asserted low during the sync interval
+static constexpr uint32_t PIXEL_VSYNC_ACTIVE_LOW = 1UL;  // VSYNC is asserted low during the sync interval
 
 // ------------------------------------------------------------
-// COMPOSITOR: VIDCMD stream player: per-slot source select over PIXEL's R4G4B4, SET forwarding to PIXEL, MASK overlays
+// COMPOSITOR: VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, SET forwarding to PIXEL, MASK overlays
 static constexpr uint32_t COMPOSITOR_CLOCK = 25175000UL;
 
 // ------------------------------------------------------------
@@ -418,15 +414,32 @@ static constexpr uint32_t ENGINE_SIGNAL_AUDIO_FIFO_W = 0x04U;
 static constexpr uint32_t ENGINE_SIGNAL_SPARE = 0x08U;
 static constexpr uint32_t VIDCMD_SET_CMP_COLOR1 = 0x00U;
 static constexpr uint32_t VIDCMD_SET_CMP_COLOR0 = 0x01U;
-static constexpr uint32_t VIDCMD_SET_PIX_PAL_FG = 0x02U;
-static constexpr uint32_t VIDCMD_SET_PIX_PAL_BG = 0x03U;
-static constexpr uint32_t VIDCMD_SET_PIX_HAM_HELD = 0x04U;
+static constexpr uint32_t VIDCMD_SET_PIX_CLUT_INDEX = 0x02U;
+static constexpr uint32_t VIDCMD_SET_PIX_CLUT_DATA = 0x03U;
+static constexpr uint32_t VIDCMD_SET_PIX_BASE = 0x04U;
 static constexpr uint32_t VIDCMD_SET_PIX_MODE = 0x05U;
 static constexpr uint32_t VIDCMD_SET_PIX_PIXEL_SKIP = 0x06U;
+static constexpr uint32_t VIDCMD_SET_FILLER = 0x07U;
+static constexpr uint32_t VIDCMD_WORDS_PER_CLUT_ENTRY = 0x03U;
+static constexpr uint32_t VIDCMD_PIX_MODE_1BPP = 0x00U;
+static constexpr uint32_t VIDCMD_PIX_MODE_2BPP = 0x01U;
+static constexpr uint32_t VIDCMD_PIX_MODE_4BPP = 0x02U;
+static constexpr uint32_t VIDCMD_PIX_MODE_ATTR = 0x03U;
+static constexpr uint32_t VIDCMD_PIX_MODE_HALF_RATE = 0x04U;
 static constexpr uint32_t PIXELS_FIFO_WORDS = 0x100U;
 static constexpr uint32_t VIDCMD_FIFO_WORDS = 0x100U;
 static constexpr uint32_t PIXELS_WORDS_PER_LINE_1BPP = 0x28U;
+static constexpr uint32_t PIXELS_WORDS_PER_LINE_1BPP_HALF = 0x14U;
 static constexpr uint32_t PIXELS_WORDS_PER_LINE_2BPP = 0x50U;
+static constexpr uint32_t PIXELS_WORDS_PER_LINE_2BPP_HALF = 0x28U;
+static constexpr uint32_t PIXELS_WORDS_PER_LINE_4BPP_HALF = 0x50U;
+static constexpr uint32_t PIXELS_WORDS_PER_LINE_ATTR = 0x50U;
+static constexpr uint32_t PIXELS_WORDS_PER_LINE_ATTR_HALF = 0x28U;
+static constexpr uint32_t PIXELS_SKIP_EXTRA_WORDS = 0x01U;
+static constexpr uint32_t PIXELS_SKIP_MAX_1BPP = 0x0EU;
+static constexpr uint32_t PIXELS_SKIP_MAX_2BPP = 0x0CU;
+static constexpr uint32_t PIXELS_SKIP_MAX_2BPP_HALF = 0x0EU;
+static constexpr uint32_t PIXELS_SKIP_MAX_4BPP_HALF = 0x0CU;
 static constexpr uint32_t COMPOSITOR_LEAD = 0x02U;
 static constexpr uint32_t PIXEL_OUT_LEAD = 0x01U;
 static constexpr uint32_t TIMING_SPLIT_LEAD = 0x01U;

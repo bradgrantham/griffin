@@ -480,6 +480,20 @@ struct RecordWriter
         word(m.data);
     }
 
+    // One palette entry: the index SET, the data SET and the same-value FILLER.
+    // Three records, and the filler is not optional — COMPOSITOR re-registers
+    // set_pix_value from every staged word, so without it the RAM stores the
+    // next word's payload (vidcmd-spec.md §3.2).  Legal in blanking, or where
+    // the four slots after the data SET are covered.
+    void palette_entry(uint32_t index, Rgb444 colour)
+    {
+        const PaletteEntryWords e = vidcmd_palette_entry(index, colour);
+        for (uint16_t v : e)
+        {
+            record(v);
+        }
+    }
+
     // A RUN_COLOR spans at most RUN_COLOR_MAX_COUNT pixels.  A chunked span is
     // still exact: the first chunk is long enough for the fetch to bank the
     // second, so the pair law lands it on the very next slot.
@@ -729,49 +743,6 @@ void write_solid_pattern_1bpp(Memory ram, uint32_t base, uint32_t stride_bytes,
     }
 }
 
-void write_test_pattern_microham(Memory ram, uint32_t base, uint32_t stride_bytes,
-                                 uint32_t lines)
-{
-    for (uint32_t y = 0; y < lines; y++)
-    {
-        BitPacker bp;
-        bp.ram  = ram;
-        bp.base = base + y * stride_bytes;
-
-        // 160 pixels of "held <- pix_pal_fg", one 2-bit code each.
-        for (uint32_t i = 0; i < 160; i++)
-        {
-            bp.put(0b01, HAM_CODE_PALETTE_BITS);
-        }
-
-        // 160 pixels of "held <- pix_pal_bg".
-        for (uint32_t i = 0; i < 160; i++)
-        {
-            bp.put(0b00, HAM_CODE_PALETTE_BITS);
-        }
-
-        // 320 pixels as 160 four-bit chroma codes.  Alternating between the
-        // green/red and green/blue forms means every channel gets driven, and
-        // stepping the phase every 8 lines makes the blocks visibly staircase
-        // down the frame.
-        for (uint32_t k = 0; k < 160; k++)
-        {
-            const uint32_t kk = k + (y >> 3);
-            const uint32_t g  = (kk >> 1) & 1u;
-            if ((kk & 1u) == 0)
-            {
-                const uint32_t r = (kk >> 2) & 1u;
-                bp.put(0b1000u | (g << 1) | r, HAM_CODE_CHROMA_BITS);   // 10_g_r
-            }
-            else
-            {
-                const uint32_t b = (kk >> 3) & 1u;
-                bp.put(0b1100u | (g << 1) | b, HAM_CODE_CHROMA_BITS);   // 11_g_b
-            }
-        }
-    }
-}
-
 void write_test_pattern_indexed2(Memory ram, uint32_t base, uint32_t stride_bytes,
                                  uint32_t lines)
 {
@@ -784,6 +755,39 @@ void write_test_pattern_indexed2(Memory ram, uint32_t base, uint32_t stride_byte
         for (uint32_t x = 0; x < H_ACTIVE; x++)
         {
             bp.put(idx2_pattern_code(x, y), 2);
+        }
+    }
+}
+
+void write_test_pattern_indexed4_half(Memory ram, uint32_t base, uint32_t stride_bytes,
+                                      uint32_t lines)
+{
+    for (uint32_t y = 0; y < lines; y++)
+    {
+        BitPacker bp;
+        bp.ram  = ram;
+        bp.base = base + y * stride_bytes;
+
+        // 320 groups, one nibble each: a half-rate 4bpp line.
+        for (uint32_t g = 0; g < H_ACTIVE / 2u; g++)
+        {
+            bp.put(idx4_pattern_code(g, y), 4);
+        }
+    }
+}
+
+void write_test_pattern_attr(Memory ram, uint32_t base, uint32_t stride_bytes,
+                             uint32_t cells_per_line, uint32_t lines)
+{
+    for (uint32_t y = 0; y < lines; y++)
+    {
+        for (uint32_t cell = 0; cell < cells_per_line; cell++)
+        {
+            const uint32_t fg  = attr_cell_fg(cell, y);
+            const uint32_t bg  = attr_cell_bg(cell, y);
+            const uint32_t pat = attr_cell_pattern(cell, y);
+            ram[base + y * stride_bytes + cell * 2] =
+                static_cast<uint16_t>((fg << 12) | (bg << 8) | pat);
         }
     }
 }
@@ -848,12 +852,16 @@ static void write_console_line(const FrameParams &p, RecordWriter &w, uint32_t l
 {
     const uint32_t row = line / CONSOLE_CELL_H;
 
-    // Blank-region setup.  pal_bg is the third colour and is written once per
-    // FRAME, because /RS at vsync clears PIXEL's registers.
+    // Blank-region setup.  The third colour is PALETTE ENTRY 0 — with no PIXELS
+    // word ever fetched the shifter reads zero, and 1bpp at pix_base 0 makes
+    // that entry 0 — and it is written once per FRAME.  /RS clears PIXEL's mode
+    // and base registers but NOT the RAM, so one entry per frame is belt and
+    // braces rather than a requirement; what /RS really forces is the mode SET.
     if (line == 0)
     {
-        w.record(vidcmd_set(SET_PIX_PAL_BG, CONSOLE_ALT_COLOR));
-        w.record(vidcmd_set(SET_PIX_MODE, PIXEL_MODE_DIRECT_1BPP));
+        w.palette_entry(0, CONSOLE_ALT_COLOR);
+        w.record(vidcmd_set(SET_PIX_BASE, 0));
+        w.record(vidcmd_set(SET_PIX_MODE, pixel_mode_bits(PixelMode::DIRECT_1BPP)));
     }
     w.record(vidcmd_set(SET_CMP_COLOR1, console_row_color1(row)));
     w.record(vidcmd_set(SET_CMP_COLOR0, console_row_color0(row)));
@@ -904,8 +912,11 @@ static void write_kiosk_line(const FrameParams &p, RecordWriter &w, uint32_t lin
 {
     if (line == 0)
     {
-        w.record(vidcmd_set(SET_PIX_PAL_BG, KIOSK_ALT_COLOR));
-        w.record(vidcmd_set(SET_PIX_MODE, PIXEL_MODE_DIRECT_1BPP));
+        // The kiosk's third colour is palette entry 0, for the same reason as
+        // the console's (write_console_line).
+        w.palette_entry(0, KIOSK_ALT_COLOR);
+        w.record(vidcmd_set(SET_PIX_BASE, 0));
+        w.record(vidcmd_set(SET_PIX_MODE, pixel_mode_bits(PixelMode::DIRECT_1BPP)));
     }
     (void)p;
 
@@ -1085,23 +1096,45 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
         // of active records below.
         bool want_records = true;
 
+        // One palette entry: three consecutive words, and in the BLANK region so
+        // the four pixel slots the write disturbs are all inside blanking.
+        auto put_entry = [&](uint32_t index, Rgb444 colour)
+        {
+            const PaletteEntryWords e = vidcmd_palette_entry(index, colour);
+            for (uint16_t v : e)
+            {
+                put(v);
+            }
+        };
+
         if (p.slot_regression)
         {
-            put(vidcmd_set(SET_PIX_PAL_FG, p.regression_c1));
-            put(vidcmd_set(SET_PIX_PAL_BG, RGB444_BLACK));
-            put(vidcmd_set(SET_PIX_MODE, PIXEL_MODE_DIRECT_1BPP));
+            // The palette this case needs — base 0 is the PAIR {c1, c1} and base
+            // REGRESSION_BASE_HI the pair {c2, c2}, so the mid-line
+            // SET(pix_base) below repaints whatever the bitmap says with one
+            // colour either way and the pixel it lands on is unambiguous — is
+            // loaded once per frame in the VBLANK preamble (author_frame), not
+            // here: twelve more words in an HBLANK would push this line's own
+            // SETs past pixel 0.
+            put(vidcmd_set(SET_PIX_BASE, 0));
+            put(vidcmd_set(SET_PIX_MODE, pixel_mode_bits(PixelMode::DIRECT_1BPP)));
             put(vidcmd_set(SET_PIX_PIXEL_SKIP, 0));
         }
         else if (p.jit_frame_preamble)
         {
-            // The firmware console's whole VIDCMD budget: three words on line 0,
+            // The firmware console's whole VIDCMD budget: one preamble on line 0,
             // nothing on the other 479.  compositor.v's hold does the rest —
             // {RUN(passthrough,1)} paints a line, and a line that receives no
-            // fill keeps holding the source it already had.
+            // fill keeps holding the source it already had.  The preamble is now
+            // the two palette entries the console's 1bpp plane selects (entry 1
+            // for a set bit, entry 0 for a clear one) plus base and mode: nine
+            // words instead of three, all of them free in blanking.
             if (line == 0)
             {
-                put(vidcmd_set(SET_PIX_PAL_FG, p.held_fg));
-                put(vidcmd_set(SET_PIX_PAL_BG, p.held_bg));
+                put_entry(0, p.held_bg);
+                put_entry(1, p.held_fg);
+                put(vidcmd_set(SET_PIX_BASE, 0));
+                put(vidcmd_set(SET_PIX_MODE, pixel_mode_bits(PixelMode::DIRECT_1BPP)));
                 put(vidcmd_run(RUN_SRC_PASSTHROUGH, 1));
                 slots += 1;
             }
@@ -1114,29 +1147,22 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
                 put(vidcmd_set(SET_CMP_HELD_FG, p.held_fg));
                 put(vidcmd_set(SET_CMP_HELD_BG, p.held_bg));
             }
+            // A PER-LINE RELOAD of the two entries a 1bpp playfield selects:
+            // six words in the HBLANK ahead of the line, entry 1 for a set bit
+            // and entry 0 for a clear one.
             if (p.per_line_palette)
             {
                 const Rgb444 fg = p.depth_fade_palette ? tempest_palette_fg(line)
                                                        : line_palette_fg(line);
                 const Rgb444 bg = p.depth_fade_palette ? tempest_palette_bg(line)
                                                        : line_palette_bg(line);
-                put(vidcmd_set(SET_PIX_PAL_FG, fg));
-                put(vidcmd_set(SET_PIX_PAL_BG, bg));
+                put_entry(0, bg);
+                put_entry(1, fg);
             }
             if (p.per_line_mode)
             {
                 put(vidcmd_set(SET_PIX_MODE, mode_value));
-
-                // MODE BEFORE ham_held, and it is not a style choice: pixel.v
-                // suppresses the blanking reload of ham_held on the mode bit,
-                // so a SET(pix_ham_held) emitted first is overwritten by pal_fg
-                // on the blank clocks between the two records.  This is the one
-                // order dependence in the chip (descriptor.h), and the model
-                // reproduces it, so getting it backwards fails the case.
-                if (p.frame_ham_held && line == 0)
-                {
-                    put(vidcmd_set(SET_PIX_HAM_HELD, p.ham_held_color));
-                }
+                put(vidcmd_set(SET_PIX_BASE, p.pix_base));
                 put(vidcmd_set(SET_PIX_PIXEL_SKIP, pixel_skip));
             }
         }
@@ -1226,7 +1252,11 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
             // close_exact() is what works that out.
             put(vidcmd_run(RUN_SRC_PASSTHROUGH, 1));
             slots += 1;
-            put(vidcmd_set(SET_PIX_PAL_FG, p.regression_c2));
+            // A mid-line SET(pix_base) is the pixel-exact recolour the indexed
+            // chip has: it changes which PAIR of palette entries the playfield
+            // selects and disturbs nothing, where a mid-line palette WRITE would
+            // steal four pixel slots (vidcmd-spec.md §3.2).
+            put(vidcmd_set(SET_PIX_BASE, REGRESSION_BASE_HI));
             slots += 1;
             close_exact();
         }
@@ -1243,9 +1273,15 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
             // consecutive slots — the whole point of the case, and the property
             // the 2-clock cadence preserves.  The record AFTER them is a fresh
             // fetch and slips one slot behind the authored sum.
-            put(vidcmd_set(SET_PIX_PAL_BG, p.split_bg));
+            //
+            // Both are SET(pix_base), to two pairs of palette entries loaded
+            // with one colour each, so "which pixel did this SET land on" is
+            // answered by the colour of that pixel and nothing else.  A mid-line
+            // palette WRITE is illegal under passthrough and is not what this
+            // case is about.
+            put(vidcmd_set(SET_PIX_BASE, SPLIT_BASE_MID));
             slots += 1;
-            put(vidcmd_set(SET_PIX_PAL_FG, p.split_fg));
+            put(vidcmd_set(SET_PIX_BASE, SPLIT_BASE_HI));
             slots += 1;
             close_exact();
         }
@@ -1373,6 +1409,28 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
 
     uint32_t audio_pair = p.audio_frame_pair_base;
     uint32_t audio_pairs_emitted = 0;
+
+    // --- the frame's PALETTE, in vertical blanking ---------------------------
+    //
+    // Sixteen three-word entries is 48 words, well past what one HBLANK can
+    // deliver, and vertical blanking is where it belongs anyway: there are no
+    // pixel slots for a write to disturb.  Nothing in hardware clears the RAM,
+    // so this load is also the assertion that the entries survive 480 lines and
+    // the /RS at the next vsync.
+    if (p.palette_entries > 0)
+    {
+        const uint32_t addr = p.vidcmd_base + VIDCMD_PREAMBLE_SLOT * VIDCMD_LINE_STRIDE_BYTES;
+        uint32_t n = 0;
+        for (uint32_t i = 0; i < p.palette_entries; i++)
+        {
+            for (uint16_t v : vidcmd_palette_entry(i, p.palette[i]))
+            {
+                ram[addr + n * 2] = v;
+                n++;
+            }
+        }
+        emit_stream(w, SIGNAL_VIDCMD_FIFO_W, addr, n, false, DESC_MAX_COUNT);
+    }
 
     // --- VBLANK preamble -----------------------------------------------------
     // The list is armed during vertical blanking, so this runs immediately with

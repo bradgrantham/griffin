@@ -642,24 +642,19 @@ static constexpr unsigned FB_WORDS_PER_LINE = se::PIXELS_WORDS_1BPP;      // 40
 static constexpr unsigned FB_STRIDE      = FB_WORDS_PER_LINE * 2;         // 80
 static constexpr unsigned FB_BYTES       = FB_LINES * FB_STRIDE;          // 38400
 
-// Micro-HAM plane geometry.  This is NOT the framebuffer: PIXEL eats two
-// stream bits per pixel clock in micro-HAM, so a line is 80 words and a frame
-// is twice what the boot framebuffer holds.  The viewer gives a HAM image its
-// own heap buffer and only the geometry lives here, next to the 1bpp numbers
-// it is the mirror of.
-static constexpr unsigned HAM_WORDS_PER_LINE = se::PIXELS_WORDS_MICROHAM;    // 80
-static constexpr unsigned HAM_STRIDE         = HAM_WORDS_PER_LINE * 2;       // 160
-static constexpr unsigned HAM_BYTES          = FB_LINES * HAM_STRIDE;        // 76800
+// MICRO-HAM IS RETIRED (2026-09-20, the indexed PIXEL).  PIXEL is index-only
+// now: there is no HAM decoder, no pal_fg/pal_bg/ham_held, and a `.ham` file has
+// no mode to be displayed in.  The viewer refuses one with a message rather than
+// painting garbage; a 4bpp or attribute-mode viewer is the replacement and is
+// package 3's business, along with image-tools.
 
-// A descriptor's count field is 5 bits, so 80 words is three descriptors.
-static constexpr unsigned HAM_PIXEL_DESCS_PER_LINE =
-    (HAM_WORDS_PER_LINE + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;      // 3 (32+32+16)
-
-// Console colours, as R4G4B4 VIDCMD SET values.  There is no FB_DEFAULT_PALETTE
-// any more — nothing is stamped into the framebuffer, the two SETs in the
-// frame preamble are the palette.
-static constexpr se::Rgb444 CONSOLE_FG = 0x0FFF;   // white
-static constexpr se::Rgb444 CONSOLE_BG = 0x0000;   // black
+// Console colours, as R4G4B4 palette entries.  The console's 1bpp plane at
+// pix_base 0 selects ENTRY 1 for a set bit and ENTRY 0 for a clear one, and the
+// frame preamble loads both — nothing in hardware clears the palette RAM, but
+// nothing initialises it either.
+static constexpr se::Rgb444 CONSOLE_FG = 0x0FFF;   // white, palette entry 1
+static constexpr se::Rgb444 CONSOLE_BG = 0x0000;   // black, palette entry 0
+static constexpr unsigned   CONSOLE_PIX_BASE = 0;
 
 // ---------------------------------------------------------------------------
 // Display-list window
@@ -822,53 +817,64 @@ static void dl_emit_pixel_line(unsigned line, bool wait_first)
 // ---------------------------------------------------------------------------
 static constexpr unsigned VBLANK_WALK_LINES = 34;   // lines 491..524
 
-// The console's entire VIDCMD budget: three words, once per frame.
-// {SET pix_pal_fg, SET pix_pal_bg, RUN(passthrough,1)}.  COMPOSITOR holds the
-// last source to the end of a line and a line that receives no records at all
-// keeps holding, so one 1-slot passthrough RUN paints all 480 lines.  The two
-// SETs are consumed during blanking and cost no slot at all.
+// The console's entire VIDCMD budget: NINE words, once per frame —
+// {palette entry 0, palette entry 1, SET pix_base, SET pix_mode,
+// RUN(passthrough,1)}, where each palette entry is the three words of
+// vidcmd-spec.md §3.2 (SET clut_index, SET clut_data, the same-value filler).
+// COMPOSITOR holds the last source to the end of a line and a line that receives
+// no records at all keeps holding, so one 1-slot passthrough RUN paints all 480
+// lines.  Everything here is consumed during vertical blanking and costs no slot
+// at all — which is also the only place a palette write is unconditionally
+// legal, since the four pixel slots after a clut_data SET are disturbed.
 
 // Descriptor and payload budgets, checked here where VBLANK_WALK_LINES is in
 // scope.  The console's is the one that matters for correctness: it is what
 // keeps the console list below GRIFFIN_APP_DESC_BASE.
+static constexpr unsigned CONSOLE_PREAMBLE_WORDS = 2 * se::PALETTE_WORDS_PER_ENTRY + 3;
 static constexpr unsigned CONSOLE_DESCRIPTORS = 1 + VBLANK_WALK_LINES + 2 * FB_LINES + 1;
-static constexpr unsigned VIEWER_DESCRIPTORS  = VBLANK_WALK_LINES + 3 * FB_LINES + 1;
+static constexpr unsigned VIEWER_DESCRIPTORS  = 1 + VBLANK_WALK_LINES + 3 * FB_LINES + 1;
 
-// The micro-HAM viewer carries one more descriptor per line (80 words of
-// pixels is three, not two) plus the frame's mode-SET preamble:
-// 1 + 34 + 480 * (1 VIDCMD + 3 PIXELS) + 1 = 1956 descriptors, 15648 bytes.
-static constexpr unsigned HAM_VIEWER_DESCRIPTORS =
-    1 + VBLANK_WALK_LINES + (1 + HAM_PIXEL_DESCS_PER_LINE) * FB_LINES + 1;
+// One viewer line's VIDCMD packet: the two palette entries the 1bpp plane
+// selects, three words each, plus the 1-slot passthrough RUN.
+static constexpr unsigned VIEWER_LINE_WORDS = 2 * se::PALETTE_WORDS_PER_ENTRY + 1;
+
 static_assert(CONSOLE_DESCRIPTORS * se::DESC_BYTES <= DL_CONSOLE_TABLE_BYTES,
               "console display list outgrew its below-the-carve table region");
-static_assert(3 * 2 <= DL_CONSOLE_VIDCMD_BYTES,
+static_assert(CONSOLE_PREAMBLE_WORDS * 2 <= DL_CONSOLE_VIDCMD_BYTES,
               "console frame preamble outgrew its below-the-carve payload region");
 static_assert(VIEWER_DESCRIPTORS * se::DESC_BYTES <= DL_VIEWER_TABLE_BYTES,
               "viewer display list outgrew the 40 KB display-list window");
-static_assert(FB_LINES * 3 * 2 <= DL_VIEWER_VIDCMD_BYTES,
+static_assert(FB_LINES * VIEWER_LINE_WORDS * 2 + 2 * 2 <= DL_VIEWER_VIDCMD_BYTES,
               "viewer per-line palette payload outgrew the display-list window");
-static_assert(HAM_VIEWER_DESCRIPTORS * se::DESC_BYTES <= DL_VIEWER_TABLE_BYTES,
-              "micro-HAM viewer display list outgrew the 40 KB display-list window");
-static_assert((1 + FB_LINES * 3) * 2 <= DL_VIEWER_VIDCMD_BYTES,
-              "micro-HAM viewer preamble plus per-line palettes outgrew the "
-              "display-list window");
 
 static void dl_build_console_list()
 {
     dl_reset(DL_CONSOLE_TABLE_BYTES, DL_CONSOLE_VIDCMD_BYTES);
 
-    const uint16_t preamble[3] = {
-        se::vidcmd_set(se::SET_PIX_PAL_FG, CONSOLE_FG),
-        se::vidcmd_set(se::SET_PIX_PAL_BG, CONSOLE_BG),
+    // The two palette entries the 1bpp plane selects, then base and mode.  The
+    // palette RAM is NEVER reset — not by /RS, not at power-up — so these two
+    // entries are what makes the console a picture rather than noise; /RS does
+    // clear pix_base and pix_mode, which is why they are re-sent every frame.
+    const se::PaletteEntryWords bg = se::vidcmd_palette_entry(CONSOLE_PIX_BASE | 0u,
+                                                             CONSOLE_BG);
+    const se::PaletteEntryWords fg = se::vidcmd_palette_entry(CONSOLE_PIX_BASE | 1u,
+                                                             CONSOLE_FG);
+    const uint16_t preamble[CONSOLE_PREAMBLE_WORDS] = {
+        bg.w[0], bg.w[1], bg.w[2],
+        fg.w[0], fg.w[1], fg.w[2],
+        se::vidcmd_set(se::SET_PIX_BASE, CONSOLE_PIX_BASE),
+        se::vidcmd_set(se::SET_PIX_MODE,
+                       se::pixel_mode(se::PIXEL_DEPTH_1BPP, false)),
         se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1),
     };
-    const uint32_t pre_addr = dl_put_vidcmd(preamble, 3);
+    const uint32_t pre_addr = dl_put_vidcmd(preamble, CONSOLE_PREAMBLE_WORDS);
 
     // Not wait_hblank: this runs the instant DESC is written, which is inside
-    // vertical blanking, which is exactly where a frame preamble belongs.
+    // vertical blanking, which is exactly where a frame preamble belongs — and
+    // where the palette writes' disturbed pixel slots do not exist.
     se::Descriptor pre;
     pre.src         = pre_addr;
-    pre.count       = 3;
+    pre.count       = CONSOLE_PREAMBLE_WORDS;
     pre.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
     dl_emit(pre);
 
@@ -903,10 +909,11 @@ static void dl_build_console_list()
 // palette has its own path now.  The pixel plane loads straight into the
 // framebuffer and the palette words become one VIDCMD packet per line.
 //
-// The list gains one VIDCMD descriptor per line — {SET pal_fg, SET pal_bg,
-// RUN(passthrough,1)} — which is the JIT discipline: three words land during
-// the line's HBLANK, the two SETs commit before pixel 0 at zero slot cost, and
-// the 1-slot RUN plus COMPOSITOR's hold covers the rest of the line.
+// The list gains one VIDCMD descriptor per line — two three-word PALETTE
+// ENTRIES plus RUN(passthrough,1), seven words — which is the JIT discipline:
+// they land during the line's HBLANK, the writes commit and complete there at
+// zero slot cost (a palette write disturbs four PIXEL slots, and in blanking
+// there are none), and the 1-slot RUN plus COMPOSITOR's hold covers the line.
 // ---------------------------------------------------------------------------
 
 // On-CF image geometry.  Not hardware; just the file layout, and it happens to
@@ -918,8 +925,9 @@ static constexpr unsigned IMG_PIXEL_BYTES = 2 * Griffin::PIXELS_WORDS_PER_LINE_1
 // the micro-HAM pair's layout.
 static constexpr uint32_t LEGACY_IMAGE_BYTES   = FB_BYTES;                        // 38400
 static constexpr uint32_t LEGACY_PALETTE_BYTES = FB_LINES * sizeof(uint16_t);     // 960
-static constexpr uint32_t HAM_IMAGE_BYTES      = HAM_BYTES;                       // 76800
-static constexpr uint32_t HAM_PALETTE_BYTES    = FB_LINES * 2 * sizeof(uint16_t); // 1920
+// The size a retired micro-HAM plane happens to be, kept only so `view` can
+// refuse one by name instead of by byte count.
+static constexpr uint32_t RETIRED_HAM_IMAGE_BYTES = FB_LINES * 160;               // 76800
 
 // R3G3B2 (the image file's palette encoding) widened to R4G4B4 by field
 // replication — the same rule the DAC uses to widen 4 bits to 8, and the same
@@ -938,78 +946,17 @@ static void dl_build_viewer_list(const uint16_t *palettes)
 {
     dl_reset(DL_VIEWER_TABLE_BYTES, DL_VIEWER_VIDCMD_BYTES);
 
-    for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
-    {
-        dl_emit_pacer(false);
-    }
-
-    for (unsigned line = 0; line < FB_LINES; line++)
-    {
-        const uint16_t pal = palettes[line];
-        const uint16_t packet[3] = {
-            se::vidcmd_set(se::SET_PIX_PAL_FG, r3g3b2_to_rgb444(static_cast<uint8_t>(pal >> 8))),
-            se::vidcmd_set(se::SET_PIX_PAL_BG, r3g3b2_to_rgb444(static_cast<uint8_t>(pal & 0xFF))),
-            se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1),
-        };
-        const uint32_t at = dl_put_vidcmd(packet, 3);
-
-        // VIDCMD ahead of the pixels: COMPOSITOR must have this line's SETs
-        // before pixel 0, and it is only three words against the pixel
-        // stream's forty.
-        se::Descriptor d;
-        d.src         = at;
-        d.count       = 3;
-        d.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
-        d.wait_hblank = true;
-        dl_emit(d);
-
-        dl_emit_pixel_line(line, false);
-    }
-    dl_emit_pacer(true);
-}
-
-// One scanline of micro-HAM pixels: 80 words, which is more than a
-// descriptor's 5-bit count can carry, so 32 + 32 + 16.  None of the three
-// waits -- the line's VIDCMD descriptor ahead of them already consumed the
-// HBLANK edge, exactly as in the 1bpp viewer.
-static void dl_emit_ham_pixel_line(uint32_t src)
-{
-    unsigned done = 0;
-    for (unsigned part = 0; part < HAM_PIXEL_DESCS_PER_LINE; part++)
-    {
-        const unsigned left  = HAM_WORDS_PER_LINE - done;
-        const unsigned count = (left > se::DESC_MAX_COUNT) ? se::DESC_MAX_COUNT : left;
-        se::Descriptor d;
-        d.src         = src + done * 2;
-        d.count       = static_cast<uint16_t>(count);
-        d.signal_mask = se::SIGNAL_PIXELS_FIFO_W;
-        dl_emit(d);
-        done += count;
-    }
-}
-
-// Micro-HAM viewer.  Same JIT discipline as the 1bpp viewer above -- one
-// three-word VIDCMD packet per line, deposited in that line's HBLANK ahead of
-// the pixels -- with two differences.  The palette words are ALREADY R4G4B4 in
-// the file, so they go out verbatim; and PIXEL has to be told the mode, once
-// per frame, because TIMING pulses /RS on PIXEL at vsync and that returns the
-// mode to direct 1bpp.  {SET pix_mode, MICRO_HAM} is therefore a frame
-// preamble with no wait_hblank: it runs the instant the vsync ISR arms the
-// list, which is inside vertical blanking and after the reset, and a staged
-// SET commits on a blank clock at no slot cost -- the same trick the console's
-// preamble uses for its two palette SETs.
-static void dl_build_ham_viewer_list(uint32_t plane, const uint16_t *palettes)
-{
-    dl_reset(DL_VIEWER_TABLE_BYTES, DL_VIEWER_VIDCMD_BYTES);
-
-    const uint16_t preamble[1] = {
-        se::vidcmd_set(se::SET_PIX_MODE, se::PIXEL_MODE_MICRO_HAM),
+    // /RS at vsync clears pix_base and pix_mode, so the frame preamble re-sends
+    // them; it runs the instant the vsync ISR arms the list, inside vertical
+    // blanking.  The palette itself is per line, below.
+    const uint16_t preamble[2] = {
+        se::vidcmd_set(se::SET_PIX_BASE, 0),
+        se::vidcmd_set(se::SET_PIX_MODE, se::pixel_mode(se::PIXEL_DEPTH_1BPP, false)),
     };
-    const uint32_t pre_addr = dl_put_vidcmd(preamble, 1);
-
+    const uint32_t pre_addr = dl_put_vidcmd(preamble, 2);
     se::Descriptor pre;
     pre.src         = pre_addr;
-    pre.count       = 1;
+    pre.count       = 2;
     pre.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
     dl_emit(pre);
 
@@ -1020,23 +967,29 @@ static void dl_build_ham_viewer_list(uint32_t plane, const uint16_t *palettes)
 
     for (unsigned line = 0; line < FB_LINES; line++)
     {
-        // Big-endian in the file, big-endian in the CPU: the two words are the
-        // SET values as they stand, no conversion anywhere.
-        const uint16_t packet[3] = {
-            se::vidcmd_set(se::SET_PIX_PAL_FG, palettes[2 * line]),
-            se::vidcmd_set(se::SET_PIX_PAL_BG, palettes[2 * line + 1]),
+        const uint16_t pal = palettes[line];
+        const se::PaletteEntryWords bg =
+            se::vidcmd_palette_entry(0, r3g3b2_to_rgb444(static_cast<uint8_t>(pal & 0xFF)));
+        const se::PaletteEntryWords fg =
+            se::vidcmd_palette_entry(1, r3g3b2_to_rgb444(static_cast<uint8_t>(pal >> 8)));
+        const uint16_t packet[VIEWER_LINE_WORDS] = {
+            bg.w[0], bg.w[1], bg.w[2],
+            fg.w[0], fg.w[1], fg.w[2],
             se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1),
         };
-        const uint32_t at = dl_put_vidcmd(packet, 3);
+        const uint32_t at = dl_put_vidcmd(packet, VIEWER_LINE_WORDS);
 
+        // VIDCMD ahead of the pixels: COMPOSITOR must have this line's entries
+        // before pixel 0, and it is only seven words against the pixel stream's
+        // forty.
         se::Descriptor d;
         d.src         = at;
-        d.count       = 3;
+        d.count       = VIEWER_LINE_WORDS;
         d.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
         d.wait_hblank = true;
         dl_emit(d);
 
-        dl_emit_ham_pixel_line(plane + line * HAM_STRIDE);
+        dl_emit_pixel_line(line, false);
     }
     dl_emit_pacer(true);
 }
@@ -1080,18 +1033,24 @@ static void view_image(const char *image_path, const char *palette_path)
         return;
     }
     const uint32_t image_bytes = static_cast<uint32_t>(info.fsize);
-    const bool     ham         = (image_bytes == HAM_IMAGE_BYTES);
-    if (!ham && image_bytes != LEGACY_IMAGE_BYTES)
+    if (image_bytes == RETIRED_HAM_IMAGE_BYTES)
     {
-        printf("view_image: %s is %lu bytes; expected %lu (micro-HAM plane) "
-               "or %lu (1bpp plane)\n",
+        // MICRO-HAM IS RETIRED with the indexed PIXEL: there is no mode to show
+        // this file in, and painting it as 1bpp would be noise.  A 4bpp or
+        // attribute-mode viewer is the replacement.
+        printf("view_image: %s is a micro-HAM plane; micro-HAM is retired (PIXEL is "
+               "index-only now) and there is no viewer for it\n", image_path);
+        return;
+    }
+    if (image_bytes != LEGACY_IMAGE_BYTES)
+    {
+        printf("view_image: %s is %lu bytes; expected %lu (1bpp plane)\n",
                image_path, static_cast<unsigned long>(image_bytes),
-               static_cast<unsigned long>(HAM_IMAGE_BYTES),
                static_cast<unsigned long>(LEGACY_IMAGE_BYTES));
         return;
     }
 
-    const uint32_t pal_bytes = ham ? HAM_PALETTE_BYTES : LEGACY_PALETTE_BYTES;
+    const uint32_t pal_bytes = LEGACY_PALETTE_BYTES;
     if (f_stat(palette_path, &info) != FR_OK)
     {
         printf("view_image: cannot open %s\n", palette_path);
@@ -1099,17 +1058,15 @@ static void view_image(const char *image_path, const char *palette_path)
     }
     if (static_cast<uint32_t>(info.fsize) != pal_bytes)
     {
-        printf("view_image: %s is %lu bytes; a %s image needs a %lu-byte "
-               "palette (%s per line)\n",
+        printf("view_image: %s is %lu bytes; a 1bpp image needs a %lu-byte palette "
+               "(one R3G3B2 pair per line)\n",
                palette_path, static_cast<unsigned long>(info.fsize),
-               ham ? "micro-HAM" : "1bpp",
-               static_cast<unsigned long>(pal_bytes),
-               ham ? "two R4G4B4 words" : "one R3G3B2 pair");
+               static_cast<unsigned long>(pal_bytes));
         return;
     }
 
-    // Per-line palette set: 480 R3G3B2 words (D[15:8]=fg, D[7:0]=bg) for a
-    // 1bpp image, 480 R4G4B4 word PAIRS for a micro-HAM one.
+    // Per-line palette set: 480 R3G3B2 words, D[15:8] = fg (palette entry 1),
+    // D[7:0] = bg (entry 0).
     // malloc, not new[]: the throwing array-new drags in libstdc++ exception
     // machinery and overflows ROM; newlib malloc/free keeps the image lean.
     uint16_t *palettes = static_cast<uint16_t *>(malloc(pal_bytes));
@@ -1124,33 +1081,13 @@ static void view_image(const char *image_path, const char *palette_path)
         return;
     }
 
-    // A micro-HAM plane is twice the framebuffer, so it gets a heap buffer of
-    // its own for the life of the view; the framebuffer stays 38400 bytes and
-    // is not disturbed.  malloc is word aligned, which is all ENGINE's source
-    // address needs.  A 1bpp plane still loads straight into the framebuffer:
-    // the file's stride and the framebuffer's are both 80 now, so it is one
-    // read — rev-1's per-line interleave is gone.
+    // A 1bpp plane loads straight into the framebuffer: the file's stride and the
+    // framebuffer's are both 80 now, so it is one read — rev-1's per-line
+    // interleave is gone.
     static_assert(IMG_PIXEL_BYTES == FB_STRIDE,
                   "image file stride must match the framebuffer stride");
-    uint8_t *plane = nullptr;
-    if (ham)
-    {
-        plane = static_cast<uint8_t *>(malloc(HAM_IMAGE_BYTES));
-        if (!plane)
-        {
-            printf("view_image: out of memory for the micro-HAM plane\n");
-            free(palettes);
-            return;
-        }
-        if (!view_read_exact(image_path, plane, HAM_IMAGE_BYTES))
-        {
-            free(plane);
-            free(palettes);
-            return;
-        }
-    }
-    else if (!view_read_exact(image_path, reinterpret_cast<void *>(FB_ADDR),
-                              LEGACY_IMAGE_BYTES))
+    if (!view_read_exact(image_path, reinterpret_cast<void *>(FB_ADDR),
+                         LEGACY_IMAGE_BYTES))
     {
         free(palettes);
         return;
@@ -1163,20 +1100,12 @@ static void view_image(const char *image_path, const char *palette_path)
     // where the engine may be mid-list while this rewrites it, which can tear
     // one frame.  Acceptable for a still-image viewer; a double-buffered
     // version would need a second 12 KB table and a pointer swap.
-    if (ham)
-    {
-        dl_build_ham_viewer_list(reinterpret_cast<uint32_t>(plane), palettes);
-    }
-    else
-    {
-        dl_build_viewer_list(palettes);
-    }
+    dl_build_viewer_list(palettes);
     free(palettes);
     if (dl_overflow)
     {
         printf("view_image: display list overflowed the reserved window\n");
         dl_build_console_list();
-        free(plane);
         return;
     }
 
@@ -1213,11 +1142,10 @@ static void view_image(const char *image_path, const char *palette_path)
         (void)duart_getchar();
     }
 
-    // The console list is armed before the plane is handed back: after this
-    // rebuild no descriptor points into it any more.
+    // Back to the console list.  The 1bpp plane lives in the framebuffer, which
+    // the console list reads too, so there is nothing to hand back.
     dl_build_console_list();
     gtxt::g_textport.clear();
-    free(plane);
 }
 
 // ---------------------------------------------------------------------------
@@ -1655,7 +1583,7 @@ static void monitor_help()
     printf("ls [PATH]                  list directory (default /)\n");
     printf("time                       print time since boot\n");
     printf("run FILE [ARGS...]         load and run FILE from CF\n");
-    printf("view IMAGE PALETTE         show a 1bpp (.bin) or micro-HAM (.ham)\n");
+    printf("view IMAGE PALETTE         show a 1bpp (.bin) image\n");
     printf("                           image until a key is pressed\n");
     printf("help                 (?)   this text\n");
     printf("CMD [ARGS...]              run CMD.bin from CF with those args\n");
@@ -1805,7 +1733,7 @@ static bool monitor_run_cf_command(int argc, char *argv[])
             {
                 printf("usage: view IMAGE PALETTE\n");
                 printf("  38400-byte 1bpp plane + 960-byte palette, or\n");
-                printf("  76800-byte micro-HAM plane + 1920-byte palette\n");
+                printf("  (micro-HAM planes are retired: PIXEL is index-only)\n");
             }
             else
             {

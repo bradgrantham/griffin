@@ -3250,6 +3250,13 @@ public:
     // PIXEL and COMPOSITOR, held across scanlines exactly as the chips are.
     // Their state is the frame: FIFO contents, held colours, the run in
     // progress.  Only /RS at vsync clears them.
+    // POWER-ON, not /RS.  The palette RAM comes up with undefined contents
+    // (reproducible random here) because nothing on the board clears it, and
+    // COMPOSITOR is held sane between power-up and the first vsync only by the
+    // ATF1508AS's POWER_RESET feature — so the first frame is not a defined
+    // picture and a display list that forgets a palette entry paints noise,
+    // here as on the bench.  power_on_reset() is called from the emulator's
+    // own reset path below.
     SuperEngine::PixelUnit      pixel_unit;
     SuperEngine::CompositorUnit compositor_unit;
 
@@ -4036,7 +4043,14 @@ public:
                 // unit calls as super-engine's render_line_at_a_time driver,
                 // which `make check` holds pixel-identical to its clock-accurate
                 // one.
-                SuperEngine::run_blanking(pixel_unit, compositor_unit);
+                // This HBLANK precedes line `line`, so PIX_PRELOAD belongs in it
+                // only when that line is visible: the raster generator pulses it
+                // PIXEL_FETCH_LEAD clocks before a VISIBLE line, and PIXEL reads
+                // the line's first PIXELS word there.  Arming it in vertical
+                // blanking would read a word per blank line that the chip never
+                // reads.
+                SuperEngine::run_blanking(pixel_unit, compositor_unit,
+                                          line < static_cast<int>(VideoState::V_ACTIVE));
                 if (line < VideoState::V_ACTIVE)
                 {
                     SuperEngine::Rgb444 row[SuperEngine::H_ACTIVE];
@@ -4673,6 +4687,16 @@ int main(int argc, const char** argv)
     // Griffin's CPU is a 68010 (VBR/movec, format-8 bus-error frames).
     emulator.setModel(moira::Model::M68010);
     emulator.reset();
+
+    // POWER-ON RESET of the video chain, which is NOT the per-frame /RS: the
+    // palette RAM comes up with undefined contents (reproducible random) because
+    // nothing on the board clears it, and COMPOSITOR's registers come up cleared
+    // by the ATF1508AS's POWER_RESET feature rather than at their /RS values.
+    // Everything from here to the first vsync is therefore an undefined picture,
+    // exactly as it is on the bench.
+    emulator.pixel_unit.power_on_reset();
+    emulator.compositor_unit.power_on_reset();
+
     emulator.governor.reset(emulator.getClock(), emulator.clock_hz);
 
     uint64_t previous_uart_sample_fp = 0; // 16.16 fixed-point clock

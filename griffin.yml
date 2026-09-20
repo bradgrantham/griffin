@@ -130,7 +130,7 @@ peripherals:
         width: 8
         description: |
           Latched vsync frame interrupt status.
-          GLUE latches the assertion edge of TIMING's nVSYNC_IRQ; while
+          GLUE latches the assertion edge of PIXEL's nVSYNC_IRQ; while
           CONFIG.VSYNC_IRQ_EN is set the latch asserts the level-6 IRQ
           until cleared via VSYNC_CLEAR.  Latch and readback are
           unconditional, so firmware may poll and acknowledge with no ISR.
@@ -159,7 +159,7 @@ peripherals:
           - { bit: "0", name: ACTIVE,
               description: "1 = a list is armed and has not stopped or been aborted (ENGINE dma_en)" }
           - { bit: "1", name: WAITING,
-              description: "1 = ENGINE has released the bus and is waiting for TIMING's HBLANK rising edge" }
+              description: "1 = ENGINE has released the bus and is waiting for PIXEL's HBLANK rising edge" }
           - { bit: "2", name: IRQ,
               description: "1 = ~ENGINE_IRQ is asserted" }
       - offset: 0x1B
@@ -278,7 +278,7 @@ peripherals:
   # ~ENGINE_IRQ asserts when a stop_after descriptor completes and clears on
   # any DESC or CTRL write.
   # Descriptors themselves are read only from the top 64K of RAM.
-  # wait_hblank descriptors wait for the rising edge of TIMING's HBLANK.
+  # wait_hblank descriptors wait for the rising edge of PIXEL's HBLANK.
   # Descriptor format and strobe semantics: super-engine/descriptor.h and
   # vidcmd-spec.md.
   ENGINE:
@@ -320,24 +320,30 @@ peripherals:
           - { bit: "0", name: ENABLE, default: 0,
               description: "1 = run the armed list; 0 = abort and release the bus" }
 
-  # None of TIMING -> PIXEL -> COMPOSITOR -> DAC is on the CPU bus; the CPU
-  # reaches them only through ENGINE's PIXELS/VIDCMD FIFO streams.  The
-  # frame IRQ is TIMING's nVSYNC_IRQ latched in GLUE (VSYNC_STATUS/VSYNC_CLEAR).
+  # None of PIXEL -> COMPOSITOR -> DAC is on the CPU bus; the CPU reaches
+  # them only through ENGINE's PIXELS/VIDCMD FIFO streams.  The frame IRQ is
+  # PIXEL's nVSYNC_IRQ latched in GLUE (VSYNC_STATUS/VSYNC_CLEAR).
 
-  # TIMING (cpld/pixel/timing.v, ATF1504AS PLCC44) owns the VGA raster timing
-  # and derived signals. No inputs but PIXEL_CLK and nRESET.  Output
-  # contracts, enforced by cpld/pixel/timing_tb.v (`make timing-sim`):
+  # PIXEL (cpld/pixel/pixel.v) is BOTH the raster time base and the PIXELS
+  # stream unpacker: timing.v's Timing module is instantiated inside it, so
+  # PIX_CONSUME / PIX_PRELOAD / PIX_LAST are internal nets, there is no TIMING
+  # chip and no TIMING socket.  Raster output contracts, enforced by
+  # cpld/pixel/timing_tb.v (`make timing-sim`) against the merged top level:
   # - nRS: 8 pixel clocks at the top of the vsync line (v_cnt==V_SYNC_START
   #   & h_cnt<8).  Consumers: COMPOSITOR machine reset (GCLR) and /RS of the
   #   four video-stream FIFO chips; the 7200 needs /W and /RE inactive from
   #   tRSS 15 ns before its rise to tRSR 10 ns after, so ENGINE video-write
   #   descriptors must finish before vsync (audio strobes exempt).
+  #   nRS is COMPOSITOR's ONLY reset input, so between power-up and the first
+  #   vsync nothing but the ATF1508AS POWER_RESET feature defines its state:
+  #   the fitter's power_reset strategy flag is load-bearing there, and the
+  #   first frame after power-up is not a defined picture.
   # - H_ACTIVE: leads the visible window by COMPOSITOR_LEAD (2) pixel clocks.
   #   Consumer: COMPOSITOR slot gating.
-  # - PIX_CONSUME / PIX_PRELOAD / PIX_LAST: registered strobes to PIXEL, one
+  # - PIX_CONSUME / PIX_PRELOAD / PIX_LAST: internal registered strobes, one
   #   clock late (TIMING_SPLIT_LEAD).  PIX_CONSUME = the 640 consumption
-  #   clocks of a visible line; PIX_LAST = its last 8 (h_cnt[9:3]==79), a
-  #   width pixel_tb's end-of-line cases assume; PIX_PRELOAD = one clock at
+  #   clocks of a visible line; PIX_LAST = its last 8 (h_cnt[9:3]==79), the
+  #   end-of-line fetch cutoff window; PIX_PRELOAD = one clock at
   #   H_TOTAL - PIXEL_PRELOAD_LEAD before a visible line.
   # - Sync compares shift late by DAC_LEAD (4); timing.v localparams must
   #   equal the lead constants below.
@@ -357,18 +363,70 @@ peripherals:
   #   (PADDLE_TICKS_PER_SECOND, AUDIO_SAMPLES_PER_SECOND).  Separate nets
   #   so the audio rate can change alone.
   # - VGA_HSYNC and VGA_VSYNC drive ONLY the 74AC541 buffers.
-  # - DUART OP4..OP7 -> TIMING pins 20, 21, 24, 25: reserved static
-  #   configuration inputs (future raster/audio-rate select), not fitted;
-  #   TIMING must treat the OP reset state 1111 as today's behaviour.
-  #   GCLK2 (pin 44) is left free for an optional second oscillator.
-  TIMING:
-    part: "ATF1504AS (PLCC44)"
-    description: "Raster time base: VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, PIXEL strobes, ENGINE HBLANK, GLUE vsync IRQ, PORTS paddle/audio ticks"
-    clock: 25175000    # dedicated pixel oscillator, not SYSCLK; shared by PIXEL and COMPOSITOR
+  # - DUART OP4..OP7 -> PIXEL: reserved static configuration inputs (future
+  #   raster/audio-rate select), not fitted; PIXEL must treat the OP reset
+  #   state 1111 as today's behaviour.
+  #
+  # The decoder is INDEX-ONLY.  Every playfield pixel in every mode is a
+  # four-bit palette index on IDX[3:0], which addresses the external 16x12
+  # palette RAM (interfaces, "Palette RAM"); that RAM's outputs are
+  # COMPOSITOR's RGB_IN.  PIXEL holds no colour register of any kind.
+  # - PIXELS FIFO read port: 2x IDT7200 read as ONE ganged 16-bit port.
+  #   PIXELS_Q[15:0] in, ONE registered nPIXELS_RE out, low for exactly one
+  #   clock per word and never low on two consecutive clocks; at least 8 pixel
+  #   clocks between reads in every defined mode.  Words are consumed MSB
+  #   first from bit 15, so a record renders the same as it did on the retired
+  #   byte-interleaved port.  /RS of the pair is PIXEL's own nRS.
+  # - No empty-flag input and no half-full pacing: underrun repeats the last
+  #   word (ENGINE must keep the stream ahead; see vidcmd-spec.md).
+  # - SET registers, applied directly at COMPOSITOR's set_pix_commit from the
+  #   set_pix_value bus (targets VIDCMD_SET_PIX_*): CLUT_INDEX, CLUT_DATA,
+  #   BASE, MODE, PIXEL_SKIP.  PIXEL taps only set_pix_value[3:0]; all twelve
+  #   bits go to the palette RAM's data inputs.
+  # - MODE: mode[1:0] is a depth ENUMERATION (VIDCMD_PIX_MODE_1BPP / _2BPP /
+  #   _4BPP / _ATTR), mode[2] is half rate (every group held two pixel clocks,
+  #   320 groups per line), mode[3] is RESERVED and must be written 0.  Index
+  #   formation: 1bpp {BASE[3:1], bit}, 2bpp {BASE[3:2], dibit}, 4bpp the
+  #   nibble (BASE unused), attribute bit ? fg : bg out of a
+  #   {fg[3:0], bg[3:0], pattern[7:0]} word per eight-group cell, pattern MSB
+  #   first.  Words per line are the PIXELS_WORDS_PER_LINE_* constants; 4bpp
+  #   at full rate is UNDEFINED and must not be emitted.  A mid-line mode
+  #   change is undefined.
+  # - PIXEL_SKIP is a start position in STREAM BITS inside the line's first
+  #   word (no whole-word discard; coarser scrolling moves the descriptor's
+  #   source pointer).  It is sampled at that line's preload and clamped at
+  #   consumption: 2bpp ignores bit 0, 4bpp bits [1:0], attribute forces 0,
+  #   and the value is capped at PIXELS_SKIP_MAX_*.  A line whose skip is
+  #   non-zero consumes PIXELS_SKIP_EXTRA_WORDS more words than its mode's
+  #   record and its tail shows real stream data; the list author supplies
+  #   that word.
+  # - PALETTE WRITE: a SET CLUT_DATA muxes CLUT_INDEX onto IDX for three
+  #   clocks and pulses nCLUT_WE low for the middle one, so the RAM gets a
+  #   full clock of address and data setup and a full clock of hold.  The data
+  #   is COMPOSITOR's set_pix_value bus, which is re-registered from every
+  #   staged word, so the CLUT_DATA SET must be followed by a SAME-VALUE SET
+  #   to target 7 (the filler) or the RAM stores the next word's payload
+  #   instead: one entry costs VIDCMD_WORDS_PER_CLUT_ENTRY words.  IDX is
+  #   stolen for the three pixel clocks after the commit and one more is a
+  #   write-recovery guard, so those four pixel slots must be in blanking or
+  #   covered by a non-passthrough source (a cmp_color / RUN_COLOR RUN or an
+  #   opaque MASK dibit).
+  # - Reset (nRS at vsync): MODE, BASE, PIXEL_SKIP, CLUT_INDEX all 0, IDX 0,
+  #   nCLUT_WE and nPIXELS_RE high — so an untouched chip is 1bpp full rate
+  #   out of palette entries 0 and 1.  THE PALETTE RAM IS NEVER RESET: it
+  #   powers up undefined, software loads what it uses, and its contents
+  #   persist across frames.
+  # - `make pixel-sim` (pixel_tb.v) is the executable per-mode semantics,
+  #   `make timing-sim` the raster laws and `make clut-pair-sim` the
+  #   palette-write window.
+  PIXEL:
+    part: "ATF1508AS (PLCC84)"
+    description: "Raster time base and indexed PIXELS unpacker: 4-bit palette index + palette-RAM write port, VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, ENGINE HBLANK, GLUE vsync IRQ, PORTS ticks"
+    clock: 25175000    # dedicated pixel oscillator, not SYSCLK; shared with COMPOSITOR
     # VESA 640x480@60.  Horizontal counts in pixel clocks, vertical in
     # lines; codegen checks that the four terms sum to the total.
     # timing.v's H_*/V_* localparams must equal these values; the generated
-    # TIMING_H_*/TIMING_V_* defines are the checkable form.
+    # PIXEL_H_*/PIXEL_V_* defines are the checkable form.
     video_timing:
       pixel_clock_hz: 25175000
       h_active:       640
@@ -384,34 +442,6 @@ peripherals:
       hsync_polarity: negative
       vsync_polarity: negative
 
-  # PIXEL (cpld/pixel/pixel.v) unpacks the PIXELS FIFO byte stream into R4G4B4
-  # for COMPOSITOR and hosts the SET-target registers COMPOSITOR forwards.
-  # - PIXELS FIFO read port: 2x IDT7200 as a byte-interleaved shared-Q pair,
-  #   PIXELS_Q[7:0] in, nPIXELS_RE_EVEN / nPIXELS_RE_ODD out.  A byte is
-  #   consumed every >= 8 pixel clocks (2bpp modes) or 16 (1bpp).  /RS of
-  #   the pair is TIMING's nRS.
-  # - Raster events come only from TIMING (PIX_CONSUME / PIX_PRELOAD /
-  #   PIX_LAST, see TIMING).  nRESET is the power-on GCLR, not the frame /RS.
-  # - SET registers, applied directly at COMPOSITOR's set_pix_commit from the
-  #   12-bit set_pix_value bus (targets VIDCMD_SET_PIX_*): PAL_FG, PAL_BG,
-  #   HAM_HELD, MODE, PIXEL_SKIP.  MODE is decoded bitwise, not as an
-  #   enumeration: mode[0] = 2bpp micro-HAM, mode[1] = 2bpp indexed,
-  #   mode[2] = half rate (ignored in micro-HAM).  1bpp (mode[1:0] == 00) is
-  #   80 bytes/line MSB first (PIXELS_WORDS_PER_LINE_1BPP); micro-HAM and
-  #   indexed are two stream bits per pixel clock, 160 bytes/line
-  #   (PIXELS_WORDS_PER_LINE_2BPP); half rate holds each bit-group for two
-  #   clocks and halves the stream (40 / 80 bytes) at half the horizontal
-  #   resolution.  PIXEL_SKIP >= 8 discards whole bytes; [2:0] shifts bits.
-  # - RGB_OUT[11:0] -> COMPOSITOR RGB_IN, one register after the decoder's
-  #   held colour (PIXEL_OUT_LEAD).
-  # - No empty-flag input and no half-full pacing: underrun repeats the last
-  #   word (ENGINE must keep the stream ahead; see vidcmd-spec.md).
-  # - `make pixel-sim` (pixel_tb.v) is the executable per-mode semantics.
-  PIXEL:
-    part: "ATF1508AS (PLCC84)"
-    description: "PIXELS stream unpacker: 1bpp direct, 2bpp micro-HAM, 2bpp indexed, half rate; R4G4B4 to COMPOSITOR"
-    clock: 25175000
-
   # COMPOSITOR (cpld/compositor/compositor.v) sits between PIXEL and the DAC.
   # It plays the per-line VIDCMD instruction stream out of the VIDCMD FIFO
   # (2x IDT7200 ganged 16-bit, filled by ENGINE) and for every active pixel
@@ -422,7 +452,7 @@ peripherals:
   # super-engine/descriptor.h and semantics in vidcmd-spec.md.  Everything is
   # in the PIXEL_CLK domain except nVIDCMD_EF (2-FF synchronized); H_ACTIVE,
   # nRS and RGB_IN arrive on the same clock unsynchronized.  Machine reset is
-  # TIMING's nRS (GCLR), once per frame.  RGB_OUT[11:0] -> the 74AC541
+  # PIXEL's nRS (GCLR), once per frame.  RGB_OUT[11:0] -> the 74AC541
   # buffers and DAC (see interfaces).
   # - VIDCMD FIFO read port (2x IDT7200L15, shared /RE): registered /RE
   #   from COMPOSITOR, 2 pixel clocks per word, no shaping gate (timing
@@ -435,17 +465,22 @@ peripherals:
   #   COMPOSITOR's own clock-aligned read).
   # - COMPOSITOR -> PIXEL SET path: a dedicated 12-bit registered value bus
   #   set_pix_value[11:0] alongside the valid/target/commit handshake; the
-  #   bus is registered from COMPOSITOR's staged word and PIXEL applies it
-  #   at the commit pulse with no capture register.
+  #   bus is registered from COMPOSITOR's staged word — from EVERY staged
+  #   word, whatever its target, which is why a palette entry needs a filler
+  #   (see PIXEL) — and PIXEL applies it at the commit pulse with no capture
+  #   register.  PIXEL taps [3:0] only; all twelve bits also drive the
+  #   palette RAM's data inputs (see interfaces, "Palette RAM").
+  # - COMPOSITOR's own colours (cmp_color1, cmp_color0, RUN_COLOR, MASK) are
+  #   direct 12-bit values and never go through the palette.
   COMPOSITOR:
     part: "ATF1508AS (PLCC84)"
-    description: "VIDCMD stream player: per-slot source select over PIXEL's R4G4B4, SET forwarding to PIXEL, MASK overlays"
+    description: "VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, SET forwarding to PIXEL, MASK overlays"
     clock: 25175000
 
   # GLUE decodes the region, hands over ~PORTS_SELECT and answers DTACK.
-  # Time bases are TIMING's PADDLE_TICK and AUDIO_TICK (see TIMING); PORTS
+  # Time bases are PIXEL's PADDLE_TICK and AUDIO_TICK (see PIXEL); PORTS
   # counts falling edges only and has no divider, so a rate change is a
-  # TIMING change.
+  # PIXEL change.
   # The mouse channel mirrors GLUE's keyboard register layout and offsets.
   PORTS:
     part: ATF1508AS
@@ -603,7 +638,7 @@ peripherals:
           without disturbing FIFO contents.  RESET drives both 7200 /RS pins
           low, discarding every queued pair; its reset value 1 holds the FIFOs
           in reset from power-on until software releases it.  The 7200's /RS
-          setup/recovery rule (see TIMING nRS) means PORTS holds its own /RE
+          setup/recovery rule (see PIXEL nRS) means PORTS holds its own /RE
           off while RESET is set, and software must change RESET only when no
           descriptor list that deposits AUDIO_FIFO_W is armed.  Flush
           sequence: ENABLE=0, RESET=1, RESET=0, deposit, ENABLE=1.
@@ -680,11 +715,11 @@ peripherals:
     #   OP3: RTC_SDA_DRIVE (N-FET gate: pin high pulls SDA low)
     #                                            IP2: RTC_SDA readback
     #                                            IP3: RTC_MFP (MCP7940N alarm/square-wave output)
-    #   OP4..OP7: -> TIMING pins 20, 21, 24, 25  IP4: DCD_B (ch B carrier)
+    #   OP4..OP7: -> PIXEL (reserved)            IP4: DCD_B (ch B carrier)
     #                                            IP5: RI_B (ch B ring)
     # IP4/IP5 come from the ch B RS-232 receivers; the 68681
     # change-of-state IRQ covers only IP0-IP3, so both are poll-only.
-    # OP4..OP7 are a static configuration word for TIMING (see TIMING); the
+    # OP4..OP7 are a static configuration word for PIXEL (see PIXEL); the
     # OP reset state (OPR = 0 -> pins HIGH, 1111) must remain today's
     # behaviour.
     # Bus: ~CS from GLUE (nDUART_SELECT), DTACKN back to GLUE (nDUART_DTACK),
@@ -823,12 +858,12 @@ constants:
   # Audio FIFO geometry (2x IDT7200, 256 x 9, one per channel): 256 pairs =
   # 16.3 ms at AUDIO_SAMPLES_PER_SECOND; fills are sized against this.
   AUDIO_FIFO_DEPTH:          256
-  AUDIO_SAMPLES_PER_SECOND:  15734   # TIMING AUDIO_TICK falling edges: every second 31.469 kHz line
-  PADDLE_TICKS_PER_SECOND:   15734   # TIMING PADDLE_TICK falling edges: same
+  AUDIO_SAMPLES_PER_SECOND:  15734   # PIXEL AUDIO_TICK falling edges: every second 31.469 kHz line
+  PADDLE_TICKS_PER_SECOND:   15734   # PIXEL PADDLE_TICK falling edges: same
 
   # DUART OP/IP masks (see the DUART pin wiring).  OP pins drive the
   # COMPLEMENT of their OPR bits; RTC_SDA_DRIVE inverts again through the
-  # N-FET (pin high = SDA low).  OP4..OP7 have no masks until TIMING uses them.
+  # N-FET (pin high = SDA low).  OP4..OP7 have no masks until PIXEL uses them.
   DUART_OP_RTC_SCL:        0x04   # OP2
   DUART_OP_RTC_SDA_DRIVE:  0x08   # OP3
   DUART_IP_RTC_SDA:        0x04   # IP2
@@ -844,7 +879,7 @@ constants:
   # rationale: griffin.log 2026-09-03).
   ENGINE_WORDS_PER_BURST: 20
 
-  # Frame interrupt level (TIMING nVSYNC_IRQ latched in GLUE).
+  # Frame interrupt level (PIXEL nVSYNC_IRQ latched in GLUE).
   VSYNC_IRQ_LEVEL: 6
 
   # --- Video path: numbers more than one component must agree on.  Bit-level
@@ -859,31 +894,64 @@ constants:
   ENGINE_SIGNAL_SPARE:          0x08
 
   # VIDCMD SET target numbering {1, ttt, value[11:0]}: 0..1 COMPOSITOR-local,
-  # 2..6 forwarded to PIXEL over the valid/target/commit handshake, 7 spare.
-  # Target 0 writes cmp_color1 and target 1 writes cmp_color0 (see issues).
+  # 2..6 forwarded to PIXEL over the valid/target/commit handshake.  Target 0
+  # writes cmp_color1 and target 1 writes cmp_color0 (see issues).  Target 7 is
+  # ignored by both chips, which is what makes it the palette-write FILLER: a
+  # same-value SET to it holds set_pix_value across the write pulse (see PIXEL).
   VIDCMD_SET_CMP_COLOR1:     0
   VIDCMD_SET_CMP_COLOR0:     1
-  VIDCMD_SET_PIX_PAL_FG:     2
-  VIDCMD_SET_PIX_PAL_BG:     3
-  VIDCMD_SET_PIX_HAM_HELD:   4
+  VIDCMD_SET_PIX_CLUT_INDEX: 2
+  VIDCMD_SET_PIX_CLUT_DATA:  3
+  VIDCMD_SET_PIX_BASE:       4
   VIDCMD_SET_PIX_MODE:       5
   VIDCMD_SET_PIX_PIXEL_SKIP: 6
+  VIDCMD_SET_FILLER:         7
+
+  # A palette entry is three VIDCMD words: SET CLUT_INDEX, SET CLUT_DATA and
+  # the same-value filler.
+  VIDCMD_WORDS_PER_CLUT_ENTRY: 3
+
+  # SET PIX_MODE value: mode[1:0] depth enumeration, mode[2] half rate,
+  # mode[3] reserved (write 0).
+  VIDCMD_PIX_MODE_1BPP:      0
+  VIDCMD_PIX_MODE_2BPP:      1
+  VIDCMD_PIX_MODE_4BPP:      2
+  VIDCMD_PIX_MODE_ATTR:      3
+  VIDCMD_PIX_MODE_HALF_RATE: 0x4
 
   # Stream FIFO depth in words (parts: interfaces, Stream FIFO parts).
   PIXELS_FIFO_WORDS: 256
   VIDCMD_FIFO_WORDS: 256
 
-  # Pixel stream lengths (no in-band header): 1bpp = 1 bit/px, 2bpp
-  # micro-HAM / indexed = 2 stream bits per px clock.
-  PIXELS_WORDS_PER_LINE_1BPP: 40
-  PIXELS_WORDS_PER_LINE_2BPP: 80   # both 2bpp modes, micro-HAM and indexed
+  # Pixel stream lengths, in 16-bit words per visible line, one per defined
+  # mode (no in-band header).  Half rate halves the stream; 4bpp full rate is
+  # undefined and has no constant.  Attribute mode is one word per eight-group
+  # cell.
+  PIXELS_WORDS_PER_LINE_1BPP:      40
+  PIXELS_WORDS_PER_LINE_1BPP_HALF: 20
+  PIXELS_WORDS_PER_LINE_2BPP:      80
+  PIXELS_WORDS_PER_LINE_2BPP_HALF: 40
+  PIXELS_WORDS_PER_LINE_4BPP_HALF: 80
+  PIXELS_WORDS_PER_LINE_ATTR:      80
+  PIXELS_WORDS_PER_LINE_ATTR_HALF: 40
+
+  # A line whose PIXEL_SKIP is non-zero reads this many words MORE than its
+  # mode's record, and never more than this however large the skip.
+  PIXELS_SKIP_EXTRA_WORDS: 1
+
+  # PIXEL_SKIP is clamped at consumption to these caps (above the cap the
+  # first fetch trigger or the preload's own lead would be missed).
+  PIXELS_SKIP_MAX_1BPP:      14   # either rate
+  PIXELS_SKIP_MAX_2BPP:      12   # full rate
+  PIXELS_SKIP_MAX_2BPP_HALF: 14
+  PIXELS_SKIP_MAX_4BPP_HALF: 12
 
   # Pipeline lead constants -- DERIVED from measured stage latencies, not
-  # tuned; TIMING fires its comparators early by exactly these amounts and
-  # timing.v localparams must stay equal to them.
+  # tuned; the raster generator fires its comparators early by exactly these
+  # amounts and timing.v localparams must stay equal to them.
   COMPOSITOR_LEAD:    2    # consume edge + registered RGB_OUT (compositor_tb)
-  PIXEL_OUT_LEAD:     1    # ham_held -> registered RGB_OUT inside PIXEL
-  TIMING_SPLIT_LEAD:  1    # TIMING->PIXEL registered strobe hop
+  PIXEL_OUT_LEAD:     1    # consumed group -> registered IDX inside PIXEL
+  TIMING_SPLIT_LEAD:  1    # the registered raster-strobe hop inside PIXEL (timing.v SPLIT_LEAD)
   DAC_LEAD:           4    # sum of the above: sync compares shift by this
   PIXEL_PRELOAD_LEAD: 16   # hblank fetch lead (derivation: griffin.log 2026-09-03)
 
@@ -950,9 +1018,10 @@ bodges:
 # Open items only.
 issues:
   - "FIFO desync observability: the display-list ENGINE does not drive the 7200 9th-bit toggle, so there is no FIFO-level desync detector in rev 2.  GLUE ENGINE_STATUS exposes the engine's own state; decide whether that plus frame-bounded /RS recovery is enough."
-  - "Micro-HAM stream encoding is not captured in the YAML."
+  - "The palette RAM part is not chosen: 74F219-pinout 16x4 separate-I/O parts differ in address access time and three of them draw the best part of an amp, and the read-path arithmetic (PIXEL tCO + tAA + COMPOSITOR tSU inside one 39.72 ns pixel clock) and the write-path setup/hold/recovery arithmetic are both unsettled."
+  - "CLUT_INDEX does not post-increment, so consecutive palette entries cost 3 words each instead of 2."
   - "VIDCMD SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  Swapping the target NUMBERS to match the colour numbers is a wire-contract change, not yet decided."
-  - "Only one raster mode (640x480 in 800x525 @ 60) is specified.  Alternate rasters (the DUART OP4..OP7 selector into TIMING) have no video_timing entry and no consumer contract."
+  - "Only one raster mode (640x480 in 800x525 @ 60) is specified.  Alternate rasters (the DUART OP4..OP7 selector into PIXEL) have no video_timing entry and no consumer contract."
   - "The PIXELS and VIDCMD stream FIFOs (ENGINE -> PIXEL / COMPOSITOR) are described in comments and constants, not as first-class entries."
   - "BERR in 0x400000-0x7FFFFF, 0xC00000-0xCFFFFF and 0xE00000-0xEFFFFF is by DTACK timeout (no decode); state whether that is the intended contract."
   - "BERR in unassigned IO spaces is unspecified."
@@ -970,7 +1039,7 @@ interfaces:
   - |
     VGA R4G4B4 output stage: COMPOSITOR -> 2x 74AC541 -> weighted-resistor
     DAC -> DE-15.  14 CPLD signals: R[3:0], G[3:0], B[3:0] from COMPOSITOR,
-    HSYNC, VSYNC from TIMING.  U-a: R[3:0] + G[3:0]; U-b: B[3:0] + HSYNC +
+    HSYNC, VSYNC from PIXEL.  U-a: R[3:0] + G[3:0]; U-b: B[3:0] + HSYNC +
     VSYNC.  Both /OE grounded.  Buffers are mandatory (ATF1508AS VOH is
     specified only to -2 mA; the MSB sources ~8.6 mA).
     DAC per channel (x3): binary-weighted ladder + shunt to ground.  bit3 =
@@ -985,13 +1054,13 @@ interfaces:
     Stream FIFO parts: no transceivers anywhere on D[15:0] -- the six
     7200 data-pin loads sit directly on the bus alongside CPU, 8 RAM,
     2 ROM, 3 CPLDs, DUART and CF.
-    All three streams use 2x IDT7200 (256x9) -- PIXELS
-    byte-interleaved shared-Q pair (/RE from PIXEL), VIDCMD ganged 16-bit
-    (/RE from COMPOSITOR), AUDIO one per channel (/RE from PORTS).  Each
-    pair's /W pins are one ENGINE deposit strobe: nPIXELS_FIFO_W,
-    nVIDCMD_FIFO_W, nAUDIO_FIFO_W (ENGINE pins per engine.v); data pins on
-    D[15:0].
-    PIXELS and VIDCMD /RS from TIMING nRS; AUDIO /RS from PORTS
+    All three streams use 2x IDT7200 (256x9) -- PIXELS ganged 16-bit
+    (PIXELS_Q[15:0], ONE /RE from PIXEL driving both parts; PIXELS_Q[15:8] is
+    the part on D[15:8]), VIDCMD ganged 16-bit (/RE from COMPOSITOR), AUDIO
+    one per channel (/RE from PORTS).  Each pair's /W pins are one ENGINE
+    deposit strobe: nPIXELS_FIFO_W, nVIDCMD_FIFO_W, nAUDIO_FIFO_W (ENGINE pins
+    per engine.v); data pins on D[15:0].
+    PIXELS and VIDCMD /RS from PIXEL nRS; AUDIO /RS from PORTS
     (AUDIO_CONTROL.RESET), AUDIO /EF to PORTS, /HF unconnected.  XI/XO cascade is an
     unpopulated-footprint option if depth is ever needed.
   - |
@@ -999,8 +1068,27 @@ interfaces:
     AUDIO) has a series axial footprint at its driver, stuffed 0R; 33-47R
     only if a strobe rings on the bench.
   - |
-    TIMING nVSYNC_IRQ -> GLUE nVSYNC: the level-6 frame IRQ, edge-latched
+    Palette RAM: 16 entries x 12 bits of separate-I/O static RAM between
+    PIXEL and COMPOSITOR, built from three 16x4 parts (74F219 function table,
+    non-inverting only), /CS tied low.
+    ADDRESS: PIXEL IDX[3:0] (all three parts).  WRITE PULSE: PIXEL nCLUT_WE
+    (all three).  DATA IN: COMPOSITOR set_pix_value[11:0], four bits per part
+    -- PIXEL has no data path to the RAM at all.  DATA OUT: COMPOSITOR
+    RGB_IN[11:0], combinational, no clock of its own.
+    NOT RESET BY ANYTHING: no /RS, no power-on clear.  The RAM powers up
+    undefined and software loads every entry it uses; contents persist across
+    frames.  Write sequence and the pixel slots it disturbs: see PIXEL.
+    The read path must close PIXEL tCO + flight + RAM address access + flight
+    inside one pixel clock against COMPOSITOR tSU, so the part's tAA is a
+    selection criterion, not a detail.
+  - |
+    PIXEL nVSYNC_IRQ -> GLUE nVSYNC: the level-6 frame IRQ, edge-latched
     in GLUE with W1C ack (VSYNC_STATUS/VSYNC_CLEAR).
+  - |
+    JTAG chain, five TAPs in this order: GLUE -> PORTS -> ENGINE -> PIXEL ->
+    COMPOSITOR.  Each link net is named {earlier}_TO_{later}_TD (TDO of the
+    earlier chip to TDI of the later); the programming header drives the
+    first TDI and reads the last TDO.  There is no TIMING TAP.
   - |
     Power entry: the logic board is +5 V only. Board connector: keyed 6-position AMP MATE-N-LOK in
     the Apple II pinout -- VERIFY before silk.  +5 V and GND feed the
@@ -1064,7 +1152,7 @@ interfaces:
   - |
     Clocks: three oscillators, no CPLD re-drives a clock.  SYSCLK (14 MHz
     can) -> CPU CLK and GCLK1 of GLUE, ENGINE and PORTS.  Pixel
-    oscillator (25.175 MHz can) -> GCLK1 of TIMING, PIXEL and COMPOSITOR.
+    oscillator (25.175 MHz can) -> GCLK1 of PIXEL and COMPOSITOR.
     The DUART runs its own 3.6864 MHz crystal on X1/X2.
   - |
     Audio output stage, per channel (x2, L and R identical): 7200 Q[7:0]

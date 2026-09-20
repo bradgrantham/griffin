@@ -1,0 +1,816 @@
+Griffin super-engine display-list + VIDCMD validation suite
+  SYSCLK 14000000 Hz, pixel clock 25175000 Hz, 640x480 of 800x525, line 445 SYSCLK, HBLANK 89 SYSCLK
+  colour R4G4B4 (12-bit), 3 deposit strobes + 1 spare, VIDCMD slot framing
+  arbitration model 4 SYSCLK/descriptor, re-arm latency 200 SYSCLK, 44 vblank pacing lines
+  skew MEASURED: SET->PIXEL 0 px, SET->COMPOSITOR 0 px (dedicated value bus, both land in the SET's own slot)
+  rendering raster frames 1 and 2 (frame 0 is the arming frame)
+  VIDCMD fetch 2 slots/word, banked pair gap 1 slot, on-chip bank 2 records
+  PIXEL is INDEX-ONLY: mode[1:0] depth (1bpp / 2bpp / 4bpp / attribute), mode[2] half rate, mode[3] reserved
+  palette 16 x 12 in external RAM, NEVER RESET, random at power-up; 3 VIDCMD words per entry
+  PIXELS words/line   full rate 40 1bpp, 80 2bpp, 80 attr (4bpp UNDEFINED); half rate 20 / 40 / 40 / 80 4bpp
+
+=== pixel-modes — the model against cpld/pixel/pixel_tb.v ===
+  1BPP             A / W       640 pixels checked, 0 wrong, 40 words read (want 40)
+  1BPP_HALF        F / W       640 pixels checked, 0 wrong, 20 words read (want 20)
+  2BPP             B / W       640 pixels checked, 0 wrong, 80 words read (want 80)
+  2BPP_HALF        W           640 pixels checked, 0 wrong, 40 words read (want 40)
+  4BPP_HALF        C / W       640 pixels checked, 0 wrong, 80 words read (want 80)
+  ATTR             D / D2      640 pixels checked, 0 wrong, 80 words read (want 80)
+  ATTR_HALF        E / E2      640 pixels checked, 0 wrong, 40 words read (want 40)
+  BASE_PAIR        A          pair 0/1 vs 6/7: 0 pixels disagree
+  BASE_QUAD        B          quad 0..3 vs 8..B: 0 pixels disagree
+  SKIP_MATRIX      W / skip   108 mode/skip cells: 0 word counts wrong, 0 leading pixels wrong
+  SKIP_TAIL        skip       skip 3: 41 words, last 16 pixels 0 wrong, 9 of them set
+  RESET_1BPP       R          /RS leaves mode 0, base 0, skip 0 and the RAM LOADED: 0 wrong, 0 unloaded reads
+  PALETTE_UNLOADED S0         no palette load: 640 of 640 pixels wrong, 640 unloaded reads
+  MEASURED         words/line 40/20 1bpp, 80/40 2bpp, -/80 4bpp, 80/40 attr; skip caps 14/12/14/12; +1 word on any non-zero skip
+
+=== palette — the model against cpld/pixel/clut_pair_tb.v ===
+  S1c CONTRACT        entry 5 <- 0xABC in HBLANK: stored 0xABC, 0 of 32 pixels wrong, 0 bad fillers
+  S1a MISSING FILLER  third word SET(pix_base,0x123): entry 5 holds 0x123 (wanted 0xABC), 1 flagged
+  S1b MISSING FILLER  third word SET(cmp_color1,0x123): entry 5 holds 0x123, 1 flagged
+  S3 HBLANK RELOAD    27 words = 8 entries + mode/base/RUN; 0 entries wrong, the line paints entry 7 as 0x800
+  S6 COVERED          entry 5 rewritten mid-line behind a cmp_color1 RUN: 0 disturbed pixels on the DAC, entry holds 0xABC
+  S6-neg UNCOVERED    the same write under passthrough: 4 disturbed pixels on the DAC, 2 of them UNDEFINED
+  S8 VBLANK LOAD      48 words for 16 entries (3 each)
+                      0 entries wrong, the line paints entry 15 on 64 of 64 slots, 0 unloaded reads
+  MEASURED            an entry is 3 words; the write disturbs the 4 slots after the data SET (3 measured + 1 recovery guard)
+
+=== compositor-cadence — the model against compositor_tb.v's traces ===
+  M0                  px0 0xFFF px1 0x0F0 px2 0x0F0, 0 tail exceptions
+  pair                slots 0..7 FFF FFF FFF FFF 1B2 1B2 1B2 3C4
+  triple burst        slots 0..6 FFF 111 111 222 222 333 333
+  one-px spans        slots 0..5 F00 0F0 0F0 00F 00F 9A3, 0 tail exceptions
+  sustained 2-slot    256 of 640 one-slot records reach the screen, 0 pixels off the pattern
+  cadence ceiling     pitch  authored px  painted px  verdict
+                          2           32          63  STRETCHED, spans widen
+                          3           32          63  STRETCHED, spans widen
+                          4           32          32  lands as authored
+                          6           32          32  lands as authored
+
+=== compositor-mask — the model against compositor_tb.v's MASKB_* traces ===
+  MASKB_SPRITE        px0..px15 00F 9A3 9A3 00F F0F 9A3 9A3 00F F0F 9A3 9A3 00F F0F F0F 00F 9A3
+  MASK data not decoded  data word 0x9ABC would be SET(color0,0xABC); mask B pixel 0 is 0x00F
+  MASKB_BLANK         a banked header plays pixel 0 in slot 0 (00F), the record behind it lands at slot 16
+  MASKB_CHAIN32       32 contiguous sprite pixels over slots 4..35, 0 pattern exceptions, chain gap 0
+  MASKB_RECOLOR       slots 19..22 F0F 9A3 9A3 00F, seam 2 slot(s)
+  MASK,SET,SET,MASK   slots 19..25 F0F 9A3 9A3 9A3 9A3 0FF 0F0, seam 4 slot(s)
+  RUN,SET,SET,MASK    slots 19..23 0F0 0F0 0F0 0F0 0FF, seam 3 slot(s)
+  MASKB_STARVE        px7 held for 191 slots, the withheld data half took effect at slot 203
+  MASKB_RESUME        pixels 8..15 replay at slots 0..7 of the next line, 0 exceptions
+  THIRD COLOUR probe  dibit 00 over a dry PIXELS FIFO: group A 0x123, group B 0x456 after a COVERED palette reload at slot 26
+                      the reload's four disturbed slots are covered by the cmp_color0 source: 0 disturbed pixels reached the DAC
+                      *** MODEL BEHAVIOUR, NOT YET VERIFIED IN HARDWARE ***
+                      render.cpp follows pixel.v's documented tiling (no
+                      empty flag, a 7200 holds Q while empty), but what a
+                      7200 pair presents after /RS with no write at all, and
+                      what pixel.v's shifter holds before its first fetch,
+                      are unverified.  Treat dibit 00 as a third colour only
+                      after checking both against the RTL and the part.
+  ------------------------------------------------------------------
+  MEASURED CONSTANTS FOR THE SUITE (MASK)
+    MASK record                          : 16 slots per 2-word record
+                                           (px0 implicit opaque color0, 7 + 8 dibits)
+    mid-record data reload at pixel      : 8 (HOLD stretch on starvation)
+    RUN -> mask gap                      : 0 slot(s)   [tb MASKB_SPRITE]
+    mask -> mask gap                     : 0 slot(s)   [tb MASKB_CHAIN32, GAPLESS]
+    mask -> SET -> mask gap              : 2 slot(s)   [tb MASKB_RECOLOR]
+    mask -> SET,SET -> mask gap          : 4 slot(s)   [DERIVED here, not 3]
+    RUN  -> SET,SET -> mask gap          : 3 slot(s)   [DERIVED, banked pair]
+    header is playback-class, NOT blank-eager
+  ------------------------------------------------------------------
+
+=== m0-slot-regression — NORMATIVE: RUN(pt,1) SET(pix_pal_fg,C2) RUN(pt,637) over all-fg bits ===
+  descriptors/frame     1487          table bytes  11896 / 32768 per half (65536 total window)
+  payload words/frame  22173          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 6..6 (mean 6.00), 2880/frame
+  VIDCMD records/line max   6  mean 6.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   1 slot(s) on 960 of 960 lines (fetch = 2 slots/word)
+  bus utilization       29.3%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  140  mean  140.0   (line = 445 SYSCLK, 31% worst)
+  HBLANK spill        max   54  mean   53.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max   54 SYSCLK/line
+  IRQ count                2          descriptors executed 2974
+  table window used   0x3F0000..0x3FAE78
+  PIXELS FIFO         high  35  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  19  max  20
+  palette             writes 16  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   1  low   0  popped 5803  overflows 0
+  VIDCMD holds        cadence 960  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m0-slot-regression-f1.ppm m0-slot-regression-f2.ppm
+  normative result    pixel 0 = 0xF00 on 480/480 lines, pixels 1..639 = 0x00F with 0 exceptions
+
+=== m1-vscroll-jit — 1bpp vertical scroll with a 9-word-per-FRAME VIDCMD preamble ===
+  descriptors/frame     1006          table bytes   8048 / 32768 per half (65536 total window)
+  payload words/frame  19254          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 0..9 (mean 0.02), 9/frame
+  VIDCMD records/line max   9  mean 0.02
+  VIDCMD slots/line        0..1      framing JIT     (<= 640, hold covers the rest)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       23.9%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  146  mean  114.1   (line = 445 SYSCLK, 33% worst)
+  HBLANK spill        max   59  mean   27.1   (HBLANK = 89 SYSCLK)
+  active-video steal  max   59 SYSCLK/line
+  IRQ count                2          descriptors executed 2012
+  table window used   0x3F0000..0x3F9F70
+  PIXELS FIFO         high  38  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  19  max  33
+  palette             writes 2  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   1  low   0  popped 9  overflows 0
+  VIDCMD holds        cadence 0  starved 614398   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m1-vscroll-jit-f1.ppm m1-vscroll-jit-f2.ppm
+  scroll check        frame 2 == frame 1 shifted up 16 lines: 0 mismatched pixels
+  incremental API     line-at-a-time driver vs clock-accurate: 0 differing pixels
+  JIT framing         9 VIDCMD words for the whole frame (0..9 per line); hold covered 614398 slots
+  hold coverage       0 of 307200 pixels are neither preamble colour
+
+=== m2-perline — per-line palette / mode / pixel_skip as blank-region VIDCMD SETs ===
+  descriptors/frame     1485          table bytes  11880 / 32768 per half (65536 total window)
+  payload words/frame  24045          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 10..10 (mean 10.00), 4800/frame
+  VIDCMD records/line max  10  mean 10.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       31.1%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  150  mean  149.0   (line = 445 SYSCLK, 34% worst)
+  HBLANK spill        max   64  mean   62.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max   64 SYSCLK/line
+  IRQ count                2          descriptors executed 2970
+  table window used   0x3F0000..0x3FAE68
+  PIXELS FIFO         high  35  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  19  max  20
+  palette             writes 1918  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   1  low   0  popped 9590  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m2-perline-f1.ppm m2-perline-f2.ppm
+  incremental API     line-at-a-time driver vs clock-accurate: 0 differing pixels
+  h-scroll check      frame 2 row 250 == frame 1 shifted left 3 px: 637/637
+
+=== m2-split — mid-line recolour by SET(pix_base), placed by VIDCMD slot arithmetic ===
+  descriptors/frame     1487          table bytes  11896 / 32768 per half (65536 total window)
+  payload words/frame  25533          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 13..13 (mean 13.00), 6240/frame
+  VIDCMD records/line max  13  mean 13.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   1 slot(s) on 960 of 960 lines (fetch = 2 slots/word)
+  bus utilization       32.1%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  154  mean  154.0   (line = 445 SYSCLK, 35% worst)
+  HBLANK spill        max   68  mean   67.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max   68 SYSCLK/line
+  IRQ count                2          descriptors executed 2974
+  table window used   0x3F0000..0x3FAE78
+  PIXELS FIFO         high  34  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  19  max  19
+  palette             writes 1934  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   2  low   0  popped 12517  overflows 0
+  VIDCMD holds        cadence 960  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m2-split-f1.ppm m2-split-f2.ppm
+  split check         x=319 0x005 (want 0x005), x=320 0x0F0 (want 0x0F0), x=336 0xF00 (want 0xF00)
+  skew compensation   re-run at SET->PIXEL 3 px / SET->COMPOSITOR 1 px: image IDENTICAL
+
+=== m2-attr — attribute mode: 80 coloured text cells a line, colours in the stream ===
+  descriptors/frame     1967          table bytes  15736 / 32768 per half (65536 total window)
+  payload words/frame  40413          of which pacing 45
+  PIXELS words/line       80          VIDCMD words/line 4..4 (mean 4.00), 1920/frame
+  VIDCMD records/line max   4  mean 4.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       47.8%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  230  mean  230.0   (line = 445 SYSCLK, 52% worst)
+  HBLANK spill        max  144  mean  143.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max  144 SYSCLK/line
+  IRQ count                2          descriptors executed 3934
+  table window used   0x3F0000..0x3FBD78
+  PIXELS FIFO         high  51  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  26  max  26
+  palette             writes 16  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   1  low   0  popped 3884  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m2-attr-f1.ppm m2-attr-f2.ppm
+  stream cost         80 words/line, one per eight-pixel cell
+  pixel exactness     attr: all 307200 pixels of both frames match the reference
+  cell seams          37920 boundaries checked, 0 wrong: the colour byte changes on the cell's first pixel and not before
+
+=== m8-idx2bpp — 2bpp: 80 words/line, a palette quad, and a mid-line SET(pix_base) ===
+  descriptors/frame     1967          table bytes  15736 / 32768 per half (65536 total window)
+  payload words/frame  41853          of which pacing 45
+  PIXELS words/line       80          VIDCMD words/line 7..7 (mean 7.00), 3360/frame
+  VIDCMD records/line max   7  mean 7.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   1 slot(s) on 960 of 960 lines (fetch = 2 slots/word)
+  bus utilization       49.0%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  236  mean  236.0   (line = 445 SYSCLK, 53% worst)
+  HBLANK spill        max  150  mean  149.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max  150 SYSCLK/line
+  IRQ count                2          descriptors executed 3934
+  table window used   0x3F0000..0x3FBD78
+  PIXELS FIFO         high  49  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  25  max  26
+  palette             writes 16  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   2  low   0  popped 6763  overflows 0
+  VIDCMD holds        cadence 960  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m8-idx2bpp-f1.ppm m8-idx2bpp-f2.ppm
+  stream rate         80 words/line at two stream bits per pixel clock
+  pixel exactness     idx2bpp: all 307200 pixels of both frames match the reference
+  split seam          line 100: x=319 0x00F, x=320 0xFF0 (want the MID quad's 0xFF0), x=336 0x730 (want the HI quad's 0x730)
+  four codes          76800 / 76800 / 76800 / 76800 pixels (want 76800 each)
+  line word budget    80 PIXELS + 7 VIDCMD = 87 words/line against the 147-word cap (66% of the 445-SYSCLK line)
+
+=== m10-idx4-half — 4bpp half rate: 80 words/line, all sixteen palette entries ===
+  descriptors/frame     1967          table bytes  15736 / 32768 per half (65536 total window)
+  payload words/frame  40413          of which pacing 45
+  PIXELS words/line       80          VIDCMD words/line 4..4 (mean 4.00), 1920/frame
+  VIDCMD records/line max   4  mean 4.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       47.8%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  230  mean  230.0   (line = 445 SYSCLK, 52% worst)
+  HBLANK spill        max  144  mean  143.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max  144 SYSCLK/line
+  IRQ count                2          descriptors executed 3934
+  table window used   0x3F0000..0x3FBD78
+  PIXELS FIFO         high  51  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  26  max  26
+  palette             writes 16  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   1  low   0  popped 3884  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m10-idx4-half-f1.ppm m10-idx4-half-f2.ppm
+  stream cost         80 words/line for 320 four-bit groups
+  pixel exactness     idx4half: all 307200 pixels of both frames match the reference
+  palette coverage    16 of 16 entries displayed, 0 groups span other than two slots
+
+=== m9-halfrate — half rate: a 320-wide playfield under 640-wide MASK sprites ===
+  descriptors/frame     1485          table bytes  11880 / 32768 per half (65536 total window)
+  payload words/frame  20207          of which pacing 45
+  PIXELS words/line       20          VIDCMD words/line 22..24 (mean 22.00), 10562/frame
+  VIDCMD records/line max  20  mean 18.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       27.6%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  136  mean  132.0   (line = 445 SYSCLK, 31% worst)
+  HBLANK spill        max   49  mean   45.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max   49 SYSCLK/line
+  IRQ count                2          descriptors executed 2970
+  table window used   0x3F0000..0x3FAE68
+  PIXELS FIFO         high  18  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min   9  max   9
+  palette             writes 1918  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high  11  low   0  popped 21111  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 3840 (mask stalls 0)
+  artifacts           m9-halfrate-f1.ppm m9-halfrate-f2.ppm
+  stream cost         20 words/line, half of 1bpp's 40 — 320 groups across the same 640-clock window
+  pixel exactness     halfrate: all 307200 pixels of both frames match the reference
+  group law           138240 playfield groups checked, 0 span less than 2 slots
+  MASK interop        4320 adjacent pairs inside the sprite cells differ: a mask keeps full 640-pixel resolution over a 320-wide playfield
+
+=== m9-halfrate-attr — half rate in attribute mode: a 320-wide tile screen, 40 words/line ===
+  descriptors/frame     1487          table bytes  11896 / 32768 per half (65536 total window)
+  payload words/frame  26975          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 16..18 (mean 16.00), 7682/frame
+  VIDCMD records/line max  14  mean 12.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       33.4%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  164  mean  160.0   (line = 445 SYSCLK, 37% worst)
+  HBLANK spill        max   77  mean   73.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max   77 SYSCLK/line
+  IRQ count                2          descriptors executed 2974
+  table window used   0x3F0000..0x3FAE78
+  PIXELS FIFO         high  33  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  15  max  17
+  palette             writes 16  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high  11  low   0  popped 15405  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 3840 (mask stalls 0)
+  artifacts           m9-halfrate-attr-f1.ppm m9-halfrate-attr-f2.ppm
+  half+attribute      40 words/line (half of 80), 0 split groups
+
+=== m3-cursor — 1bpp plus a 16x16 arrow cursor, decomposed into held-colour spans ===
+  descriptors/frame     1486          table bytes  11888 / 32768 per half (65536 total window)
+  payload words/frame  19799          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 1..9 (mean 1.14), 548/frame
+  VIDCMD records/line max   9  mean 1.14
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   6 slot(s) on 14 of 960 lines (fetch = 2 slots/word)
+  bus utilization       27.2%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  146  mean  130.3   (line = 445 SYSCLK, 33% worst)
+  HBLANK spill        max   60  mean   43.3   (HBLANK = 89 SYSCLK)
+  active-video steal  max   60 SYSCLK/line
+  IRQ count                2          descriptors executed 2972
+  table window used   0x3F0000..0x3FAE70
+  PIXELS FIFO         high  36  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  19  max  25
+  palette             writes 2  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   7  low   0  popped 1099  overflows 0
+  VIDCMD holds        cadence 30  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m3-cursor-f1.ppm m3-cursor-f2.ppm
+  span coverage       98 pixels painted with a held colour (expected 98)
+  cadence regression  the arrow's 84 opaque pixels now paint 98: 7 rows carry
+                      1-px fg/bg segments, and at the 2-clock fetch each of
+                      those costs a HOLD slot that keeps the art's own held
+                      colour.  Worst row +5 (six 1-px segments).  The line
+                      still frames exactly 640 — the stretch comes out of the
+                      trailing filler — so the damage stays on its own row.
+
+=== m3-sprites — worst case: four sprites per line as spans, plus covering runs ===
+  descriptors/frame     1486          table bytes  11888 / 32768 per half (65536 total window)
+  payload words/frame  23573          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 9..11 (mean 9.00), 4322/frame
+  VIDCMD records/line max  11  mean 9.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       30.4%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  150  mean  146.0   (line = 445 SYSCLK, 34% worst)
+  HBLANK spill        max   63  mean   59.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max   63 SYSCLK/line
+  IRQ count                2          descriptors executed 2972
+  table window used   0x3F0000..0x3FAE70
+  PIXELS FIFO         high  35  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  19  max  19
+  palette             writes 2  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   7  low   0  popped 8646  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m3-sprites-f1.ppm m3-sprites-f2.ppm
+  span coverage       17280 pixels painted with a held colour (expected 17280)
+
+=== m6-console — 80x60 text screen as MASK groups: pure VIDCMD, no PIXELS descriptors ===
+  descriptors/frame      959          table bytes   7672 / 32768 per half (65536 total window)
+  payload words/frame  22364          of which pacing 45
+  PIXELS words/line        0          VIDCMD words/line 3..85 (mean 46.50), 22319/frame
+  VIDCMD records/line max  47  mean 24.85
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       26.3%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  218  mean  125.7   (line = 445 SYSCLK, 49% worst)
+  HBLANK spill        max  131  mean   46.3   (HBLANK = 89 SYSCLK)
+  active-video steal  max  131 SYSCLK/line
+  IRQ count                2          descriptors executed 1918
+  table window used   0x3F0000..0x3F9DF8
+  PIXELS FIFO         high   0  low   0  tiled words 38399  overflows 0  (depth 256)
+  PIXELS line-start   banked words min   0  max   0
+  palette             writes 1  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high  54  low   0  popped 44629  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 16201  RUN_COLOR 0  MASK 20780 (mask stalls 0)
+  artifacts           m6-console-f1.ppm m6-console-f2.ppm
+  layout invariant    0 of 19200 groups want ink on a record's implicit pixel 0 (the 8-px cell's blank column 0 is what keeps it 0)
+  pixel exactness     console: all 307200 pixels of both frames match the reference
+  console budget      worst line 85 words, most common 51 words (144 lines), 60 all-background lines
+                      full-width ceiling 82 words (40 groups x 2 + 2 SETs) vs the 147-word cap
+                      218 SYSCLK/line worst against the 445-SYSCLK line (66% budget = 294 SYSCLK)
+  third colour in use 3916 pixels are dibit-00 passthrough at 0xFA0 (pix_pal_bg), painted with no SET between the groups that carry them
+                      *** MODEL BEHAVIOUR pending verification against pixel.v — see the THIRD COLOUR probe above ***
+  delivery            8100 words spill past HBLANK into the previous line's active video; FIFO high 54, dry 0, cadence holds 0
+  headline            10390 MASK records per frame paint an 80x60 text screen with ZERO PIXELS words;
+                      the display list IS the framebuffer, and a text cell costs one word.
+
+=== m7-kiosk — large-text menu: one MASK record per big glyph, SET pairs, RUN_COLOR bar ===
+  descriptors/frame      525          table bytes   4200 / 32768 per half (65536 total window)
+  payload words/frame   4338          of which pacing 45
+  PIXELS words/line        0          VIDCMD words/line 2..30 (mean 8.94), 4293/frame
+  VIDCMD records/line max  17  mean 5.88
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   3 slot(s) on 320 of 960 lines (fetch = 2 slots/word)
+  bus utilization        8.2%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max   80  mean   37.9   (line = 445 SYSCLK, 18% worst)
+  HBLANK spill        max    0  mean    0.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max    0 SYSCLK/line
+  IRQ count                2          descriptors executed 1050
+  table window used   0x3F0000..0x3F9068
+  PIXELS FIFO         high   0  low   0  tiled words 38399  overflows 0  (depth 256)
+  PIXELS line-start   banked words min   0  max   0
+  palette             writes 1  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high  28  low   0  popped 8579  overflows 0
+  VIDCMD holds        cadence 448  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 1920  MASK 2944 (mask stalls 0)
+  artifacts           m7-kiosk-f1.ppm m7-kiosk-f2.ppm
+  layout invariant    0 mask groups want ink on their implicit pixel 0 (the x3 font is 15 px in a 16-px cell, so column 0 is always blank)
+  pixel exactness     kiosk: all 307200 pixels of both frames match the reference
+  SET,SET seam        "PLAY" ends at x=208, "DEMO"'s cell starts at x=212: seam 4 slot(s)
+                      derived: the mask holds staged_word, so only ONE word parks on Q and the two
+                      SETs cannot pair — each costs its own slot plus a cadence HOLD, 2 + 2 = 4.
+  kiosk cadence       stretch max 3 slot(s) on 160 lines = the SET seams, not starvation (dry slots 0, occupancy 640..640)
+  kiosk budget        worst line 30 words; sparse recolouring (one SET pair per menu item, not per group) FITS the 147-word cap
+                      full-density recolouring — a SET pair in front of EVERY 16-pixel group — costs
+                      40 groups x (2 SETs + 2 mask words) = 160 words/line, which BLOWS the 147-word cap;
+                      and it does not even fit the LINE: 40 x (16 + 4) = 800 slots against 640 available.
+  highlight bar       19148 pixels at 0x0FF: a RUN_COLOR across the line plus the selected item's cmp_color0,
+                      which must be stated separately because a mask's dibit 00 is passthrough, not the span under it.
+  third colour in use 1692 hotkey pixels at 0xFFF are dibit-00 passthrough, a third colour inside a group with no SET
+                      *** MODEL BEHAVIOUR pending verification against pixel.v — see the THIRD COLOUR probe above ***
+
+=== m4-audio — M2 plus 16 audio pairs every 32 lines and a 23-pair vblank preamble ===
+  descriptors/frame     1503          table bytes  12024 / 32768 per half (65536 total window)
+  payload words/frame  24356          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 10..10 (mean 10.00), 4800/frame
+  VIDCMD records/line max  10  mean 10.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       31.2%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  194  mean  149.4   (line = 445 SYSCLK, 44% worst)
+  HBLANK spill        max  107  mean   62.5   (HBLANK = 89 SYSCLK)
+  active-video steal  max  107 SYSCLK/line
+  IRQ count                2          descriptors executed 3004
+  table window used   0x3F0000..0x3FAEE8
+  frame 2 list          1501 descriptors, 12008 bytes
+  PIXELS FIFO         high  34  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  19  max  19
+  palette             writes 1918  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   1  low   0  popped 9590  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  AUDIO FIFO          high   93 low   49 underruns 0  overflows 0  (depth 256)
+  AUDIO pairs         503 deposited inside the 2 rendered frames, 525 consumed
+  artifacts           m4-audio-f1.ppm m4-audio-f2.ppm m4-audio.wav
+  audio budget delta  worst line 194 SYSCLK vs 150 without audio (+44)
+
+=== m5-handshake — stop+IRQ, double-buffered tables, VBLANK-ISR re-arm latency ===
+  descriptors/frame     1485          table bytes  11880 / 32768 per half (65536 total window)
+  payload words/frame  24045          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 10..10 (mean 10.00), 4800/frame
+  VIDCMD records/line max  10  mean 10.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       30.8%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  148  mean  148.0   (line = 445 SYSCLK, 33% worst)
+  HBLANK spill        max   62  mean   61.0   (HBLANK = 89 SYSCLK)
+  active-video steal  max   62 SYSCLK/line
+  IRQ count                2          descriptors executed 2970
+  table window used   0x3F0000..0x3FAE68
+  PIXELS FIFO         high  34  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  19  max  19
+  palette             writes 1918  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   1  low   0  popped 9590  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  artifacts           m5-handshake-f1.ppm m5-handshake-f2.ppm
+  double buffering    A 0x3F0000+11880, B 0x3F8000+11880, disjoint, 20888 bytes spare
+  re-arm latency         0 SYSCLK (  0.0 us): clean
+  re-arm latency       100 SYSCLK (  7.1 us): clean
+  re-arm latency       200 SYSCLK ( 14.3 us): clean
+  re-arm latency       300 SYSCLK ( 21.4 us): clean
+  re-arm latency       400 SYSCLK ( 28.6 us): clean
+  re-arm latency       600 SYSCLK ( 42.9 us): FRAME SLIP
+  re-arm budget       clean up to 400 SYSCLK (28.6 us)
+
+=== crazy-demo — per-line palette + horizontal scroll + 4 sprites/line + audio, 2 frames ===
+  descriptors/frame     1503          table bytes  12024 / 32768 per half (65536 total window)
+  payload words/frame  28198          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 18..20 (mean 18.00), 8642/frame
+  VIDCMD records/line max  20  mean 18.00
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       34.7%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  216  mean  166.4   (line = 445 SYSCLK, 49% worst)
+  HBLANK spill        max  129  mean   79.5   (HBLANK = 89 SYSCLK)
+  active-video steal  max  129 SYSCLK/line
+  IRQ count                2          descriptors executed 3004
+  table window used   0x3F0000..0x3FAEE8
+  frame 2 list          1501 descriptors, 12008 bytes
+  PIXELS FIFO         high  33  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  13  max  15
+  palette             writes 1918  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   7  low   0  popped 17271  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 0  MASK 0 (mask stalls 0)
+  AUDIO FIFO          high   93 low   49 underruns 0  overflows 0  (depth 256)
+  AUDIO pairs         503 deposited inside the 2 rendered frames, 525 consumed
+  artifacts           crazy-demo-f1.ppm crazy-demo-f2.ppm crazy-demo.wav
+  arbitration 4        VIDCMD before pixels line 216 SYSCLK, banked at line start 13, PIXELS underruns 0, VIDCMD dry 0 (cadence 0)
+  arbitration 5        VIDCMD before pixels line 221 SYSCLK, banked at line start 12, PIXELS underruns 0, VIDCMD dry 0 (cadence 0)
+  arbitration 6        VIDCMD before pixels line 226 SYSCLK, banked at line start 11, PIXELS underruns 0, VIDCMD dry 0 (cadence 0)
+  arbitration 7        VIDCMD before pixels line 231 SYSCLK, banked at line start 10, PIXELS underruns 0, VIDCMD dry 0 (cadence 0)
+  arbitration 8        VIDCMD before pixels line 236 SYSCLK, banked at line start  9, PIXELS underruns 0, VIDCMD dry 0 (cadence 0)
+  arbitration 4        VIDCMD after pixels  line 216 SYSCLK, banked at line start 32, PIXELS underruns 0, VIDCMD dry 105 (cadence 576)
+  arbitration 5        VIDCMD after pixels  line 221 SYSCLK, banked at line start 31, PIXELS underruns 0, VIDCMD dry 116 (cadence 571)
+  arbitration 6        VIDCMD after pixels  line 226 SYSCLK, banked at line start 30, PIXELS underruns 0, VIDCMD dry 127 (cadence 565)
+  arbitration 7        VIDCMD after pixels  line 231 SYSCLK, banked at line start 29, PIXELS underruns 0, VIDCMD dry 137 (cadence 561)
+  arbitration 8        VIDCMD after pixels  line 236 SYSCLK, banked at line start 28, PIXELS underruns 0, VIDCMD dry 148 (cadence 555)
+
+=== tempest-web — static wireframe in the bitmap, moving objects as RUN_COLOR spans ===
+  descriptors/frame     1485          table bytes  11880 / 32768 per half (65536 total window)
+  payload words/frame  24105          of which pacing 45
+  PIXELS words/line       40          VIDCMD words/line 10..14 (mean 10.12), 4860/frame
+  VIDCMD records/line max  14  mean 10.12
+  VIDCMD slots/line      640..640    framing CUSHION (occupancy must be exactly 640)
+  VIDCMD cadence      stretch max   0 slot(s) on 0 of 960 lines (fetch = 2 slots/word)
+  bus utilization       30.9%         over 466996 SYSCLK of the 2-frame run
+  per-line SYSCLK     max  156  mean  148.2   (line = 445 SYSCLK, 35% worst)
+  HBLANK spill        max   70  mean   61.3   (HBLANK = 89 SYSCLK)
+  active-video steal  max   70 SYSCLK/line
+  IRQ count                2          descriptors executed 2970
+  table window used   0x3F0000..0x3FAE68
+  PIXELS FIFO         high  34  low   0  tiled words 0  overflows 0  (depth 256)
+  PIXELS line-start   banked words min  18  max  19
+  palette             writes 1918  bad fillers 0  disturbed-on-DAC 0  unloaded reads 0
+  VIDCMD FIFO         high   3  low   0  popped 9710  overflows 0
+  VIDCMD holds        cadence 0  starved 0   (cadence = the 2-clock fetch, starved = a dry FIFO)
+  VIDCMD framing      overruns 0  late words 0  RUN_COLOR 60  MASK 0 (mask stalls 0)
+  artifacts           tempest-web-f1.ppm tempest-web-f2.ppm
+  bitmap immutability web checksum 0x1E86535E before authoring, 0x1E86535E after two animated frames
+  object pixels       claw 0xFF0 24 (want 24), flipper 0xF00 54 (want 54), shot 0xFFF 8 (want 8)
+  depth fade          line 380: 7 wireframe pixels at 0x03C, 0 stray colours (near-rim 0x03F, far-rim 0x016)
+  animation delta     172 pixels differ between frames, 0 of them not an object colour in either frame
+  vector headline     densest line 14 VIDCMD words (14 records) for the whole
+                      object set; the earlier cases peaked at 19.
+  density sweep  VIDCMD1st spans words/ln recs/ln  SYSCLK  PIXbank  PIXtiled  VIDCMDhold  overrun
+                              0       14      14     156       18         0          0       0  ok
+                              8       26      26     180        6         0          0       0  ok
+                             16       42      42     226        0         8          0       0  OVER BUDGET
+                             24       58      58     258        0        16          0       0  OVER BUDGET
+                             32       74      74     304        0        26          0       0  OVER BUDGET
+                             48      106     106     382        0        44          0       0  OVER BUDGET
+                             64      138     138     461        0        60          0       0  OVER BUDGET
+  density sweep  PIXhead20 spans words/ln recs/ln  SYSCLK  PIXbank  PIXtiled  VIDCMDhold  overrun
+                              0       14      14     156       19         0          0       0  ok
+                              8       26      26     180       19         0          0       0  ok
+                             16       42      42     226       19         0          0       0  ok
+                             24       58      58     258       19         0          0       0  ok
+                             32       74      74     304       19         0          0       0  ok
+                             48      106     106     382       19        16          0       0  OVER BUDGET
+                             64      138     138     461       19        34          0       0  OVER BUDGET
+  object budget       8 one-pixel spans/line with VIDCMD wholly ahead of the
+                      pixels, 32 with the pixel stream split 20 words either
+                      side of it.  The specified object set uses 14 records on
+                      its densest line.  The reorder is FREE: a 40-word 1bpp
+                      line already splits into two 20-word descriptors, so
+                      putting VIDCMD between them costs no extra descriptor —
+                      both shapes are 156 SYSCLK/line at zero stress spans.
+  cadence headroom    densest sweep point is a 9-pixel pitch (64 spans spread
+                      over 640 pixels) against a 4-pixel cadence floor, so the
+                      2-clock fetch never binds here — stretch 0 on every line.
+
+=== findings ===
+  1. STILL HOLDS. edma3.v has only wait_hblank — no wait-VBLANK and no
+     wait-last-vblank-line.  A list armed by the ISR needs 44 leading
+     wait_hblank/mask-0 descriptors (352 bytes, 968 SYSCLK) just to walk to the top
+     of frame, and frame lock depends on the CPU arming inside one scanline.
+  2. RESOLVED by the VIDCMD redesign.  pixel_skip used to be a 3-bit slice of a
+     MODE word, which could only reach pixel offsets 16n+0..16n+7.  As a 12-bit
+     SET value it spans a whole FIFO word, so every horizontal scroll offset is
+     now reachable; the m2-perline 3-pixel scroll check confirms it.
+  3. STILL HOLDS. PORTS pops audio through vertical blanking too, where no
+     per-line group exists to feed it, so a frame's list must carry vblank's
+     45/2 = 23 pairs in its preamble on top of the 15x16 the visible lines give.
+  4. SUPERSEDED. Landing a mid-line register change no longer needs mask=0 bus
+     pacing descriptors.  The old technique cost ~45 wasted payload words per
+     line, drove the case to 57% bus utilization, and still only placed the
+     change to about +-4 pixels.  A VIDCMD SET occupying one active slot is
+     pixel-exact and costs one word.  Pacing descriptors remain the right tool
+     for time in the *bus* domain — the vblank walk and the stop pacer still use
+     them — but not for placing a deposit on a pixel.
+  5. STILL HOLDS. Ending every list on a wait_hblank/mask-0/stop_after descriptor
+     pins nENGINE_IRQ to line 479's HBLANK edge, so the ISR re-arm budget is a
+     constant instead of shrinking with the frame's weight.
+  6. REVERSED. The previous round concluded "put the overlay stream BEHIND the
+     pixel stream", because the overlay was small and PIXEL was starving at 2 of
+     41 words banked.  Under VIDCMD the answer is the opposite, and the sweep
+     above shows it: VIDCMD ahead of PIXELS is clean through 8 SYSCLK/descriptor
+     (14 words banked falling to 10), while VIDCMD behind PIXELS leaves
+     COMPOSITOR dry for 105+ slots at every arbitration value (2026-08-19: it
+     read 138+ before the cadence rework, and the whole of that drop is
+     reattribution — a fetch that eats one word per two slots empties the FIFO
+     half as fast, so those slots are now counted as cadence holds, ~500 of them,
+     against a FIFO that is not empty).  Two things
+     changed.  VIDCMD now carries the palette and mode SETs that used to be
+     their own descriptors, so it MUST be in the FIFO before pixel 0 or the line
+     draws with the previous line's palette — and it is 17-19 words, not 13.
+     At the same time, folding those two descriptors into the stream deleted two
+     14-SYSCLK overheads from ahead of the pixel deposits, which is what took
+     PIXEL's line-start margin from 2 words to 14.  The redesign paid for the
+     ordering it requires.
+  7. REFINED BY THE RTL, AND AGAIN ON 2026-08-19. The slot arithmetic is still
+     the sharpest edge, but it is no longer a SUM.  compositor.v holds on an
+     empty FIFO — it keeps the current source and keeps trying — and that is
+     first-class framing, not underrun mercy.  Two contracts come off that one
+     hardware rule: cushion lists promise exactly 640 slots of OCCUPANCY per line
+     (authored slots plus the HOLD slots the 2-clock fetch spends between
+     records) and may not hold for want of data; JIT lists promise at most 640
+     and must instead land every word before their line's pixel 0.  The two
+     flavours of hold are now counted separately — a cadence hold is structural,
+     a starvation hold is the cushion running out — and write_vidcmd_records
+     reports occupancy, not the authored sum, because only occupancy closes.
+  8. OVERTURNED BY HOLD. The previous round measured a floor of one VIDCMD
+     word per line even for a line that wanted nothing, and charged the plain
+     vertical-scroll case 130 SYSCLK/line for it.  With hold-on-empty modelled
+     the floor is not per line at all: m1-vscroll-jit paints a whole 480-line
+     frame with THREE VIDCMD words — {SET fg, SET bg, RUN(passthrough,1)} in the
+     first hblank — and drops back to 114 SYSCLK/line.  That is the firmware
+     console's list shape, and it is why the console does not need a per-line
+     VIDCMD descriptor at all.
+  9. NEW, AND NOW CONDITIONAL (2026-08-19). A multi-register mid-line change
+     cannot be atomic: each SET owns one pixel slot, so changing both palette
+     entries takes two pixels and the frame shows one pixel of mixed old/new
+     state.  m2-split still pins exactly that — background at x=320, foreground
+     from x=321 — but at the 2-clock fetch cadence it holds only because the two
+     SETs are a BANKED PAIR: the run ahead of them gives the fetch time to stage
+     one and park the other, and the park moves in on the very edge the first
+     executes.  A THIRD SET in the same burst lands two pixels later, not one
+     (the compositor-cadence traces measure exactly that), so a mid-line restyle
+     of more than two registers is no longer a contiguous two-pixel seam.
+ 10. NEW, AND IT BIT THIS SUITE TWICE. Losing the VIDEO_PALETTE and VIDEO_MODE
+     strobes did remove one aliasing hazard: those deposits sourced their value
+     from a RAM scratch word that both double-buffered lists shared, and the
+     previous round caught frame N+1's pixel_skip leaking into frame N.  A SET
+     carries its value inside the instruction, so that particular word is gone.
+     But the hazard MOVED rather than vanished, and rebuilding this suite walked
+     straight into it again: the VIDCMD records are themselves per-frame data,
+     and one shared VIDCMD region gave every line of frame 1 the wrong
+     pixel_skip — 480 PIXELS underruns per frame.  The rule is that ANY RAM a
+     descriptor sources from is frame-owned and needs the same double buffering
+     the descriptor table gets.  The table is easy to remember because it lives
+     in a special 64K window; the VIDCMD region is ordinary RAM (163840 bytes here,
+     nearly three times the table) and is exactly the thing a driver will forget.
+ 12. NEW. micro-HAM costs 232 SYSCLK/line, 52% of the line and nearly double the
+     1bpp case, entirely because 80 pixel words is 160 SYSCLK of payload.  It
+     splits into THREE descriptors of ~27 words, not four of 20: the 5-bit count
+     field reaches 32, so the 20-word figure inherited from the current engine's
+     ENGINE_WORDS_PER_BURST is not a constraint here and buying the fourth
+     descriptor's 14 SYSCLK back is free.  Note the corollary for the reserved
+     word0 bits [6:4] freed by the strobe reduction: a 6-bit count would carry a
+     whole 40-word 1bpp line in one descriptor.
+ 13. NEW. RUN_COLOR is the atomic answer to finding 9.  Painting a span with the
+     held colours costs two SETs and therefore lands one pixel apart; a RUN_COLOR
+     is one word, one record, and its colour never touches held_fg/held_bg, so
+     independent objects on one line cannot clobber each other's colour.  It cost
+     no new semantics either — it is a playback record like any other RUN and it
+     counts its slots the same way.  What it does NOT do any more (2026-08-19) is
+     satisfy the prefetch invariant for free: one word is one FETCH, and a fetch
+     costs two slots, so a one-pixel RUN_COLOR beside a one-pixel gap is exactly
+     the shape the cadence cannot sustain.  The price is also in the fit, not the
+     format: FIT-RISKY ASSUMPTION 5 in descriptor.h.  Note the encoding squeeze —
+     three colour bits come out of the count, so a RUN_COLOR spans at most 511
+     pixels where a plain RUN spans 4095.  Nothing in these cases comes close.
+ 14. NEW, AND THE HEADLINE FOR VECTOR GAMES. The two FIFO consumers drain at
+     rates that differ by 8x, and the per-line descriptor order has to respect
+     that.  One PIXELS word feeds 16 pixel clocks; one VIDCMD word feeds as few
+     as two (2026-08-19: it was one before the registered-/RE fetch, so the gap
+     halved and the conclusion did not move).  VIDCMD has no cheap head and must
+     arrive first, while PIXEL can be made immune for a third of a line by 12-20
+     words.  With the whole VIDCMD stream ahead of the pixels the well supports
+     only 8 one-pixel spans per line before PIXEL starves; interleaving — 20 pixel
+     words, then all of VIDCMD, then the other 20 — supports 32, four times as
+     many, for ZERO extra descriptors, because a 40-word line already splits
+     into two 20-word descriptors.  This refines finding 6 rather than
+     overturning it: VIDCMD still goes ahead of the BULK of the pixels.
+ 15. NEW, AND NOW TWO CEILINGS (2026-08-19). The ceiling above is a delivery-rate
+     ceiling, not a FIFO-depth one: the engine puts one VIDCMD word on the bus
+     every 2 SYSCLK, one word per ~3.6 pixel clocks, so a line sustains about one
+     record per 3.6 pixels averaged across its width and denser BURSTS are fine
+     only to the extent HBLANK pre-buffered them.  The registered-/RE fetch adds
+     a SECOND, unconditional ceiling underneath it: the compositor itself eats
+     one word per 2 pixel clocks, so no amount of pre-buffering makes a record
+     list denser than one record per two slots.  A one-pixel span therefore needs
+     a 4-pixel pitch to land where it was authored (the cadence traces measure
+     exactly that), and a burst tighter than that is not late — it is impossible.
+     The two ceilings do not meet in these cases: the density sweep's densest
+     point spreads 64 spans over 640 pixels, a 9-pixel pitch, so the bus is still
+     what runs out first and the sweep's answers are unchanged.
+ 11. CLOSED 2026-08-19, AND THE FIX WAS A WIRE. The COMPOSITOR->PIXEL SET
+     conduit used to be a shadow tap of the VIDCMD Q bus, and it did not work:
+     COMPOSITOR held set_pix_valid/target as levels and pulsed set_pix_commit,
+     PIXEL captured VIDCMD_Q while valid was high, and Q had moved on by then.
+     That was the one place this suite could not match a TB measurement.  Two
+     decisions closed it.  A dedicated 12-bit registered value bus (set_pix_value,
+     twelve point-to-point traces) carries the payload, so value/valid/target/
+     commit share one pipeline stage and PIXEL applies the bus straight at the
+     commit pulse; PIXEL's twelve Q taps came off the shared FIFO bus with it.
+     And the registered-/RE fetch leaves Q high-Z between reads, so a tap was
+     never going to work anyway.  A PIXEL-target SET now costs exactly what any
+     other record costs — the tb measures 2 slots, the same as everything else —
+     which is what the model always assumed, so the model is now a measurement.
+     SKEW_PIX_TARGET stays a named zero and m2-split still re-runs at 3/1 px for
+     the identical image, so the compensation path stays exercised.
+ 16. NEW, FROM THE RTL SYNC, AND IT CUTS BOTH WAYS. Dropping TILE bought back the
+     two 16-bit mask shifters and cost words instead, but whether that is a good
+     trade depends entirely on how many HOLES the art has per row.  Measured
+     here: the four-sprite worst case IMPROVED from 13 words/line to 11, because
+     a diamond row is one contiguous run and a tile always cost 3 words.  The
+     cursor got WORSE, 4 words/line to 9, because an arrow row with an eroded
+     outline is up to five alternating fg/bg/transparent segments and each one
+     is its own record.  Rule of thumb for the list builder: contiguous art is
+     cheaper as runs, and art with more than ~2 holes per row is what TILE was
+     actually for.  ANSWERED 2026-08-24 by MASK — see finding 20.
+ 17. REINSTATED 2026-08-19, IN A CADENCE-AWARE FORM. The 1-word/clock rework
+     retired the prefetch invariant entirely — playback(k) >= words(k+1) was
+     satisfied by construction once every record was one word and one slot, and
+     the check was deleted rather than left to pass vacuously.  The registered-
+     /RE fetch brings the obligation back: one word per 2 slots means a record
+     list has to AVERAGE 2 slots per record, with the two-deep on-chip bank
+     (staged_word plus the parked Q) as the line's entire free credit.  It is no
+     longer a closed form — whether a given record is half of a banked pair
+     depends on the whole prefix — so the rule is a SIMULATION,
+     descriptor.h's vidcmd_plan_line(), and the list builder runs it over every
+     line to size that line's filler.  The check is not vacuous either way: the
+     render model drives the same engine independently against real deposit
+     cycles, so a planner that got the arithmetic wrong would show up as an
+     overrun in the CUSHION assertions.
+ 18. NEW, FROM THE RTL SYNC. PIXEL underrun is not an error condition.  pixel.v
+     has no empty-flag input and a 7200 holds Q while empty, so a short PIXELS
+     fill simply re-delivers the last word — a bandwidth compressor, not a
+     fault.  The suite counts tiled words and still requires zero on every case,
+     because none of these lists intends to be short; but the counter is a
+     measurement now, not an assertion about the hardware.
+ 19. NEW 2026-08-19, AND IT COST ART. The VIDCMD read port is a registered /RE
+     driving the 7200 pair directly: two pixel clocks per word, no shaping gate.
+     The alternative died on the pinned worst-case table, not on a breadboard
+     (griffin.yml interfaces, "VIDCMD FIFO read port", 2026-08-18), so this is
+     an electrical verdict the format has to live with rather than a design
+     preference.  What it buys back is +7.7 ns of margin on the data path; what
+     it costs is one HOLD slot behind every record that is not half of a banked
+     pair.  Three consequences, all visible above.  (a) An exact-640 line's
+     filler is now computed, not summed: m0's tail RUN is 637 slots, not 638,
+     and m2-split's is 317, not 318 — same images, one fewer authored slot,
+     because the record after a SET pair lands on slot N+2 rather than N+1.
+     (b) m2-split's whole point survives untouched: a SET pair behind a run of
+     four or more still commits on ADJACENT pixels, because the pair law is what
+     the parked-Q bank exists for.  (c) The cursor is a REGRESSION and is
+     recorded as one: a 16x16 arrow whose eroded outline leaves 1-pixel fg/bg
+     segments now paints 98 pixels instead of 84, because the HOLD slots inside
+     the art keep the art's own held colour and widen it.  The framing still
+     closes — the builder takes the stretch out of the trailing filler — so the
+     damage is confined to the row that authored it.  Rule for art: features and
+     gaps of one pixel are no longer free, and anything at least two pixels wide
+     with two-pixel gaps (every sprite, every tempest object) is unaffected.
+ 20. NEW 2026-08-24, AND IT IS THE ANSWER TO FINDING 16. The `01` prefix carries
+     MASK: two words, SIXTEEN pixels, no inline colour, no new shifters (it runs
+     through staged_word and the shared playback counter).  That is a flat 8
+     pixels per word for art of ANY hole density, against RUN spans' one word per
+     contiguous segment — so the rule of thumb inverts above about two holes per
+     16 pixels, and the cursor row that regressed to five records is one MASK.
+     What it costs instead is RECOLOURING.  The header spends all fourteen
+     payload bits on dibits, so changing colour is an ordinary SET, and the seams
+     are 4 slots between two mask groups (the mask holds staged_word, so the two
+     SETs cannot be a banked pair) against 3 behind a RUN.  Chaining itself is
+     FREE: mask-to-mask and RUN-to-mask are both ZERO slots, because the
+     pixel-15 edge captures the next record one slot early.
+ 21. NEW 2026-08-24, AND IT IS A NEW SCREEN MODE. A display list can author NO
+     PIXELS DESCRIPTORS AT ALL and still paint a full screen: the display list IS
+     the framebuffer.  m6-console draws an 80x60 text screen at 82 words on its
+     widest line (40 groups x 2 + 2 per-line SETs) against the 147-word delivery
+     cap, pixel-exact against a host rasterization of the same font; m7-kiosk
+     draws large text one glyph per record.  The two geometries both come out of
+     the implicit pixel 0: whatever lands on a record boundary is cmp_color0, so
+     an 8-px cell with a blank column 0 fits TWO glyphs in a record and a x3 font
+     in a 16-px cell fits ONE.  What runs out is recolouring, not records: forty
+     chained masks are exactly 640 slots, but a SET pair in front of every group is
+     160 words/line (over the cap) and 800 slots (over the LINE) — impossible rather
+     than merely late.
+ 22. NEW 2026-08-24, AND EXPLICITLY UNVERIFIED. With the PIXELS FIFO never
+     written, the modelled PIXEL re-shifts its reset word — all zeroes, which in
+     1bpp direct mode selects pix_pal_bg — so a passthrough dibit resolves to
+     pal_bg, a register a VIDCMD SET can write.  Dibit 00 is then a THIRD
+     SETTABLE COLOUR inside a record, with no SET between the groups that use it,
+     and both screen cases spend it (console prefixes and status line, kiosk
+     hotkey letters).  THIS IS WHAT THE MODEL DOES, NOT WHAT THE CHIP IS KNOWN TO
+     DO.  render.cpp follows pixel.v's documented tiling (no empty flag, a 7200
+     holds Q while empty), but what a 7200 pair presents on Q after /RS with no
+     write at all, and what pixel.v's shifter holds before its first fetch, are
+     both open.  Settle them against the RTL and the datasheet before any art
+     depends on the third colour.
+ 23. REPLACED 2026-09-20, AND THE MODE REGISTER IS AN ENUMERATION AGAIN. pixel.v is
+     INDEX-ONLY: mode[1:0] is a depth enumeration (1bpp / 2bpp / 4bpp /
+     attribute), mode[2] is half rate and mode[3] is reserved.  Every playfield
+     pixel in every mode is a four-bit index into an EXTERNAL 16 x 12 palette RAM;
+     micro-HAM, pal_fg/pal_bg/ham_held and the 2bpp fixed four colours are gone.
+     pix_base selects the PAIR a 1bpp line uses and the QUAD a 2bpp line uses, so
+     one word recolours a whole line or a whole half-line — m8-idx2bpp switches
+     quads mid-line with two banked SETs and renders pixel-exact at 80 PIXELS +
+     7 VIDCMD words a line, against the 147-word cap.
+ 24. NEW 2026-09-20, AND IT IS THE RULE A LIST AUTHOR MUST NOT GET WRONG. A palette
+     entry is THREE VIDCMD words — SET clut_index, SET clut_data, and a SAME-VALUE
+     SET to target 7 — because COMPOSITOR re-registers set_pix_value from every
+     staged word and the RAM's data inputs sit on that bus: without the filler the
+     RAM stores the NEXT word's payload, which the model reproduces and counts.
+     And the write steals four pixel slots (the entry being written, two clocks of
+     high-Z and write recovery, plus a guard), so the four slots after the data
+     SET must be in blanking or covered by a non-passthrough source.  The
+     palette-rule traces assert both directions: a covered write is invisible, an
+     uncovered one puts undefined pixels on the DAC, and a missing filler stores
+     the wrong colour.  THE RAM IS NEVER RESET: it powers up undefined (random in
+     the model), so a list that forgets an entry paints noise.
+ 25. UNCHANGED, AND HALF RATE STILL COSTS NOTHING OUTSIDE PIXEL. mode[2] holds every
+     consumed group for two pixel clocks: 320 groups across the same 640-clock
+     window, so a line costs half the stream — 20 words 1bpp, 40 2bpp, 40 attribute
+     — at half the horizontal resolution, and it is the only way to run 4bpp at all
+     (80 words; full rate is UNDEFINED).  It is a STREAM-SIDE GATE and nothing else
+     in the pipeline learns about it: RGB_OUT's window, PIXEL_OUT_LEAD, the SET
+     path and COMPOSITOR are untouched.  The interop that matters for a game mode
+     is that MASK DIBITS STEP ONCE PER PIXEL-CLOCK SLOT REGARDLESS, so sprites keep
+     full 640-pixel horizontal resolution over a 320-wide playfield — m9-halfrate
+     measures both halves at once: zero playfield groups spanning other than 2
+     slots, and adjacent pixels inside the sprite cells that DO differ.
+
+=== summary ===
+  all cases PASS

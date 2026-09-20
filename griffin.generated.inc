@@ -103,26 +103,23 @@
 .equ ENGINE_CTRL_ENABLE_SHIFT, 0
 .equ ENGINE_CTRL_DEFAULT, 0x00
 
-| TIMING: Raster time base: VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, PIXEL strobes, ENGINE HBLANK, GLUE vsync IRQ, PORTS paddle/audio ticks
-.equ TIMING_CLOCK, 25175000
-.equ TIMING_PIXEL_CLOCK_HZ, 25175000  | pixel clock, Hz
-.equ TIMING_H_ACTIVE, 640  | pixel clocks
-.equ TIMING_H_FRONT_PORCH, 16  | pixel clocks
-.equ TIMING_H_SYNC, 96  | pixel clocks
-.equ TIMING_H_BACK_PORCH, 48  | pixel clocks
-.equ TIMING_H_TOTAL, 800  | pixel clocks
-.equ TIMING_V_ACTIVE, 480  | lines
-.equ TIMING_V_FRONT_PORCH, 10  | lines
-.equ TIMING_V_SYNC, 2  | lines
-.equ TIMING_V_BACK_PORCH, 33  | lines
-.equ TIMING_V_TOTAL, 525  | lines
-.equ TIMING_HSYNC_ACTIVE_LOW, 1  | HSYNC is asserted low during the sync interval
-.equ TIMING_VSYNC_ACTIVE_LOW, 1  | VSYNC is asserted low during the sync interval
-
-| PIXEL: PIXELS stream unpacker: 1bpp direct, 2bpp micro-HAM, 2bpp indexed, half rate; R4G4B4 to COMPOSITOR
+| PIXEL: Raster time base and indexed PIXELS unpacker: 4-bit palette index + palette-RAM write port, VGA syncs, frame /RS, COMPOSITOR H_ACTIVE, ENGINE HBLANK, GLUE vsync IRQ, PORTS ticks
 .equ PIXEL_CLOCK, 25175000
+.equ PIXEL_PIXEL_CLOCK_HZ, 25175000  | pixel clock, Hz
+.equ PIXEL_H_ACTIVE, 640  | pixel clocks
+.equ PIXEL_H_FRONT_PORCH, 16  | pixel clocks
+.equ PIXEL_H_SYNC, 96  | pixel clocks
+.equ PIXEL_H_BACK_PORCH, 48  | pixel clocks
+.equ PIXEL_H_TOTAL, 800  | pixel clocks
+.equ PIXEL_V_ACTIVE, 480  | lines
+.equ PIXEL_V_FRONT_PORCH, 10  | lines
+.equ PIXEL_V_SYNC, 2  | lines
+.equ PIXEL_V_BACK_PORCH, 33  | lines
+.equ PIXEL_V_TOTAL, 525  | lines
+.equ PIXEL_HSYNC_ACTIVE_LOW, 1  | HSYNC is asserted low during the sync interval
+.equ PIXEL_VSYNC_ACTIVE_LOW, 1  | VSYNC is asserted low during the sync interval
 
-| COMPOSITOR: VIDCMD stream player: per-slot source select over PIXEL's R4G4B4, SET forwarding to PIXEL, MASK overlays
+| COMPOSITOR: VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, SET forwarding to PIXEL, MASK overlays
 .equ COMPOSITOR_CLOCK, 25175000
 
 | PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop/reset control
@@ -347,15 +344,32 @@
 .equ ENGINE_SIGNAL_SPARE, 0x08
 .equ VIDCMD_SET_CMP_COLOR1, 0x00
 .equ VIDCMD_SET_CMP_COLOR0, 0x01
-.equ VIDCMD_SET_PIX_PAL_FG, 0x02
-.equ VIDCMD_SET_PIX_PAL_BG, 0x03
-.equ VIDCMD_SET_PIX_HAM_HELD, 0x04
+.equ VIDCMD_SET_PIX_CLUT_INDEX, 0x02
+.equ VIDCMD_SET_PIX_CLUT_DATA, 0x03
+.equ VIDCMD_SET_PIX_BASE, 0x04
 .equ VIDCMD_SET_PIX_MODE, 0x05
 .equ VIDCMD_SET_PIX_PIXEL_SKIP, 0x06
+.equ VIDCMD_SET_FILLER, 0x07
+.equ VIDCMD_WORDS_PER_CLUT_ENTRY, 0x03
+.equ VIDCMD_PIX_MODE_1BPP, 0x00
+.equ VIDCMD_PIX_MODE_2BPP, 0x01
+.equ VIDCMD_PIX_MODE_4BPP, 0x02
+.equ VIDCMD_PIX_MODE_ATTR, 0x03
+.equ VIDCMD_PIX_MODE_HALF_RATE, 0x04
 .equ PIXELS_FIFO_WORDS, 0x100
 .equ VIDCMD_FIFO_WORDS, 0x100
 .equ PIXELS_WORDS_PER_LINE_1BPP, 0x28
+.equ PIXELS_WORDS_PER_LINE_1BPP_HALF, 0x14
 .equ PIXELS_WORDS_PER_LINE_2BPP, 0x50
+.equ PIXELS_WORDS_PER_LINE_2BPP_HALF, 0x28
+.equ PIXELS_WORDS_PER_LINE_4BPP_HALF, 0x50
+.equ PIXELS_WORDS_PER_LINE_ATTR, 0x50
+.equ PIXELS_WORDS_PER_LINE_ATTR_HALF, 0x28
+.equ PIXELS_SKIP_EXTRA_WORDS, 0x01
+.equ PIXELS_SKIP_MAX_1BPP, 0x0E
+.equ PIXELS_SKIP_MAX_2BPP, 0x0C
+.equ PIXELS_SKIP_MAX_2BPP_HALF, 0x0E
+.equ PIXELS_SKIP_MAX_4BPP_HALF, 0x0C
 .equ COMPOSITOR_LEAD, 0x02
 .equ PIXEL_OUT_LEAD, 0x01
 .equ TIMING_SPLIT_LEAD, 0x01

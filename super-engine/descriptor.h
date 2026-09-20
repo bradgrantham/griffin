@@ -57,16 +57,17 @@
 // PIPELINE
 // ===========================================================================
 //
-//   ENGINE (descriptor DMA) --> PIXELS FIFO --> PIXEL --12-bit RGB--> COMPOSITOR --> DAC
-//                          \--> VIDCMD FIFO --------------------------^
+//   ENGINE (descriptor DMA) --> PIXELS FIFO --> PIXEL --IDX[3:0]--> PALETTE RAM
+//                          \--> VIDCMD FIFO --> COMPOSITOR <--12-bit RGB--/
+//                                               COMPOSITOR --> DAC
 //
 // Neither PIXEL nor COMPOSITOR has a CPU bus; both live in the 25.175 MHz
 // pixel-clock domain and are configured entirely in band.  COMPOSITOR is the
 // only instruction decoder: it plays RUN/RUN_COLOR records against the pixel
 // stream and it also issues register writes out of that same stream into PIXEL.
 //
-// Colour is 12-bit R4G4B4 everywhere — palette entries, the micro-HAM held
-// colour, the compositor's held colours and the DAC.
+// Colour is 12-bit R4G4B4 everywhere — the sixteen palette-RAM entries, the
+// compositor's held colours, RUN_COLOR and the DAC.
 //
 // ===========================================================================
 // PORTABILITY
@@ -320,127 +321,105 @@ constexpr uint32_t engine_wait_descriptor_cycles(uint32_t arbitration, uint32_t 
 // PIXELS stream
 // ============================================================================
 //
-// Pure pixel bits — no header words at all any more, because palette and mode
-// left the stream for VIDCMD.  The line length is a function of the mode:
+// Pure pixel bits — no header words at all, because palette and mode left the
+// stream for VIDCMD — and since 2026-09-20 PURE INDICES: every playfield pixel
+// in every mode is a four-bit palette index into the external 16 x 12 palette
+// RAM (PaletteUnit in render.h).  PIXEL holds no colour register.
 //
-//   direct 1bpp        1 bit  per pixel clock,  640 bits = 40 words
-//   2bpp micro-HAM     2 bits per pixel clock, 1280 bits = 80 words
-//   2bpp indexed       2 bits per pixel clock, 1280 bits = 80 words
-//   + half rate        320 groups, not 640: 20 words 1bpp, 40 words indexed
+// Words are consumed MSB FIRST, bit 15 down, out of ONE ganged 16-bit FIFO port
+// with ONE read strobe.  The line length is a function of the mode; a nonzero
+// pixel_skip adds exactly one word (see the record+1 rule below).
 //
-// Big-endian, MSB of each word leftmost.  pixel_skip discards that many bits
-// of the line's first word at line start, which is why a nonzero skip needs
-// one more word to reach the last pixel.
+// Normative: cpld/pixel/pixel.v and cpld/pixel/pixel_tb.v (`make pixel-sim`),
+// whose MEASURED CONSTANTS every number here is taken from; the palette write
+// window is cpld/pixel/clut_pair_tb.v's (`make clut-pair-sim`).
 
 // IDT7200L-15, 256x9, two in parallel: each FIFO holds 256 bus words.
 inline constexpr uint32_t PIXELS_FIFO_WORDS = 256;
 inline constexpr uint32_t VIDCMD_FIFO_WORDS = 256;
 
-// ---------------------------------------------------------------------------
-// THE MODE REGISTER IS A BIT FIELD, NOT AN ENUMERATION (pixel.v, 2026-08-24)
-// ---------------------------------------------------------------------------
-//
-//   mode[0]  1 = 2bpp micro-HAM
-//   mode[1]  1 = 2bpp indexed
-//   mode[2]  1 = half rate
-//
-// Only three bits exist; SET(pix_mode) writes value[2:0] and drops the rest.
-//
-//   [1:0] == 2'b11 is RESERVED and micro-HAM wins it BY CONSTRUCTION —
-//   pixel.v computes indexed as mode[1] & ~mode[0], so a buggy list gets one
-//   whole known mode rather than two decoders fighting over ham_held.
-//
-//   HALF RATE IS MASKED OFF IN MICRO-HAM, in hardware, not merely declared
-//   undefined: a HAM code can span two consumption clocks and ham_second is
-//   not phase-gated, so a half-rate HAM line would mis-pair every 4-bit code.
-//   half_rate = mode[2] & ~mode[0].  The flag does nothing in HAM, which is a
-//   debuggable outcome; the model reproduces the masking, not the garbage.
-//
-// SET ORDERING RULE — MODE BEFORE ham_held, and it is the ONE order
-// dependence in this chip.  In indexed mode ham_held is the third palette
-// entry and SET is its only writer: pixel.v suppresses both the stream write
-// (load_pal) and the blanking reload (held_init = ~pix_consume & ~mode_idx2)
-// while the mode register reads indexed.  A list that SETs ham_held and THEN
-// SETs mode has its colour overwritten by pal_fg on the intervening blank
-// clocks.  SET mode first and every gap is safe.  render.cpp models the
-// blanking reload clock by clock (PixelUnit::blank_clock) precisely so this
-// ordering rule is real in the model rather than only documented.
-inline constexpr uint32_t PIXEL_MODE_DIRECT_1BPP  = 0;
-inline constexpr uint32_t PIXEL_MODE_MICRO_HAM    = 1;   // mode[0]
-inline constexpr uint32_t PIXEL_MODE_INDEXED_2BPP = 2;   // mode[1]
-inline constexpr uint32_t PIXEL_MODE_HALF_RATE    = 4;   // mode[2], an OR-able flag
-inline constexpr uint32_t PIXEL_MODE_BITS         = 7;   // what SET(pix_mode) keeps
+// PIX_PRELOAD to the line's first consumption clock, in pixel clocks: one for
+// the read, one for the capture and up to 14 alignment shifts.  pixel_tb.v
+// calls it FETCH_LEAD; timing.v emits it as PIXEL_FETCH_LEAD.
+inline constexpr uint32_t PIXEL_FETCH_LEAD = Griffin::PIXEL_PRELOAD_LEAD;
+static_assert(PIXEL_FETCH_LEAD == 16);
 
-// The three decoded wires, one for one with pixel.v's mode_ham / mode_idx2 /
-// half_rate.  Every helper below and every branch in PixelUnit goes through
-// these, so "the mode register is a bit field" is stated once.
-constexpr bool pixel_mode_ham(uint32_t mode)
+// A line whose effective skip is non-zero reads this many words more than its
+// mode's record, and never more however large the skip.
+inline constexpr uint32_t PIXELS_SKIP_EXTRA_WORDS = Griffin::PIXELS_SKIP_EXTRA_WORDS;
+
+// PIX_LAST's width: the last eight consumption clocks of a line, the window the
+// end-of-line fetch cutoff uses raw (timing.v: h_cnt[9:3] == 79).
+inline constexpr uint32_t PIXEL_LAST_CLOCKS = 8;
+
+// ---------------------------------------------------------------------------
+// THE MODE REGISTER: A DEPTH ENUMERATION PLUS A HALF-RATE FLAG (pixel.v)
+// ---------------------------------------------------------------------------
+//
+//   mode[1:0]  depth: 00 1bpp, 01 2bpp, 10 4bpp, 11 attribute
+//   mode[2]    half rate — every consumed group held two pixel clocks, so a
+//              line carries 320 groups instead of 640
+//   mode[3]    RESERVED for the COMPOSITOR bypass, MUST BE WRITTEN 0
+//
+// SET(pix_mode) writes value[2:0] and drops the rest.  There is no order
+// dependence anywhere in the chip any more: the micro-HAM / ham_held ordering
+// rule died with micro-HAM.
+//
+// INDEX FORMATION, one line per depth:
+//
+//   1bpp        {pix_base[3:1], bit}          two entries, selected by pix_base
+//   2bpp        {pix_base[3:2], dibit}        four entries
+//   4bpp        the nibble                    all sixteen; pix_base unused
+//   attribute   bit ? fg : bg                 from {fg[3:0], bg[3:0], pattern[7:0]}
+//
+// The attribute word is ONE WORD PER EIGHT-GROUP CELL: PIXELS_Q[15:8] the
+// colour byte, PIXELS_Q[7:0] the pattern, pattern MSB first.  At full rate an
+// 80-column cell-coloured text/tile mode; at half rate a 320-wide tile mode.
+//
+// 4BPP AT FULL RATE IS UNDEFINED and must never be emitted: four clocks per
+// word puts two fetch triggers inside the eight-clock end-of-line window, the
+// line ends short of its record and every following line is out of phase.
+// pixels_words_per_line() refuses it rather than computing it.
+inline constexpr uint32_t PIXEL_DEPTH_1BPP = 0;
+inline constexpr uint32_t PIXEL_DEPTH_2BPP = 1;
+inline constexpr uint32_t PIXEL_DEPTH_4BPP = 2;
+inline constexpr uint32_t PIXEL_DEPTH_ATTR = 3;
+
+inline constexpr uint32_t PIXEL_MODE_DEPTH_MASK = 3;
+inline constexpr uint32_t PIXEL_MODE_HALF_RATE  = 4;   // mode[2], an OR-able flag
+inline constexpr uint32_t PIXEL_MODE_RESERVED   = 8;   // mode[3], write 0
+inline constexpr uint32_t PIXEL_MODE_BITS       = 7;   // what SET(pix_mode) keeps
+
+static_assert(PIXEL_DEPTH_1BPP == Griffin::VIDCMD_PIX_MODE_1BPP);
+static_assert(PIXEL_DEPTH_2BPP == Griffin::VIDCMD_PIX_MODE_2BPP);
+static_assert(PIXEL_DEPTH_4BPP == Griffin::VIDCMD_PIX_MODE_4BPP);
+static_assert(PIXEL_DEPTH_ATTR == Griffin::VIDCMD_PIX_MODE_ATTR);
+static_assert(PIXEL_MODE_HALF_RATE == Griffin::VIDCMD_PIX_MODE_HALF_RATE);
+
+// The mode value a SET carries, built rather than hand-ORed.
+constexpr uint32_t pixel_mode(uint32_t depth, bool half_rate)
 {
-    return (mode & PIXEL_MODE_MICRO_HAM) != 0;
+    return (depth & PIXEL_MODE_DEPTH_MASK) | (half_rate ? PIXEL_MODE_HALF_RATE : 0u);
 }
 
-constexpr bool pixel_mode_indexed(uint32_t mode)
+constexpr uint32_t pixel_mode_depth(uint32_t mode)
 {
-    return (mode & PIXEL_MODE_INDEXED_2BPP) != 0 && !pixel_mode_ham(mode);
+    return mode & PIXEL_MODE_DEPTH_MASK;
 }
 
 constexpr bool pixel_mode_half_rate(uint32_t mode)
 {
-    return (mode & PIXEL_MODE_HALF_RATE) != 0 && !pixel_mode_ham(mode);
+    return (mode & PIXEL_MODE_HALF_RATE) != 0;
 }
 
-// 2bpp indexed: the dibit is a DIRECT palette index, no arithmetic, no
-// multi-clock codes, and no new SET targets — the three colour entries are the
-// registers 1bpp and micro-HAM already own and black is a constant.
-//
-//   00 pix_pal_bg    01 pix_pal_fg    10 pix_ham_held    11 0x000 (black)
-//
-// The odd-skip clamp is inherited from micro-HAM for the same reason: an odd
-// alignment shift splits every index across a dibit boundary.
-inline constexpr uint32_t IDX2_CODE_PAL_BG   = 0;
-inline constexpr uint32_t IDX2_CODE_PAL_FG   = 1;
-inline constexpr uint32_t IDX2_CODE_HAM_HELD = 2;
-inline constexpr uint32_t IDX2_CODE_BLACK    = 3;
-
-// pixel_skip now rides a 12-bit SET value instead of a 3-bit slice of a MODE
-// word, so it finally spans a whole 16-bit FIFO word.  That closes the
-// horizontal-scroll gap the previous round of this suite reported: the source
-// address moves in whole words and skip covers 0..15 within one, so every
-// pixel offset is now reachable.
-inline constexpr uint32_t PIXELS_SKIP_MAX = 15;
-
-// micro-HAM codes, consumed at exactly 2 bits per pixel clock so a 2-bit code
-// covers 1 pixel and a 4-bit code covers 2:
-//
-//   0 p        held <- p ? pix_pal_fg : pix_pal_bg          1 pixel
-//   1 0 g r    held.green <- g*0xF, held.red   <- r*0xF     2 pixels
-//   1 1 g b    held.green <- g*0xF, held.blue  <- b*0xF     2 pixels
-//
-// At the start of every visible line held <- pix_pal_fg.  The codes can only
-// reach the 0x0/0xF extremes of a channel; a full-precision colour arrives via
-// SET(pix_ham_held), which is the whole reason that target exists.
-//
-// PAIR ORDERING, per pixel.v and NOT per the old video.v serial decoder: two
-// bits leave the stream every clock, so the prefix pair (1x) and the chroma
-// pair (g,r / g,b) land in DIFFERENT clocks and the decoder cannot see g until
-// the second one.  The FIRST pixel of a 4-bit code therefore shows the OLD held
-// colour, and the SECOND shows both channels updated together.  video.v
-// staggered the two channels one pixel apart; that is not reproducible here and
-// the renderer matches pixel.v.
-//
-// UNDERRUN TILES.  PIXEL has no empty-flag input and no half-full pacing: /RE
-// keeps firing on schedule and a 7200 ignores a read while empty and holds Q,
-// so the last word pattern simply repeats.  A short PIXELS fill is therefore a
-// bandwidth compressor, not an error — and there is no 9th-bit desync detector
-// any more, so there is nothing to flag either way.
-inline constexpr uint32_t HAM_CODE_PALETTE_BITS = 2;
-inline constexpr uint32_t HAM_CODE_CHROMA_BITS  = 4;
-
-// Bits of the pixel stream a CONSUMING clock eats.  Both two-bit modes share
-// every piece of the byte engine's cadence, which is why this is one term.
-constexpr uint32_t pixels_bits_per_clock(uint32_t mode)
+// Stream bits per GROUP (W in the testbench's derivations).  Attribute mode
+// consumes one pattern bit per group like 1bpp; its cell costs a whole word
+// every eight groups, which is why its word count matches 2bpp's.
+constexpr uint32_t pixels_bits_per_group(uint32_t mode)
 {
-    return (pixel_mode_ham(mode) || pixel_mode_indexed(mode)) ? 2u : 1u;
+    const uint32_t d = pixel_mode_depth(mode);
+    return d == PIXEL_DEPTH_2BPP ? 2u :
+           d == PIXEL_DEPTH_4BPP ? 4u : 1u;
 }
 
 // How many bit-groups a line consumes.  Half rate holds every consumed group
@@ -452,47 +431,212 @@ constexpr uint32_t pixels_groups_per_line(uint32_t mode)
     return pixel_mode_half_rate(mode) ? (H_ACTIVE / 2u) : H_ACTIVE;
 }
 
-// pixel_skip as CONSUMED at line start.  Bit 0 is ignored in both two-bit
-// modes (pixel.v's HARDWARE CLAMP), applied at consumption rather than at the
-// SET write so the result cannot depend on SET ordering.  A line's word count
-// has to use the clamped value or an odd skip over-provisions the record by a
-// word and the FIFO drifts a word per line down the frame.  Half rate needs no
-// extra clamp: skip is measured in stream bits and a stream bit is still
-// exactly one group.
+// The fetch trigger's stream position T = 16-2W at full rate, 16-W at half
+// rate; attribute mode's cell is eight groups, so its trigger compares the low
+// three bits only and T is 6 (full) / 7 (half).  Here for the model and for
+// anything that wants to reason about the cadence; PIXEL applies it itself.
+constexpr uint32_t pixels_fetch_trigger(uint32_t mode)
+{
+    const uint32_t w    = pixels_bits_per_group(mode);
+    const bool     half = pixel_mode_half_rate(mode);
+    const uint32_t t    = half ? (16u - w) : (16u - 2u * w);
+    return (pixel_mode_depth(mode) == PIXEL_DEPTH_ATTR) ? (t & 7u) : t;
+}
+
+// ---------------------------------------------------------------------------
+// pixel_skip — A START POSITION IN STREAM BITS INSIDE THE LINE'S FIRST WORD
+// ---------------------------------------------------------------------------
+//
+// Four bits; skip s means pixel 0 is stream bit s of the line's first word.
+// There is no whole-word discard (coarser scrolling moves the descriptor's
+// source pointer), and two clamps apply, BOTH at consumption — the line's
+// preload — so SET ordering cannot smuggle a stale bit in:
+//
+//   DEPTH   a W-bit group can only shift by multiples of W: 2bpp ignores bit 0,
+//           4bpp ignores bits [1:0], attribute forces 0 (a bit-level scroll
+//           would shift a pattern byte out of step with its colour byte).
+//   RANGE   the trigger's lead T bounds it at FULL RATE only, and the preload's
+//           own lead bounds it at 14 at BOTH rates.  Net caps: 14 (1bpp either
+//           rate), 12 (2bpp full), 14 (2bpp half), 12 (4bpp half).
+//
+// Above the cap the value is CLAMPED, not honoured — a recorded limitation
+// (pixel.v's header has the two overruns it prevents, one of which silently
+// reads a word too few on every line of the frame).
+inline constexpr uint32_t PIXELS_SKIP_MAX = 15;   // the register's own width
+
+constexpr uint32_t pixels_skip_depth_clamp(uint32_t mode, uint32_t pixel_skip)
+{
+    switch (pixel_mode_depth(mode))
+    {
+        case PIXEL_DEPTH_2BPP: return pixel_skip & ~1u;
+        case PIXEL_DEPTH_4BPP: return pixel_skip & ~3u;
+        case PIXEL_DEPTH_ATTR: return 0u;
+        default:               return pixel_skip;
+    }
+}
+
+// The cap a mode's skip is clamped to: min(T at full rate, PRELOAD_LEAD - 2).
+constexpr uint32_t pixels_skip_cap(uint32_t mode)
+{
+    const uint32_t preload_cap = PIXEL_FETCH_LEAD - 2u;
+    if (pixel_mode_half_rate(mode))
+    {
+        return preload_cap;
+    }
+    const uint32_t trigger_cap = 16u - 2u * pixels_bits_per_group(mode);
+    return trigger_cap < preload_cap ? trigger_cap : preload_cap;
+}
+
+// pixel_skip as CONSUMED at the line's preload: the register truncated to four
+// bits, the depth clamp, then the cap.
 constexpr uint32_t pixels_skip_effective(uint32_t mode, uint32_t pixel_skip)
 {
-    return (pixels_bits_per_clock(mode) == 2u) ? (pixel_skip & ~1u) : pixel_skip;
+    const uint32_t s   = pixels_skip_depth_clamp(mode, pixel_skip & 0xFu);
+    const uint32_t cap = pixels_skip_cap(mode);
+    return s > cap ? cap : s;
+}
+
+// ---------------------------------------------------------------------------
+// WORDS PER LINE — the rule the display-list author must satisfy
+// ---------------------------------------------------------------------------
+//
+//     words per line = record + (effective pixel_skip != 0 ? 1 : 0)
+//
+//     record = 40 (1bpp full)   20 (1bpp half)   80 (2bpp full)   40 (2bpp half)
+//              80 (4bpp half)   80 (attr full)   40 (attr half)
+//
+// A line entered at bit s > 0 gets only 16-s bits out of its first word, so it
+// needs ONE more word and its tail shows REAL stream data rather than zeros —
+// which is what a horizontal scroll wanted.  Exactly one extra word is ever
+// read, never two.  Attribute mode takes no skip, so it is always its record.
+
+// A line's record, in 16-bit words, ignoring skip.  4bpp full rate has no
+// answer: the caller must not ask.
+constexpr uint32_t pixels_record_words(uint32_t mode)
+{
+    const uint32_t d    = pixel_mode_depth(mode);
+    const bool     half = pixel_mode_half_rate(mode);
+    if (d == PIXEL_DEPTH_ATTR)
+    {
+        // One word per eight-group cell.
+        return pixels_groups_per_line(mode) / 8u;
+    }
+    if (d == PIXEL_DEPTH_4BPP && !half)
+    {
+        return 0u;   // UNDEFINED mode: refused, not computed
+    }
+    return pixels_groups_per_line(mode) * pixels_bits_per_group(mode) / 16u;
+}
+
+constexpr bool pixels_mode_defined(uint32_t mode)
+{
+    return !(pixel_mode_depth(mode) == PIXEL_DEPTH_4BPP && !pixel_mode_half_rate(mode));
 }
 
 constexpr uint32_t pixels_words_per_line(uint32_t mode, uint32_t pixel_skip)
 {
-    const uint32_t bits = pixels_groups_per_line(mode) * pixels_bits_per_clock(mode) +
-                          pixels_skip_effective(mode, pixel_skip);
-    return (bits + 15) / 16;
+    return pixels_record_words(mode) +
+           (pixels_skip_effective(mode, pixel_skip) != 0u ? PIXELS_SKIP_EXTRA_WORDS : 0u);
 }
 
-// The four unscrolled line lengths, derived rather than tabulated.  pixel.v's
-// end-of-line fetch cutoff makes an unscrolled line read EXACTLY its record —
-// 80 bytes in 1bpp, 160 in a two-bit full-rate mode, 40/80 at half rate — so
-// these are the byte counts pixel_tb.v's check_reads() asserts, in words.
-inline constexpr uint32_t PIXELS_WORDS_1BPP     = pixels_words_per_line(PIXEL_MODE_DIRECT_1BPP, 0);
-inline constexpr uint32_t PIXELS_WORDS_MICROHAM = pixels_words_per_line(PIXEL_MODE_MICRO_HAM, 0);
-inline constexpr uint32_t PIXELS_WORDS_INDEXED2 = pixels_words_per_line(PIXEL_MODE_INDEXED_2BPP, 0);
-inline constexpr uint32_t PIXELS_WORDS_HALF_1BPP =
-    pixels_words_per_line(PIXEL_MODE_DIRECT_1BPP | PIXEL_MODE_HALF_RATE, 0);
-inline constexpr uint32_t PIXELS_WORDS_HALF_INDEXED2 =
-    pixels_words_per_line(PIXEL_MODE_INDEXED_2BPP | PIXEL_MODE_HALF_RATE, 0);
+// The seven defined line lengths, derived rather than tabulated, and checked
+// against griffin.yml's constants — which are checked in turn against
+// pixel_tb.v's MEASURED CONSTANTS table.
+inline constexpr uint32_t PIXELS_WORDS_1BPP =
+    pixels_words_per_line(pixel_mode(PIXEL_DEPTH_1BPP, false), 0);
+inline constexpr uint32_t PIXELS_WORDS_1BPP_HALF =
+    pixels_words_per_line(pixel_mode(PIXEL_DEPTH_1BPP, true), 0);
+inline constexpr uint32_t PIXELS_WORDS_2BPP =
+    pixels_words_per_line(pixel_mode(PIXEL_DEPTH_2BPP, false), 0);
+inline constexpr uint32_t PIXELS_WORDS_2BPP_HALF =
+    pixels_words_per_line(pixel_mode(PIXEL_DEPTH_2BPP, true), 0);
+inline constexpr uint32_t PIXELS_WORDS_4BPP_HALF =
+    pixels_words_per_line(pixel_mode(PIXEL_DEPTH_4BPP, true), 0);
+inline constexpr uint32_t PIXELS_WORDS_ATTR =
+    pixels_words_per_line(pixel_mode(PIXEL_DEPTH_ATTR, false), 0);
+inline constexpr uint32_t PIXELS_WORDS_ATTR_HALF =
+    pixels_words_per_line(pixel_mode(PIXEL_DEPTH_ATTR, true), 0);
 
-static_assert(PIXELS_WORDS_1BPP == 40);
-static_assert(PIXELS_WORDS_MICROHAM == 80);
-static_assert(PIXELS_WORDS_INDEXED2 == 80);
-static_assert(PIXELS_WORDS_HALF_1BPP == 20);
-static_assert(PIXELS_WORDS_HALF_INDEXED2 == 40);
-static_assert(pixels_words_per_line(PIXEL_MODE_MICRO_HAM | PIXEL_MODE_HALF_RATE, 0) ==
-              PIXELS_WORDS_MICROHAM,
-              "half rate is masked off in micro-HAM, so it may not shorten the line");
-static_assert(pixels_bits_per_clock(PIXEL_MODE_MICRO_HAM | PIXEL_MODE_INDEXED_2BPP) == 2,
-              "the reserved 11 encoding is micro-HAM by construction");
+static_assert(PIXELS_WORDS_1BPP      == Griffin::PIXELS_WORDS_PER_LINE_1BPP);
+static_assert(PIXELS_WORDS_1BPP_HALF == Griffin::PIXELS_WORDS_PER_LINE_1BPP_HALF);
+static_assert(PIXELS_WORDS_2BPP      == Griffin::PIXELS_WORDS_PER_LINE_2BPP);
+static_assert(PIXELS_WORDS_2BPP_HALF == Griffin::PIXELS_WORDS_PER_LINE_2BPP_HALF);
+static_assert(PIXELS_WORDS_4BPP_HALF == Griffin::PIXELS_WORDS_PER_LINE_4BPP_HALF);
+static_assert(PIXELS_WORDS_ATTR      == Griffin::PIXELS_WORDS_PER_LINE_ATTR);
+static_assert(PIXELS_WORDS_ATTR_HALF == Griffin::PIXELS_WORDS_PER_LINE_ATTR_HALF);
+
+static_assert(PIXELS_WORDS_1BPP == 40 && PIXELS_WORDS_1BPP_HALF == 20);
+static_assert(PIXELS_WORDS_2BPP == 80 && PIXELS_WORDS_2BPP_HALF == 40);
+static_assert(PIXELS_WORDS_4BPP_HALF == 80);
+static_assert(PIXELS_WORDS_ATTR == 80 && PIXELS_WORDS_ATTR_HALF == 40);
+static_assert(!pixels_mode_defined(pixel_mode(PIXEL_DEPTH_4BPP, false)),
+              "4bpp full rate is undefined and must be refused, not computed");
+static_assert(pixels_skip_effective(pixel_mode(PIXEL_DEPTH_1BPP, false), 15) ==
+              Griffin::PIXELS_SKIP_MAX_1BPP);
+static_assert(pixels_skip_effective(pixel_mode(PIXEL_DEPTH_1BPP, true), 15) ==
+              Griffin::PIXELS_SKIP_MAX_1BPP);
+static_assert(pixels_skip_effective(pixel_mode(PIXEL_DEPTH_2BPP, false), 14) ==
+              Griffin::PIXELS_SKIP_MAX_2BPP);
+static_assert(pixels_skip_effective(pixel_mode(PIXEL_DEPTH_2BPP, true), 15) ==
+              Griffin::PIXELS_SKIP_MAX_2BPP_HALF);
+static_assert(pixels_skip_effective(pixel_mode(PIXEL_DEPTH_4BPP, true), 15) ==
+              Griffin::PIXELS_SKIP_MAX_4BPP_HALF);
+static_assert(pixels_skip_effective(pixel_mode(PIXEL_DEPTH_ATTR, false), 9) == 0,
+              "attribute mode refuses pixel_skip");
+static_assert(pixels_words_per_line(pixel_mode(PIXEL_DEPTH_1BPP, false), 3) ==
+              PIXELS_WORDS_1BPP + 1,
+              "a skipped line reads its record plus one word");
+static_assert(pixels_words_per_line(pixel_mode(PIXEL_DEPTH_2BPP, false), 1) ==
+              PIXELS_WORDS_2BPP,
+              "the depth clamp turns 2bpp skip 1 into 0, so no extra word");
+
+// ---------------------------------------------------------------------------
+// THE PALETTE — 16 x 12 of external RAM, and a THREE-WORD table entry
+// ---------------------------------------------------------------------------
+//
+// The RAM's data inputs are COMPOSITOR's set_pix_value[11:0]; PIXEL supplies
+// only the address (IDX) and the write pulse.  COMPOSITOR re-registers that bus
+// from EVERY staged word, and stages one every two clocks, so the clut_data
+// SET's own payload owns the write window's first half and the word behind it
+// owns the second: the entry is
+//
+//      SET pix_clut_index, i
+//      SET pix_clut_data,  V
+//      SET 7 (the filler), V      <- the SAME twelve bits, or the RAM stores
+//                                    the next word's payload instead
+//
+// and the four pixel clocks after the data SET's commit (its own slot + 3) are
+// DISTURBED: one shows the entry being written, two are undefined while /WE is
+// low and the RAM recovers, and the fourth is a guard for a write-recovery time
+// that is not pinned yet.  They must be in blanking or covered by a
+// non-passthrough source; in particular the word after the filler must not be
+// the RUN that resumes passthrough.  All of it is measured by clut_pair_tb.v.
+//
+// THE RAM IS NEVER RESET — not by /RS, not at power-up.  The model and the
+// emulator fill it with reproducible random values at construction so a list
+// that forgets an entry fails loudly.
+inline constexpr uint32_t PALETTE_ENTRIES = 16;
+inline constexpr uint32_t PALETTE_WORDS_PER_ENTRY = Griffin::VIDCMD_WORDS_PER_CLUT_ENTRY;
+static_assert(PALETTE_WORDS_PER_ENTRY == 3);
+
+// The pixel slots a clut_data SET disturbs, counted from the SET's OWN slot:
+// slots +1..+3 are the measured disturbance and +4 is the recovery guard, so
+// PALETTE_WRITE_DISTURBED_SLOTS slots after the SET's slot must be covered.
+inline constexpr uint32_t PALETTE_WRITE_MEASURED_SLOTS  = 3;
+inline constexpr uint32_t PALETTE_WRITE_DISTURBED_SLOTS = 4;
+
+// Entries a 1bpp / 2bpp line can reach: pix_base selects a PAIR in 1bpp and a
+// QUAD in 2bpp, so these are the base values that mean anything.
+constexpr uint32_t palette_index_1bpp(uint32_t pix_base, uint32_t bit)
+{
+    return ((pix_base & 0xEu)) | (bit & 1u);
+}
+
+constexpr uint32_t palette_index_2bpp(uint32_t pix_base, uint32_t dibit)
+{
+    return ((pix_base & 0xCu)) | (dibit & 3u);
+}
+
 
 // ============================================================================
 // VIDCMD instruction stream
@@ -588,8 +732,8 @@ inline constexpr uint32_t RUN_SRC_COLOR0      = RUN_SRC_HELD_BG;
 // apart (see the mid-line-split case).  RUN_COLOR is a single atomic word.
 //
 // colour[2:0] is {R, G, B}: bit 11 red, bit 10 green, bit 9 blue.  Each bit is
-// replicated across its whole nibble — {4{r}, 4{g}, 4{b}} — the same trick the
-// micro-HAM chroma codes use, giving the eight saturated corners of the cube.
+// replicated across its whole nibble — {4{r}, 4{g}, 4{b}} — giving the eight
+// saturated corners of the colour cube.
 //
 // The count is 9 bits and stored complemented, matching the convention the
 // 12-bit RUN count already uses: the field is ~count masked to the field
@@ -617,16 +761,26 @@ constexpr Rgb444 run_colour_to_rgb444(uint32_t code)
                   ((code >> 0) & 1u) != 0 ? 0xFu : 0x0u);
 }
 
-// SET targets, PROVISIONAL numbering (index order as specified).  0..1 are
-// COMPOSITOR's own registers, 2..6 are forwarded to PIXEL, 7 is spare.
+// SET targets.  0..1 are COMPOSITOR's own registers, 2..6 are forwarded to
+// PIXEL, and 7 is decoded NOWHERE — which is what makes it the palette-write
+// filler (see "THE PALETTE" above and vidcmd-spec.md §3.2).
 inline constexpr uint32_t SET_CMP_HELD_FG    = 0;
 inline constexpr uint32_t SET_CMP_HELD_BG    = 1;
-inline constexpr uint32_t SET_PIX_PAL_FG     = 2;
-inline constexpr uint32_t SET_PIX_PAL_BG     = 3;
-inline constexpr uint32_t SET_PIX_HAM_HELD   = 4;
+inline constexpr uint32_t SET_PIX_CLUT_INDEX = 2;
+inline constexpr uint32_t SET_PIX_CLUT_DATA  = 3;
+inline constexpr uint32_t SET_PIX_BASE       = 4;
 inline constexpr uint32_t SET_PIX_MODE       = 5;
 inline constexpr uint32_t SET_PIX_PIXEL_SKIP = 6;
-inline constexpr uint32_t SET_SPARE_7        = 7;
+inline constexpr uint32_t SET_FILLER         = 7;
+
+static_assert(SET_CMP_HELD_FG    == Griffin::VIDCMD_SET_CMP_COLOR1);
+static_assert(SET_CMP_HELD_BG    == Griffin::VIDCMD_SET_CMP_COLOR0);
+static_assert(SET_PIX_CLUT_INDEX == Griffin::VIDCMD_SET_PIX_CLUT_INDEX);
+static_assert(SET_PIX_CLUT_DATA  == Griffin::VIDCMD_SET_PIX_CLUT_DATA);
+static_assert(SET_PIX_BASE       == Griffin::VIDCMD_SET_PIX_BASE);
+static_assert(SET_PIX_MODE       == Griffin::VIDCMD_SET_PIX_MODE);
+static_assert(SET_PIX_PIXEL_SKIP == Griffin::VIDCMD_SET_PIX_PIXEL_SKIP);
+static_assert(SET_FILLER         == Griffin::VIDCMD_SET_FILLER);
 
 // The color-numbered spelling of targets 0 and 1, matching compositor.v's
 // cmp_color1 / cmp_color0 and griffin.yml's VIDCMD_SET_CMP_COLOR1 /
@@ -643,7 +797,7 @@ inline constexpr uint32_t SET_CMP_COLOR0 = SET_CMP_HELD_BG;   // target 1
 
 constexpr bool vidcmd_set_targets_pixel(uint32_t target)
 {
-    return target >= SET_PIX_PAL_FG && target <= SET_PIX_PIXEL_SKIP;
+    return target >= SET_PIX_CLUT_INDEX && target <= SET_PIX_PIXEL_SKIP;
 }
 
 // Held colours at /RS (vsync), and the playback state it resets to.  Straight
@@ -874,6 +1028,38 @@ constexpr uint16_t vidcmd_set(uint32_t target, uint32_t value)
 constexpr uint32_t vidcmd_set_target(uint16_t w) { return (w >> 12) & 0x7; }
 constexpr uint32_t vidcmd_set_value(uint16_t w)  { return w & 0xFFF; }
 
+// ---------------------------------------------------------------------------
+// One palette entry, as the three words it really is
+// ---------------------------------------------------------------------------
+//
+// SET clut_index, SET clut_data, and a SAME-VALUE SET to the filler target.
+// The filler is not optional and it is not decoration: COMPOSITOR re-registers
+// set_pix_value from every staged word, so without it the RAM stores whatever
+// the next word carries (clut_pair_tb.v S1a/S1b).  Authors emit entries through
+// this helper and never hand-roll the pair, which is the whole point of it
+// living here.
+//
+// THE THREE WORDS MUST BE CONSECUTIVE IN THE STREAM, and the four pixel slots
+// starting at the data SET's own slot must be blanking or covered — see
+// "THE PALETTE" above.
+struct PaletteEntryWords
+{
+    uint16_t w[3];
+
+    constexpr const uint16_t *begin() const { return w; }
+    constexpr const uint16_t *end() const { return w + 3; }
+    static constexpr uint32_t size() { return PALETTE_WORDS_PER_ENTRY; }
+};
+
+constexpr PaletteEntryWords vidcmd_palette_entry(uint32_t index, Rgb444 colour)
+{
+    return PaletteEntryWords{{
+        vidcmd_set(SET_PIX_CLUT_INDEX, index & 0xFu),
+        vidcmd_set(SET_PIX_CLUT_DATA, colour),
+        vidcmd_set(SET_FILLER, colour),
+    }};
+}
+
 // Words this record occupies in the stream: one, except MASK's header + data.
 constexpr uint32_t vidcmd_record_words(uint16_t lead)
 {
@@ -955,7 +1141,8 @@ inline constexpr uint32_t VIDCMD_PAIR_SLOT_GAP = 1;
 // not a sum.
 inline constexpr uint32_t VIDCMD_BANK_DEPTH = 2;
 
-// PIXEL's own ham_held -> RGB_OUT register, from pixel.v's lead discussion.
+// PIXEL's own consumed-group -> registered IDX stage, from pixel.v's lead
+// discussion.  The palette RAM is combinational, so it adds nothing.
 inline constexpr uint32_t PIXEL_OUT_LEAD = 1;
 
 // ---------------------------------------------------------------------------

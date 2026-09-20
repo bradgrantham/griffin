@@ -1,5 +1,10 @@
 # Indexed PIXEL + palette RAM — spec draft for review
 
+**FOLDED IN.**  As of package 2 this draft's content is current fact in
+`vidcmd-spec.md` (§1, §2, §3's SET table, §3.2, §5, §6, §7, §8) and in
+`griffin.yml`; the file is kept as the review record of how the design was
+agreed, not as a source anything should be read out of.
+
 Status: DRAFT 2026-09-20.  Nothing here is law until it is folded into
 `vidcmd-spec.md` together with the RTL, testbench, model, suite and emulator
 (CLAUDE.md, video-chain discipline).  Evidence and fit ladders:

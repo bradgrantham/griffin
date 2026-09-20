@@ -368,18 +368,20 @@ enum class ScreenStyle : uint8_t
     KIOSK   = 2,
 };
 
-// The PIXEL mode register, as the BIT FIELD pixel.v decodes (descriptor.h):
-// bit 0 micro-HAM, bit 1 2bpp indexed, bit 2 half rate.  The named combinations
-// below are conveniences, not an enumeration — HALF_RATE is an OR-able flag and
-// the list builder may hand any of these to SET(pix_mode) verbatim.
+// The PIXEL mode register as pixel.v decodes it (descriptor.h): a DEPTH
+// ENUMERATION in mode[1:0] plus the half-rate flag in mode[2].  Every playfield
+// pixel is a palette index, so a mode says how many bits a pixel costs and
+// nothing about colour.
 enum class PixelMode : uint8_t
 {
-    DIRECT_1BPP       = PIXEL_MODE_DIRECT_1BPP,    // 40 words/line, 1 bit per clock
-    MICRO_HAM         = PIXEL_MODE_MICRO_HAM,      // 80 words/line, 2 bits per clock
-    INDEXED_2BPP      = PIXEL_MODE_INDEXED_2BPP,   // 80 words/line, 2 bits per clock
-    HALF_RATE         = PIXEL_MODE_HALF_RATE,      // the flag on its own
-    HALF_1BPP         = PIXEL_MODE_DIRECT_1BPP | PIXEL_MODE_HALF_RATE,     // 20 words/line
-    HALF_INDEXED_2BPP = PIXEL_MODE_INDEXED_2BPP | PIXEL_MODE_HALF_RATE,    // 40 words/line
+    DIRECT_1BPP   = PIXEL_DEPTH_1BPP,                             // 40 words/line
+    TWO_BPP       = PIXEL_DEPTH_2BPP,                             // 80 words/line
+    ATTR          = PIXEL_DEPTH_ATTR,                             // 80 words/line
+    HALF_1BPP     = PIXEL_DEPTH_1BPP | PIXEL_MODE_HALF_RATE,      // 20 words/line
+    HALF_TWO_BPP  = PIXEL_DEPTH_2BPP | PIXEL_MODE_HALF_RATE,      // 40 words/line
+    HALF_FOUR_BPP = PIXEL_DEPTH_4BPP | PIXEL_MODE_HALF_RATE,      // 80 words/line
+    HALF_ATTR     = PIXEL_DEPTH_ATTR | PIXEL_MODE_HALF_RATE,      // 40 words/line
+    // 4bpp at FULL rate is undefined and deliberately has no name here.
 };
 
 constexpr uint32_t pixel_mode_bits(PixelMode m)
@@ -429,10 +431,28 @@ enum class FramingMode : uint8_t
     JIT = 1,
 };
 
+// The palette PAIRS the slot-arithmetic cases switch between with a mid-line
+// SET(pix_base).  1bpp forms its index as {pix_base[3:1], bit}, so a base value
+// names a pair and its low bit is ignored; each pair below is loaded with a
+// single colour so a pixel's colour names the pair and not the bitmap.
+// They are chosen so the SAME values name a distinct PAIR in 1bpp and a distinct
+// QUAD in 2bpp ({base[3:2], dibit}), which is what lets one authoring path serve
+// both the 1bpp and the 2bpp slot-arithmetic cases.
+inline constexpr uint32_t REGRESSION_BASE_HI = 8;   // 1bpp pair 8/9
+inline constexpr uint32_t SPLIT_BASE_MID     = 4;   // 1bpp pair 4/5, 2bpp quad 4..7
+inline constexpr uint32_t SPLIT_BASE_HI      = 8;   // 1bpp pair 8/9, 2bpp quad 8..B
+
 // Bytes reserved per line in the authored VIDCMD region.  160 words is well
 // above the ~150-word worst case the tempest density sweep reaches, and keeps
 // the per-line address a small multiply on the target.
 inline constexpr uint32_t VIDCMD_LINE_STRIDE_BYTES = 320;
+
+// Where the frame's VBLANK palette preamble is staged: one spare line slot above
+// the 480 per-line regions.  The preamble is deposited during vertical blanking,
+// with no HBLANK wait, which is where a sixteen-entry load belongs — 48 words is
+// more than an HBLANK can deliver, and in vblank the writes' disturbed pixel
+// slots do not exist.
+inline constexpr uint32_t VIDCMD_PREAMBLE_SLOT = 480;   // V_ACTIVE
 
 struct FrameParams
 {
@@ -454,20 +474,31 @@ struct FrameParams
     // blanking, applies immediately and costs no active slot.  A SET emitted
     // between records lands in active video and costs exactly one slot, which
     // is precisely the mechanism the mid-line split uses.
-    bool per_line_palette     = false;   // SET pix_pal_fg / pix_pal_bg per line
+    bool per_line_palette     = false;   // reload entries 0 and 1 in every HBLANK
     bool per_line_mode        = false;   // SET pix_mode / pix_pixel_skip per line
 
-    // 2bpp indexed's third palette entry, dibit 10.  Emitted ONCE PER FRAME,
-    // on line 0, and IMMEDIATELY AFTER the SET(pix_mode) that puts PIXEL in
-    // indexed mode — the ordering rule in descriptor.h.  Once per frame rather
-    // than once per line is deliberate: it is the strongest available assertion
-    // that the mode really does lock the stream and the blanking reload out of
-    // ham_held, because in any other mode blanking would overwrite it with
-    // pal_fg before line 1 ever started.  /RS at vsync is why it is needed at
-    // all each frame.
-    bool   frame_ham_held     = false;
-    Rgb444 ham_held_color     = rgb444(15, 12, 0);
+    // THE PALETTE THE FRAME LOADS.  Nothing in hardware clears the RAM — not
+    // /RS, not power-up — so a list must load every entry it displays, and the
+    // model powers the RAM up with random contents so a list that forgets one
+    // fails instead of reading a convenient black.  These entries are loaded
+    // ONCE PER FRAME, in the frame's own preamble (line 0's blanking), each as
+    // the three-word entry of vidcmd-spec.md §3.2.
+    //
+    // Loading once per frame rather than once per line is itself an assertion:
+    // the entries have to survive 479 following lines and the /RS in between
+    // frames, which is what "the RAM is not reset" means.
+    std::array<Rgb444, PALETTE_ENTRIES> palette = {};
+    uint32_t palette_entries  = 0;       // how many of them to load
 
+    // pix_base: which PAIR (1bpp) or QUAD (2bpp) of palette entries the
+    // playfield selects.  Emitted with the mode.
+    uint32_t pix_base         = 0;
+
+    // THE MID-LINE SPLIT.  Two SET(pix_base) records in a banked pair, landing
+    // on consecutive slots: slot `split_pixel` selects the pair loaded with
+    // split_bg and slot split_pixel+1 the pair loaded with split_fg, so each
+    // SET's own pixel names it.  Both pairs carry ONE colour, which is what
+    // makes "the pixel this SET landed on" unambiguous whatever the bitmap says.
     bool     mid_line_split   = false;
     uint32_t split_pixel      = 320;
     Rgb444   split_fg         = rgb444(15, 0, 0);
@@ -587,16 +618,7 @@ void write_test_pattern_1bpp(Memory ram, uint32_t base, uint32_t stride_bytes,
 void write_solid_pattern_1bpp(Memory ram, uint32_t base, uint32_t stride_bytes,
                               uint32_t words_per_line, uint32_t lines);
 
-// A micro-HAM line, hand-checkable by construction:
-//   pixels   0..159  code 0_1  -> held <- pix_pal_fg
-//   pixels 160..319  code 0_0  -> held <- pix_pal_bg
-//   pixels 320..639  4-bit chroma codes stepping red/green/blue between 0x0
-//                    and 0xF, giving eight flat colour blocks
-// 160*2 + 160*2 + 160*4 = 1280 bits = exactly 80 words.
-void write_test_pattern_microham(Memory ram, uint32_t base, uint32_t stride_bytes,
-                                 uint32_t lines);
-
-// A 2bpp indexed line: sixteen 40-pixel blocks cycling through all four codes,
+// A 2bpp line: sixteen 40-pixel blocks cycling through all four codes,
 // with the phase stepping every 8 lines so the blocks staircase down the frame.
 //
 //   code(x, y) = ((x / IDX2_BLOCK_W) + (y / IDX2_BLOCK_PHASE)) % 4
@@ -615,6 +637,40 @@ constexpr uint32_t idx2_pattern_code(uint32_t x, uint32_t y)
 
 void write_test_pattern_indexed2(Memory ram, uint32_t base, uint32_t stride_bytes,
                                  uint32_t lines);
+
+// A 4bpp HALF-RATE line: 320 nibbles, each a palette index straight out, in
+// sixteen 20-group bands that rotate one entry per line so every entry of the
+// sixteen is exercised on every line and the bands stripe down the frame.
+// 320 nibbles = 1280 bits = exactly 80 words.
+constexpr uint32_t idx4_pattern_code(uint32_t group, uint32_t y)
+{
+    return ((group / 20u) + y) % PALETTE_ENTRIES;
+}
+
+void write_test_pattern_indexed4_half(Memory ram, uint32_t base, uint32_t stride_bytes,
+                                      uint32_t lines);
+
+// An ATTRIBUTE line: one {fg[3:0], bg[3:0], pattern[7:0]} word per eight-group
+// cell, so 80 words at full rate and 40 at half.  The cell's colours step down
+// the frame and across the line so a mis-paired colour byte is obvious, and the
+// pattern is a glyph-like column pair that makes a wrong pattern bit visible.
+constexpr uint32_t attr_cell_fg(uint32_t cell, uint32_t y)
+{
+    return (cell + y) % PALETTE_ENTRIES;
+}
+
+constexpr uint32_t attr_cell_bg(uint32_t cell, uint32_t y)
+{
+    return (cell + y + 8u) % PALETTE_ENTRIES;
+}
+
+constexpr uint32_t attr_cell_pattern(uint32_t cell, uint32_t y)
+{
+    return ((cell * 37u + y * 11u) & 0xFFu);
+}
+
+void write_test_pattern_attr(Memory ram, uint32_t base, uint32_t stride_bytes,
+                             uint32_t cells_per_line, uint32_t lines);
 
 // Writes each line's VIDCMD records.  Reports the per-line word count, record
 // count, ACTIVE SLOT OCCUPANCY and cadence STRETCH through the caller-provided

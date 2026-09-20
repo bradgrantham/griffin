@@ -1,0 +1,28 @@
+Griffin!
+ROM shadow disabled.
+Vector table copied.
+Memory: 4MB
+RAM test OK
+Firmware Build: 2026-09-20 13:38:59, GIT indexed-pixel f39178b+
+DUART: runtime init (RX irq + 100 Hz tick)
+DUART: SRA=0x0C TXRDY
+DUART TX
+Console on DUART Channel A, 115200 8N1
+VIDEO: framebuffer at 0x3857F0 (480 lines x 80 bytes, headerless)
+ENGINE: list at 0x3F6000, 996 descriptors (7968 bytes), 9 VIDCMD words
+ENGINE: armed at DESC=0x3000
+Memory: 4096 KB
+CF: init failed (err=1) status=0xFF error=0xFF
+PS/2 mouse: ready, 4-byte packets
+Monitor ready; 'help' for commands
+> help
+read  ADDR [LEN]     (rd)  dump LEN bytes (default 1, max 256)
+write ADDR VAL       (wr)  write byte VAL at ADDR
+ls [PATH]                  list directory (default /)
+time                       print time since boot
+run FILE [ARGS...]         load and run FILE from CF
+view IMAGE PALETTE         show a 1bpp (.bin) image
+                           image until a key is pressed
+help                 (?)   this text
+CMD [ARGS...]              run CMD.bin from CF with those args
+> 
