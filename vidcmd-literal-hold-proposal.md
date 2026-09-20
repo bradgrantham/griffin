@@ -119,6 +119,16 @@ non-passthrough cover).  New:
 * Patch pixels over a 4bpp photograph: ~50 exact-colour half-rate pixels per
   line beside 80 pixel words.  `image-tools/clut-experiment` can evaluate it
   with a literal-pixel span model.
+* A true-colour video window over a full-rate desktop (Brad, 2026-09-20):
+  PIXEL shows a 640-wide 1bpp or 2bpp framebuffer; on the window's lines the
+  program is RUN(passthrough, X) + N literals + RUN(passthrough, rest).  The
+  window is 2N screen pixels wide (even width, any X with >= 4 px of run in
+  front).  Budget: ~147 words/line minus 80 (2bpp) leaves ~60 literals = 120
+  screen px; over 1bpp (40) ~100 literals = 200 px.  Descriptors can point at
+  the frame data in place and flip between two buffers in the vsync ISR, so
+  display costs no copying; filling the buffer (e.g. raw RGB444 words from CF,
+  60x45 at 15 fps = ~40 KB/s) is the CPU's job with roughly 45% of the machine
+  left on a 2bpp screen (cost-model estimate, not benchmarked).
 * Any-colour vector dots and short segments (Tempest) in 1-2 words.
 * Bandwidth ceiling with PIXELS idle and ~10% CPU (estimate from the
   `descriptor.h` cost model, 2.44 SYSCLK per word in full descriptors): ~164
