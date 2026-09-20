@@ -628,3 +628,358 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   a small hardware mixer of 0 to 4 voices whose parameters the CPU updates
   every other line, mixed down to the DAC in hardware.  Form not decided;
   keep in mind when the rev 2 audio section is revisited.
+
+2026-09-18 -- Video: palette lookup table after PIXEL (idea, Brad; not adopted)
+  Prompted by the Smurf port, where per-cell background colour changes
+  (SET pal_fg/pal_bg pairs mid-line) tangle with sprite spans in the same
+  COMPOSITOR line program: the pair is two records on different slots,
+  which is the source of the placement rules, the planner and the
+  fallback lines in the port's encoder.  Ideas discussed:
+  - PIXEL outputs an index; an SRAM on the PIXEL->COMPOSITOR colour bus
+    maps it to R4G4B4.  Written through SET during blanking: PIXEL drives
+    the entry address and re-drives the SET value onto the colour bus
+    with the SRAM's output disabled; the entry pointer is a small counter
+    inside PIXEL (one "data, post-increment" target).  About two chips
+    (12 bits wide); micro-HAM bypasses by tri-state.  PIXEL's colour
+    registers would shrink to index width.  Timing of PIXEL tCO + SRAM
+    access + COMPOSITOR setup inside one pixel period not checked.
+  - A PIXEL "attribute word" mode, {fg index 4, bg index 4, pattern 8},
+    one word per 16-pixel cell at half rate, 40 words/line: Graphics II
+    attributes in-band, context-free, needs the table.
+  - Loading the table from ENGINE with an external counter: needs a second
+    driver on both the address and data sides (tri-state counter or mux,
+    bus buffers), four to five parts, sequential loads only.  Rejected in
+    favour of the SET route if this is ever built.
+  - Without a table: an atomic two-word "set pair" record in COMPOSITOR
+    committing both registers on one slot would remove the ordering rule
+    and the one-slot-late law.  Fit not tried.
+  Decision: none of these for now.  COMPOSITOR stays as is; the port uses
+  offline-precomputed context-free cell records and precomputed sprite
+  chunks.  Revisit after the finished Smurf port and the stretch titles
+  (Marble Madness, Tempest) show how well tiles and COMPOSITOR sprites
+  coexist.
+
+2026-09-16 -- Audio: measured cost of a software SN76489 on the 68000 (measurement, Smurf port)
+  Evidence for the 2026-09-15 mixer idea.  A four-voice SN76489 model
+  (3 tone + noise, 16.16 phase accumulators, 2 dB ladder, 15734.375 Hz,
+  mono duplicated into the FIFO's {L,R} word), compiled with m68k-g++ -O2
+  and hand-counted against the MC68000 tables over the recorded Smurf
+  playthrough:
+  - per-sample synthesis: ~390 cycles/sample = ~108k cycles per field,
+    46% of the 233,625-cycle field, on every field (register spills, the
+    noise channel, the clamp/mix-down; BTST/Bcc/ADD.L floors ~35/channel).
+  - run-length (toggle-event) renderer, output bit-identical: median field
+    43k (18%), mean 49k (21%), worst 112k (48%) when a tone sweeps to
+    period 4 with rate-3 noise clocked from it (1.8 shifts/sample; no
+    renderer can fill runs there; band-limiting reaches 41%).
+  So software synthesis of even this simple chip costs a fifth of the CPU
+  on average and half of it in the worst 10% of fields.  A 0-4 voice
+  hardware mixer updated per line would delete that cost; the per-line
+  parameter traffic is ~9 PSG bytes per frame for this game.  Source and
+  numbers: griffin-ports/smurf/app/audio (private).
+
+2026-09-16 -- Audio: the 256-pair FIFO cannot hold one field (finding, Smurf port)
+  A field is 262.5 pairs at 15,734.375 Hz, so AUDIO_FIFO_DEPTH = 256 is
+  less than one field and the 168-pair prime is 0.64 of one.  ENGINE
+  stops on stop_after, so a missed vblank deposits nothing while PORTS
+  pops 263: one miss empties the FIFO, and because the level is
+  dead-reckoned (no half-full flag, no interrupt) it never recovers.
+  Measured under the emulator on the Smurf replay: 11 missed fields in
+  4,478 turned into 35% of the run's samples being a held DAC until the
+  app re-primed after every missed field (two fields of silence).  For
+  rev 2: either a deeper FIFO (>= 2 fields, 512 pairs) or a level
+  indication, or the per-line hardware mixer above, which has no FIFO
+  level to lose.
+
+2026-09-15 -- Audio mixing: saturating-accumulator fit experiment (idea, Brad)
+  Idea: two 8-bit saturating accumulators between D[15:0] and the AUDIO
+  FIFO pair so display-list descriptors do the voice summing ("clear, add
+  voice A, add voice B, ..., load FIFO").  Where it could live:
+  - PORTS: 120/128 LC, 42/64 I/O (ports.fit).  Pins would suffice, cells
+    do not, and nothing in PORTS is movable to TIMING: every PORTS
+    function but the AUDIO_TICK pop gate is CPU-bus-facing and TIMING has
+    no bus pins and runs on PIXEL_CLK.
+  - TIMING as built: 35/64 LC, 15/32 I/O; too small for 16 D pins plus
+    two 8-bit adders.  A 1508 TIMING would hold it on paper (35+54 LC,
+    15+21 pins) but drags D[15:0] and a CPUCLK domain into the raster
+    chip and changes its footprint/JTAG position.  Rejected in favour of
+    a fifth bus-side chip.
+  Fit ladder, ATF1504AS PLCC44, -preassign ignore, JTAG on (cpld/tmp/mixer.v):
+    stereo 8-bit saturating accumulators, bus-slave read of {L,R} in the
+    unmapped 0x400000-0x7FFFFF window with clear on the decode falling
+    edge, ENGINE spare strobe as ADD:          54/64 LC, 17 FF, 217 PT,
+                                               25/32 I/O; pass 1 placement
+                                               fails, pass 2 (cascade) fits
+    same, wrapping add (no saturation):        46/64 LC, 17 FF, 183 PT
+    xor_synthesis = on: no change in either rung.
+  Zero ENGINE/GLUE/PORTS changes in that form: the "load" is a one-word
+  descriptor reading 0x400000 with nAUDIO_FIFO_W (A23=0, A22=1 is decoded
+  by nobody today; ENGINE's src reaches it), the clear rides on the read.
+  Open: SRAM tOHZ vs mixer drive-on at the RAM->window address turnover
+  (bus contention of order 10 ns, not checked against datasheets).
+  Budget (derived from engine.v's state walk, not measured): ~16 CPUCLK
+  per one-word descriptor, so ~80 of the 890 CPUCLK per 15.734 kHz sample
+  for 4 voices (~9% of the bus), plus 4 x 256 x 8-byte descriptors =
+  10 KB of static list per 256-sample fill and a contiguous 512-byte
+  ping-pong copy per voice per fill (~4-5% CPU).  A CPU-only 4-voice
+  stereo saturating mix is ~200 cycles/sample (~22%).  Alternatives noted
+  in the same discussion: (a) a second FIFO pair + DAC ladders summed in
+  analog (Paula style) on the spare strobe, no logic, 2 voices/side max;
+  (b) a 1508 mixer owning the FIFO D inputs and /W that auto-loads every
+  Nth add, so voice-interleaved buffers stream with plain count=32
+  descriptors (~1% bus); not fitted.  See also the 2026-09-15 "right
+  primitive?" entry above.
+  Rule this exposed (Brad, same day): the list can be static, so the cost
+  is not authoring records but ENGINE walking them.  A 4-word fetch plus
+  an arbitration round trip (~16 CPUCLK) per ONE payload word is the same
+  order as the CPU's own load-and-saturating-add, so a read-clear
+  accumulator forces count=1 descriptors and gains almost nothing.
+  ENGINE pays off only when a descriptor carries many payload words;
+  any mixing scheme must let a count=32 descriptor stay count=32
+  (auto-load mixer over interleaved buffers, or one FIFO per voice).
+
+2026-09-19 -- Video: indexed PIXEL + CLUT, direction of thinking (idea, Brad; not adopted)
+  After playing the Smurf build: picture updates drop out during jumps
+  (32 player lines at ~10k cycles each), so the cell assembler is judged
+  probably insufficient.  Requirement restated: background static and
+  prebuilt, scrolled by moving PIXEL DMA pointers, sprites merged cheaply;
+  i.e. background colour must travel in the PIXEL stream.
+  - Favoured: PIXEL becomes index-only, CLUT SRAM between PIXEL and
+    COMPOSITOR, attribute-word mode {fg4,bg4,pattern8} ("Graphics II
+    inline"; fiction: TMS9918 IP licensed piecemeal).  Micro-HAM dropped to
+    recover PIXEL capacity; 4bpp indexed mode added back if it fits.
+  - CLUT load through VIDCMD: SET selects the entry index, a new record
+    carries the colour.  Post-increment of the index would let one hblank
+    packet (<= 26 words) reload all 16 entries per line; without it, ~13.
+  - Photo display replacement for micro-HAM: per-line CLUT reload plus
+    COMPOSITOR RUN spans for refinement.
+  - In-hand SRAMs (MCM60L64P10 100 ns, KM6264L-15 150 ns) are too slow even
+    at half rate (pixel 79 ns minus PIXEL tCO and COMPOSITOR tSU).  If every
+    mode passes through the table, full rate needs roughly a 15 ns part
+    (two x8 for R4G4B4); datasheet budget not yet done.
+  - Open: who drives SRAM data on a write (COMPOSITOR colour pins turned
+    around?), write-strobe timing inside one dot clock, whether writes are
+    safe under a RUN as well as in blanking.  First step when taken up: a
+    PIXEL fit ladder (strip micro-HAM, index out, attribute word, 4bpp).
+
+2026-09-19 -- Video: CLUT photo experiment, host-only (measurement)
+  image-tools/clut-experiment/ (DESIGN.md, make check, out/index.html).
+  Four photographs, 640x480, scored with microham_encode's own two metrics
+  (its printed numbers reproduced to rounding).  Best variant per mode,
+  4x4-box error / per-pixel RGB444 error:
+    image    mham-ordered  mham-fs      c4h(320x4bpp) c2f(640x2bpp) attr(40w)
+    maya2    653.9/6.87    137.1/13.15  33.5/0.56     93.7/1.17     44.5/0.76
+    millie2  1030.9/9.21   176.2/17.86  41.3/0.53     127.0/1.24    51.5/0.68
+    adobe2   946.5/10.53   236.3/19.78  89.9/2.22     288.2/3.03    147.4/2.89
+    oops2    257.3/2.44    79.7/5.93    25.6/0.74     67.7/0.48     67.8/0.66
+  c4h = 80 pixel words/line, the same as micro-HAM; attr = the tile mode
+  {fg4,bg4,pattern8} showing a photo.  Both beat micro-HAM by 4-20x on the
+  box metric, mostly undithered.
+  - Reload count hardly matters: the encoder uses 2-5 loads/line even when
+    allowed 16; K=4 costs 0.2-3.3% against K=16.  Post-increment on the CLUT
+    index is NOT needed for photos.
+  - Refinement spans matter: 16 spans/line (3 words each, conservative
+    placement stand-in, not the planner recurrence) cut box error ~36% on
+    the 4bpp and attr modes and 5x on 2bpp.
+  - 640x4bpp (160 pixel words) exceeds the 147-word line budget; only ~8-25%
+    better than 320x4bpp anyway.
+
+2026-09-19 -- Video: indexed-PIXEL plan sketch (proposal, not adopted)
+  - COMPOSITOR needs no RTL or pin change (it is 121/128 LC, 64/64 I/O):
+    it forwards SET target/value to PIXEL as today.  PIXEL-side targets are
+    re-meant: 2 = clut_index, 3 = clut_data (writes SRAM), 4 = pix_base,
+    5 = pix_mode, 6 = pix_skip, 7 spare.  pal_fg/pal_bg/ham_held retire.
+  - PIXEL: IDX[3:0] out -> SRAM address; the twelve former RGB pins stay on
+    the SRAM data / COMPOSITOR RGB_IN bus, hi-Z except during a CLUT write,
+    when PIXEL re-drives set_pix_value onto them; plus /CLUT_WE, /CLUT_OE.
+    Write = FF-timed multi-clock sequence, no half-clock strobes.  A write
+    disturbs the pixel bus for its duration: legal in blanking or under a
+    non-passthrough RUN.
+  - Modes: mode[1:0] depth (1bpp, 2bpp, 4bpp, attr {fg4,bg4,pattern8}),
+    mode[2] half rate.  1bpp/2bpp index = {pix_base, bits}.  No new fetch
+    cadence: attr full rate and 4bpp half rate = 8 clocks/word like 2bpp;
+    attr half rate = 16 like 1bpp.  4bpp full rate left undefined.
+    Attr at full rate is an 80-column colour text mode.
+  - The attr word is the TMS9918 Graphics II colour byte + pattern byte
+    verbatim when the CLUT holds the TMS palette.
+  - Read budget from the pinned VIDCMD FIFO numbers (ATF1508AS-10 tCO 8.0,
+    ~2 flight, T - tSU = 32.7): SRAM tAA <= 22.7 ns; a 15 ns part gives the
+    same +7.7 ns the FIFO path has.  PIXEL speed grade to be confirmed.
+
+2026-09-19 -- Emulator: per-line video DMA stall is not charged (finding); console DMA cost (measurement, emulator model)
+  apps/dmabench/ (RESULTS.md).  Found first: since 76c8a9b (2026-08-13)
+  service_video() discards check_timer()'s return value (emulator.cpp ~4001),
+  so only the arm-time preamble is charged and video is free to the CPU
+  (1bpp console measured 99.9% of video-off).  Second trap:
+  GRIFFIN_DMA_STALL_STEP defaults to 4 and clamps any charge above ~34%.
+  Every emulator CPU-budget measurement since 08-13 (including the Smurf
+  port's late-field and cycles-per-field figures) was taken with free video.
+  Not fixed in emulator/; the bench builds a patched copy in its own dir.
+  With the stall charged (STEP=64), CPU left, analytic / measured, 300 fields:
+    1bpp PIXEL console (as firmware)      76.2% / 76.1%
+    pure-VIDCMD MASK text, 82 words/line  56.1% / 55.9%
+    80 PIXELS words + 6 VIDCMD            51.6% / 51.4%
+    20 PIXELS + 60 VIDCMD (Smurf-like)    56.9% / 56.7%
+  A MASK console leaves the CPU 73.5% of what the 1bpp console leaves it.
+  23% of the MASK screen's cost is descriptor overhead (count <= 32 forces
+  3 descriptors for 82 words).  Cost model: descriptor.h:291-317.
+
+2026-09-19 -- PIXEL: indexed-PIXEL fit ladder (experiment; cpld/experiments/indexed-pixel/RESULTS.md)
+  ATF1508AS PLCC84, production flags, -preassign keep.  LC/FF/nodes+FB/PT/I/O:
+    R0 pixel.v as shipped            105/81/121/391/46  (byte-identical to pixel.fit;
+                                     pixel.v header "120 LC/445 PT" is stale)
+    R1 minus micro-HAM                95/78/ 99/346/46  (HAM = 10 LC, 45 PT, 22 nodes)
+    R2 index-only, 1bpp+2bpp          43/37/ 44/129/30
+    R3 + CLUT write  W1 / W2          92/60/ 96/280/52   50/45/54/154/31
+    R4 + 4bpp half rate              103/63/106/314/52   60/48/60/186/31
+    R5 + attr word (half+full)       112/72/122/364/52   73/57/77/234/31
+    R6 period shape (no full rate,   110/72/118/352/53   68/57/74/215/32
+       PAIR_STROBE)
+    R8 R5b + TIMING in one 1508      112/87/115/357/36  pass 1
+    R8 R6b + TIMING                  104/87/111/329/37  pass 1
+    R9 COMPOSITOR + PIX_BIT bit mode 118/96/146/346/64  direct mux FITS (base
+       122/95/143/389); cur_src form: grouping fail.  PIX_BIT on dedicated
+       input pin 2; 63 frozen pins unchanged.
+  W1 = PIXEL drives a common-I/O SRAM's data bus (+39 LC, +21 pins, pass 2).
+  W2 = separate-I/O RAM with data inputs on set_pix_value; PIXEL muxes
+  clut_index onto IDX and pulses /CLUT_WE; needs 2 idle list slots after a
+  clut_data SET.  ATF1504AS: no fit for R5a/R5b/R6b on any package
+  (grouping fail; macrocells bind, not pins).  idx_tb.v passes for R5a,
+  R5b, R6b (hand-derived index sequences, write sequences); it found a real
+  attr-mode /RE bug during the work.  Open: attr mode reads both PIXELS
+  FIFOs on adjacent clocks (Q-bus turnover inside one clock, electrically
+  unchecked); 4bpp full rate must stay undefined (desyncs the frame); attr
+  skip unsupported; CLUT read-path timing not done.
+
+2026-09-19 -- Emulator: video DMA is charged again, and the pay-down is now derived
+  Two bugs, both in service_video() (emulator/emulator.cpp).  (1) Since
+  76c8a9b (08-13) the return value of video.check_timer() -- the per-scanline
+  walker cost -- was discarded, so only the arm-time preamble walk was ever
+  charged and video DMA was free to the guest.  (2) The SMOOTH pay-down capped
+  the charge at GRIFFIN_DMA_STALL_STEP (default 4) cycles per CPU step, which
+  can charge at most STEP/(STEP + mean instruction cycles) of the bus -- 34%
+  at a ~7.6-cycle mean -- so every list costing more than a third of a line
+  measured the cap and the remainder was deferred for ever.  A fixed cap
+  cannot be right for every load: the rate it needs is N*D/(LINE-D), a
+  function of both the list and the guest's instruction mix.
+  Fix: the debt is now held equal to the engine's share of the guest cycles
+  left before the next HBLANK edge, i.e. pay cpu_cycles*debt/(line_left-debt)
+  per step, which retires a line's charge exactly at the line's last cycle for
+  any load, carries a bigger-than-a-line charge into the next line, and caps
+  nothing.  Charged SYSCLK per field == the walker's total.  Knobs kept for
+  A/B only: GRIFFIN_DMA_STALL_STEP=N restores the old fixed cap,
+  GRIFFIN_DMA_STALL_LUMP, GRIFFIN_NO_DMA_STALL (documented in
+  emulator/CLAUDE.md).
+  Verification, stock binary, DEFAULT environment, dmabench 300 fields --
+  byte-identical to the patched STEP=64 column, analytic / measured CPU left:
+    C1 1bpp PIXEL console    76.2% / 76.1%      C2 MASK text  56.1% / 55.9%
+    C3 2bpp indexed          51.6% / 51.4%      C4 Smurf-like 56.9% / 56.7%
+  Negative controls: GRIFFIN_NO_DMA_STALL reproduces the regression (C1 100%),
+  GRIFFIN_DMA_STALL_STEP=4 reproduces the clamp (C2/C3/C4 all 65.6%).
+  Regression check: apps/dmabench/check-dma-stall.sh [FIELDS] (~30 s).
+  Consequence: Smurf's replay figures were all taken with free video and get
+  worse under the fix -- see the Smurf port's own notes.
+
+2026-09-19 -- PIXEL: indexed ladder continued - shadow register, skip audit (experiment; cpld/experiments/indexed-pixel/RESULTS.md)
+  Owner's 7200 datasheet: tRHZ max 20 ns, tRLZ min 3 ns, so attr mode's
+  adjacent-clock reads of the two shared-Q FIFOs are rejected; reads are now
+  4 clocks apart (the 2bpp full-rate cadence) with an 8-bit shadow register.
+    R5c r5b + shadow                  84/65/ 84/271/31 pass 1
+    R5d r5c + full-rate skip clamp    88/65/106/316/31 pass 2
+    R8c r5c + TIMING, one ATF1508    124/95/131/396/36 pass 1  FITS, 4 LC spare
+    R8d r5d + TIMING                 124/95/131/401/36 pass 1
+  Nodes+FB reads 131/128 and still fits (shipping compositor.v reads
+  143/128): that line is not enforced by the fitter; LC is the margin.
+  Skip law in the new design: 1bpp S=skip; 2bpp S=skip&~1; 4bpp S=skip&~3;
+  attr forced 0; register is 4 bits.  114 hand-derived skip runs pass; four
+  negative-control mutants fail as required.
+  PRE-EXISTING pixel.v bugs found by the audit (NOT fixed in production;
+  pixel_tb.v and render.cpp do not catch/model them):
+  1. full rate, skip_fine > 8-2W (1bpp skip 7/15; 2bpp 6/7/14/15): the whole
+     line is displaced by one byte period.  Half rate immune.  render.cpp has
+     no fetch cadence in its skip model, so the shared model diverges from
+     the RTL there.  R5d clamps; the real fix (two-byte window) not designed.
+  2. any skip >= 8 reads an odd byte count per line, so the per-line
+     fifo_select reset mis-pairs even/odd bytes on following lines.
+  Also: production already has adjacent-clock FIFO reads (the extra-byte
+  discard re-strobes next clock for skip >= 8) - same tRHZ/tRLZ contention.
+
+2026-09-20 -- PIXEL: ganged 16-bit PIXELS port (experiment; cpld/experiments/indexed-pixel/RESULTS.md, r5w.v, idxw_tb.v)
+  Each 7200 on its own 8 Q pins, one registered nPIXELS_RE (VIDCMD-style).
+    r5c  shared-Q + shadow            84/65/ 84/271/31
+    R5w  16-bit port                  85/65/ 83/277/38  pass 1
+    r8c  r5c + TIMING                124/95/131/396/36
+    R8w  R5w + TIMING                122/95/130/401/43  pass 1, 6 LC spare
+                                     (LAB D 16/16, C 15/16)
+  Gone: fifo_select, second /RE (pin 51 freed), extra-byte discard and its
+  adjacent-clock bus turnover, attr shadow, late_window.  Bug 2 (odd byte
+  count / mis-pairing) gone by construction.  Bug 1 NOT gone: narrowed to
+  1bpp skip 15 and 2bpp skip 14/15, clamped (rate-independent).  Byte order:
+  old first byte = Q[15:8] (pixel.v:75-76); existing records stay valid.
+  New rule: a line with skip != 0 consumes record+1 words (tail shows real
+  data; zero-fill unreachable with an 8-clock PIX_LAST); the allowance is
+  latched at preload.  /RE min spacing 8 clocks.  136 line-runs/177 checks
+  pass, mutants fail.  Not done: record+1 consequences in ENGINE lists /
+  render.cpp / pixel_tb; setup cost of 16 inputs on one edge; period shape.
+
+2026-09-20 -- Idea (Brad): RAM write-detect register for planar-screen emulation (not adopted)
+  For ST/MiNT-style software that writes a planar screen directly: a CPLD
+  sets one bit per region on any CPU write into a fixed RAM window; the
+  vblank ISR reads the bits and converts only dirty regions planar->packed
+  into the real 4bpp/2bpp frame.  Suggested shape: fixed 32K window, 8 x 4K
+  regions (~25 ST low-res lines each), write-1-to-clear or read-clears so a
+  write between read and clear is not lost.  Rough cost without it: a full
+  320x200 c2p pass ~1M cycles (estimate, 10-20 cycles/pixel), i.e. all of
+  the ~52% CPU a 4bpp screen leaves, for ~8 fields.  Not needed for ST mono
+  (1 plane = packed 1bpp) or for software drawing through a packed-pixel VDI
+  driver.  Home: GLUE fit doubtful (unmeasured); the ATF1504 socket freed by
+  folding TIMING into PIXEL (64 LC, 32 I/O) would hold a bus watcher on rev 2.
+  68010 bus-error-and-restart emulation rejected as far too slow per write.
+
+2026-09-20 -- Idea (Brad): LITERAL replaces RUN_COLOR as a one-word pixel (candidate experiment, after the indexed-PIXEL landing)
+  Encoding { 2'b00, 2'b11, colour[11:0] }: the RUN_COLOR prefix plus a full
+  R4G4B4 colour is exactly one word, so N literal pixels = N words, no count,
+  no refetch sequencing.  Ordinary one-slot record: at the 2-clock fetch
+  cadence it paints its slot + one HOLD slot = one half-rate pixel; a banked
+  pair gives two adjacent 640-res pixels (L5).  CORRECTION same day: HOLD
+  lasts only until the next word stages (2 clocks in steady state), so a
+  literal is NOT a one-word span of arbitrary length except when nothing
+  follows it on the line (right border).  A mid-line flat span in an
+  arbitrary colour stays SET cmp_color + RUN (2 words); replacing RUN_COLOR
+  therefore gives up one-word spans in the 8 corner colours in exchange for
+  true-colour pixels.  cmp_color0/1 stay untouched by literals.
+  Sprite format this enables (320-density game modes): each sprite row a
+  precompiled word array, one LITERAL per coloured pixel, RUN(passthrough)
+  for transparent gaps; a line program is gap RUN + row + gap RUN + row...
+  (concatenation, the background being in PIXELS); depth overlap = slicing
+  the back row by index.  Rows compiled for a known entry state (preceded by
+  a >= 4-px run, because a banked pair lands on consecutive 1-clock slots).
+  ~16 words per 16-px row vs 2 for a MASK row; ~100 literal pixels/line over
+  a 40-word attr background.  Zero-copy variant: descriptors point at row
+  data in place, X = the gap RUN count word; ~14 SYSCLK descriptor overhead
+  per fragment.  Proposed implementation:
+  the literal loads RGB_OUT from staged_word on its slot and HOLD of a literal
+  is "RGB_OUT keeps its value" - no 12-bit latch, and RUN_COLOR's 3-FF colour
+  latch is freed.  Cost: one more source term on the 12 RGB_OUT cells plus a
+  hold/CE term; COMPOSITOR is 122/128 LC, fit untried.  To pin: MASK over a
+  held literal (restore rule), as today's rule for MASK over RUN_COLOR.
+  Bandwidth ceiling with PIXELS idle and ~10% CPU (estimate from the cost
+  model, 2.44 SYSCLK/word in full descriptors): ~164 literals/line = 160x480
+  true-colour full width at 4-clock pixels, or a half-width window at
+  half-rate density; within the normal 147-word budget, ~50 exact-colour
+  patch pixels per line over a 4bpp photo.  RUN_COLOR users to re-author:
+  apps/dtest, apps/smurf + image-tools/sprite2spans, apps/dmabench, the
+  griffin-ports Smurf borders, suite case m7-kiosk.  SET target 7 stays the
+  palette-write filler.
+  Addition (Brad, same day): a counted "hold" record - repeat the last output
+  colour for N slots.  LITERAL + HOLD(N) = any-colour span in 2 words with no
+  register clobber (restores RUN_COLOR's virtue for all 4096 colours), and
+  compresses same-colour runs in literal sprite rows (wins at >= 3 game
+  pixels).  Encoding idea: a flag in RUN's unused top count bits (640 slots
+  need 10 of the 12), shrinking the counter by 2 FF - terminal/complement
+  logic and HOLD framing dependence on those bits unchecked.  No new playback
+  state: cur_src's fourth value (today RUN_COLOR) becomes "RGB_OUT keeps its
+  value"; LITERAL loads RGB_OUT for one slot then enters it, HOLD(N) enters it
+  for N.  Semantics: hold after a MASK repeats the mask's last pixel (same
+  repaint rule as MASK over RUN_COLOR today); hold after passthrough smears
+  the last playfield pixel.

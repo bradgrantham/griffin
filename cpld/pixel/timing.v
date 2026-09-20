@@ -2,9 +2,8 @@
 //
 // Not a chip of its own any more: pixel.v `include's this file and
 // instantiates Timing, so PIX_CONSUME / PIX_PRELOAD / PIX_LAST are internal
-// nets and every other output below is a PIXEL pin.  The pin numbers and the
-// DUART OP4..OP7 reservation live in pixel.v's //PIN block, which is the one
-// home for them.  (The standalone ATF1504AS PLCC44 TIMING chip is the
+// nets and every other output below is a PIXEL pin.  The pin numbers live in
+// pixel.v's //PIN block, which is the one home for them.  (The standalone ATF1504AS PLCC44 TIMING chip is the
 // pre-merge design, reachable at the rev1-video tag.)
 //
 // The system's one time base.  It owns the VGA raster and every signal the
@@ -26,9 +25,8 @@
 // PORTS side is a fit result, not a preference: a both-edges XOR detector
 // doubles the product terms of every paddle-counter bit and PORTS stops
 // routing.)  They are separate registers on separate pins so the audio rate
-// can diverge later without a board change — the four DUART OP4..OP7 pins
-// reserved in pixel.v's //PIN block are the intended selector, not yet
-// consumed by any logic.
+// can diverge later without a board change — DUART OP4..OP7 are the intended
+// selector; they have no pins here yet and float until that is designed.
 //
 // THE REGISTER STAGE IS KEPT, AND THAT IS WHY THE LEADS DO NOT MOVE.  Every
 // output here is registered.  That was forced when TIMING was a separate
@@ -204,5 +202,5 @@ module Timing
 
 endmodule
 
-// NO //PIN BLOCK HERE.  This is a module of the PIXEL chip; its pins, and the
-// DUART OP4..OP7 reservation that used to sit in this block, are in pixel.v.
+// NO //PIN BLOCK HERE.  This is a module of the PIXEL chip; its pins are in
+// pixel.v.

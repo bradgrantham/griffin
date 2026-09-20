@@ -363,9 +363,8 @@ peripherals:
   #   (PADDLE_TICKS_PER_SECOND, AUDIO_SAMPLES_PER_SECOND).  Separate nets
   #   so the audio rate can change alone.
   # - VGA_HSYNC and VGA_VSYNC drive ONLY the 74AC541 buffers.
-  # - DUART OP4..OP7 -> PIXEL: reserved static configuration inputs (future
-  #   raster/audio-rate select), not fitted; PIXEL must treat the OP reset
-  #   state 1111 as today's behaviour.
+  # - DUART OP4..OP7 are unconnected; a future raster/audio-rate select into
+  #   PIXEL would take them, with the OP reset state 1111 as today's behaviour.
   #
   # The decoder is INDEX-ONLY.  Every playfield pixel in every mode is a
   # four-bit palette index on IDX[3:0], which addresses the external 16x12
@@ -715,13 +714,13 @@ peripherals:
     #   OP3: RTC_SDA_DRIVE (N-FET gate: pin high pulls SDA low)
     #                                            IP2: RTC_SDA readback
     #                                            IP3: RTC_MFP (MCP7940N alarm/square-wave output)
-    #   OP4..OP7: -> PIXEL (reserved)            IP4: DCD_B (ch B carrier)
+    #   OP4..OP7: unconnected                    IP4: DCD_B (ch B carrier)
     #                                            IP5: RI_B (ch B ring)
     # IP4/IP5 come from the ch B RS-232 receivers; the 68681
     # change-of-state IRQ covers only IP0-IP3, so both are poll-only.
-    # OP4..OP7 are a static configuration word for PIXEL (see PIXEL); the
-    # OP reset state (OPR = 0 -> pins HIGH, 1111) must remain today's
-    # behaviour.
+    # OP4..OP7 float; if PIXEL ever takes them as a static configuration
+    # word, the OP reset state (OPR = 0 -> pins HIGH, 1111) must remain
+    # today's behaviour.
     # Bus: ~CS from GLUE (nDUART_SELECT), DTACKN back to GLUE (nDUART_DTACK),
     # ~IACK tied high, RESET (active low) directly on the system ~RESET net.
     address_range:
