@@ -67,6 +67,39 @@ Consequences:
 * At the sustained 2-clock fetch cadence a literal is exactly one half-rate
   (320-density) pixel: its own slot plus one slot of implicit HOLD.
 
+### Alternative B: direct load, a zero-slot literal (derived, unsimulated)
+
+Under the bank-holding form above (call it A) a literal ALWAYS shows for two
+slots whatever follows it, RUN(passthrough) included: the delayed capture of
+the next word delays its consume by one clock.  A is right for 320-density
+pixels and wrong for single-pixel patches over a 640-wide picture.
+
+B: on the consume edge, RGB_OUT loads `staged_word[11:0]` directly instead of
+the source mux, and `cur_src` becomes KEEP.  The colour never has to outlive
+the edge, so there is no bank stall and no latch.  Every other record shows
+from the slot AFTER its consume edge, so a B-literal lands one slot earlier:
+it OVERWRITES THE LAST PIXEL OF THE PRECEDING RECORD and occupies no slot of
+its own.
+
+* `RUN(pass, n >= 4)  LITERAL  RUN(pass, rest)`: literal and resuming RUN are
+  a banked pair, so the literal replaces exactly pixel n-1 and passthrough
+  resumes at pixel n — a one-pixel patch at 640 resolution, 2 words.
+* A sustained literal stream still tiles into contiguous 2-clock pixels
+  (KEEP between arrivals), so the 320 mode, sprite rows and the video window
+  work as described.
+* Costs: breaks L1 (one slot per record) — the 640-slot accounting and the
+  planner recurrence need a zero-length record; patches need >= 4 px of run in
+  front (else the resuming RUN is late and KEEP smears 2-3 px), so a pitch
+  floor of about 4 px like PN6; a literal cannot open a line; the staged-word
+  decode now feeds RGB_OUT's D input directly (deeper path, check at 25 MHz).
+  Logic estimate similar to A: +1 PT per RGB_OUT cell, existing terms gain a
+  "not literal" input.
+* Before spending logic on patches: test them in `image-tools/clut-experiment`
+  (one-pixel patch model, ~30 per line beside 80 pixel words of 2bpp 640, or
+  ~50 beside 4bpp 320) against the 36% that 3-word flat spans bought.
+
+The fit ladder tries A and B.
+
 ### Expected logic delta (estimate, unfitted)
 
 COMPOSITOR is 122/128 LC, pin-closed, PT-dense on the twelve RGB_OUT cells.
