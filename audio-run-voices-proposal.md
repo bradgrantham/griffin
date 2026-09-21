@@ -226,3 +226,117 @@ FIFOs behind one pair of buffers.
 5. Emulator voice model + firmware/app API, then the Smurf app's audio path
    becomes a table lookup, and the field budget is re-measured.
 6. Rev-2 schematic.
+
+---
+
+# Form 2 (Brad, later the same evening): SAMPLES + AUDCMD + a sixth CPLD
+
+Brad's framing, for symmetry with video: keep a pure SAMPLES FIFO that ENGINE
+fills exactly as today; add a synth-COMMANDS FIFO; a sixth chip (an ATF1508,
+working name MIXER) pulls commands and produces sound; an app chooses PCM,
+synthesis, or both.  Worked through below.  Same caveat as above: nothing
+fitted, nothing simulated, all timing from memory.
+
+## F2.1 The symmetry, taken literally
+
+| video | audio |
+|---|---|
+| PIXELS FIFO: bulk data, one record per line | SAMPLES FIFO: `{L8, R8}` per tick, as today |
+| VIDCMD FIFO: `RUN` / `SET` records that occupy slots | AUDCMD FIFO: `WAIT` / `SET` records that occupy ticks |
+| COMPOSITOR: passthrough, or its own sources, per slot | MIXER: PCM passthrough PLUS its own voices, per tick |
+| palette RAM behind PIXEL | voice/wave RAM behind MIXER (F2.3) |
+| nothing staged = HOLD | AUDCMD empty = voices keep sounding |
+
+One change from Brad's sketch, and the reason: the MIXER should drive the DACs
+itself and READ the SAMPLES FIFO as its passthrough input, not WRITE synthesis
+into the SAMPLES FIFO.  Writing into it means a second driver on FIFO data
+inputs that sit directly on the system bus (isolation buffers, arbitration
+with ENGINE deposits), and it makes PCM and synthesis either/or.  Reading it
+makes sampled effects over chip music the normal case, and COMPOSITOR works
+the same way: it consumes PIXEL's output, it does not write PIXELS.
+PORTS' audio pop logic retires into MIXER (PORTS gets macrocells back).
+
+AUDCMD records (sketch):
+
+```
+WAIT { 0, ticks[14:0] }               time passes; voices and PCM play
+SET  { 1, address[6:0], value[7:0] }  write one byte of voice state, takes no time
+```
+
+ENGINE's unused SPARE strobe is the AUDCMD FIFO's `/W`: no ENGINE change.  The
+tick is locked to the raster (262.5 per field exactly), so `WAIT` counts never
+drift against fields; a song is a descriptor list of SET/WAIT words, a game
+driver is "this frame's PSG bytes -> a few SETs".  A missed vblank just leaves
+the notes sounding (the 2026-09-16 FIFO-runs-dry finding goes away for
+synthesis; PCM still wants `/HF`).
+
+## F2.2 Voices inside the chip (a PSG in a 1508): probably does not fit with a digital mix
+
+Three tone voices at 10-bit period + 10-bit counter + flip = 63 FF; noise LFSR
+and control about 21; four amplitudes 16-24; WAIT counter 12-15; a serial
+saturating accumulator and L/R output registers about 25.  About 140-150 FF
+against 128 macrocells, before the adder's product terms.  It comes under 128
+only with analog mixing (each voice's gated square wave on its own pins into
+resistors, PCM on its existing DACs), which gives linear 4-bit volume, not the
+PSG's 2 dB ladder.  Worth one fit rung to confirm; I do not expect it to be
+the answer.
+
+## F2.3 Voices in an SRAM, one adder time-shared: the form I would pursue
+
+Brad's bin has 8K x 8 SRAMs (MCM60L64P10, KM6264L-15) that were too slow for
+the palette.  They are far faster than audio needs.  A tick is 890 SYSCLK
+long; a voice needs about seven byte-wide RAM accesses (increment low/high,
+phase low/high read, phase low/high write-back, one wave sample), about 21
+SYSCLK at three clocks an access.  So ONE 16-bit phase adder and ONE
+saturating accumulator, time-shared, service 8 or 16 voices per tick with
+most of the tick to spare, and all voice state — phase, increment, amplitude,
+wave select, pan — lives in the RAM, where AUDCMD `SET`s write it.  The same
+RAM holds the wave tables (256 bytes each), so a voice is a WAVETABLE voice:
+square, pulse, triangle, a sampled single cycle, anything 256 bytes long.
+(I believe this is roughly how mid-80s wavetable chips such as Ensoniq's were
+organised; from memory, not checked.)
+
+* Volume without a multiplier: a square/noise voice adds or subtracts its
+  amplitude byte by the phase MSB (no table at all, phase-continuous volume,
+  an exact PSG voice); a wavetable voice gets volume by selecting one of
+  several pre-scaled copies of its table (16 volumes x 256 B = 4 KB per
+  waveform; 8 KB RAM holds state plus about one such bank, a second RAM chip
+  or a 32 KB part holds more).
+* Noise: a 15-bit LFSR in the chip stepped on one voice's phase carry (about
+  17 macrocells), or a 256-sample noise table (no logic, short-loop colour).
+* PCM passthrough: the SAMPLES FIFO's `{L, R}` is simply the first term added
+  into the accumulators each tick.  Per-voice pan bits choose L, R or both.
+* Output: two external 8-bit latches in front of the existing R-2R ladders.
+* Rough size: phase/temporary 16, accumulator 10 x 2 (or one, two passes),
+  voice and step counters 8, WAIT 15, address/data staging about 20, LFSR 15
+  => about 95-105 FF plus a 16-bit adder and a saturating 10-bit adder in
+  product terms.  The 2026-09-15 mixer experiment measured stereo 8-bit
+  saturating accumulators with a bus-slave port at 54 LC on a 1504, so an
+  ATF1508 is plausible and not certain.  Pins: RAM 13 + 8 + 2, AUDCMD FIFO
+  16 + 2, SAMPLES FIFO 16 + 2 (or 8 + 3 if L and R are popped in turn onto a
+  shared byte bus), DAC byte + 2 latch clocks, SYSCLK, AUDIO_TICK: about 55-62
+  of 64.  Tight; the shared-bus trick (FIFO outputs are high-Z unless read)
+  can also put the AUDCMD FIFO bytes and the RAM data on ONE byte bus, which
+  brings it to about 40.
+
+Against the run-record voices of sections 1-9: Form 2.3 has phase-continuous
+volume (the known weakness above disappears), more voices (8-16 against 4),
+wavetables, exact in-band timing, digital mixing with PCM, and fewer FIFOs
+(two more 7200s instead of six) — for one SRAM from the bin and a harder CPLD.
+Run-record voices keep one advantage: almost no logic.  If 2.3 fits, I think
+it is the better machine and the closer twin of the video chain.
+
+## F2.4 Ladder for Form 2
+
+1. Listen first, as in section 9 step 1, but model F2.3: the recorded Smurf
+   PSG stream -> SETs -> a host model of time-shared 16-bit phase voices at
+   15,734.375 Hz -> WAV beside the SN76489 model's.  (The current software
+   model is itself a 16.16 point-sampled accumulator, so a square voice here
+   should match it closely; say how closely.)
+2. Fit rungs on an ATF1508: (i) sequencer + RAM port + 16-bit phase adder +
+   one saturating accumulator, 8 square voices, no FIFO ports; (ii) + AUDCMD
+   SET/WAIT; (iii) + PCM passthrough and stereo pan; (iv) + LFSR noise;
+   (v) wavetable lookup.  Record LC/FF/PT at every rung; F2.2 as a side rung.
+3. Datasheet: the SRAM's read/write cycle against three SYSCLK per access;
+   7200 read timing on a shared byte bus.
+4. Testbench, model, emulator, API, Smurf — as section 9 steps 4-6.

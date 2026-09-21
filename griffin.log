@@ -1003,3 +1003,10 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   first).  Alternatives kept in view: a real PSG chip; plain PSG voices
   in a CPLD.  Full text, datasheet items to verify and the ladder:
   audio-run-voices-proposal.md.  Nothing fitted or simulated.
+  Addendum, same day (Brad): "Form 2" for symmetry with video -- keep the
+  SAMPLES FIFO as is, add an AUDCMD FIFO (SET/WAIT records on the SPARE
+  strobe) and a sixth CPLD (ATF1508, MIXER) that reads both and drives the
+  DACs.  Preferred sub-form: voice state and wave tables in one of the
+  bin's 8Kx8 SRAMs, one phase adder and one saturating accumulator
+  time-shared over 8-16 wavetable voices per tick, PCM as the passthrough
+  term.  Same file, sections F2.1-F2.4.  Unfitted.
