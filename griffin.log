@@ -983,3 +983,23 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   for N.  Semantics: hold after a MASK repeats the mask's last pixel (same
   repaint rule as MASK over RUN_COLOR today); hold after passthrough smears
   the last playfield pixel.
+
+2026-09-20 -- Audio: run-record voices on looping FIFOs (idea, Brad + Claude; PROPOSAL)
+  From the Smurf port on the indexed PIXEL: with the picture path down to
+  ~20% of the available CPU, the software SN76489 is 56-61% of it (the
+  2026-09-16 numbers, now seen under DMA stretch 1.36), and the run-length
+  renderer is already the production path, so there is no software lever
+  left of any size.  Rejected on the way: pre-rendered PCM stems (1.1-1.6
+  MB for three 8.5 s loops; Brad: a waste of RAM for audio this simple);
+  four independently loaded 7200s summed in analog (solves mixing, not
+  generation or data size).
+  Idea: a voice's FIFO pair holds RUN records {level8, end_of_loop,
+  count7} at a ~109 kHz tick; the 7200's retransmit pin replays a short
+  record list, so a square wave is a two-record loop costing no CPU; PCM
+  is the same record with a short count and no loop; voices summed in
+  analog; records routed with the existing AUDIO strobe plus a control
+  word on the unused SPARE strobe (reset mask, select mask), no ENGINE
+  change.  Known weakness: a volume change restarts the wave (listen
+  first).  Alternatives kept in view: a real PSG chip; plain PSG voices
+  in a CPLD.  Full text, datasheet items to verify and the ladder:
+  audio-run-voices-proposal.md.  Nothing fitted or simulated.
