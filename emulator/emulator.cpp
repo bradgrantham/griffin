@@ -3270,7 +3270,10 @@ public:
     // instruction while the clock is inside [START,END), dump the hottest
     // 64-byte buckets at exit for symbolization against System.map.
     static constexpr uint32_t PROFILE_SHIFT = 6;   // 64-byte buckets
+    static constexpr uint32_t PROFILE_SPAN = 0x900000;   // RAM and the ROM at 0x800000
     std::vector<uint32_t> profile_hist;
+    std::vector<uint64_t> profile_cycles;   // SYSCLK the bucket's instructions took (incl. DMA stall)
+    uint64_t profile_total_cycles = 0;
     uint64_t profile_start = 0, profile_end = 0;
     uint64_t profile_samples = 0;
 
@@ -3278,23 +3281,37 @@ public:
     {
         profile_start = start;
         profile_end = end;
-        profile_hist.assign(RAM_TOTAL_SIZE >> PROFILE_SHIFT, 0);
+        profile_hist.assign(PROFILE_SPAN >> PROFILE_SHIFT, 0);
+        profile_cycles.assign(PROFILE_SPAN >> PROFILE_SHIFT, 0);
     }
 
-    void profile_sample()
+    // Called with the PC and clock read BEFORE the instruction ran and the
+    // clock after it (and after the DMA stall pay-down that followed it), so
+    // every SYSCLK of the window is charged to the instruction that was
+    // executing: the cycle histogram is a cost, the sample histogram a count.
+    void profile_sample(uint32_t pc, uint64_t before, uint64_t after)
     {
-        uint64_t now = getClock();
-        if (now < profile_start || now >= profile_end)
+        if (before < profile_start || before >= profile_end)
         {
             return;
         }
-        uint32_t pc = getPC();
-        if (pc < RAM_TOTAL_SIZE)
+        if (pc < PROFILE_SPAN)
         {
             profile_hist[pc >> PROFILE_SHIFT]++;
+            profile_cycles[pc >> PROFILE_SHIFT] += after - before;
             profile_samples++;
+            profile_total_cycles += after - before;
+        }
+        else
+        {
+            // Beyond RAM and ROM (nothing executes there); counted so the
+            // window still adds up.
+            profile_rom_samples++;
+            profile_rom_cycles += after - before;
         }
     }
+    uint64_t profile_rom_samples = 0;
+    uint64_t profile_rom_cycles = 0;
 
     void profile_dump() const
     {
@@ -3308,16 +3325,20 @@ public:
         std::partial_sort(idx.begin(), idx.begin() + 50, idx.end(),
             [this](uint32_t a, uint32_t b)
             { return profile_hist[a] > profile_hist[b]; });
-        fprintf(stderr, "=== PC profile: %" PRIu64 " samples in [%" PRIu64
-                ", %" PRIu64 ") ===\n",
-                profile_samples, profile_start, profile_end);
+        fprintf(stderr, "=== PC profile: %" PRIu64 " samples, %" PRIu64
+                " SYSCLK in [%" PRIu64 ", %" PRIu64 ") ===\n",
+                profile_samples, profile_total_cycles, profile_start, profile_end);
+        fprintf(stderr, "  (ROM, unbucketed: %" PRIu64 " samples, %" PRIu64 " SYSCLK)\n",
+                profile_rom_samples, profile_rom_cycles);
         for (int i = 0; i < 50; i++)
         {
             uint32_t b = idx[i];
             if (profile_hist[b] == 0) break;
-            fprintf(stderr, "  %08X %8u %5.2f%%\n",
+            fprintf(stderr, "  %08X %8u %5.2f%% %10" PRIu64 " %5.2f%%\n",
                     b << PROFILE_SHIFT, profile_hist[b],
-                    100.0 * profile_hist[b] / profile_samples);
+                    100.0 * profile_hist[b] / profile_samples,
+                    profile_cycles[b],
+                    100.0 * profile_cycles[b] / profile_total_cycles);
         }
     }
     ClockGovernor governor;
@@ -4721,12 +4742,14 @@ int main(int argc, const char** argv)
             emulator.disassemble(str, emulator.getPC());
             printf("%04X: %s\n", emulator.getPC(), str);
         }
+        const uint32_t profile_pc = emulator.getPC();
+        const uint64_t profile_before = emulator.getClock();
         emulator.execute();
+        emulator.service_video();
         if (!emulator.profile_hist.empty())
         {
-            emulator.profile_sample();
+            emulator.profile_sample(profile_pc, profile_before, emulator.getClock());
         }
-        emulator.service_video();
         auto clock_now = emulator.getClock();
         // time(2) once per instruction was measurable host overhead; the
         // once-per-second stats only need a coarse check.
