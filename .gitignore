@@ -68,3 +68,25 @@ rom_odd-read.bin
 # Generated artefacts for gates: converted reference images, CF images built
 # from them.  Never the reference photographs themselves.
 out/
+
+# CPLD fitter and simulator outputs (sources are the .v files and Makefile)
+cpld/**/*.edif
+cpld/**/*.fit
+cpld/**/*.io
+cpld/**/*.jed
+cpld/**/*.pin
+cpld/**/*.tt3
+cpld/**/*.vvp
+cpld/**/*.vo
+cpld/**/*.yosys.log
+cpld/**/*.fitter.log
+
+# Host-side audio model and Z80 sound processor build trees
+mixer/build/
+mixer/.cache/
+sound/**/build/
+sound/build/
+
+# Editor swap files
+*.swp
+*.swo

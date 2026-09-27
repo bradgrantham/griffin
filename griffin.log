@@ -1010,3 +1010,462 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   bin's 8Kx8 SRAMs, one phase adder and one saturating accumulator
   time-shared over 8-16 wavetable voices per tick, PCM as the passthrough
   term.  Same file, sections F2.1-F2.4.  Unfitted.
+
+2026-09-24 -- VIDCMD 1-word-per-clock read closed; line-authoring rules of thumb
+  Closed form from the 2026-09-03 pinned numbers, measured back from a
+  capture edge C: the fall's clock edge <= C-32 (tCO 8 + tA 15 + flight 2
+  + tSU 7), the rise's >= C-8 (tCO min 3 assumed + tDV 5, tH 0), the next
+  fall >= rise + 15 (tRR 10 + the 5 ns tCO spread): 39 ns per read against
+  the 39.72 ns period, 0.7 ns of slack.  General form: an /RE low time L
+  gives a guaranteed Q window of L - 10 ns.  Rejected on that arithmetic:
+  half-period /RE from both clock edges (either phasing; the 10 ns window
+  misses the 40 and 60 ns edges by 7-12 ns), a 74AC00 NAND shaping the
+  clock (same waveform with tPD in place of tCO; this was the 2026-08-10
+  proposal), a 50.35 MHz quadrature clock (10 ns edge grid), a 2x fetch
+  clock, and the ~87%-phase delay element (the 2026-08-18 tolerance
+  stack).  Routes that would work: two FIFO pairs read as a 32-bit gang
+  (COMPOSITOR is 64/64 I/O, so a sequencer CPLD or a bigger package;
+  ENGINE's nSIGNAL_SPARE is already a fourth deposit strobe, so the
+  builder could split even/odd records into two descriptors with no
+  ENGINE change), or faster parts (IDT7200L12 + ATF1508AS-7, roughly
+  14 ns of slack -- the L12 and AS-7 figures have not been read from the
+  datasheets).  Not pursued: the fetch rate only sets local pitch, ENGINE
+  delivery (~147 words/line) sets the line total, and MASK already paints
+  per pixel.  Waveforms: the VIDCMD Fetch Cascade page,
+  https://claude.ai/artifact/6pwSZyqXnKi6sfzW7Sa559.
+  Correction to the 2026-09-03 wording: "+7.7 setup / +6 hold" are the
+  margins; the requirements are tSU 7 + ~2 ns flight before the edge and
+  tH 0 after it.
+  Authoring rules of thumb (datasheet 6.1, RT1..RT7), from hand derivation
+  against compositor.v's fetch rules plus the fetch-engine model (the
+  Line Player page's port of vidcmd_plan_line): a RUN/RUN_COLOR of >= 2 px
+  ends exactly where authored; a run of >= 3 px always re-arms the banked
+  pair (a run of 2 only when the record behind it was already parked);
+  a 1-px record is exact inside the pair and 2 px wide outside it (after
+  RUN(10): RC1,RUN -> 10,11; RC1 x2 -> 10,11,13; RC1 x3 -> 10,11,13,15);
+  repeated 1-px features are exact at 4-px pitch (RUN 3 + feature) and
+  stretch at 2-3-px pitch; masks chain gapless, RUN->mask 0,
+  mask->SET->mask 2.  compositor_tb re-run 2026-09-24: 179 checks, 0
+  failures (the on-disk compositor_sim.log predated the 2026-08-24 mask
+  rework and still said 8-slot masks and a 3-slot mask seam).  The
+  RUN >= 3 pair re-arm is a model and hand-derivation result, not yet a
+  compositor_tb case.
+
+2026-09-26 -- MIXER fit rung (i): sequencer + SRAM port + phase adder + accumulators (measurement)
+  wave-table-design.md step 2.  cpld/mixer/mixer.v (module Mixer), rung
+  wrappers in cpld/mixer/ladder/, targets `make mixer` (the default
+  configuration), `make mixer-ladder` (every wrapper, totals printed) and
+  `make mixer-sim` (cpld/mixer/mixer_tb.v).  ATF1508AS PLCC84, -preassign
+  ignore, JTAG on, no //PIN block, no griffin.generated.vh.
+  What the rung holds: AUDIO_TICK 2-FF synchronized, falling edge latched
+  as a pending tick; a 3-SYSCLK SRAM access (nOE or nWE low during t1,t2;
+  reads captured at the edge ending t2; nobody drives D during t0, so
+  every turnaround has one dead clock); per voice PHASE_LO r, INC_LO r,
+  PHASE_LO w, PHASE_HI r, INC_HI r, PHASE_HI w, [CTL r], AMP r -- the
+  PHASE byte is read FIRST into `sum`, INC is added to it off the bus, and
+  `sum` is the write-back byte, then the sign, so there is no INC staging
+  register; `sum` also takes SET_DATA, so the D pins are its macrocells.
+  Accumulator add straight off the bus at the AMP capture, acc + (D ^ neg)
+  + neg, saturating (so -(-128) = +127).  Address = {voice[3:0], item[2:0]}
+  registers, A[12:7] constant 0.  SET stand-in: SET_STROBE edge queues one
+  write of SET_DATA at SET_ADDR when idle, a pending tick first.  DAC: one
+  shared byte plus two latch clocks (10 pins against 16); in the
+  two-accumulator form DAC = acc_r, R is latched, acc_r takes acc_l, L is
+  latched (the copy is a load term, no macrocells); in the two-pass and
+  mono forms DAC is the accumulator itself.  Latch clocks are one SYSCLK
+  wide with the byte stable one SYSCLK before and after the rise.
+  Ladder (LC/FF/PT, I/O used of 64 INCLUDING the 4 JTAG pins, fitter pass):
+    (i-a)  mono, 8 voices                       95/40/314   55  pass 1 (23 cascades)
+    (i-b)  stereo, TWO accumulators + PAN, 8 v  126/51/446  56  pass 2 (cascade)
+    (i-c)  (i-b) with 16 voices                 DOES NOT FIT: placement fail
+                                                 pass 1, grouping fail 2-4
+    (i-b2) stereo, ONE accumulator, two passes  110/43/370  56  pass 1 (29 cascades)
+           (pass 0 = the walk into L; pass 1 re-reads PHASE_HI, CTL, AMP
+           into the same accumulator for R)
+    (i-c2) (i-b2) with 16 voices                122/43/425  56  pass 3
+    xor_synthesis = on: (i-b) 126/51/447 pass 2, (i-b2) 110/43/370 pass 1;
+      no change on either.
+  Levers tried and rejected (each measured; every one worse):
+    registered AMP operand (sum <= D ^ neg at the capture, acc add one
+      clock later register+register, overlapping the next t0): (i-b)
+      128/53/421 pass 2 -- fewer PT, more LC.
+    async reset on GCLR instead of the synchronous reset (on top of the
+      above; the sync reset is a literal in nearly every equation):
+      (i-a) 102/42/371 p2, (i-b) 127/53/448 p2, (i-c) 128/53/389 p1 (FITS,
+      barely), (i-b2) 118/45/428 p2, (i-c2) 113/45/412 p2.  Worse on every
+      8-voice rung; the two 16-voice rungs improving shows how noisy the
+      fitter is at 90%+.
+    one adder shared between the phase add and the accumulator add
+      (operand mux acc/sum, D ^ (neg & item_amp), cin mux): (i-a)
+      115/40/440 p2, (i-b2) 115/43/393 p1 -- the operand mux costs more
+      than the second carry chain it removes.
+  In every count 6 LC are the constant A[12:7] outputs (the fitter spends
+  a 0-PT macrocell on each) and nCE is a 1-PT macrocell: a board with nCE
+  tied low and those pins driven only when wavetables (rung v) need them
+  is 7 LC cheaper than the numbers above.
+  GATE: (i-b) under 100 LC -- FAIL.  Two accumulators is 126; the cheapest
+  stereo form is the two-pass (i-b2) at 110 (104 net of the constant
+  address pins).  Mono is 95.
+  PINS: this rung 52 user pins + 4 JTAG = 56 (SYSCLK on the dedicated
+  clock pin; mono 55).  Paper count for the real chip, JTAG on: 35 (nRESET
+  on GCLR, AUDIO_TICK, A 13, D 8, nCE/nOE/nWE, DAC 8 + 2) + AUDCMD 16+2 +
+  SAMPLES 16+2 + JTAG 4 = 75: FAIL; SAMPLES popped a byte at a time (8+3):
+  68: FAIL; AUDCMD on the shared SRAM byte bus (2 /R + EF = 3) and SAMPLES
+  16+2: 60: borderline; both FIFOs on the shared byte bus: 45: PASS; the
+  DAC byte on that bus as well: 37.  The shared-byte-bus rung is therefore
+  mandatory, not optional.
+  SYSCLK per tick, 3 per access: mono 170; two accumulators 196 (16
+  voices 388); two-pass 268 (16 voices 532); 890 available.  Four clocks
+  an access would still fit every form (two-pass 16 voices: 708).
+  Bench (mixer_tb.v, 9 ticks, 4 voices, 100 ns behavioural SRAM): DAC
+  sequence hand-derived in its header before the first run and matched by
+  all three configurations (saturation both ways, the low->high carry, a
+  SET between ticks); -DMUTATE=1 (wrapping accumulator) fails at tick 2
+  with the predicted 0x7D/0x6D.  The first bench draft had two bench bugs
+  (an all-z bus reads as x under reduction XOR; the L latch is the LAST
+  event in the two-accumulator form, not the R latch) and no RTL bug.
+  Section 2 consequences: (1) the access order above is forced by the
+  write-back -- PHASE before INC -- and the layout is unchanged; (2) AMP
+  = -128 is legal and -(-128) saturates to +127; (3) MODE, RESET_PHASE,
+  WAVE_PAGE are not read in this rung; (4) 16 voices costs 12 LC in the
+  two-pass form and does not fit with two accumulators.
+  What this means for rungs ii-iv on one ATF1508: WAIT needs a 15-bit
+  counter (~15 FF + terminal), the two FIFO read ports ~8-10, the LFSR
+  ~17: 110 + ~42 > 128.  Form 2.3 as pinned will not fit one chip with
+  everything in it.  Candidates, none tried: (a) WAIT as a 16-bit SRAM
+  field walked by the same phase adder (INC = 1 toward the all-ones
+  terminal: costs accesses, not macrocells); (b) noise as a 256-byte
+  table voice (rung v's lookup) instead of the LFSR; (c) a second CPLD
+  for AUDCMD/FIFOs, with the voice engine alone in MIXER; (d) mono
+  (95 LC) with pan done in analog.
+  For step 3 (datasheets): nWE rises on the same edge the address advances
+  (address hold after write = the tCO spread only); the D data outlasts
+  nWE's rise by the output-enable path delay; nWE and nOE pulses are two
+  SYSCLK (142 ns at 14 MHz), address-to-capture 214 ns minus tCO.
+
+2026-09-26 -- MIXER step 3: SRAM, 7200, latch and CPLD timing from the datasheet tables (measurement)
+  wave-table-design.md step 3.  Every number below is copied from a table
+  fetched today; nothing is from memory.  Documents (local copies in the
+  session scratchpad only):
+    [IDT]  IDT7200L/7201LA/7202LA, IDT DSC-2679/7, December 1996, "AC
+           ELECTRICAL CHARACTERISTICS" (2679 tbl 06), Commercial VCC 5V+/-10%,
+           0-70C.  edg.uchicago.edu/~bogdan/prefred/doc/parts/idt7200.pdf
+    [KMA]  Samsung 1988 MOS Memory Data Book, KM6264A/KM6264AL pp. 143-145,
+           "AC CHARACTERISTICS" READ CYCLE / WRITE CYCLE, Ta 0-70C, Vcc 5V
+           +/-10%, 1 TTL load + 100 pF, 1.5 V reference.  bitsavers.org/
+           components/samsung/_Databooks/1988_Samsung_MOS_Memory_Data_Book.pdf
+    [KMB]  Samsung KM6264B Family, Rev 0.0 Aug 1996, "PARAMETER LIST FOR EACH
+           SPEED BIN".  web.mit.edu/6.111/www/s2007/datasheets/KM6264B.pdf
+    [MOT]  Motorola MCM6064/MCM60L64 Advance Information, Motorola Memory
+           Data pp. 3-8..3-13, "READ CYCLE" and "WRITE CYCLE 1 (W
+           CONTROLLED)", Vcc 5V+/-10%, TA 0-70C, Figure 1 load (930 ohm,
+           100 pF).  ardent-tool.com/datasheets/Motorola_MCM6064_60L64.pdf
+    [HC]   Nexperia 74HC574;74HCT574 Product data sheet Rev. 10, 5 Aug 2024,
+           Table 7 "Dynamic characteristics", 74HC574 rows, VCC 4.5 V, CL 50
+           pF.  assets.nexperia.com/documents/data-sheet/74HC_HCT574.pdf
+    [ATF]  Atmel ATF1508AS(L) Rev. 0784P-PLD-7/05, "AC Characteristics", -15
+           column, and "Ordering Information".  ww1.microchip.com/downloads/
+           en/DeviceDoc/doc0784.pdf
+  NOT FOUND: a KM6264L-15 / KM6264-15 (150 ns, the bin part) column.  The
+  1988 book lists KM6264A/AL at 7/10/12 only, the 1996 sheet KM6264B at
+  7/10/12; the pre-A KM6264(L)-15 sheet is on no archive I could reach
+  (alldatasheet, octopart, datasheetarchive, datasheets360 all 403).  The
+  KM6264A-12 column is used below as the nearest DOCUMENTED grade and is
+  marked as such; it does NOT bound the bin part.  Only its headline
+  number (150 ns access, from the part marking / chip-inventory.csv) is
+  used for the bin part, and only for tAA.
+  Tables, ns (min/max as printed; "-" = not specified):
+    [IDT] 7200L15 | L25 | L35:  tRC 25/35/45 min; tA 15/25/35 max; tRR
+      10/10/10 min; tRPW 15/25/35 min; tRLZ 5/5/5 min (note 3: by design);
+      tWLZ 5/5/10 min; tDV 5/5/5 min; tRHZ 15/18/20 max; tWC 25/35/45;
+      tWPW 15/25/35 min; tWR 10/10/10 min; tDS 11/15/18 min; tDH 0/0/0;
+      tRSC 25/35/45; tRS 15/25/35 min; tRSS 15/25/35 min; tRSR 10/10/10
+      min; tRTC 25/35/45; tRT 15/25/35; tRTS 15/25/35; tRTR 10/10/10;
+      tEFL 25/35/45 max; tREF 15/25/30 max; tWEF 15/25/30 max; tRPE
+      15/25/35 min; tS 40/28.5/22.2 MHz.  High-Z confirmed, Signal
+      Descriptions, DATA OUTPUTS (Q0-Q8): "This data is in a high
+      impedance condition whenever Read (R) is in a high state."  (The
+      L12 column is 20/12/8/12/3/3/5/12 for tRC/tA/tRR/tRPW/tRLZ/tWLZ/
+      tDV/tRHZ.)  The bin part "7200 LP15" is the L15 column (P = plastic
+      DIP).
+    [KMA] KM6264A(L)-12 (KM6264A-10 in parentheses): tRC 120 (100) min;
+      tAA 120 (100) max; tCO1,tCO2 120 (100) max; tOE 60 (50) max; tLZ 10
+      (10) min; tOLZ 5 (5) min; tHZ 0..40 (0..35); tOHZ 0..40 (0..35);
+      tOH 15 (10) min; tWC 120 (100); tCW 85 (80) min; tAS 0; tAW 85 (80)
+      min; tWP 70 (60) min; tWR1 (from CS1 or WE) 5 (5) min; tWR2 15 (15)
+      min; tWHZ 0..40 (0..35); tDW 50 (40) min; tDH 0; tOW 10 (5) min.
+    [KMB] KM6264BL-12 (-10): tRC 120 (100); tAA 120 (100); tCO 120 (100);
+      tOE 60 (50); tLZ 10 (10); tOLZ 5; tHZ 0..40 (0..35); tOHZ 0..40
+      (0..35); tOH 10; tWC 120 (100); tCW 85 (80); tAS 0; tAW 85 (80); tWP
+      70 (60); tWR 0; tWHZ 0..30; tDW 50 (40); tDH 0; tOW 10 (5).  Note
+      the two generations differ exactly at tWR (5 vs 0) and tOH (15 vs
+      10); the bin part is the OLDER generation.
+    [MOT] MCM60L64-10 (-12): tAVAV/tRC 100 (120) min; tAVQV/tAA 100 (120)
+      max; tE1LQV/tAC1 and tE2HQV/tAC2 100 (120) max; tGLQV/tOE 50 (60)
+      max; tAXQX/tOH 20 (20) min; tCLZ 10 min; tGLQX/tOLZ 5 min; tCHZ
+      0..35 (0..40); tGHQZ/tOHZ 0..35 (0..40).  Write (W controlled):
+      tAVAV/tWC 100 (120); tAVWL/tAS 0; tAVWH/tAW 80 (85) min; tWLWH/tWP
+      60 (70) min; tDVWH/tDW 40 (50) min; tWHDX/tDH 0; tWLQZ/tWHZ 0..35
+      (0..40); tWHQX/tWLZ 5 min; tWHAX/tWR 0 min.  Note 1: "A write cycle
+      ends at the earliest transition of a high E1, high W or low E2."
+    [HC] 74HC574 at VCC 4.5 V, 25C (Tamb -40..+85C in parentheses): tpd
+      CP->Qn 30 max (35); tW CP high or low 16 min (20); tsu Dn->CP 12 min
+      (15); th Dn->CP 5 min (5); fmax 30 MHz min (24).  The -40..+85C
+      column is used below.
+    [ATF] ATF1508AS -15: tPD1 15 max; tPD2 12 max; tSU (global clock) 11
+      min; tH 0 min; tCOP (global clock to output) 8 max; tCH 5 min; tCL 5
+      min; fMAX 100 MHz; tIN 2; tRD 1; tGLOB 1; tOD1 4 (5V, 35 pF); tIOE 3;
+      tZX1 7; tXZ 6 (CL 5 pF); tASU 4, tAH 4, tACOP 15 (array clock, not
+      used: SYSCLK is on the dedicated clock pin).  tIN + tGLOB + tRD +
+      tOD1 = 8 = tCOP, so tCOP is pin to pin.  NO MINIMUM is published for
+      any delay (tCOP, tPD, tZX, tXZ); every skew argument below assumes
+      0 min.  The AC table does not distinguish packages; Ordering
+      Information lists ATF1508AS-15JC84 (commercial, tCO1 5) and
+      -15JI84 (industrial, tCO1 8); the AC table's -15 column says 8 and
+      8 is used.
+  Cadence checked (rung (i), cpld/mixer/mixer.v): SYSCLK 14 MHz, T = 71.4
+  ns; access = t0,t1,t2; E0 = edge starting t0 (A registered, tCOP), E1 =
+  edge ending t0 (nOE or nWE register falls), E3 = edge ending t2 (read
+  captured with tSU/tH; nOE/nWE rise; A advances; both from the same edge,
+  spread 0..8 ns); D driven from the `sum` register while nWE is low
+  (`assign D = nWE ? z : sum`, the OE is the nWE register fed back); nCE
+  = ~accessing is combinational from the state register (low for a whole
+  walk, and for one SET write); t0 is a dead bus clock.
+  Windows: A/nCE valid to capture 3T - 8 - 11 = 195.3; strobe low to
+  capture 2T - 8 - 11 = 123.9; strobe pulse 2T - 8 = 134.9 worst (142.9
+  nominal); dead clock T - 8 = 63.4 worst.
+  SRAM READ, margin ns (PASS unless marked), KM6264A-12 [KMA] /
+  MCM60L64-10 [MOT] / KM6264BL-12 [KMB]:
+    tRC  214.3 vs 120/100/120:                     +94.3 / +114.3 / +94.3
+    tAA  195.3 vs 120/100/120:                     +75.3 / +95.3 / +75.3
+         (bin KM6264L-15 at its 150 ns marking:    +45.3, tAA only)
+    tCO/tAC1 chip select: nCE combinational, worst tPD1 15 instead of 8:
+         3T - 15 - 11 = 188.3 vs 120/100/120:      +68.3 / +88.3 / +68.3
+    tOE  123.9 vs 60/50/60:                         +63.9 / +73.9 / +63.9
+    tOH  A advances at E3 + >=0, data holds >= tOH after: capture hold
+         needs tH 0:                                +15 / +20 / +10
+    tOHZ hold at capture: nOE rises at E3 + tCOP(min unpublished), data may
+         go Z tOHZ min 0 later: margin = tCOP min - tH = 0 formally;
+         PASS BY ZERO, relies on tCOP min > 0 (all three parts alike).
+    read->write turnaround: SRAM Z by E3 + 8 + tOHZ max = +48/+43/+40; the
+         CPLD drives D no earlier than E3 + T + tZX min(0) = +71.4:
+                                                    +23.4 / +28.4 / +31.4
+    write->read: CPLD off by E3 + tXZ 6; SRAM drives no earlier than
+         E1' + 0 + tOLZ 5 = E3 + 76.4:              +70.4 all
+  SRAM WRITE (nOE stays high throughout, so tWLZ/tOW never fight):
+    tWC  214.3 vs 120/100/120:                     +94.3 / +114.3 / +94.3
+    tAS  A at E0 + 8, nWE falls at E1 + 0 worst: 63.4 vs 0:   +63.4 all
+    tWP  134.9 vs 70/60/70:                         +64.9 / +74.9 / +64.9
+    tAW  A at E0 + 8 to end of write at E3 + 0: 206.3 vs 85/80/85:
+                                                    +121.3 / +126.3 / +121.3
+    tCW  nCE low long before the write (whole walk); for a SET write nCE
+         falls at E0 + <=15: 199.3 vs 85/80/85:     +114.3 / +119.3 / +114.3
+    tDW  D valid at E1 + max(tCOP 8, tZX1 7) = E1 + 8 to E3 + 0: 134.9 vs
+         50/40/50:                                  +84.9 / +94.9 / +84.9
+    tDH  0 min all: nWE pin rises at register + tOD1(4 max); D disables at
+         the same register + tIOE(3) + tXZ(6): structurally later, but with
+         no published minimums NOT PROVABLE from the tables (formal worst
+         case: nWE at E3 + 8, D off at E3 + 0 = -8 ns).  Flagged; see fix.
+    tWR  ** FAIL / UNPROVEN ** (the first thing rung (i) said to check).
+         nWE rises at E3 + (0..8) and A advances at E3 + (0..8) from the
+         same edge; A may change up to 8 ns BEFORE the write ends:
+           KM6264A-12 tWR1 5 min:  -5 ns even with zero skew, -13 worst
+           MCM60L64-10 tWHAX 0:    0 with zero skew, -8 worst
+           KM6264BL-12 tWR 0:      0 with zero skew, -8 worst
+         An address that moves before W rises puts the write's tail on the
+         next voice's byte.  For a SET write nCE (combinational, up to 15)
+         also ends the write ([MOT] note 1, [KMA] note "earliest
+         transition"), same skew class.  Tying nCE low on the board (already
+         recommended 2026-09-26) removes the nCE term only.
+  7200 READ on the shared byte bus (/R low t1,t2, Q captured at E3), 7200L15
+  [IDT] (L25 / L35 in parentheses):
+    tA    123.9 vs 15 (25/35):                      +108.9 (+98.9 / +88.9)
+    tRPW  134.9 vs 15 (25/35):                      +119.9 (+109.9 / +99.9)
+    tRC   214.3 vs 25 (35/45) for back-to-back pops: +189.3 (+179.3 / +169.3)
+    tRR   /R high >= one dead clock 63.4 vs 10:     +53.4
+    tDV   Q valid >= 5 after /R high, needs tH 0:   +5 (+5 / +5)  (better
+          than the SRAM's zero: the 7200 guarantees a hold)
+    tRHZ  Q Z by E3 + 8 + 15 = +23 (+26 / +28); next CPLD drive at +71.4:
+                                                    +48.4 (+45.4 / +43.4)
+    tRLZ  Q may drive from E1 + 0 + 5; previous CPLD write off at E3prev +
+          6 = E1 - 65.4:                            +70.4
+    tREF/tWEF 15 max: the EF flag moves within a quarter clock of the
+          strobe edge; the rung-(ii) 2-FF synchronizer sees it one or two
+          SYSCLK later (design input, no pass/fail).  tRPE 15 min met by
+          any 2-clock /R.  tRS 15 / tRSS 15 / tRSR 10: /RS from PORTS or
+          ENGINE must be >= one SYSCLK and end >= 10 ns before the first
+          /R falls -- one dead clock (63.4) covers tRSR.
+  DAC LATCH (74HC574, VCC 4.5 V, -40..+85C column [HC]; byte from CPLD
+  registers, clock one SYSCLK wide from a CPLD register, byte stable one
+  SYSCLK before and after the clock edge per mixer.v):
+    tsu   T - 8 (byte late) + 0 (clock early) = 63.4 vs 15:   +48.4
+    th    T - 8 (clock late) + 0 (byte early) = 63.4 vs 5:    +58.4
+    tW    T +/- 8 = 63.4 vs 20:                               +43.4
+    tpd   35 max to the R-2R ladder: no consumer, informational.
+  CPLD itself [ATF]: tCH/tCL 5 vs 35.7 half period +30.7; fMAX 100 MHz vs
+  14; input tSU 11 / tH 0 on D at the capture edge are the numbers used
+  above (D pins are I/O pins on the global clock: the "Global Clock Setup
+  Time" row).
+  Findings for the two flagged items:
+    (1) Address hold after write: FAIL for the KM6264A(L) generation (tWR1
+        5 min) under any skew; zero-margin-or-worse for MCM60L64 and
+        KM6264B (tWR 0) because the ATF1508AS publishes no minimum tCOP.
+        The tDH argument has the same shape (D off vs nWE rise, both from
+        the same edge) and is structurally but not numerically safe.
+        Fix candidates, none tried: (a) 4-clock write, A (and D) held
+        through a t3 with nWE already high -- costs one clock per write =
+        +16 SYSCLK per 8-voice tick in every form (two-pass 268 -> 284,
+        16 voices 532 -> 564), no macrocells beyond the t counter's third
+        state; (b) advance A one clock late for every access -- free, but
+        the read window drops to 2T - 8 - 11 = 123.9 (-26 vs a 150 ns
+        part, +3.9 vs 120, +23.9 vs 100): rejected on paper.  (a) is the
+        recommendation.
+    (2) Read-to-write turnaround: PASS, +23.4 (KM6264A-12), +28.4
+        (MCM60L64-10) with the one dead clock; the 7200 side is +48.4.
+        Without the dead clock it would be -48 / -43: the dead clock is
+        load-bearing.
+  Which SRAM: MCM60L64P10 (100 ns).  It has 10-20 ns more margin than the
+  KM6264A-12 column on every read/write parameter, tWR 0 rather than 5,
+  and it is the only one of the two bin parts whose grade has a table.
+  The KM6264L-15 has no table at all; if its parameters scale like its
+  access time (1.25x the -12 column) tOE 75, tWP 88, tDW 63 would still
+  pass at three clocks -- that is an extrapolation, not a measurement,
+  and its tWR1 is unknown.  Four-SYSCLK access: not needed for speed on
+  either part (smallest read/write speed margin is tOE +63.9 for the
+  -12 column, +73.9 for MCM60L64-10; a 150 ns tAA still has +45.3); the
+  fourth clock is wanted on WRITES only, for address hold, on both parts.
+  Step 6's behavioural SRAM model must check tWR with a nonzero tCO skew
+  or it will not see this.
+
+2026-09-26 -- MIXER fit rung (ii): the whole PSG-subset chip (measurement)
+  wave-table-design.md step 4, on the two-pass stereo base of rung (i).
+  cpld/mixer/mixer.v (module Mixer; rung (i) moved to
+  cpld/mixer/ladder/mixer_i.v with its bench mixer_i_tb.v), wrappers in
+  cpld/mixer/ladder/, `make mixer` (the default), `make mixer-ladder`,
+  `make mixer-sim` (cpld/mixer/mixer_tb.v).  ATF1508AS PLCC84, -preassign
+  ignore, JTAG on, no //PIN block, nRESET asynchronous on GCLR.
+  What the rung holds, all bench-verified: AUDIO_TICK and both 7200 /EF
+  flags 2-FF synchronized; SRAM read 3 SYSCLK, WRITE 4 (nWE low t1,t2; A
+  and D held through t3 -- step 3's tWR fix; the D output enable is its
+  own register d_oe, high t1..t3); nCE tied low on the board (no pin);
+  one dead clock at every turnaround.  AUDCMD pair on the SRAM byte bus:
+  nR_AUDCMD_HI/LO, the LO chip's /EF; SAMPLES pair likewise, L popped as
+  the pass-0 seed, R as the pass-1 seed, the R chip's /EF, and the pop
+  decision latched at tick start so R is popped iff L was.  Records
+  execute only in the gap between mix k-1 and tick k; a record that has
+  started when the tick is seen completes first (bench: a SET pushed 6
+  SYSCLK before the tick edge lands in that tick).  WAIT is a 16-bit SRAM
+  field at 0x84/0x85 (hardware-private, >= 0x80) holding ~n, with its INC
+  slots 0x80/0x81 written as 0x0001 by the load, walked by the ordinary
+  voice walk toward all-ones; the carry out sets wait_done, a WAIT load
+  clears it, the walk right after the load makes WAIT 0 a no-op and puts
+  the terminal exactly before tick k+n; once terminal the field is not
+  walked again.  MODE 2 wavetable: CTL r -> WAVE_PAGE r -> a read of
+  {WAVE_PAGE[4:0], phase[15:8]} added as the sample; A[12:0] all live.
+  The table index reaches A[7:0] by the address register and `sum`
+  trading places at the WAVE_PAGE capture (sum carries {0, voice+1,
+  first item} across the read); a page register is A[12:8], cleared after
+  the read.  MODES 1/3 are played as square (only CTL[3] & ~CTL[2] is
+  decoded); RESET_PHASE (CTL bit 4) is stored and ignored (a phase reset
+  is two SETs of PHASE = 0, the same thing; only the LFSR reseed is lost).
+  DAC byte is OFFSET BINARY {~acc[7], acc[6:0]} into the two latches (the
+  CD4049 inverters go away); the fitter absorbed the inversion into the
+  register polarity: 0 cells, 0 PT.  Accumulator cleared at pass start,
+  the SAMPLES seed is the first saturating add.
+  Ladder (LC/FF/PT, I/O of 64 INCLUDING the 4 JTAG pins, fitter pass).
+  Every rung below was fitted ALONE: parallel wine fitters collide on
+  vendor/*.tmp and die with INTERNAL ERROR (three such crashes were
+  re-run; ladder/fitserial.sh).
+    (ii)      default: 8 voices, no LFSR           128/60/415  44  pass 1
+              (16 cascades, 53 foldbacks; 5 of the 128 are combinational
+              copies of buried address registers A_0..A_3, A_7 -- pin
+              scarcity per LAB, present in every fit of this rung)
+    (ii-x)    + xor_synthesis = on                  127/60/431  44  pass 3
+    (ii-ded)  AUDIO_TICK, nEF_AUDCMD on dedicated input pins 2 and 84
+              (-preassign keep, two-line pin file) 128/60/428  42  pass 1
+    (ii-wi)   section-2 bend: the WAIT record carries ~n[14:0] and the
+              chip forces bit 15 (no complemented load)
+                                                    126/60/410  44  pass 1
+              + xor_synthesis: FITTER CRASH (INTERNAL ERROR, alone too;
+              griffin.log 2026-06 saw the same with xor_synthesis)
+    cadence rung, rung (i)'s 3-clock write (fails tWR) for the delta:
+              plain: FITTER CRASH at pass 3 (parallel run: no fit);
+              + xor: no fit; on (ii-wi): no fit; on (ii-wi) + xor:
+              127/60/430 pass 1.  The fourth clock costs no macrocell
+              (the t counter and d_oe exist in both) and the PT delta is
+              inside the fitter's noise (410..431 either way).
+    (ii-b)    + LFSR (15 FF + select at 0x78 + carry latch + 2 mode FF,
+              shift after pass 1, noise sign from lfsr[0]; RTL passes the
+              bench)                                DOES NOT FIT (pass 1-4),
+              on (ii-wi) too
+    (ii-c)    15 voices (voice_last == 14; RTL passes the bench)
+                                                    DOES NOT FIT, on (ii-wi) too
+    F2.2: not derivable from this rung; skipped.
+  Levers tried and rejected (every one measured alone):
+    adder operand gated to 0 for the walk (cin = 1) instead of the
+      stored INC 0x0001: DOES NOT FIT (the ~D_i literals split product
+      terms); it saves 8 SYSCLK per WAIT record.
+    seed as a masked load (acc <= D & popped) instead of an add into a
+      cleared accumulator: 128/60/459 pass 2; both together (the first
+      cut): DOES NOT FIT.
+    synchronous reset instead of GCLR: DOES NOT FIT (rung (i) found the
+      same direction at 8 voices).
+    a separate voice counter instead of the sum/address trade: DOES NOT
+      FIT (+3 FF).
+    saturation deferred to the clock after the add (an overflow flag, the
+      latch clocks one later): FITTER CRASH alone, no fit in the parallel
+      run; on the first-cut base 128/61/451 pass 1 -- no gain.
+    fitter strategies on the (ii-wi) base: Push_Gate off 124 pass 2,
+      Foldback off 123 pass 2, Cascade off 123 pass 2, Soft_Buffer on 123
+      pass 2, logic_doubling on 133 (no fit), Optimize off 133 (no fit).
+    The fitter is noisy at this density: the same RTL lands anywhere from
+      123 to 128 or fails grouping depending on which literal is removed;
+      no T-type registers or macrocell XORs were ever used (all D-type,
+      flattened SOP, two macrocells per phase-adder bit).
+  GATE (step 4): PASS on the letter -- 8 stereo voices, PCM seed, MODE 2
+  wavetable, AUDCMD SET/WAIT with the FIFO ports, all in one ATF1508 at
+  pass 1 (128/128) with 44 of 64 pins including JTAG.  With ZERO spare
+  macrocells: the LFSR (MODE 1/3) and 15 voices do not fit, RESET_PHASE
+  is not implemented, and equivalent RTL variants fail grouping.  Whether
+  "no LFSR" is a substantial limitation is Brad's call (Smurf's noise is
+  periodic and is a MODE 2 table; white noise is not).
+  PINS (real): SYSCLK (GCLK), nRESET (GCLR), AUDIO_TICK, A 13, D 8, nOE,
+  nWE, nR x4, nEF x2, DAC 8 + 2 latch clocks = 42 user I/O less the two
+  dedicated inputs = 40 + 4 JTAG = 44 (42 with AUDIO_TICK and nEF_AUDCMD
+  on pins 2 and 84).  nCE tied low.
+  SYSCLK per tick (bench-measured = hand count): reads 3, writes 4; seed
+  3 + square voice 26 / wavetable 29 in pass 0, 9 / 12 in pass 1, latch
+  2 each pass: 8 square 290, tick 1 of the bench (7 square + 1 table)
+  296, 8 tables 338; + 20 for the WAIT walk when waiting; 15 voices 535 /
+  625.  The right latch follows the left by 77 (square) to 101 (tables)
+  SYSCLK.  AUDCMD: SET 10 SYSCLK (HI r, LO r, w), WAIT 42 (HI r, w, LO
+  r, w, w 0x80, w 0x81, walk 20).  Idle gap 890 - tick - walk: 580 with
+  8 square voices, 532 with 8 tables.  SETs per boundary (gap minus one
+  WAIT, over 10): 53 with 8 square voices, 49 with 8 tables, 20 with 15
+  tables; the driver's first-emit (16) is well inside.  Records still in
+  the FIFO when the tick is seen slide to the next boundary (the model's
+  constant).
+  Bench (mixer_tb.v): behavioural MCM60L64P10 (100 ns) with the write
+  strobe 8 ns late against A and D (tCOP spread), checking address
+  stable through the strobe and 5 ns after (tWR), data valid 40 ns before
+  (tDW) and at the strobe (tDH); two 7200L15 pairs (tA/tRHZ/tREF/tWEF
+  15, Q high-Z unless /R low, /R on empty is an error); a driver count on
+  D at every edge; DAC byte stable a SYSCLK either side of its clock.
+  Nine ticks at the real rate with 5 voices (one wavetable reading a
+  12-entry table at page 2), 8 records at reset (SETs, WAIT 3, WAIT 0,
+  WAIT 2) plus one late SET, three SAMPLES words (seed saturation both
+  ways).  Expectations hand-derived in the header from section 2 before
+  the first run and matched on the first run by every configuration;
+  the only bench-side fix was a declaration order.  MUTATE=1 (wrapping
+  accumulator) fails at tick 2, MUTATE=2 (no walk after a WAIT load, WAIT
+  n runs n+1) at tick 4, MUTATE=3 (3-clock writes) on the first write:
+  data gone at the late strobe and the address moved -- the bench sees
+  step 3's failure.  One RTL bug found by the bench: the (ii-wi) lever
+  needed bit 15 forced (the record's type bit is 0, ~n's bit 15 is 1).
+  Section 2 consequences, for Brad to edit: (1) RESET_PHASE not in rung
+  (ii); (2) MODES 1/3 = square until an LFSR fits somewhere; (3) the WAIT
+  field owns 0x80..0x87 (INC written by hardware), still >= 0x80; (4) the
+  DAC byte is offset binary; (5) the record-format bend (WAIT carries ~n)
+  buys 2 cells and is not the default; (6) 15 voices do not fit: 8 is the
+  number; (7) SETs-per-boundary bound 49..53 for 8 voices; (8) the right
+  latch follows the left by 77..101 SYSCLK, not "about 100".

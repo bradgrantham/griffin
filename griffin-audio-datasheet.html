@@ -1,0 +1,535 @@
+<title>Griffin Audio Pipeline</title>
+<style>
+  :root {
+    --paper: #FAFAF8;
+    --ink: #1B1E23;
+    --ink-soft: #4A4F57;
+    --bar: #4A3F5E;
+    --bar-text: #F6F4F9;
+    --rule: #C9CCD2;
+    --rule-soft: #E3E5E9;
+    --mono-bg: #F1F2EF;
+    --prod: #2F6B4F;
+    --prod-bg: #E8F1EC;
+    --prelim: #8A5A18;
+    --prelim-bg: #F6EEDF;
+    --adv: #6B4A7A;
+    --adv-bg: #F0E9F4;
+    --open: #8A2E2E;
+    --open-bg: #F6E4E4;
+    --accent: #5A4A7A;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --paper: #16181D;
+      --ink: #D9DCE1;
+      --ink-soft: #9AA0A9;
+      --bar: #3B325042;
+      --bar-text: #E2DCEC;
+      --rule: #3A3F47;
+      --rule-soft: #272B31;
+      --mono-bg: #1E2126;
+      --prod: #6FBA94;
+      --prod-bg: #1E2E27;
+      --prelim: #D3A45B;
+      --prelim-bg: #2E2718;
+      --adv: #B491C7;
+      --adv-bg: #29202E;
+      --open: #D77C7C;
+      --open-bg: #2E1E1E;
+      --accent: #B3A0D6;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #16181D;
+    --ink: #D9DCE1;
+    --ink-soft: #9AA0A9;
+    --bar: #3B325042;
+    --bar-text: #E2DCEC;
+    --rule: #3A3F47;
+    --rule-soft: #272B31;
+    --mono-bg: #1E2126;
+    --prod: #6FBA94;
+    --prod-bg: #1E2E27;
+    --prelim: #D3A45B;
+    --prelim-bg: #2E2718;
+    --adv: #B491C7;
+    --adv-bg: #29202E;
+    --open: #D77C7C;
+    --open-bg: #2E1E1E;
+    --accent: #B3A0D6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0 16px 64px;
+  }
+  .sheet { max-width: 920px; margin: 0 auto; }
+
+  .masthead {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    border-bottom: 3px solid var(--ink);
+    padding: 28px 0 10px; gap: 16px; flex-wrap: wrap;
+  }
+  .masthead h1 { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .masthead .sub { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
+  .docmeta {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11.5px; color: var(--ink-soft); text-align: right; line-height: 1.6;
+  }
+  .feat-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0 32px;
+    border-bottom: 1px solid var(--rule); padding: 14px 0 18px;
+  }
+  @media (max-width: 640px) { .feat-grid { grid-template-columns: 1fr; } }
+  .feat-grid h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--ink-soft); margin: 8px 0 6px; font-weight: 700;
+  }
+  .feat-grid ul { margin: 0; padding-left: 18px; }
+  .feat-grid li { margin: 3px 0; font-size: 13.5px; }
+
+  section { margin-top: 34px; }
+  .secbar {
+    background: var(--bar); color: var(--bar-text);
+    font-weight: 700; font-size: 14px; letter-spacing: 0.04em;
+    padding: 6px 12px; display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .secbar .no { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-weight: 400; opacity: 0.75; font-size: 12px; }
+  h3 {
+    font-size: 14.5px; font-weight: 700; margin: 22px 0 6px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    text-wrap: balance;
+  }
+  h3 .mnum { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-weight: 400; color: var(--ink-soft); font-size: 12.5px; }
+  p { margin: 8px 0; max-width: 70ch; }
+  .note { color: var(--ink-soft); font-size: 13px; max-width: 70ch; }
+
+  .st {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 10px; letter-spacing: 0.08em; font-weight: 700;
+    padding: 2px 7px; border-radius: 2px; white-space: nowrap;
+  }
+  .st.prod   { color: var(--prod);   background: var(--prod-bg);   border: 1px solid var(--prod); }
+  .st.prelim { color: var(--prelim); background: var(--prelim-bg); border: 1px solid var(--prelim); }
+  .st.adv    { color: var(--adv);    background: var(--adv-bg);    border: 1px solid var(--adv); }
+  .st.open   { color: var(--open);   background: var(--open-bg);   border: 1px solid var(--open); }
+
+  .twrap { overflow-x: auto; margin: 10px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--ink-soft); border-bottom: 2px solid var(--ink);
+    padding: 5px 10px 5px 0; font-weight: 700; white-space: nowrap;
+  }
+  td { border-bottom: 1px solid var(--rule-soft); padding: 6px 10px 6px 0; vertical-align: top; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.mono, .mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12.5px; }
+  tr.subhead td {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--ink-soft); font-weight: 700; border-bottom: 1px solid var(--rule);
+    padding-top: 14px;
+  }
+
+  pre {
+    background: var(--mono-bg); border: 1px solid var(--rule-soft);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 12px; line-height: 1.45; padding: 12px 14px;
+    overflow-x: auto; margin: 10px 0;
+  }
+  code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.92em; }
+
+  .bd { margin: 14px 0; }
+  .bd-row { display: flex; align-items: stretch; gap: 0; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .bd-box {
+    border: 1.5px solid var(--ink); padding: 8px 10px; min-width: 108px;
+    text-align: center; flex: 0 0 auto;
+  }
+  .bd-box b { display: block; font-size: 12.5px; }
+  .bd-box span { display: block; font-size: 10.5px; color: var(--ink-soft); margin-top: 2px; line-height: 1.35; }
+  .bd-arrow {
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    padding: 0 4px; flex: 0 0 auto; color: var(--ink-soft);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 10.5px;
+    text-align: center; line-height: 1.3;
+  }
+  .bd-under {
+    border: 1px dashed var(--rule); color: var(--ink-soft);
+    padding: 6px 10px; margin-top: 8px; font-size: 11.5px; max-width: 640px;
+  }
+
+  .recipe { border: 1px solid var(--rule); margin: 14px 0; }
+  .recipe-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+    padding: 8px 12px; border-bottom: 1px solid var(--rule); flex-wrap: wrap;
+    background: var(--mono-bg);
+  }
+  .recipe-head b { font-size: 13.5px; }
+  .recipe-head .cost { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 11.5px; color: var(--ink-soft); }
+  .recipe-body { padding: 8px 12px 10px; font-size: 13px; }
+  .recipe-body p { margin: 5px 0; }
+  .footer {
+    margin-top: 48px; border-top: 3px solid var(--ink); padding-top: 8px;
+    font-size: 11.5px; color: var(--ink-soft);
+    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  .banner {
+    border: 1px solid var(--prelim); background: var(--prelim-bg);
+    padding: 8px 12px; max-width: none; margin-top: 16px;
+    color: var(--ink); font-size: 13px;
+  }
+</style>
+
+<div class="sheet">
+
+  <div class="masthead">
+    <div>
+      <h1>Griffin Audio Pipeline</h1>
+      <div class="sub">Two-stream sound subsystem &mdash; mechanism reference and application notes</div>
+    </div>
+    <div class="docmeta">
+      REV 2 PROPOSAL &middot; DRAFT 2026-09-26<br>
+      branch indexed-pixel; rev-1 audio = SAMPLES path only<br>
+      sources: wave-table-design.md &sect;2, mixer/mixer.h,<br>
+      cpld/mixer/mixer.v, audio-run-voices-proposal.md F2,<br>
+      griffin.yml AUDIO / PORTS, griffin.log 2026-09-15..26,<br>
+      mixer_ab A/B against the Smurf PSG recording (2026-09-26)
+    </div>
+  </div>
+
+  <div class="feat-grid">
+    <div>
+      <h2>Features</h2>
+      <ul>
+        <li>Stereo 8-bit two&rsquo;s complement output at 15,734.375 Hz, tick-locked to the raster (262.5 ticks per field)</li>
+        <li>SAMPLES stream: PCM pairs deposited by ENGINE DMA, no CPU path (rev 1 production)</li>
+        <li>AUDCMD stream: beam-locked WAIT / SET records driving a time-shared voice engine (proposal)</li>
+        <li>8 voices in an 8K&times;8 SRAM: square and wavetable (LFSR noise did not fit, &sect;7); 16-bit phase, signed 8-bit amplitude, L/R pan</li>
+        <li>Phase-continuous volume; a missed vblank holds the notes, it never silences them</li>
+        <li>PCM passthrough mixed digitally under the voices; saturating on every add</li>
+        <li>No CPU bus on MIXER &mdash; every voice byte is set in band through the AUDCMD FIFO</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Device Complement</h2>
+      <ul>
+        <li>ENGINE &mdash; existing descriptor DMA master; <code>AUDIO_FIFO_W</code> and <code>SPARE</code> strobes, no change</li>
+        <li>2&times; IDT7200L15 &mdash; SAMPLES pair, {L, R} per word, 256 deep (rev 1, in place)</li>
+        <li>2&times; IDT7200L15 &mdash; AUDCMD pair, one 16-bit record per word (new)</li>
+        <li>MIXER &mdash; ATF1508AS: tick sequencer, one 8-bit adder walked over the voices, one saturating accumulator, two passes, both FIFO read ports, WAIT field (rung ii: 128/128 LC, 60 FF, 44/64 I/O, pass 1, zero spare cells)</li>
+        <li>8K&times;8 SRAM &mdash; voice state, wave tables, WAIT field: MCM60L64P10 (100 ns) from the bin; the KM6264L-15 has no timing table for its grade (&sect;5)</li>
+        <li>2&times; 74HC574 DAC latches on one shared byte, driving the existing R-2R ladders, LM358 stage and 3&times; LM386; the rev-1 CD4049 MSB inverters are removed, MIXER emits offset binary</li>
+        <li>PORTS &mdash; rev-1 pop logic (<code>AUDIO_CONTROL</code> / <code>AUDIO_STATUS</code>) retires into MIXER</li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="banner"><b>Proposal revision.</b> Rev 1 ships the SAMPLES path only (&sect;3.1): ENGINE fills a FIFO pair and PORTS pops it to the DACs. Everything from &sect;3.2 on is the MIXER proposal being worked on 2026-09-26: the host model and its A/B against the SN76489 recording have passed their gate; the first fit rung fitted the voice walk but not the whole chip; the second rung is the decisive gate, and if it fails without a limitation the owner accepts, the sound processor becomes a Z80 (wave-table-design.md &sect;3 step 4). Nothing in &sect;3.2 onward has run on hardware, and rev-1 boards cannot take it. <span class="st prelim">PRELIMINARY</span> marks mechanisms modelled and fitted in part; <span class="st adv">ADVANCE</span> marks concepts; <span class="st open">OPEN</span> marks a question the gate has not answered.</p>
+
+  <section>
+    <div class="secbar"><span>General Description</span><span class="no">1</span></div>
+    <p>
+      The audio pipeline is shaped by the same fact as the video pipeline: the CPLDs hold no RAM,
+      so anything that must remember more than a hundred bits lives in a FIFO or an external SRAM.
+      Sound therefore travels as two streams, in deliberate symmetry with PIXELS and VIDCMD.
+      <b>SAMPLES</b> is a fixed-rate data plane: one <code>{L, R}</code> pair per tick, deposited by ENGINE
+      and consumed whether or not anyone is listening. <b>AUDCMD</b> is a variable-rate control plane:
+      <code>WAIT</code> and <code>SET</code> records that occupy ticks the way VIDCMD records occupy pixel slots.
+      MIXER consumes both, keeps every voice&rsquo;s state in the SRAM, and produces one stereo pair per tick
+      by walking the voices through one adder. The CPU never touches a voice register; it writes records into
+      RAM and points a descriptor at them.
+    </p>
+    <div class="bd">
+      <div class="bd-row">
+        <div class="bd-box"><b>ENGINE</b><span>descriptor DMA<br>AUDIO_FIFO_W + SPARE strobes<br>&le;32 words per descriptor</span></div>
+        <div class="bd-arrow">D[15:0]<br>&rarr;</div>
+        <div class="bd-box"><b>SAMPLES FIFO</b><span>2&times;7200, L and R bytes<br>256 pairs = 16.3 ms<br>Q on MIXER&rsquo;s byte bus</span></div>
+        <div class="bd-arrow">L byte, R byte<br>&rarr;</div>
+        <div class="bd-box"><b>MIXER</b><span>tick sequencer<br>8-bit adder &times; 2 per phase<br>1 saturating acc, 2 passes<br>SRAM port</span></div>
+        <div class="bd-arrow">DAC byte<br>L_CLK / R_CLK<br>&rarr;</div>
+        <div class="bd-box"><b>DAC</b><span>2&times;74HC574<br>MSB inverted in MIXER<br>R-2R &rarr; LM358 &rarr; LM386</span></div>
+      </div>
+      <div class="bd-row" style="margin-top:8px">
+        <div class="bd-box" style="border-style:dashed"><b>AUDCMD FIFO</b><span>2&times;7200, record hi and lo bytes<br>written by ENGINE SPARE<br>read in the idle gap only</span></div>
+        <div class="bd-arrow">records<br>&rarr; MIXER</div>
+        <div class="bd-box" style="border-style:dashed"><b>VOICE SRAM</b><span>MCM60L64P10, 3 SYSCLK read / 4 write<br>0x00..0x77 voices 0..14<br>0x78..0x7F control<br>&ge;0x80 WAIT field, wave tables</span></div>
+        <div class="bd-arrow">A[12:0] D[7:0]<br>&harr; MIXER</div>
+        <div class="bd-box" style="border-style:dashed"><b>TIMING</b><span>AUDIO_TICK: every second line<br>15,734.375 Hz<br>2-FF synchronized in MIXER</span></div>
+      </div>
+      <div class="bd-under">
+        ENGINE fills both FIFOs by DMA from ordinary RAM: a sample buffer and a record list are just
+        descriptor sources, so a game&rsquo;s soundtrack rides the same display list as its frame.
+        The SAMPLES and AUDCMD Q outputs and the SRAM data pins share one byte bus into MIXER (a 7200&rsquo;s Q is
+        high-impedance unless its /R is low), which is what brings the pin count under 64.
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="secbar"><span>System Characteristics</span><span class="no">2</span></div>
+    <div class="twrap"><table>
+      <tr><th>Parameter</th><th class="num">Value</th><th>Notes</th></tr>
+      <tr><td>Tick rate</td><td class="num">15,734.375 Hz</td><td>25175000 / 1600: every second 31.469 kHz line; <code>AUDIO_SAMPLES_PER_SECOND</code> rounds it to 15734</td></tr>
+      <tr><td>Ticks per field</td><td class="num">262.5</td><td>263 then 262, free-running; the app carries the parity (smurf FieldCounter)</td></tr>
+      <tr><td>Sample format</td><td class="num">8-bit two&rsquo;s complement</td><td>0x00 = silence; the DAC MSB is inverted to offset binary (CD4049 on rev 1, inside MIXER from rev 2). Pre-2026-08-31 unsigned convention is retired</td></tr>
+      <tr><td>SAMPLES word</td><td class="num mono">{L[15:8], R[7:0]}</td><td>one pair per ENGINE <code>AUDIO_FIFO_W</code> deposit; no CPU write path</td></tr>
+      <tr><td>SAMPLES depth</td><td class="num">256 pairs</td><td>16.3 ms, less than one field: a full-rate PCM stream must be fed more than once per field (&sect;6)</td></tr>
+      <tr><td>AUDCMD record</td><td class="num">16 bits</td><td>WAIT {0, ticks[14:0]} or SET {1, addr[6:0], v[7:0]}; 256 deep; the 61-tick Smurf death frame is 91 words</td></tr>
+      <tr><td>Voices</td><td class="num">8</td><td>15 voices do not fit the full chip (rung ii); the 0x78 control block is reserved but nothing reads it yet</td></tr>
+      <tr><td>Phase / increment</td><td class="num">16 bits</td><td>quantum 0.24 Hz; worst PSG tone error 1.82 cents at period 1014, mean 0.48 (measured)</td></tr>
+      <tr><td>Amplitude</td><td class="num">signed 8 bits</td><td>at the reference peak of 31, attenuations 12 and 13 collapse to one value (&sect;7 OPEN)</td></tr>
+      <tr><td>Mix</td><td class="num">8-bit saturating</td><td>PCM first, then voices by index, saturate on every add, per channel; 0 saturations over the Smurf trace at peak 31</td></tr>
+      <tr><td>SYSCLK per tick</td><td class="num">290 / 338 of 890</td><td>measured on the rung ii bench: 8 square voices / 8 table voices, 3 SYSCLK per SRAM read and 4 per write (&sect;5); +20 while a WAIT is walking</td></tr>
+      <tr><td>Idle gap per tick</td><td class="num">580 / 532 SYSCLK</td><td>where AUDCMD records execute: a SET costs 10, a WAIT 42, so the bound is 53 SETs per boundary with square voices, 49 with tables; Smurf&rsquo;s worst boundary is 26 records</td></tr>
+      <tr><td>Bus cost, chip music</td><td class="num">&asymp;1% of bus</td><td>a note is one 3-word descriptor; Smurf&rsquo;s driver emits 0.93 SETs per field on average, 12 at most, 17 on the first frame; worst boundary 26 records</td></tr>
+      <tr><td>CPU cost, chip music</td><td class="num">a few hundred cycles/field</td><td>replaces 49,000 average / 112,000 worst for the software SN76489 (griffin.log 2026-09-16)</td></tr>
+      <tr><td>Output pipeline</td><td class="num">L then R, 77&ndash;101 SYSCLK apart</td><td>5.5&ndash;7.2 &micro;s inter-channel latch skew, a tenth of a tick; the model treats them as simultaneous</td></tr>
+    </table></div>
+  </section>
+
+  <section>
+    <div class="secbar"><span>Mechanisms</span><span class="no">3</span></div>
+    <p class="note">
+      Status stamps: <span class="st prod">PRODUCTION</span> = RTL built, fitted, verified; on rev-1 boards for &sect;3.1.
+      <span class="st prelim">PRELIMINARY</span> = laws pinned in wave-table-design.md &sect;2, modelled in mixer/mixer.h,
+      fitted in part. <span class="st adv">ADVANCE</span> = concept, specification may change.
+    </p>
+
+    <h3><span class="mnum">3.1</span> SAMPLES stream &mdash; PCM data plane <span class="st prod">PRODUCTION (rev 1)</span></h3>
+    <p>
+      ENGINE deposits one <code>{L, R}</code> word per <code>AUDIO_FIFO_W</code> strobe into the pair; nothing else can write it.
+      On rev 1, PORTS pops both chips on every <code>AUDIO_TICK</code> falling edge while <code>AUDIO_CONTROL.ENABLE</code> is set,
+      and the DACs hold the last pair when the FIFO runs dry. <code>AUDIO_CONTROL.RESET</code> (reset value 1) holds both /RS low;
+      <code>AUDIO_STATUS.EMPTY</code> is the raw /EF pin, polled, with no interrupt. Flush sequence: ENABLE=0, RESET=1, RESET=0,
+      deposit, ENABLE=1, and RESET may only change while no list that deposits <code>AUDIO_FIFO_W</code> is armed.
+    </p>
+    <p>
+      Under MIXER the pair stays exactly as built and the pop moves: MIXER reads the L chip at the start of pass 0 and the R chip
+      at the start of pass 1 as each channel&rsquo;s accumulator seed, or seeds 0 when /EF says empty. The rev-1 registers retire.
+    </p>
+
+    <h3><span class="mnum">3.2</span> AUDCMD stream &mdash; tick-locked control plane <span class="st prelim">PRELIMINARY</span></h3>
+<pre>WAIT { 0, ticks[14:0] }       ticks more ticks elapse before the next record is consumed.
+                              WAIT 0 is a no-op.  A WAIT n consumed at the boundary of tick k
+                              lets ticks k .. k+n-1 play; the next record is consumed at k+n.
+SET  { 1, addr[6:0], v[7:0] } voice RAM[addr] = v.  Takes no tick.  Any number execute at one
+                              boundary until a WAIT or an empty FIFO, bounded by the idle gap.</pre>
+    <p>
+      Records are consumed only at tick boundaries, in the idle gap after the walk. At a boundary the WAIT count is decremented
+      first; if it is then zero, records are consumed until a WAIT with a nonzero count. An empty FIFO changes nothing: the
+      voices keep sounding. This is the property the SAMPLES path lacks (&sect;6, AR1): a missed vblank holds the last notes
+      rather than draining to silence. ENGINE writes the pair through its existing <code>SPARE</code> strobe (mask bit 3), so
+      ENGINE is unchanged. Hardware implements WAIT as a 16-bit SRAM field at a private address, loaded as the complement and
+      walked toward all-ones by the same adder that advances phases; the contract above does not depend on that.
+    </p>
+
+    <h3><span class="mnum">3.3</span> Voice state &mdash; the 8-byte record in SRAM <span class="st prelim">PRELIMINARY</span></h3>
+    <div class="twrap"><table>
+      <tr><th>Offset</th><th>Byte</th><th>Meaning</th></tr>
+      <tr><td class="mono">+0</td><td class="mono">INC_LO</td><td rowspan="2">16-bit phase increment in phase units per tick. Frequency = INC &times; 15734.375 / 65536.</td></tr>
+      <tr><td class="mono">+1</td><td class="mono">INC_HI</td></tr>
+      <tr><td class="mono">+2</td><td class="mono">AMP</td><td>signed 8-bit amplitude; the sample is +AMP or &minus;AMP for square and noise voices</td></tr>
+      <tr><td class="mono">+3</td><td class="mono">CTL</td><td>bit 0 PAN_L, bit 1 PAN_R, bits 3:2 MODE (0 square, 1 white noise, 2 wavetable, 3 periodic noise), bit 4 RESET_PHASE (executes, not stored)</td></tr>
+      <tr><td class="mono">+4</td><td class="mono">PHASE_LO</td><td rowspan="2">hardware-owned running phase; a SET is honoured, for sync or reset</td></tr>
+      <tr><td class="mono">+5</td><td class="mono">PHASE_HI</td></tr>
+      <tr><td class="mono">+6</td><td class="mono">WAVE_PAGE</td><td>SRAM page of the voice&rsquo;s 256-byte table (MODE 2 only)</td></tr>
+      <tr><td class="mono">+7</td><td class="mono">&mdash;</td><td>reserved</td></tr>
+      <tr class="subhead"><td colspan="3">Address map</td></tr>
+      <tr><td class="mono">0x00..0x77</td><td>voices 0..14</td><td>addr = voice &times; 8 + offset</td></tr>
+      <tr><td class="mono">0x78..0x7F</td><td>MIXER control</td><td>0x78 = LFSR voice select; rest reserved (provisional, step 5 confirms)</td></tr>
+      <tr><td class="mono">&ge; 0x80</td><td>private</td><td>0x80..0x87 the WAIT field (walked as a voice with INC 1), then wave tables; outside the 7-bit SET window, reached by WAVE_PAGE only</td></tr>
+    </table></div>
+    <p class="note">
+      The SRAM is never reset. Software must SET every voice it uses, including AMP 0 and CTL 0 for the ones it does not,
+      and must SET the LFSR voice select before a noise voice sounds; a select naming an unplayed voice (15) disables the LFSR. Power-on contents are garbage by contract.
+    </p>
+
+    <h3><span class="mnum">3.4</span> The tick &mdash; execution model <span class="st prelim">PRELIMINARY</span></h3>
+    <p>One <code>AUDIO_TICK</code> falling edge is one tick. In order:</p>
+    <div class="twrap"><table>
+      <tr><th>Step</th><th>What happens</th><th>SYSCLK</th></tr>
+      <tr><td class="mono">1</td><td>AUDCMD: WAIT counts down; if zero, records are consumed until a nonzero WAIT or an empty FIFO. SETs take effect in this tick&rsquo;s walk.</td><td class="num">idle gap of the previous tick</td></tr>
+      <tr><td class="mono">2</td><td>Pass 0: pop the L byte of SAMPLES (or 0) into the accumulator; for each voice in index order, PHASE += INC (byte-serial, PHASE_LO read first, one 8-bit adder used twice, carry kept), write PHASE back, then add its sample if PAN_L. Latch the left DAC.</td><td class="num">8 &times; 8 accesses &times; 3 + 2</td></tr>
+      <tr><td class="mono">3</td><td>Pass 1: pop the R byte of SAMPLES (or 0); for each voice re-read PHASE_HI, CTL and AMP (or the table byte) and add its sample if PAN_R. Latch the right DAC.</td><td class="num">8 &times; 3 accesses &times; 3 + 2</td></tr>
+      <tr><td class="mono">4</td><td>If the LFSR voice&rsquo;s phase add carried this tick, shift the LFSR once. Every voice in both passes read the pre-shift value. (Model law; the LFSR did not fit rung ii, where MODES 1 and 3 play as square.)</td><td class="num">1</td></tr>
+    </table></div>
+    <p>
+      Voice sample by MODE: square is <code>phase[15] ? +AMP : &minus;AMP</code>; noise is <code>lfsr[0] ? +AMP : &minus;AMP</code>
+      with the SN76489AN register, 15 bits, taps 0 and 1 fed back into bit 14 for white and the plain 15-bit ring for periodic;
+      wavetable is <code>SRAM[WAVE_PAGE &times; 256 + phase[15:8]]</code>, a signed byte already at its volume. Adds saturate to
+      &minus;128..+127 individually, so &minus;(&minus;128) clips rather than wraps. The two channels never interact, so the two-pass
+      hardware is bit-identical to a model with two accumulators in one pass. RESET_PHASE zeroes PHASE when its SET executes
+      and, on the LFSR voice, reseeds the register to 0x4000, which is the SN76489&rsquo;s behaviour on a noise control write.
+    </p>
+
+    <h3><span class="mnum">3.5</span> PSG driver &mdash; nine bytes a frame become a dozen SETs <span class="st prelim">PRELIMINARY (model)</span></h3>
+    <p>
+      <code>mixer/psg_driver</code> consumes the same byte stream an SN76489 would and emits SETs only for voice bytes that changed.
+      Tone period N maps to <code>INC = round(3579545 / (32 N) &times; 65536 / 15734.375)</code> from a 1024-entry table;
+      attenuation maps to AMP from the 2 dB ladder at the chosen peak; noise control maps to the noise voice&rsquo;s INC (rates
+      0x10/0x20/0x40, or tone 2&rsquo;s period for rate 3), MODE 1 or 3, and RESET_PHASE. Periods 1..7 store INC mod 65536 for tones,
+      which is the exact alias the chip itself produces, and 0xFFFF for noise. Measured over the whole Smurf playthrough: 0.93 SETs
+      per field mean, 12 max, 17 on the first frame (the LFSR voice select rides first), and the death frame&rsquo;s 61 emissions fit in 91 words.
+    </p>
+
+    <h3><span class="mnum">3.6</span> Volume without a multiplier <span class="st adv">ADVANCE</span></h3>
+    <p>
+      A square or noise voice has exact phase-continuous volume for free: AMP is a byte the accumulator adds or subtracts.
+      A wavetable voice gets volume by page selection, 16 pre-scaled copies of a 256-byte wave in 4 KB, so the 8K SRAM holds
+      the voice records plus one such bank. Which is why noise as a 256-byte table and square as a table are also on offer if
+      the LFSR does not fit: MODE 2 is the general mechanism and MODES 0/1/3 are the cheap special cases.
+    </p>
+
+    <h3><span class="mnum">3.7</span> What the PSG subset cannot express <span class="st prelim">PRELIMINARY (measured)</span></h3>
+    <p>
+      A 16-bit INC carries at most one carry per tick, so a noise voice shifts at most once per tick. The SN76489 at rate 3
+      clocked from tone 2 at period 4 shifts 1.8 times per sample; in Smurf&rsquo;s jump tail (54 fields) periodic noise tops out at
+      1049 Hz where the chip reaches 1864 Hz. This is the only deviation the model cannot represent, and listening found it
+      unobjectionable. Volume changes do not restart the wave (the run-record proposal&rsquo;s weakness is gone). Nothing here plays FM.
+    </p>
+  </section>
+
+  <section>
+    <div class="secbar"><span>Application Notes</span><span class="no">4</span></div>
+    <p class="note">Costs are bus words per field (ENGINE delivery) and 68000 cycles per field. The frame budget reference is 233,625 SYSCLK per field.</p>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>PSG game port &mdash; three tones and noise, SN76489-class</b><span class="cost">&le;12 SETs + WAITs per field &middot; a few hundred cycles</span><span class="st prelim">PRELIMINARY (model)</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> voices 0..2 square, voice 3 noise, all PAN_L+PAN_R; the game&rsquo;s PSG bytes go through psg_driver (&sect;3.5) into a small record buffer; one descriptor per field points at it, followed by a WAIT to the next field boundary. Queue field k+1&rsquo;s records during field k so the chain never re-syncs on an empty FIFO (AR3).</p>
+        <p><b>Notes:</b> the Smurf port. Pitch within 2 cents everywhere, ladder within 0.5 LSB, invariants hold every tick; A/B judged equal or better than the software reference on 2026-09-26.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>PCM soundtrack or one-shots &mdash; the rev-1 path</b><span class="cost">263 words/field per stereo stream &middot; CPU renders or copies the samples</span><span class="st prod">PRODUCTION (rev 1)</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> a sample buffer in RAM; the display list deposits it in bursts of at most 32 words spread across the field (Smurf: 9 bursts) so the 256-pair FIFO never underruns and never overflows. Under MIXER it mixes beneath the voices automatically.</p>
+        <p><b>Notes:</b> a field is 262.5 pairs and the FIFO holds 256, so one missed vblank empties it and the DAC holds (AR1). Rev 1 apps re-prime after a miss; MIXER-era apps can leave PCM idle and rely on voices instead.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Tracker / chiptune playback &mdash; song as a record list</b><span class="cost">&asymp;3&ndash;20 words per row &middot; zero cycles while playing</span><span class="st adv">ADVANCE</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> a whole song is SET/WAIT words in RAM; ENGINE streams it with count-32 descriptors as the FIFO drains. WAIT counts are tick-exact and raster-locked, so tempo never drifts against the picture. Envelopes are AMP SETs at chosen ticks; arpeggios are INC SETs.</p>
+        <p><b>Notes:</b> the 256-word FIFO holds seconds of sparse music; the app only has to keep it non-empty. Fifteen voices need more idle gap than eight; check the SET bound (&sect;6, AR4).</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Wavetable instruments and drums</b><span class="cost">4 KB SRAM per instrument at 16 volumes &middot; loaded by SETs once</span><span class="st adv">ADVANCE</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> load 256-byte tables through SETs is not possible (SETs reach only the 7-bit window), so tables are loaded through a MIXER control mechanism still to be specified, or preloaded; a MODE 2 voice then plays any single-cycle wave, and a one-shot drum is a table played once by an INC chosen so the phase wraps at the sample&rsquo;s end followed by AMP 0.</p>
+        <p><b>Notes:</b> the table-load path is the open specification item for this mode. Until rung (ii) fits the table read, this is concept only.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Stereo effects over music</b><span class="cost">one PAN bit per voice</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> music voices PAN_L+PAN_R; a sound effect on a spare voice with PAN_L or PAN_R only, or a PCM one-shot with the other channel&rsquo;s byte at 0.</p>
+        <p><b>Notes:</b> amplitude budgeting is the driver&rsquo;s job: with eight voices at a peak of 31 the sum can reach 248 and will saturate; keep the sum of active peaks under 127 per channel unless clipping is wanted.</p>
+      </div>
+    </div>
+
+    <div class="recipe">
+      <div class="recipe-head"><b>Speech and sampled sound on a voice</b><span class="cost">&asymp;16 SETs per 256 samples at PCM rates</span><span class="st adv">ADVANCE</span></div>
+      <div class="recipe-body">
+        <p><b>Recipe:</b> not this way. A voice plays a 256-byte loop; long samples belong on the SAMPLES stream, which costs nothing but bus words and mixes under the voices for free.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="secbar"><span>SRAM and Read-Port Timing</span><span class="no">5</span></div>
+    <p>
+      The walk assumes three SYSCLK (214 ns) per SRAM read and, after the step-3 datasheet check, four per write:
+      address registered at the edge that starts the access; /OE low for the middle two clocks (135 ns worst); read data
+      captured at the edge that ends the access; on a write, /WE low for t1&ndash;t2 only and address and data held through t3
+      so the address outlasts /WE&rsquo;s rise by a full clock; one dead clock on the byte bus at every read/write turnaround.
+      A 7200 read on the shared bus holds /R low for two clocks and captures at the end. The DAC byte is stable one clock either
+      side of a one-clock latch pulse. Every number below is from a table fetched on 2026-09-26 (griffin.log, step 3 entry);
+      the chosen SRAM is the MCM60L64P10, because no table exists for the KM6264L-15 grade and the KM6264A generation needs
+      5 ns of address hold after write that a same-edge /WE cannot give.
+    </p>
+    <div class="twrap"><table>
+      <tr><th>Check</th><th>Table value</th><th class="num">Margin, MCM60L64-10</th><th>Status</th></tr>
+      <tr><td>SRAM read tAA / tOE inside the capture window (195 ns after address, 124 ns after /OE)</td><td>tAA 100, tOE 50</td><td class="num">+95 / +74 ns</td><td><span class="st prod">PASS</span></td></tr>
+      <tr><td>SRAM output hold at capture (tOH)</td><td>tOH 20</td><td class="num">+20 ns</td><td><span class="st prod">PASS</span></td></tr>
+      <tr><td>Write pulse, data setup, address setup (tWP, tDW, tAS)</td><td>60, 40, 0</td><td class="num">+75 / +95 / +63 ns</td><td><span class="st prod">PASS</span></td></tr>
+      <tr><td>Address hold after write (tWR) with /WE rising on the address-advance edge</td><td>tWR 0 (KM6264A: 5)</td><td class="num">&minus;8 ns worst</td><td><span class="st open">FAIL at 3 clocks</span> &rarr; 4-clock writes, +16 SYSCLK per 8-voice tick</td></tr>
+      <tr><td>Data hold after /WE rise (tDH) from the same register</td><td>tDH 0</td><td class="num">structurally later; no published tCO minimum</td><td><span class="st prelim">NOT PROVABLE</span>, covered by the 4-clock write</td></tr>
+      <tr><td>Read&rarr;write turnaround: SRAM tOHZ vs MIXER drive-on</td><td>tOHZ 35 max</td><td class="num">+28 ns with the dead clock, &minus;43 without</td><td><span class="st prod">PASS</span> dead clock is load-bearing</td></tr>
+      <tr><td>7200L15 read on the shared bus: tA, tRPW, tRR, tDV, tRHZ; Q high-Z when /R high</td><td>15, 15, 10, 5 min, 15 max; confirmed verbatim</td><td class="num">+109 / +120 / +53 / +5 / +48 ns</td><td><span class="st prod">PASS</span></td></tr>
+      <tr><td>7200 empty flag settles (tREF / tWEF) before the next decision</td><td>15 max</td><td class="num">within a quarter clock</td><td><span class="st prod">PASS</span></td></tr>
+      <tr><td>DAC latch 74HC574 tsu / th / tW at 4.5 V</td><td>15 / 5 / 20</td><td class="num">+48 / +58 / +43 ns</td><td><span class="st prod">PASS</span></td></tr>
+      <tr><td>ATF1508AS-15 tCH/tCL, fMAX; tCO used</td><td>5 / 5, 100 MHz; tCO 8 (industrial)</td><td class="num">+31 ns; 14 of 100 MHz</td><td><span class="st prod">PASS</span></td></tr>
+      <tr><td>AUDIO_TICK domain crossing</td><td>2-FF synchronizer, falling edge latched as tick_pending</td><td class="num">&mdash;</td><td><span class="st prelim">PRELIMINARY</span> rung i RTL</td></tr>
+    </table></div>
+    <p class="note">The KM6264L-15 from the bin passes on read margins by extrapolation only and its tWR is unknown; it is not the part. A step-6 SRAM model must check tWR with a nonzero tCO skew or it cannot see this fault.</p>
+  </section>
+
+  <section>
+    <div class="secbar"><span>Authoring Rules and Limitations</span><span class="no">6</span></div>
+    <h3><span class="mnum">6.1</span> Rules of thumb for a sound driver <span class="st prelim">PRELIMINARY (model)</span></h3>
+    <div class="twrap"><table>
+      <tr><th>#</th><th>Rule of thumb</th></tr>
+      <tr><td class="mono">RT1</td><td><b>Silence is not free at power-on.</b> The SRAM starts as garbage. Before the first note, SET AMP 0 and CTL 0 on every voice you do not own, and SET the LFSR voice select.</td></tr>
+      <tr><td class="mono">RT2</td><td><b>A note is one descriptor.</b> Three words, SET INC_LO, SET INC_HI, SET AMP, delivered by ENGINE from RAM; you never write a register. Only send bytes that changed.</td></tr>
+      <tr><td class="mono">RT3</td><td><b>WAIT is the clock; queue a field ahead.</b> A WAIT that expires on an empty FIFO re-syncs to whenever the next words arrive, so deliver field k+1&rsquo;s records during field k and the timing stays tick-exact.</td></tr>
+      <tr><td class="mono">RT4</td><td><b>Missed vblanks hold, they do not silence.</b> Voices keep sounding on an empty AUDCMD FIFO; only the PCM stream drains. Design so that a held note is the failure mode, not a dropout.</td></tr>
+      <tr><td class="mono">RT5</td><td><b>Budget amplitude, not the chip.</b> Saturation happens on every add. Keep the sum of active peaks under 127 per channel; at a per-voice peak of 31 that is four voices, at 15 it is eight.</td></tr>
+      <tr><td class="mono">RT6</td><td><b>Pitch is exact enough; do not table-correct it.</b> The 16-bit increment lands every PSG period within 2 cents. Sweeps update INC once per field or once per row.</td></tr>
+      <tr><td class="mono">RT7</td><td><b>Long samples go on SAMPLES, short waves go in tables.</b> A voice plays 256 bytes; anything longer is PCM through the other stream and mixes under the voices for nothing.</td></tr>
+    </table></div>
+    <h3><span class="mnum">6.2</span> Rules and limitations <span class="st prelim">PRELIMINARY</span></h3>
+    <div class="twrap"><table>
+      <tr><th>#</th><th>Rule</th></tr>
+      <tr><td class="mono">AR1</td><td>SAMPLES holds 256 pairs and a field consumes 262.5; a full-rate PCM stream must receive at least two deposits per field, spread so the level never crosses 0 or 256 (rev 1 measured: one miss = two fields of held DAC).</td></tr>
+      <tr><td class="mono">AR2</td><td>AUDCMD words go to the pair only through ENGINE&rsquo;s SPARE strobe; a write to a full FIFO is lost. Keep the queued record count under 256 by construction (a field of Smurf is at most 91).</td></tr>
+      <tr><td class="mono">AR3</td><td>SETs at one boundary are bounded by the idle gap: 53 with eight square voices, 49 with eight table voices (measured, rung ii); records beyond the bound execute at the next boundary, and a record already started completes first. The model carries the bound as a checked constant.</td></tr>
+      <tr><td class="mono">AR4</td><td>SETs in one boundary execute in queue order and before the walk, so a PHASE SET after RESET_PHASE wins and a SET is heard in the same tick.</td></tr>
+      <tr><td class="mono">AR5</td><td>One LFSR per chip in the model; which voice steps it is control byte 0x78, and a shift is heard one tick after the carry. The rung ii chip has no LFSR: noise is a MODE 2 table (periodic noise exact, white noise approximated).</td></tr>
+      <tr><td class="mono">AR6</td><td>A noise voice shifts at most once per tick; an SN76489 rate-3 noise clocked above the tick rate is clamped (&sect;3.7).</td></tr>
+      <tr><td class="mono">AR7</td><td>The left DAC latches about 7 &micro;s before the right. Treat the pair as one sample; nothing an application does can observe the skew.</td></tr>
+      <tr><td class="mono">AR8</td><td>Nothing in the SRAM is reset by /RS; /RS clears the WAIT field and empties both FIFOs. Voice state survives a reset and must be re-established by software (RT1). RESET_PHASE is stored and ignored in rung ii; two SETs of PHASE 0 do the same.</td></tr>
+      <tr><td class="mono">AR9</td><td>Tables are outside the SET window; MODE 2 depends on a table-load path not yet specified. Until it is, MODE 2 is a fit rung, not an application mode.</td></tr>
+    </table></div>
+  </section>
+
+  <section>
+    <div class="secbar"><span>Qualification Status</span><span class="no">7</span></div>
+    <div class="twrap"><table>
+      <tr><th>Item</th><th>Gate</th><th>Status</th></tr>
+      <tr><td>SAMPLES path (&sect;3.1)</td><td>rev-1 hardware; PORTS pop, DMA-only fill, two&rsquo;s complement DACs; Smurf soundtrack plays</td><td class="mono">PRODUCTION rev 1</td></tr>
+      <tr><td>Host model of &sect;2 laws (mixer/mixer.h) + PSG driver</td><td>A/B over the 81.7 s Smurf recording against the SN76489 per-sample reference: pitch worst 1.82 cents / mean 0.48; ladder within 0.46 LSB; phase, noise and LFSR invariants 0 violations every tick; 7 of 7 mutants caught; listening test passed</td><td class="mono">PASS 2026-09-26</td></tr>
+      <tr><td>Fit rung (i): sequencer + SRAM port + phase adder + accumulator, 8 square voices</td><td>mono 95 LC; stereo two-acc 126; stereo two-pass 110/128, 56/64 I/O, pass 1; 16 voices 122 two-pass, no fit two-acc; smoke bench 9 ticks hand-derived, mutant fails</td><td class="mono">FITS, GATE FAIL 2026-09-26 (&lt;100 LC target missed; pins pass only on the shared byte bus)</td></tr>
+      <tr><td>Fit rung (ii): + WAIT field, AUDCMD and SAMPLES read ports on the shared bus, wavetable read, 4-clock writes, in-chip MSB inversion</td><td>128/128 LC, 60 FF, 44/64 I/O, pass 1 (re-verified); bench hand-derived, every configuration matched first run, 3 mutants fail incl. the 3-clock write. Side rungs: + LFSR does not fit; 15 voices does not fit; RESET_PHASE dropped; the same RTL lands 123&ndash;128 or fails grouping on one literal</td><td class="mono">PASS ON THE LETTER 2026-09-26, zero spare cells &middot; owner&rsquo;s call pending: accept, split into two CPLDs, or Z80</td></tr>
+      <tr><td>Datasheet timing (&sect;5)</td><td>IDT7200, KM6264A/B, MCM60L64, 74HC574, ATF1508AS-15 tables fetched and checked against the cadence: every read, FIFO and latch margin passes by 20 ns or more; address hold after write fails at 3 clocks and is fixed by a 4-clock write; part = MCM60L64P10</td><td class="mono">PASS WITH FIX 2026-09-26</td></tr>
+      <tr><td>LFSR end-of-tick shift, record bound, control block 0x78 in the model</td><td>19 of 19 checks; new output-level invariants E7h/E8h/E20 (0 mismatches over 1.1 M ticks); 10 of 10 mutants fail; record bound 64 never reached (max 26)</td><td class="mono">PASS 2026-09-26</td></tr>
+      <tr><td>8-bit AMP at the quiet end</td><td>peak 31: attenuations 11..13 collapse to AMP 2. Peak 60 (measured): no collapse, worst ladder error 0.49 LSB, but 1.2% of ticks saturate and the reference clips on nearly the same ticks; listen to build/peak60/wav. A 10-bit accumulator is the cells-for-headroom alternative</td><td class="mono">OPEN (listen)</td></tr>
+      <tr><td>Table-load path for MODE 2</td><td>SETs cannot reach &ge;0x80; needs a control mechanism or a wider window</td><td class="mono">OPEN</td></tr>
+      <tr><td>griffin.yml encoding, PORTS re-fit without audio pop, JTAG chain with MIXER</td><td>step 5</td><td class="mono">TO DO</td></tr>
+      <tr><td>Testbench with 7200 and SRAM models, model and RTL tick-for-tick on the A/B stream</td><td>step 6</td><td class="mono">TO DO</td></tr>
+      <tr><td>Shared model into the suite (m4-audio) and the emulator</td><td>step 7</td><td class="mono">TO DO</td></tr>
+      <tr><td>Smurf on MIXER, field budget re-measured</td><td>step 8, against 49,000 / 112,000</td><td class="mono">TO DO</td></tr>
+      <tr><td>Breadboard prototype from the SPARE header</td><td>step 9, the only silicon check before rev 2</td><td class="mono">TO DO</td></tr>
+      <tr><td>Run-record voices on looping FIFOs (proposal sections 1..9)</td><td>superseded by Form 2.3: restart-on-volume-change artefact and six more FIFOs</td><td class="mono">RETIRED 2026-09-20</td></tr>
+      <tr><td>Z80 sound processor</td><td>fallback: Z80H 8 MHz, 27C128 program + tables, 6264 state RAM, 74HC138 decode, latches, /NMI tick, four FIFO Q ports on its data bus; 4 mono wavetable voices at 8 MHz by hand count</td><td class="mono">FALLBACK, decided 2026-09-26</td></tr>
+    </table></div>
+  </section>
+
+  <div class="footer">
+    <span>Griffin audio, rev 2 proposal &mdash; working design record; normative sources are wave-table-design.md &sect;2, mixer/mixer.h, cpld/mixer/mixer.v and griffin.yml AUDIO.</span>
+    <span>DRAFT &middot; 2026-09-26</span>
+  </div>
+
+</div>
