@@ -12,7 +12,7 @@ PSG_DIR  ?= ../../../griffin-ports/smurf/app/audio
 
 INC := -I. -I$(MIXER) -I$(PSG_DIR) -I..
 
-all: $(BUILD)/harness
+all: $(BUILD)/harness $(BUILD)/harness2
 
 $(BUILD)/z80emu.o: z80emu/z80emu.c z80emu/z80emu.h z80emu/instructions.h z80emu/macros.h z80emu/tables.h z80emu/z80config.h z80user.h
 	@mkdir -p $(BUILD)
@@ -29,6 +29,13 @@ $(BUILD)/psg_driver.o: $(MIXER)/psg_driver.cpp $(MIXER)/psg_driver.h $(MIXER)/mi
 $(BUILD)/harness.o: harness.cpp z80user.h ../audio_records.h $(MIXER)/mixer.h $(MIXER)/psg_driver.h $(PSG_DIR)/tests/trace_io.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INC) -c $< -o $@
+
+$(BUILD)/harness2.o: harness2.cpp z80user.h ../audio_records.h $(MIXER)/mixer.h $(MIXER)/psg_driver.h $(PSG_DIR)/tests/trace_io.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INC) -c $< -o $@
+
+$(BUILD)/harness2: $(BUILD)/harness2.o $(BUILD)/z80emu.o $(BUILD)/mixer.o $(BUILD)/psg_driver.o
+	$(CXX) $(CXXFLAGS) $^ -o $@
 
 $(BUILD)/harness: $(BUILD)/harness.o $(BUILD)/z80emu.o $(BUILD)/mixer.o $(BUILD)/psg_driver.o
 	$(CXX) $(CXXFLAGS) $^ -o $@

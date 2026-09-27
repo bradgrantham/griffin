@@ -23,6 +23,8 @@ H        = ./build/harness
 ROM      = ../rom/build/rom.bin
 ROM_NOPCM = ../rom/build/rom-nopcm.bin
 ROM_FAST = ../rom/build/rom-fast.bin
+H2       = ./build/harness2
+ROM2     = ../rom/build/rom2.bin
 
 all: rom harness
 
@@ -56,6 +58,22 @@ test-8mhz: all
 	@echo "== Smurf trace at 8 MHz, first $(STOP) ticks, --no-pcm"
 	-cd harness && $(H) --trace ../$(TRACE) --mhz 8 --no-pcm --rom $(ROM_NOPCM) --stop $(STOP) --no-wav
 
+test-v2: all
+	@echo "== v2 oracle b: square voices, stereo, 10,000 ticks"
+	cd harness && $(H2) --synthetic square --period $(PERIOD) --ticks 10000 --voices 4 --stereo --out build/v2-square
+	@echo "== v2 oracle b: square voices, mono + PCM"
+	cd harness && $(H2) --synthetic square --period $(PERIOD) --ticks 10000 --voices 4 --mono --pcm --out build/v2-square-mono
+	@echo "== v2 oracle c: Smurf trace, mono, PCM on the SAMPLES pair"
+	cd harness && $(H2) --trace ../$(TRACE) --period $(PERIOD) --mono --pcm --out build/v2-smurf-pcm
+	@echo "== v2 oracle c: Smurf trace, mono, no PCM"
+	cd harness && $(H2) --trace ../$(TRACE) --period $(PERIOD) --mono --no-pcm --out build/v2-smurf-nopcm
+	@echo "== v2 oracle d: every record type, CONFIGURE rebuilds, uploads, DUMP"
+	cd harness && $(H2) --synthetic records --period $(PERIOD) --stereo --out build/v2-records
+
+test-v2-real: all
+	@for m in 6 8; do for p in "--pcm" "--no-pcm"; do echo "== v2 Smurf at $$m MHz $$p, first $(STOP) ticks"; \
+	  (cd harness && $(H2) --trace ../$(TRACE) --mhz $$m --mono $$p --stop $(STOP) --no-wav | grep "NMI T\|mismatches"); done; done
+
 measure: all
 	@for v in 1 2 3 4; do echo "== FAST NO_PCM ROM, $$v square voices"; \
 	  (cd harness && $(H) --synthetic square --period $(PERIOD) --ticks 10000 --voices $$v --rom $(ROM_FAST) --no-wav | grep "NMI T\|mismatches"); done
@@ -66,4 +84,4 @@ clean:
 	$(MAKE) -C rom clean
 	$(MAKE) -C harness clean
 
-.PHONY: all rom harness test test-6mhz test-8mhz measure clean
+.PHONY: all rom harness test test-v2 test-v2-real test-6mhz test-8mhz measure clean

@@ -192,15 +192,15 @@
   <div class="masthead">
     <div>
       <h1>Griffin Audio Pipeline</h1>
-      <div class="sub">Z80 sound processor on one record stream &mdash; mechanism reference and application notes</div>
+      <div class="sub">Z80 sound processor on two FIFO streams &mdash; mechanism reference and application notes</div>
     </div>
     <div class="docmeta">
-      REV 2 PROPOSAL &middot; DRAFT 2026-09-26<br>
+      REV 2 PROPOSAL &middot; DRAFT 2026-09-27<br>
       branch indexed-pixel; rev-1 audio = SAMPLES path only<br>
       sources: wave-table-design.md, griffin.yml AUDIO + interfaces,<br>
       mixer/mixer.h (the tick law), sound/audio_records.h,<br>
-      sound/README.md (Z80 budget), griffin.log 2026-09-15..26,<br>
-      mixer_ab A/B against the Smurf PSG recording (2026-09-26)
+      sound/README.md (Z80 budget, v1 measured; v2 in progress),<br>
+      griffin.log 2026-09-15..27, mixer_ab A/B against the Smurf PSG recording
     </div>
   </div>
 
@@ -209,63 +209,63 @@
       <h2>Features</h2>
       <ul>
         <li>Stereo 8-bit two&rsquo;s complement output at 15,734.375 Hz, tick-locked to the raster (262.5 ticks per field)</li>
-        <li>One 16-bit record stream from ENGINE DMA carries voice SETs, WAITs, inline PCM, table descriptors and program uploads</li>
-        <li>Voices with 16-bit phase, signed 8-bit amplitude, L/R pan; square, wavetable and SN76489-style LFSR noise</li>
-        <li>Tables and the PCM ring live in the Z80&rsquo;s own RAM: the same machine is stereo PCM or many wavetables, by what the 68000 loads</li>
-        <li>A title may upload its own sound program and run it (exact PSG emulation at the register-write level)</li>
-        <li>Phase-continuous volume; a missed vblank holds the notes, it never silences them</li>
+        <li>Two DMA-fed streams, as in video: SAMPLES (PCM pairs) and AUDCMD (16-bit records: voice SETs, WAITs, CONFIGURE, program uploads)</li>
+        <li>Voices with 16-bit phase, signed 8-bit amplitude, left or right or mono; square, wavetable and SN76489-style LFSR noise</li>
+        <li>The tick routine is assembled from templates at CONFIGURE time and patched in place by SET: no per-voice dispatch</li>
+        <li>Tables live in the Z80&rsquo;s RAM; a title may upload its own sound program and run it</li>
+        <li>PCM popped straight from its FIFO under the voices; a missed vblank holds the last pair, the voices keep sounding</li>
         <li>No 68000-visible registers, no status path: deposits are scheduled against documented drain rates</li>
       </ul>
     </div>
     <div>
       <h2>Device Complement</h2>
       <ul>
-        <li>ENGINE &mdash; existing descriptor DMA master; <code>AUDIO_FIFO_W</code> strobe, unchanged</li>
-        <li>2&times; IDT7200L15 &mdash; the rev-1 audio pair footprint, now one ganged 16-bit record FIFO; a 7201 (512 deep) drops in</li>
-        <li>Z80B 6 MHz on its own 6.000 MHz can; 27C128 program + tables; 6264 8K&times;8 RAM</li>
-        <li>74HC138 + half a 74HC139 decode; 4.7 k pull-up pack on the Z80 data bus</li>
+        <li>ENGINE &mdash; existing descriptor DMA master; <code>AUDIO_FIFO_W</code> feeds SAMPLES, <code>SPARE</code> feeds AUDCMD; no change</li>
+        <li>2&times;2 IDT7200L15 &mdash; SAMPLES pair (the rev-1 footprint) and AUDCMD pair, each ganged 16-bit; 7201 drops in</li>
+        <li>Z80B 6 MHz or Z80H 8 MHz (decided by &sect;5) on its own oscillator can; 27C128 program + tables; 6264 8K&times;8 RAM</li>
+        <li>74HC138 + half a 74HC139 decode; 74HC244 status port (/EF, /HF of both pairs)</li>
         <li>2&times; 74HC574 DAC latches driving the existing R-2R ladders, LM358 stage, 3&times; LM386 (rev-1 CD4049 inverters removed)</li>
-        <li>12-pin debug header: /WR, /IORQ, DEBUG select, D0..D7, GND</li>
+        <li>12-pin debug header: /WR, /IORQ, DEBUG select, D0..D7, GND; DUMP records write a state snapshot to it</li>
         <li>PORTS &mdash; rev-1 pop logic (<code>AUDIO_CONTROL</code> / <code>AUDIO_STATUS</code>) retires (package B)</li>
       </ul>
     </div>
   </div>
 
-  <p class="banner"><b>Proposal revision.</b> Rev 1 ships the SAMPLES path only (&sect;3.1 rev 1): ENGINE fills a FIFO pair and PORTS pops it to the DACs. Everything else on this page is the Z80 sound processor decided on 2026-09-26 after the CPLD form (&sect;7, retired row) fitted with no headroom. The tick law is the shared model that passed its A/B against the SN76489 recording; the Z80 program matches it bit for bit but costs about three times the tick at 6 MHz (&sect;5), so the sound processor&rsquo;s final form is an open decision (&sect;7). Nothing here has run on hardware, and rev-1 boards cannot take it. <span class="st prelim">PRELIMINARY</span> marks what the model pins and the Z80 test is confirming; <span class="st adv">ADVANCE</span> marks concepts; <span class="st open">OPEN</span> marks a question no gate has answered.</p>
+  <p class="banner"><b>Proposal revision.</b> Rev 1 ships the SAMPLES path only (&sect;3.1 rev 1). The Z80 form was decided on 2026-09-26 after the CPLD form fitted with no headroom (&sect;7). The first Z80 ROM matched the tick law bit for bit but cost 1263 T per tick against 381 at 6 MHz; the second form on this page (templated tick, SET patching, PCM from its own FIFO, a status port, a minimal NMI) also matches bit for bit and costs 816 T, so no Z80 in the bin carries Smurf&rsquo;s four voices (&sect;5). The sound processor&rsquo;s final form is an open decision (&sect;7). <span class="st prelim">PRELIMINARY</span> marks what the model pins and the Z80 test is confirming; <span class="st adv">ADVANCE</span> marks concepts; <span class="st open">OPEN</span> marks a question no gate has answered.</p>
 
   <section>
     <div class="secbar"><span>General Description</span><span class="no">1</span></div>
     <p>
-      The audio pipeline keeps the video pipeline&rsquo;s shape, one stream in and a stateless consumer, but puts the
-      consumer in software: a small Z80 with its own ROM and RAM reads a FIFO of 16-bit <b>records</b> that ENGINE deposits
-      by DMA, and produces one stereo sample pair per <code>AUDIO_TICK</code>. Records are voice writes, waits measured in
-      ticks, inline PCM, table descriptors, and program uploads. All voice state, every wave table and the PCM ring live in
-      the Z80&rsquo;s RAM, so the 68000 decides what the machine is by what it loads. The CPU never touches a sound register;
-      it writes records into RAM and points a descriptor at them, exactly as it does for VIDCMD.
+      The audio pipeline keeps the video pipeline&rsquo;s shape, two DMA-fed streams and a consumer with no CPU bus, but the
+      consumer is a small Z80 with its own ROM and RAM. <b>SAMPLES</b> is the data plane, one <code>{L, R}</code> pair per tick,
+      popped straight from its FIFO. <b>AUDCMD</b> is the control plane: 16-bit records that set voice parameters, wait a number
+      of ticks, configure the tick routine, or upload a program. All voice state and every table live in the Z80&rsquo;s RAM, so the
+      68000 decides what the machine is by what it loads, and it never touches a sound register: it writes records into RAM
+      and points a descriptor at them, exactly as it does for VIDCMD.
     </p>
     <div class="bd">
       <div class="bd-row">
-        <div class="bd-box"><b>ENGINE</b><span>descriptor DMA<br>AUDIO_FIFO_W strobe<br>&le;32 words per descriptor</span></div>
+        <div class="bd-box"><b>ENGINE</b><span>descriptor DMA<br>AUDIO_FIFO_W and SPARE strobes<br>&le;32 words per descriptor</span></div>
         <div class="bd-arrow">D[15:0]<br>&rarr;</div>
-        <div class="bd-box"><b>RECORD FIFO</b><span>2&times;7200 ganged 16-bit<br>256 records (7201: 512)<br>Q on the Z80 data bus</span></div>
-        <div class="bd-arrow">hi byte, lo byte<br>ports 0xFF / lo<br>&rarr;</div>
-        <div class="bd-box"><b>Z80B 6 MHz</b><span>NMI = AUDIO_TICK<br>main loop drains records<br>tick mixes voices + ring</span></div>
+        <div class="bd-box"><b>SAMPLES FIFO</b><span>2&times;7200 ganged<br>{L, R} pairs<br>popped by the tick</span></div>
+        <div class="bd-arrow">L, R bytes<br>&rarr;</div>
+        <div class="bd-box"><b>Z80</b><span>NMI = AUDIO_TICK<br>tick: voices + PCM, ~80 T framing<br>main loop: drain AUDCMD</span></div>
         <div class="bd-arrow">OUT DAC_L, DAC_R<br>offset binary<br>&rarr;</div>
         <div class="bd-box"><b>DAC</b><span>2&times;74HC574<br>R-2R &rarr; LM358 &rarr; LM386</span></div>
       </div>
       <div class="bd-row" style="margin-top:8px">
-        <div class="bd-box" style="border-style:dashed"><b>ROM 27C128</b><span>0x0000..0x3FFF<br>NMI vector 0x0066<br>synth, loader, INC/AMP tables, square bank</span></div>
-        <div class="bd-arrow">&harr; Z80 bus</div>
-        <div class="bd-box" style="border-style:dashed"><b>RAM 6264</b><span>0x8000..0x9FFF<br>voice window (128 B), control 0x78<br>PCM ring, tables, uploaded code</span></div>
-        <div class="bd-arrow">&harr; Z80 bus</div>
-        <div class="bd-box" style="border-style:dashed"><b>DEBUG</b><span>12-pin header<br>/WR /IORQ select D0..D7<br>probe decodes OUT bytes</span></div>
+        <div class="bd-box" style="border-style:dashed"><b>AUDCMD FIFO</b><span>2&times;7200 ganged<br>SET WAIT CONFIGURE<br>LOAD JUMP RESET DUMP</span></div>
+        <div class="bd-arrow">records<br>&rarr; drain</div>
+        <div class="bd-box" style="border-style:dashed"><b>STATUS 74HC244</b><span>/EF /HF of both pairs<br>read before every pop</span></div>
+        <div class="bd-arrow">&rarr; Z80</div>
+        <div class="bd-box" style="border-style:dashed"><b>ROM 27C128 / RAM 6264</b><span>NMI vector, templates, tables<br>tick buffer, voice window,<br>uploaded programs</span></div>
         <div class="bd-arrow">&larr; PIXEL</div>
         <div class="bd-box" style="border-style:dashed"><b>AUDIO_TICK</b><span>every second line<br>15,734.375 Hz<br>falling edge = /NMI</span></div>
       </div>
       <div class="bd-under">
         Nothing flows back. The 68000 cannot read the Z80, the FIFO flags or the DACs; the display-list author schedules
-        deposits against the drain rates in &sect;5. The Z80 has no /EF input either: an IDT7200 ignores a read while empty and
-        leaves Q high-impedance, so the pulled-up bus reads 0xFF, which is why SET address 0x7F is reserved.
+        deposits against the drain rates in &sect;5. The Z80 reads the two pairs&rsquo; empty and half-full flags through the
+        status port, so 0xFF is an ordinary value in every stream.
       </div>
     </div>
   </section>
@@ -276,19 +276,18 @@
       <tr><th>Parameter</th><th class="num">Value</th><th>Notes</th></tr>
       <tr><td>Tick rate</td><td class="num">15,734.375 Hz</td><td>25175000 / 1600: every second 31.469 kHz line; <code>AUDIO_SAMPLES_PER_SECOND</code> rounds it to 15734</td></tr>
       <tr><td>Ticks per field</td><td class="num">262.5</td><td>263 then 262, free-running; the app carries the parity</td></tr>
-      <tr><td>Z80 budget per tick</td><td class="num">381.3 T</td><td>6.000 MHz / 15,734.375; 508.4 T at 8 MHz. Measured spend in &sect;5</td></tr>
-      <tr><td>Sample format</td><td class="num">8-bit two&rsquo;s complement</td><td>0x00 = silence inside the Z80 and in every record; offset binary on the latches (bit 7 inverted in software)</td></tr>
-      <tr><td>Record</td><td class="num">16 bits</td><td>SET {1, addr[6:0], v}; WAIT {00, ticks[13:0]}; control 0x40..0x44 + following words; 0xFF = empty (&sect;3.2)</td></tr>
-      <tr><td>FIFO depth</td><td class="num">256 records</td><td><code>AUDIO_FIFO_DEPTH</code>; 512 with a 7201 on the same footprint; the SRAM ring, not the FIFO, is the PCM buffer</td></tr>
-      <tr><td>Voices</td><td class="num">4 (Smurf) .. by budget</td><td>voice count is a control byte; the tick cost per voice in &sect;5 sets how many fit at 6 MHz</td></tr>
+      <tr><td>Z80 budget per tick</td><td class="num">381.3 T / 508.4 T</td><td>6 MHz / 8 MHz. The clock is chosen by the &sect;5 measurement</td></tr>
+      <tr><td>Sample format</td><td class="num">8-bit two&rsquo;s complement</td><td>0x00 = silence in every stream; offset binary on the latches (bit 7 inverted in software)</td></tr>
+      <tr><td>SAMPLES word</td><td class="num mono">{L[15:8], R[7:0]}</td><td>one pair per ENGINE <code>AUDIO_FIFO_W</code> deposit, as on rev 1; popped once per tick, held on empty</td></tr>
+      <tr><td>AUDCMD record</td><td class="num">16 bits</td><td>SET {1, addr[6:0], v}; WAIT {00, ticks[13:0]}; control 0x40.. + following words (&sect;3.2)</td></tr>
+      <tr><td>FIFO depth</td><td class="num">256 each</td><td><code>AUDIO_FIFO_DEPTH</code>; 512 with 7201s; SAMPLES holds 16.3 ms, 32.5 ms with a 7201</td></tr>
+      <tr><td>Voices</td><td class="num">by budget</td><td>the tick is built for exactly the configured count; &sect;5 says how many fit at each clock</td></tr>
       <tr><td>Phase / increment</td><td class="num">16 bits</td><td>quantum 0.24 Hz; worst PSG tone error 1.82 cents, mean 0.48 (measured, mixer/README.md)</td></tr>
       <tr><td>Amplitude</td><td class="num">signed 8 bits</td><td>at the reference peak of 31 attenuations 12 and 13 collapse; peak 60 fixes it at 1.2 % saturating ticks (&sect;7)</td></tr>
-      <tr><td>Mix</td><td class="num">8-bit saturating</td><td>PCM first, then voices by index, saturate on every add, per channel</td></tr>
-      <tr><td>PCM ring</td><td class="num">up to ~4000 pairs in 8 KB</td><td>fifteen fields; the rev-1 "one missed vblank drains the FIFO" failure no longer exists</td></tr>
-      <tr><td>SAMPLES record</td><td class="num">&le;127 pairs</td><td>copied into the ring with a per-tick cap; keep chunks at 32 so a SET behind one waits under a millisecond (&sect;6)</td></tr>
+      <tr><td>Mix</td><td class="num">8-bit saturating</td><td>PCM first, then voices, saturate on every add, per channel (the model&rsquo;s law; 11 T per add on the Z80)</td></tr>
       <tr><td>Bus cost, chip music</td><td class="num">&asymp;1 % of bus</td><td>a note is one 3-word descriptor; Smurf&rsquo;s driver emits 0.93 SETs per field on average, 12 at most, 17 on the first frame</td></tr>
       <tr><td>CPU cost, chip music</td><td class="num">a few hundred cycles/field</td><td>replaces 49,000 average / 112,000 worst for the software SN76489 (griffin.log 2026-09-16)</td></tr>
-      <tr><td>Reset</td><td class="num">system ~RESET only</td><td>no software reset; the ROM-owned NMI entry recovers from a bad upload by falling back to the ROM synth</td></tr>
+      <tr><td>Reset</td><td class="num">system ~RESET only</td><td>reset points the tick at the ROM synth; a bad upload is an analyzer-and-rebuild event</td></tr>
     </table></div>
   </section>
 
@@ -300,94 +299,85 @@
       <span class="st adv">ADVANCE</span> = concept, specification may change.
     </p>
 
-    <h3><span class="mnum">3.1</span> The record stream &mdash; one FIFO, everything in band <span class="st prelim">PRELIMINARY</span></h3>
+    <h3><span class="mnum">3.1</span> Two streams &mdash; SAMPLES and AUDCMD <span class="st prelim">PRELIMINARY</span></h3>
     <p>
-      ENGINE deposits one 16-bit word per <code>AUDIO_FIFO_W</code> strobe into the ganged pair, at most 32 words per descriptor,
-      from anywhere in RAM. The Z80 reads the high byte (port 0xFF) then the low byte. A high byte of 0xFF means the FIFO was empty
-      and nothing was popped. Deposits are placed at lines in the display list; the author keeps the queue inside the FIFO&rsquo;s
-      depth against the drain rates of &sect;5, because a write to a full 7200 is ignored.
-      <b>Rev 1</b> <span class="st prod">PRODUCTION</span>: the same pair holds <code>{L, R}</code> sample words, PORTS pops both chips
-      on every tick while <code>AUDIO_CONTROL.ENABLE</code> is set, and <code>AUDIO_STATUS.EMPTY</code> is the raw /EF; that path
-      stays in griffin.yml as rev-1-only until package B.
+      ENGINE deposits one word per strobe, at most 32 words per descriptor, from anywhere in RAM: <code>AUDIO_FIFO_W</code> into
+      the SAMPLES pair, <code>SPARE</code> into the AUDCMD pair. The tick pops one SAMPLES pair, left byte then right, after reading
+      the status port; if the pair is empty it holds the last one, so a missed vblank is a 16 ms hold and playback resumes on
+      the next deposit. The main loop drains AUDCMD records in order in the gap between ticks, batching 128 blind when the
+      status port says half full. A write to a full 7200 is ignored, so the author keeps each queue inside its depth against
+      the &sect;5 drain rates. Control and data never block each other.
+      <b>Rev 1</b> <span class="st prod">PRODUCTION</span>: the same SAMPLES pair, PORTS pops both chips on every tick while
+      <code>AUDIO_CONTROL.ENABLE</code> is set; that path stays in griffin.yml as rev-1-only until package B.
     </p>
 
     <h3><span class="mnum">3.2</span> Records <span class="st prelim">PRELIMINARY</span></h3>
-<pre>1aaa aaaa vvvv vvvv   SET      RAM[window + a] = v.  No tick.  a = 0x7F reserved (0xFF = empty).
-00tt tttt tttt tttt   WAIT     t ticks (max 16383 = 1.04 s).  WAIT 0 is a no-op.  A WAIT n consumed at
-                               the boundary of tick k lets ticks k .. k+n-1 play; next record at k+n.
-0100 0000 rnnn nnnn   SAMPLES  n {L, R} words follow (n &lt;= 127); r = play each pair twice (7.8 kHz).
-                               Copied into the SRAM ring, a bounded number of pairs per tick.
-0100 0001 nnnn nnnn   LOAD     word: destination; n words; word: 16-bit sum.  Bad sum = image marked invalid.
-0100 0010 ---- ----   JUMP     word: entry.  Refused after a bad LOAD.  The ROM keeps the NMI entry.
-0100 0011 vvvv vvvv   VOICE    v: two words follow, table base and table length (power of two).
-0100 0100 ---- ----   RESET    ROM synth state: every voice silent, ring empty, DACs at midscale.</pre>
+<pre>1aaa aaaa vvvv vvvv   SET        window[a] = v.  No tick.  INC, AMP, PHASE and table page are patched
+                                 into the live tick at once; MODE, side, count wait for CONFIGURE.
+00tt tttt tttt tttt   WAIT       t ticks (max 16383 = 1.04 s).  WAIT 0 is a no-op.  A WAIT n consumed at
+                                 the boundary of tick k lets ticks k .. k+n-1 play; next record at k+n.
+0100 0000 ---- ----   CONFIGURE  voice count, PCM on/off, mono, then one word per voice (mode, side,
+                                 table page).  Rebuilds the tick from templates (&sect;3.4).
+0100 0001 nnnn nnnn   LOAD       word: destination; n words of two bytes; word: 16-bit sum.
+0100 0010 ---- ----   JUMP       word: entry.  Refused after a bad LOAD.  The NMI vector stays in ROM.
+0100 0100 ---- ----   RESET      ROM synth state: every voice silent, DACs at midscale.
+0100 0101 ---- ----   DUMP       writes the voice window, phases, tick target and status to the debug port.</pre>
     <p>
-      Records are consumed in the idle gap between ticks, in order, so SETs queued before a boundary take effect in that
-      tick&rsquo;s mix. An empty FIFO changes nothing: the voices keep sounding. Constants: <code>AUDIO_REC_*</code> in griffin.yml;
-      helpers in sound/audio_records.h.
+      Exact encodings and helpers: sound/audio_records.h; constants <code>AUDIO_REC_*</code> in griffin.yml. An empty AUDCMD
+      FIFO changes nothing: the voices keep sounding.
     </p>
 
-    <h3><span class="mnum">3.3</span> Voice state &mdash; the 8-byte record, and tables anywhere in RAM <span class="st prelim">PRELIMINARY</span></h3>
+    <h3><span class="mnum">3.3</span> Voice state &mdash; the window, the tick buffer, and tables anywhere in RAM <span class="st prelim">PRELIMINARY</span></h3>
     <div class="twrap"><table>
-      <tr><th>Offset</th><th>Byte</th><th>Meaning</th></tr>
-      <tr><td class="mono">+0</td><td class="mono">INC_LO</td><td rowspan="2">16-bit phase increment in phase units per tick. Frequency = INC &times; 15734.375 / 65536.</td></tr>
-      <tr><td class="mono">+1</td><td class="mono">INC_HI</td></tr>
-      <tr><td class="mono">+2</td><td class="mono">AMP</td><td>signed 8-bit amplitude; the sample is +AMP or &minus;AMP for square and noise voices, the table byte for a table voice</td></tr>
-      <tr><td class="mono">+3</td><td class="mono">CTL</td><td>bit 0 PAN_L, bit 1 PAN_R, bits 3:2 MODE (0 square, 1 white noise, 2 wavetable, 3 periodic noise), bit 4 RESET_PHASE (executes, not stored)</td></tr>
-      <tr><td class="mono">+4</td><td class="mono">PHASE_LO</td><td rowspan="2">running phase; a SET is honoured, for sync or reset</td></tr>
-      <tr><td class="mono">+5</td><td class="mono">PHASE_HI</td></tr>
-      <tr><td class="mono">+6</td><td class="mono">WAVE_PAGE</td><td>legacy page select; superseded by the VOICE record&rsquo;s base and length</td></tr>
-      <tr><td class="mono">+7</td><td class="mono">&mdash;</td><td>reserved</td></tr>
-      <tr class="subhead"><td colspan="3">SET window (128 bytes at the RAM base)</td></tr>
-      <tr><td class="mono">0x00..0x77</td><td>voices 0..14</td><td>addr = voice &times; 8 + offset</td></tr>
-      <tr><td class="mono">0x78..0x7E</td><td>control</td><td>0x78 LFSR voice select; voice count; rest reserved</td></tr>
-      <tr><td class="mono">0x7F</td><td>reserved</td><td>a SET here would read as the empty sentinel</td></tr>
-      <tr><td class="mono">beyond</td><td>Z80-private</td><td>PCM ring, wave tables placed by VOICE, uploaded programs; reached by LOAD and VOICE, never by SET</td></tr>
+      <tr><th>Offset</th><th>Byte</th><th>Meaning</th><th>Takes effect</th></tr>
+      <tr><td class="mono">+0 +1</td><td class="mono">INC_LO INC_HI</td><td>16-bit phase increment per tick; f = INC &times; 15734.375 / 65536</td><td>at once: one 16-bit store into the tick code</td></tr>
+      <tr><td class="mono">+2</td><td class="mono">AMP</td><td>signed amplitude for square and noise; the pre-scaled table page for a table voice</td><td>at once: one byte store</td></tr>
+      <tr><td class="mono">+3</td><td class="mono">CTL</td><td>side, MODE (square, white noise, wavetable, periodic noise), RESET_PHASE</td><td>RESET_PHASE at once; the rest at CONFIGURE</td></tr>
+      <tr><td class="mono">+4 +5</td><td class="mono">PHASE</td><td>running phase, a fixed RAM word per voice; a SET is honoured</td><td>at once</td></tr>
+      <tr><td class="mono">+6 +7</td><td class="mono">page, &mdash;</td><td>table page; reserved</td><td>page at once</td></tr>
+      <tr class="subhead"><td colspan="4">Window and RAM</td></tr>
+      <tr><td class="mono">0x00..0x77</td><td>voices 0..14</td><td colspan="2">addr = voice &times; 8 + offset; the tick is built for the configured count only</td></tr>
+      <tr><td class="mono">0x78..0x7F</td><td>control</td><td colspan="2">LFSR voice select, voice count, PCM, mono (written by CONFIGURE)</td></tr>
+      <tr><td class="mono">beyond</td><td>Z80-private</td><td colspan="2">the two tick code buffers, phases, tables placed by LOAD, uploaded programs; reached by LOAD and CONFIGURE, never by SET</td></tr>
     </table></div>
-    <p class="note">
-      RAM is never reset by /RS. Software SETs every voice it uses and silences the rest (AMP 0, CTL 0) or sends RESET;
-      the LFSR voice select must be SET before a noise voice sounds.
-    </p>
+    <p class="note">RAM is never reset by /RS. A title starts with RESET, then CONFIGURE, then SETs; the ROM initialises its own window at power-on.</p>
 
-    <h3><span class="mnum">3.4</span> The tick &mdash; execution model and the ROM-owned NMI <span class="st prelim">PRELIMINARY</span></h3>
+    <h3><span class="mnum">3.4</span> The tick &mdash; templates, patching, and a minimal NMI <span class="st prelim">PRELIMINARY</span></h3>
     <div class="twrap"><table>
-      <tr><th>Step</th><th>What happens</th></tr>
-      <tr><td class="mono">gap</td><td>Main loop: read the FIFO; execute SETs, load WAITs, copy SAMPLES pairs into the ring up to the per-tick cap, LOAD/JUMP/VOICE/RESET. Records beyond the gap wait for the next gap.</td></tr>
-      <tr><td class="mono">NMI</td><td>ROM entry at 0x0066: save registers, re-seed SP, note re-entry (overrun), call the tick vector in RAM.</td></tr>
-      <tr><td class="mono">tick 1</td><td>WAIT counts down; pop one ring pair (or 0) as the L and R seeds.</td></tr>
-      <tr><td class="mono">tick 2</td><td>Each voice in index order: PHASE += INC; sample by MODE (square: sign of phase; wavetable: table[base + phase &gt;&gt; (16 &minus; log2 length)]; noise: LFSR bit); &plusmn;AMP or the table byte into each PAN-enabled accumulator, saturating on every add.</td></tr>
-      <tr><td class="mono">tick 3</td><td>OUT both accumulators with bit 7 inverted; shift the LFSR once if the LFSR voice&rsquo;s add carried.</td></tr>
-      <tr><td class="mono">epilogue</td><td>Restore, RETN. Three consecutive overruns swap the tick vector back to the ROM synth.</td></tr>
+      <tr><th>Step</th><th>What happens</th><th class="num">T, estimate</th></tr>
+      <tr><td class="mono">NMI</td><td>accept; EX AF,AF&rsquo; and EXX; JP through a patched operand to the current tick (ROM synth after reset, the CONFIGURE-built buffer, or an upload)</td><td class="num">~35</td></tr>
+      <tr><td class="mono">PCM</td><td>read status; if SAMPLES not empty pop L and R as the seeds, else hold the last pair</td><td class="num">35 mono / 60 stereo</td></tr>
+      <tr><td class="mono">voices</td><td>straight-line blocks, one per configured voice: PHASE += INC (INC is an immediate), sample by the block&rsquo;s mode, saturating add into the block&rsquo;s side. Two voices keep their phase in registers, the rest in a RAM word</td><td class="num">43&ndash;51 register, 71&ndash;79 RAM</td></tr>
+      <tr><td class="mono">out</td><td>OUT both accumulators with bit 7 inverted (mono: the same byte twice); shift the LFSR if the LFSR voice&rsquo;s add carried; EXX, EX AF,AF&rsquo;, RETN</td><td class="num">~45</td></tr>
     </table></div>
     <p>
-      This is <code>Mixer::tick()</code> of mixer/mixer.h, the model that passed the SN76489 A/B, and the Z80 program is compared
-      to it bit for bit. The LFSR is the SN76489AN&rsquo;s: 15 bits, taps 0 and 1 into bit 14 for white, the plain ring for periodic;
-      every voice in a tick reads one value and a shift is heard one tick after the carry. &minus;(&minus;128) clips.
+      CONFIGURE rebuilds the tick: the drain points the JP at a hold stub that re-outputs the last pair (the NMI cannot be
+      masked), fills the tick buffer from ROM templates, and points the JP back; about 2000 to 3000 T once, and the voice
+      phases survive because they live in fixed RAM words. SET patches the live code with single-instruction stores, so a
+      tick can land between any two instructions without tearing. The law is <code>Mixer::tick()</code> of mixer/mixer.h, the
+      model that passed the SN76489 A/B, and the Z80 program is compared to it bit for bit.
     </p>
 
     <h3><span class="mnum">3.5</span> PSG driver &mdash; nine bytes a frame become a dozen SETs <span class="st prelim">PRELIMINARY (model)</span></h3>
     <p>
       <code>mixer/psg_driver</code> consumes the same byte stream an SN76489 would and emits SETs for voice bytes that changed:
       period to INC through a 1024-entry table, attenuation to AMP through the 2 dB ladder, noise control to the noise voice&rsquo;s
-      INC, MODE and RESET_PHASE, the LFSR select first. Over the Smurf playthrough: 0.93 SETs per field mean, 12 max, 17 on the
-      first frame; the 61-emission death frame is 91 words. Periods 1..7 store INC mod 65536 for tones, the chip&rsquo;s own alias.
+      INC and RESET_PHASE. Over the Smurf playthrough: 0.93 SETs per field mean, 12 max, 17 on the first frame. A PSG port sends
+      one CONFIGURE at start (three square voices and one noise voice, mono) and SETs thereafter.
     </p>
 
     <h3><span class="mnum">3.6</span> Uploaded programs &mdash; a title brings its own chip <span class="st adv">ADVANCE</span></h3>
     <p>
-      LOAD places bytes anywhere in RAM with a 16-bit sum; JUMP hands the tick vector, or the whole main loop, to the image.
-      The NMI vector stays in ROM, so the ROM&rsquo;s entry still runs first and still recovers. An uploaded SN76489 or
-      AY-3-8910 at the register-write level makes the 68000 side of a port a byte forwarder: SET carries the chip&rsquo;s own
-      register write and the Z80 does the mapping. By napkin, an SN76489 (three tones and noise) costs about 400 T per tick and
-      an AY about 450; both fit 6 MHz once the feasibility numbers of &sect;5 confirm the per-voice cost. FM chips do not fit at any
-      bin clock.
+      LOAD places two bytes per word anywhere in RAM with a 16-bit sum; JUMP points the tick JP at the image. The NMI vector
+      stays in ROM. An uploaded SN76489 or AY-3-8910 at the register-write level makes the 68000 side of a port a byte
+      forwarder. FM chips do not fit at any bin clock.
     </p>
 
     <h3><span class="mnum">3.7</span> Limits <span class="st prelim">PRELIMINARY (measured on the model)</span></h3>
     <p>
       A 16-bit INC gives at most one LFSR shift per tick; the SN76489 reaches 1.8 per sample at rate 3 clocked from tone 2 at
-      period 4, so in Smurf&rsquo;s jump tail periodic noise tops out at 1049 Hz where the chip reaches 1864 Hz (54 fields). Listening
-      found it unobjectionable. Voice count and PCM trade against each other inside 381 T per tick.
+      period 4, so in Smurf&rsquo;s jump tail periodic noise tops out at 1049 Hz where the chip reaches 1864 Hz. Listening found it
+      unobjectionable. Voice count and stereo trade against the tick budget; the sample rate does not move.
     </p>
   </section>
 
@@ -396,40 +386,40 @@
     <p class="note">Costs are bus words per field (ENGINE delivery) and 68000 cycles per field. The frame budget reference is 233,625 SYSCLK per field.</p>
 
     <div class="recipe">
-      <div class="recipe-head"><b>PSG game port &mdash; three tones and noise, SN76489-class</b><span class="cost">&le;12 SETs + WAITs per field &middot; a few hundred cycles</span><span class="st prelim">PRELIMINARY (model)</span></div>
+      <div class="recipe-head"><b>PSG game port &mdash; three tones and noise, SN76489-class</b><span class="cost">1 CONFIGURE, then &le;12 SETs + WAITs per field &middot; a few hundred cycles</span><span class="st prelim">PRELIMINARY (model)</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> voices 0..2 square, voice 3 noise, all PAN_L+PAN_R; the game&rsquo;s PSG bytes go through psg_driver (&sect;3.5) into a record buffer; one descriptor per field points at it, followed by a WAIT to the next field boundary. Queue field k+1&rsquo;s records during field k so the chain never re-syncs on an empty FIFO (AR3).</p>
-        <p><b>Notes:</b> the Smurf port. Or, once uploads exist, forward the raw PSG bytes to an uploaded chip emulation (&sect;3.6).</p>
+        <p><b>Recipe:</b> CONFIGURE 4 voices mono, no PCM; the game&rsquo;s PSG bytes go through psg_driver into a record buffer; one descriptor per field points at it, then a WAIT to the next field boundary. Queue field k+1&rsquo;s records during field k (RT3).</p>
+        <p><b>Notes:</b> the Smurf port. Or forward the raw PSG bytes to an uploaded chip emulation (&sect;3.6).</p>
       </div>
     </div>
 
     <div class="recipe">
-      <div class="recipe-head"><b>PCM soundtrack or one-shots &mdash; SAMPLES records into the ring</b><span class="cost">&asymp;270 words/field per stereo stream &middot; CPU copies or renders the samples</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-head"><b>PCM soundtrack or one-shots &mdash; the SAMPLES stream</b><span class="cost">&asymp;263 words/field per stereo stream &middot; CPU copies or renders</span><span class="st prelim">PRELIMINARY</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> a sample buffer in RAM; the display list deposits SAMPLES 32 chunks spread across the field (Smurf&rsquo;s nine bursts already have this shape). The ring holds fifteen fields, so the 68000 may run seconds ahead and a missed vblank costs nothing.</p>
-        <p><b>Notes:</b> a SET queued behind a 32-pair chunk waits until the chunk has been copied, under a millisecond; keep chunks at 32 (&sect;6, AR2). Half rate (r = 1) halves the words for speech.</p>
+        <p><b>Recipe:</b> a sample buffer in RAM; the display list deposits it in bursts of at most 32 words spread across the field (Smurf&rsquo;s nine bursts), exactly as rev 1 does. CONFIGURE with PCM on; it mixes under the voices for the cost of one pop.</p>
+        <p><b>Notes:</b> a missed vblank holds the last pair for the rest of that field and resumes; no re-priming.</p>
       </div>
     </div>
 
     <div class="recipe">
       <div class="recipe-head"><b>Tracker / chiptune playback &mdash; song as a record list</b><span class="cost">&asymp;3&ndash;20 words per row &middot; zero cycles while playing</span><span class="st adv">ADVANCE</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> a whole song is SET/WAIT words in RAM; ENGINE streams it with count-32 descriptors as the FIFO drains. WAIT counts are tick-exact and raster-locked. Envelopes are AMP SETs at chosen ticks; arpeggios are INC SETs.</p>
+        <p><b>Recipe:</b> a whole song is SET/WAIT words in RAM; ENGINE streams it with count-32 descriptors as the FIFO drains. WAIT counts are tick-exact and raster-locked.</p>
       </div>
     </div>
 
     <div class="recipe">
-      <div class="recipe-head"><b>Wavetable instruments and drums &mdash; VOICE + LOAD</b><span class="cost">a table is LOAD words once; a note is 3 SETs</span><span class="st adv">ADVANCE</span></div>
+      <div class="recipe-head"><b>Wavetable instruments and drums &mdash; LOAD + CONFIGURE</b><span class="cost">a table is LOAD words once; a note is 3 SETs</span><span class="st adv">ADVANCE</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> LOAD a single-cycle wave or a drum hit anywhere in Z80 RAM; VOICE names its base and length for a voice; a one-shot is an INC chosen so the phase runs the table once, followed by AMP 0. Volume by AMP for square and noise voices; for table voices by choosing among pre-scaled copies, or by an uploaded program that multiplies.</p>
+        <p><b>Recipe:</b> LOAD single-cycle waves at 256-byte pages (pre-scaled copies for volume); CONFIGURE the voice as a table voice on its page; SET AMP selects the page thereafter. A drum is a page played once by an INC chosen so the phase runs it out, then AMP off.</p>
       </div>
     </div>
 
     <div class="recipe">
-      <div class="recipe-head"><b>Stereo effects over music</b><span class="cost">one PAN bit per voice</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-head"><b>Stereo placement</b><span class="cost">a side per voice, baked at CONFIGURE</span><span class="st prelim">PRELIMINARY</span></div>
       <div class="recipe-body">
-        <p><b>Recipe:</b> music voices PAN_L+PAN_R; an effect on a spare voice with PAN_L or PAN_R only, or a SAMPLES one-shot with the other channel&rsquo;s byte at 0.</p>
-        <p><b>Notes:</b> amplitude budgeting is the driver&rsquo;s job: keep the sum of active peaks under 127 per channel unless clipping is wanted.</p>
+        <p><b>Recipe:</b> each voice is left or right (one add each); mono content sets the global mono flag and every voice costs one add into one accumulator written to both DACs. PCM is always stereo.</p>
+        <p><b>Notes:</b> period-exact: 1984 hardware panned by enable bits or not at all; per-voice L/R levels arrived with the PC Engine in 1987.</p>
       </div>
     </div>
   </section>
@@ -437,25 +427,26 @@
   <section>
     <div class="secbar"><span>Z80 Budget and Drain Rates</span><span class="no">5</span></div>
     <p>
-      The tick is 381.3 T at 6 MHz. Everything the ROM does per tick and per record is counted by hand from the Z80 timing tables
-      first and then measured on the z80emu harness against the recorded Smurf stream (sound/README.md). The drain rates are the
-      display-list author&rsquo;s contract: a deposit of N records at a line must be consumed before the FIFO fills.
+      The tick is 381.3 T at 6 MHz and 508.4 at 8 MHz. Every number is counted by hand from the Z80 tables first and then
+      measured on the z80emu harness against the recorded Smurf stream (sound/README.md). The first ROM (v1, general dispatch)
+      is measured; the second (v2, templates) is being measured now. The drain rates are the display-list author&rsquo;s contract.
     </p>
     <div class="twrap"><table>
-      <tr><th>Item</th><th class="num">Hand count, T</th><th class="num">Measured, T</th><th>Status</th></tr>
-      <tr><td>NMI prologue + epilogue (save, SP re-seed, overrun flag, restore, RETN)</td><td class="num">&asymp;90</td><td class="num">347 (226 without the safety checks)</td><td><span class="st prod">MEASURED</span></td></tr>
-      <tr><td>Square voice, stereo, saturating both channels</td><td class="num">&asymp;130</td><td class="num">138&ndash;147</td><td><span class="st prod">MEASURED</span></td></tr>
-      <tr><td>Wavetable voice</td><td class="num">&asymp;100</td><td class="num">not isolated (oracle d only)</td><td><span class="st prod">MEASURED</span></td></tr>
-      <tr><td>Noise voice (LFSR shift on carry)</td><td class="num">&asymp;150</td><td class="num">212&ndash;224</td><td><span class="st prod">MEASURED</span></td></tr>
-      <tr><td>PCM ring pop and seed</td><td class="num">&asymp;30</td><td class="num">79</td><td><span class="st prod">MEASURED</span></td></tr>
-      <tr><td>Drain: SET record</td><td class="num">&asymp;60</td><td class="num">301 mean, 4268 max</td><td><span class="st prod">MEASURED</span></td></tr>
-      <tr><td>Drain: WAIT record</td><td class="num">&asymp;50</td><td class="num">113</td><td><span class="st prod">MEASURED</span></td></tr>
-      <tr><td>Drain: SAMPLES pair copied into the ring</td><td class="num">&asymp;42</td><td class="num">&asymp;290</td><td><span class="st prod">MEASURED</span></td></tr>
-      <tr><td>Drain: LOAD word</td><td class="num">&asymp;45</td><td class="num">&asymp;110 per byte + 250</td><td><span class="st prod">MEASURED</span></td></tr>
-      <tr><td>Smurf: 4 voices + PCM, worst tick</td><td class="num">&asymp;560</td><td class="num">1263</td><td><span class="st open">GATE FAIL</span> 3.3&times; over 381 at 6 MHz, 2.5&times; over 508 at 8 MHz</td></tr>
-      <tr><td>Smurf: 4 voices, PCM disabled, worst tick</td><td class="num">&asymp;530</td><td class="num">1234</td><td><span class="st open">GATE FAIL</span> needs &le;324; one square voice is what 6 MHz carries (445 worst)</td></tr>
+      <tr><th>Item</th><th class="num">v1 measured, T</th><th class="num">v2 estimate, T</th><th class="num">v2 measured, T</th><th>Status</th></tr>
+      <tr><td>NMI framing incl. the two DAC writes</td><td class="num">347 (226 without safety checks)</td><td class="num">~80</td><td class="num">121</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Square voice, stereo, saturating adds</td><td class="num">138&ndash;147</td><td class="num">71&ndash;79 RAM phase, 43&ndash;51 register phase</td><td class="num">111</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Wavetable voice</td><td class="num">not isolated</td><td class="num">same as square, one more fetch</td><td class="num">&asymp;120 (oracle d only)</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Noise voice (LFSR, shift on carry)</td><td class="num">212&ndash;224</td><td class="num">~100</td><td class="num">&asymp;130 + 86 on a shift</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>PCM: ring pop (v1) / FIFO pop with status read (v2)</td><td class="num">79 + ~290 per pair in the drain</td><td class="num">35 mono / 60 stereo, nothing in the drain</td><td class="num">56, nothing in the drain</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Drain: SET</td><td class="num">301 mean, 4268 max</td><td class="num">30&ndash;60 flat</td><td class="num">350 mean, 510 max</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Drain: WAIT</td><td class="num">113</td><td class="num">~100</td><td class="num">131</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Drain: CONFIGURE (rebuild)</td><td class="num">&mdash;</td><td class="num">2000&ndash;3000 once</td><td class="num">9,700&ndash;11,600 once</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Drain: LOAD word (two bytes)</td><td class="num">~110 per byte + 250</td><td class="num">~60 per word</td><td class="num">&asymp;170 per word</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Smurf: 4 voices mono + PCM, worst tick</td><td class="num">1263</td><td class="num">~381</td><td class="num">816</td><td><span class="st open">GATE FAIL</span> 2.1&times; over 381, 1.6&times; over 508</td></tr>
+      <tr><td>3 voices mono + PCM, worst tick</td><td class="num">&mdash;</td><td class="num">~310</td><td class="num">512</td><td><span class="st open">GATE FAIL</span> misses 508 by 4 T; 2 voices + PCM = 399 fits 8 MHz</td></tr>
+      <tr><td>What fits</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">6 MHz: 1 voice + PCM or 2 voices; 8 MHz: 2 + PCM or 3</td><td><span class="st open">OPEN</span> Smurf&rsquo;s four voices need a ~1000 T tick</td></tr>
     </table></div>
-    <p class="note">Hand counts are the napkin budget in griffin.log 2026-09-26; measured values are from sound/README.md and the griffin.log measurement entry of the same date, re-run by the coordinator. The best derived inner loop (register-resident phases) is 84 T per voice, so four stereo voices need about 560&ndash;700 T per tick with any Z80 code; the Z80B has 381 and the Z80H 508. A 20 MHz Z84C0020 (1271 T) would carry it. Two protocol findings from the run: the 0xFF sentinel applies to every stream word (a PCM left sample of &minus;1 is sent as &minus;2; LOAD carries one byte per word), and PCM must be deposited ahead of the WAIT that covers it.</p>
+    <p class="note">v1: griffin.log 2026-09-26; v2: griffin.log 2026-09-27 and sound/README.md, both re-run by the coordinator. v2 halved the tick (1263 to 816 for Smurf) and every oracle is bit-exact, but the remaining cost is structural: about 100 T per voice for a 16-bit phase add, a sign test and a saturating add on a Z80, plus 121 of framing. Register-resident phases (derived, not built) would reach about 680 T for Smurf, still over 508. Four stereo-capable voices at 15.7 kHz need a tick of about 1000 T: a 16 MHz-class Z80, voices in hardware behind the Z80, or a 68010.</p>
   </section>
 
   <section>
@@ -463,27 +454,27 @@
     <h3><span class="mnum">6.1</span> Rules of thumb for a sound driver <span class="st prelim">PRELIMINARY (model)</span></h3>
     <div class="twrap"><table>
       <tr><th>#</th><th>Rule of thumb</th></tr>
-      <tr><td class="mono">RT1</td><td><b>Start with RESET, then SET what you own.</b> RAM is not reset. RESET silences every voice and empties the ring; then SET the LFSR voice select and your voices.</td></tr>
-      <tr><td class="mono">RT2</td><td><b>A note is one descriptor.</b> Three words, SET INC_LO, SET INC_HI, SET AMP, delivered by ENGINE from RAM; you never write a register. Only send bytes that changed.</td></tr>
+      <tr><td class="mono">RT1</td><td><b>RESET, CONFIGURE, then SET.</b> RAM is not reset. CONFIGURE the instrument once per screen or title (voice count, modes, sides, PCM, mono); SET the notes. A SET to a structural field waits for the next CONFIGURE.</td></tr>
+      <tr><td class="mono">RT2</td><td><b>A note is one descriptor.</b> Three words, SET INC_LO, SET INC_HI, SET AMP, delivered by ENGINE from RAM. Only send bytes that changed.</td></tr>
       <tr><td class="mono">RT3</td><td><b>WAIT is the clock; queue a field ahead.</b> A WAIT that expires on an empty FIFO re-syncs to whenever the next words arrive, so deliver field k+1&rsquo;s records during field k.</td></tr>
-      <tr><td class="mono">RT4</td><td><b>Schedule, don&rsquo;t poll.</b> There is no readback. Place deposits at lines so the queue never exceeds the FIFO&rsquo;s depth against the &sect;5 drain rates; the ring absorbs PCM, the FIFO only has to absorb what arrives between two gaps.</td></tr>
+      <tr><td class="mono">RT4</td><td><b>Schedule, don&rsquo;t poll.</b> There is no readback. Place deposits at lines so neither queue exceeds its depth against the &sect;5 drain rates. PCM has its own FIFO and never delays a record.</td></tr>
       <tr><td class="mono">RT5</td><td><b>Budget amplitude, not the chip.</b> Saturation happens on every add. Keep the sum of active peaks under 127 per channel; at a per-voice peak of 31 that is four voices.</td></tr>
       <tr><td class="mono">RT6</td><td><b>Pitch is exact enough; do not table-correct it.</b> Every PSG period lands within 2 cents. Sweeps update INC once per field or once per row.</td></tr>
-      <tr><td class="mono">RT7</td><td><b>Long samples go through SAMPLES, short waves through VOICE.</b> A table voice loops; anything longer than the table streams through the ring and mixes under the voices.</td></tr>
+      <tr><td class="mono">RT7</td><td><b>Long samples through SAMPLES, short waves through LOAD.</b> A table voice loops a 256-byte page; anything longer streams through the SAMPLES FIFO under the voices.</td></tr>
     </table></div>
     <h3><span class="mnum">6.2</span> Rules and limitations <span class="st prelim">PRELIMINARY</span></h3>
     <div class="twrap"><table>
       <tr><th>#</th><th>Rule</th></tr>
-      <tr><td class="mono">AR1</td><td>Records go to the FIFO only through ENGINE&rsquo;s AUDIO_FIFO_W strobe; a write to a full 7200 is ignored. The author keeps the queue inside 256 (512 with a 7201) by construction.</td></tr>
-      <tr><td class="mono">AR2</td><td>A SAMPLES chunk is copied a bounded number of pairs per tick, so a record behind it waits chunk length divided by that rate. Keep chunks at 32 pairs: under a millisecond of latency for the record behind.</td></tr>
-      <tr><td class="mono">AR3</td><td>Records execute in the idle gap, in order, before the next tick&rsquo;s mix; how many fit in one gap is the &sect;5 drain rate. Records beyond it execute next gap.</td></tr>
+      <tr><td class="mono">AR1</td><td>Each pair is written only by its ENGINE strobe; a write to a full 7200 is ignored. The author keeps each queue inside 256 (512 with 7201s) by construction.</td></tr>
+      <tr><td class="mono">AR2</td><td>SAMPLES is popped once per tick; an empty pair holds the last sample until the next deposit. Deposit at least twice per field for continuous PCM, as on rev 1.</td></tr>
+      <tr><td class="mono">AR3</td><td>Records execute in the gap, in order, before the next tick&rsquo;s mix; how many fit in one gap is the &sect;5 drain rate. Records beyond it execute next gap; a CONFIGURE holds the output for its rebuild time.</td></tr>
       <tr><td class="mono">AR4</td><td>SETs execute in queue order, so a later PHASE SET wins over RESET_PHASE, and a SET queued before a boundary is heard in that tick.</td></tr>
-      <tr><td class="mono">AR5</td><td>One LFSR; which voice steps it is control byte 0x78; other noise voices read the same register; a shift is heard one tick after the carry.</td></tr>
+      <tr><td class="mono">AR5</td><td>One LFSR; which voice steps it is a CONFIGURE field; other noise voices read the same register; a shift is heard one tick after the carry.</td></tr>
       <tr><td class="mono">AR6</td><td>A noise voice shifts at most once per tick (&sect;3.7).</td></tr>
-      <tr><td class="mono">AR7</td><td>Nothing in RAM is reset by /RS; the ROM initialises its own state and parks the DACs at midscale. Uploaded programs are gone after a reset and must be LOADed again.</td></tr>
-      <tr><td class="mono">AR8</td><td>SET reaches only the 128-byte window. Tables and programs enter through LOAD; VOICE tells a voice where its table is. SET address 0x7F is illegal.</td></tr>
-      <tr><td class="mono">AR9</td><td>A JUMP after a LOAD whose sum failed is refused; the NMI entry always belongs to the ROM, and three consecutive overruns return the tick to the ROM synth.</td></tr>
-      <tr><td class="mono">AR10</td><td>Nothing on the 68000 side observes the Z80. Bring-up and debugging use the header and a probe; the steady state assumes it works.</td></tr>
+      <tr><td class="mono">AR7</td><td>Nothing in RAM is reset by /RS; the ROM initialises its own state and parks the DACs at midscale. Uploaded programs and tables are gone after a reset and must be LOADed again.</td></tr>
+      <tr><td class="mono">AR8</td><td>SET reaches only the 128-byte window. Tables and programs enter through LOAD; CONFIGURE tells a voice which page it plays.</td></tr>
+      <tr><td class="mono">AR9</td><td>A JUMP after a LOAD whose sum failed is refused. A hung upload is silence until the system reset; there is no watchdog.</td></tr>
+      <tr><td class="mono">AR10</td><td>Nothing on the 68000 side observes the Z80. Development uses the emulator; silicon debugging uses DUMP records and the header.</td></tr>
     </table></div>
   </section>
 
@@ -492,20 +483,20 @@
     <div class="twrap"><table>
       <tr><th>Item</th><th>Gate</th><th>Status</th></tr>
       <tr><td>Rev-1 SAMPLES path (&sect;3.1 rev 1)</td><td>rev-1 hardware; PORTS pop, DMA-only fill, two&rsquo;s complement DACs; Smurf soundtrack plays</td><td class="mono">PRODUCTION rev 1</td></tr>
-      <tr><td>Tick law and PSG driver (mixer/mixer.h, mixer/psg_driver)</td><td>A/B over the 81.7 s Smurf recording against the SN76489 per-sample reference: pitch worst 1.82 cents / mean 0.48; ladder within 0.46 LSB; invariants 0 violations every tick; 10 of 10 mutants fail; listening test passed; end-of-tick LFSR, record bound and control block amended and re-verified</td><td class="mono">PASS 2026-09-26</td></tr>
-      <tr><td>Decision: Z80 sound processor, record protocol, no status path, empty-read sentinel, passive debug header</td><td>griffin.log 2026-09-26 decision entry; griffin.yml AUDIO, AUDIO_REC_*, interfaces</td><td class="mono">DECIDED 2026-09-26</td></tr>
-      <tr><td>Z80 feasibility (sound/): ROM tick in assembly on the z80emu harness against the model</td><td>all oracles pass with 0 mismatches (NOP cadence; 10,000 synthetic ticks; the whole 1,285,764-tick Smurf trace with and without PCM; every record type incl. uploads and the overrun fallback). Budget: worst 1263 T per tick against 381 at 6 MHz and 508 at 8 MHz</td><td class="mono">CORRECT, GATE FAIL 2026-09-26 &middot; owner&rsquo;s call: PSG chip behind the Z80, 20 MHz Z80, 68010, or the 128/128 CPLD</td></tr>
+      <tr><td>Tick law and PSG driver (mixer/mixer.h, mixer/psg_driver)</td><td>A/B over the 81.7 s Smurf recording against the SN76489 per-sample reference: pitch worst 1.82 cents / mean 0.48; ladder within 0.46 LSB; invariants 0 violations every tick; 10 of 10 mutants fail; listening test passed</td><td class="mono">PASS 2026-09-26</td></tr>
+      <tr><td>Decision: Z80 sound processor, no status path, passive debug header</td><td>griffin.log 2026-09-26 decision entry; griffin.yml AUDIO, AUDIO_REC_*, interfaces</td><td class="mono">DECIDED 2026-09-26</td></tr>
+      <tr><td>Z80 ROM v1 (general dispatch, ring PCM, sentinel) on the z80emu harness</td><td>all oracles 0 mismatches over the whole Smurf trace and every record type; worst 1263 T per tick against 381 / 508</td><td class="mono">CORRECT, GATE FAIL 2026-09-26</td></tr>
+      <tr><td>Z80 ROM v2: templated tick built at CONFIGURE, SET patching, SAMPLES pair + status port, minimal NMI, register-resident phases</td><td>same oracles; worst tick for Smurf&rsquo;s 4 voices + PCM &le; 381 at 6 MHz, else 3 voices + PCM &le; 324; 8 MHz alongside</td><td class="mono">CORRECT, GATE FAIL 2026-09-27 &middot; 816 T; 6 MHz carries 1 voice + PCM, 8 MHz 2 + PCM</td></tr>
+      <tr><td>Then: griffin.yml and docs for the settled protocol; emulator runs rom.bin on a z80emu core in place of the PORTS audio model; Smurf port on records (other session); PORTS re-fit (package B)</td><td>rebuilds clean; smurf field budget re-measured against 49,000 / 112,000</td><td class="mono">TO DO</td></tr>
       <tr><td>8-bit AMP at the quiet end</td><td>peak 31 collapses attenuations 11..13; peak 60 measured: no collapse, 1.2 % saturating ticks where the reference clips too; listen to mixer/build/peak60/wav</td><td class="mono">OPEN (listen)</td></tr>
-      <tr><td>Package B: PORTS re-fit without the pop logic, emulator Z80 model, smurf and firmware on records, rev-1 registers out of griffin.yml</td><td>emulator runs rom.bin; smurf field budget re-measured against 49,000 / 112,000</td><td class="mono">TO DO</td></tr>
-      <tr><td>Breadboard prototype from the existing audio strobe; debug header as console</td><td>the first silicon check, possible before rev 2</td><td class="mono">TO DO</td></tr>
-      <tr><td>CPLD MIXER (Form 2.3: time-shared voices in an SRAM behind an ATF1508)</td><td>host model passed; rung (i) 110/128; step 3 forced 4-clock writes and MCM60L64P10; rung (ii) whole PSG subset 128/128, 44 I/O, pass 1, no LFSR, no 15th voice, no RESET_PHASE, no headroom (griffin.log 2026-09-26, three entries; RTL kept on disk under cpld/mixer/, untracked)</td><td class="mono">RETIRED 2026-09-26</td></tr>
+      <tr><td>CPLD MIXER (Form 2.3: time-shared voices in an SRAM behind an ATF1508)</td><td>host model passed; rung (i) 110/128; step 3 forced 4-clock writes and MCM60L64P10; rung (ii) whole PSG subset 128/128, 44 I/O, pass 1, no LFSR, no 15th voice, no headroom (griffin.log 2026-09-26, three entries; RTL kept on disk under cpld/mixer/, untracked)</td><td class="mono">RETIRED 2026-09-26</td></tr>
       <tr><td>Run-record voices on looping FIFOs (proposal sections 1..9)</td><td>superseded by Form 2.3, then by the Z80</td><td class="mono">RETIRED 2026-09-20</td></tr>
     </table></div>
   </section>
 
   <div class="footer">
     <span>Griffin audio, rev 2 proposal &mdash; working design record; normative sources are griffin.yml AUDIO, mixer/mixer.h, sound/audio_records.h and wave-table-design.md.</span>
-    <span>DRAFT &middot; 2026-09-26</span>
+    <span>DRAFT &middot; 2026-09-27</span>
   </div>
 
 </div>

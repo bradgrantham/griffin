@@ -220,3 +220,85 @@ rung-3 register-resident form (84 T per voice, derived, not built) would give
    the return address wherever SP is (inside the voice records during the
    walk); there is no free register and no safe stack.  Overruns are counted,
    HL is preserved, and three in a row restore the ROM synth.
+
+# v2: templated tick, SET patching, SAMPLES pair, status port (2026-09-27)
+
+The second ROM, `rom/rom2.s`, with `harness/harness2.cpp`; `make test-v2`.
+The v1 files are untouched and still build.  What changed: a minimal NMI
+(accept, EX AF,AF' + EXX, JP through a patched vector, the tick, RETN);
+the tick is straight-line code assembled from ROM templates into RAM at
+CONFIGURE time (voice count, mode, side, mono, PCM all baked); SET patches
+the block's immediates in place (INC, |AMP| and the sign as a JR NC / JR C
+opcode, the wavetable page); PCM is popped from its own SAMPLES FIFO pair
+inside the tick; a 74HC244 status port carries both pairs' /EF and /HF, so
+there is no 0xFF sentinel, no reserved SET address, and LOAD carries two
+bytes per word; DUMP writes the state to the DEBUG port.  The tick clock
+(IY) pauses while the hold stub runs (before the first CONFIGURE and during
+a rebuild), and the harness pauses the model with it, so the comparison
+stays bit for bit.
+
+## Expectations, derived before the first run
+
+| item | hand count, T |
+|---|---|
+| NMI framing incl. both DAC writes and the IY count | 11 + 28 + 30 + 10 + 22 = 101 |
+| square voice, RAM phase, one side, saturating add | 102 (16+10+11+16+4+4+7+7+4+7+4+12) |
+| noise voice (carry latch + lfsr bit) | ~123, plus ~86 when the LFSR shifts |
+| PCM block, stereo / mono | 81 / 77 with a pair; 35 empty |
+| drain: SET INC / AMP | ~120 / ~170 (block lookup + patches) |
+| drain: WAIT | ~120 (IY read, add, store) |
+| CONFIGURE rebuild, 4 voices | ~3000 |
+
+## Measured (period 16000 T so no tick overruns; T per instruction is clock-independent)
+
+Oracles: (b) square voices stereo 9,999 ticks 0 mismatches; (b) mono + PCM
+0 mismatches; (c) the whole Smurf trace 1,285,763 ticks, mono, 0 mismatches
+with PCM on the SAMPLES pair and without; (d) records: CONFIGURE rebuilds
+mid-stream, a live PCM ramp on the SAMPLES pair, a 256-byte wavetable page
+by LOAD + CONFIGURE, LOAD/JUMP upload, a refused JUMP after a bad sum, the
+JUMPed program restoring the ROM synth, RESET, DUMP (134 DEBUG bytes: the
+boot marker plus 133), 0 mismatches.  Race ticks (an NMI landing inside a
+record) are excluded as in v1.
+
+| configuration | worst NMI T | mean |
+|---|---|---|
+| 1 / 2 / 3 / 4 square voices, stereo, no PCM | 232 / 343 / 454 / 565 | 230 / 339 / 448 / 557 |
+| 1 / 2 / 3 / 4 square voices, mono + PCM | 288 / 399 / 512 / 625 | 286 / 395 / 504 / 613 |
+| Smurf, 3 square + LFSR noise, mono + PCM | 816 | 730 |
+| Smurf, same, no PCM | 756 | 670 |
+
+So: **111 T per square voice** (the slope), **121 T of framing** (the
+intercept; hand count 101: the end block's LFSR test and the JP through the
+vector were under-counted), **PCM 56 T** with a pair, the noise voice about
++100 over a square voice when the LFSR shifts.  Drain, T per record: SET
+350 mean / 510 max (the window store, block lookup and two or three patches;
+the hand count missed the 7-cycle window store and the lookup's 16-bit
+loads), WAIT 131, CONFIGURE 9,700 to 11,600 for 4 voices, LOAD ~170 per
+word (21,742 for 128 words), JUMP 243 to 270, RESET ~10,700, DUMP 5,093.
+
+## The GATE
+
+Budget 381.3 T at 6 MHz, 508.4 at 8 MHz.
+
+* 6 MHz, Smurf's 4 voices + PCM: 816 T, **FAIL by 2.1x**.  Without PCM
+  756, fail.  The real-period run confirms it: 19,934 nested NMIs in
+  20,000 ticks.
+* 8 MHz: 816 against 508, **FAIL by 1.6x**; without PCM 756, fail.
+* What fits: 6 MHz carries 1 square voice + PCM (288) or 2 without (343);
+  8 MHz carries 2 voices + PCM (399) or 3 without (454); 3 voices + PCM
+  misses 508 by 4 T.
+
+The v2 levers halved the tick against v1 (1263 -> 816 for Smurf) and did
+exactly what was claimed: framing 347 -> 121, voice 147 -> 111 (the
+per-add saturation and the RAM phase are what is left), drain SET 301 ->
+350 (no gain: the live patch replaced the handler recompute), and PCM off
+the drain entirely.  The floor for a square voice with per-add saturation
+and a RAM phase is about 100 T on a Z80, and Smurf's four voices need about
+560 T plus framing whatever the clock.
+
+## Not built
+
+Register-resident phases (derived at 43 to 51 T per voice for the two the
+register set can hold): they would take a 4-voice Smurf tick to about
+680 T, still over 508.  Budgeted 8-bit adds without saturation would save
+about 6 T per voice.  Neither changes the verdict.

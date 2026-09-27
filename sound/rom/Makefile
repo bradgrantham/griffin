@@ -7,7 +7,12 @@ LD      = /opt/local/bin/sdldz80
 MAKEBIN = /opt/local/bin/makebin
 BUILD  ?= build
 
-all: $(BUILD)/rom.bin $(BUILD)/rom-nopcm.bin $(BUILD)/rom-fast.bin $(BUILD)/rom.syms $(BUILD)/rom-nopcm.syms $(BUILD)/rom-fast.syms
+all: $(BUILD)/rom.bin $(BUILD)/rom-nopcm.bin $(BUILD)/rom-fast.bin $(BUILD)/rom.syms $(BUILD)/rom-nopcm.syms $(BUILD)/rom-fast.syms $(BUILD)/rom2.bin $(BUILD)/rom2.syms
+
+$(BUILD)/rom2.rel: rom2.s
+	@mkdir -p $(BUILD)
+	$(AS) -plosgff -o $@ rom2.s
+	mv rom2.lst $(BUILD)/rom2.lst 2>/dev/null || true
 
 $(BUILD)/rom.rel: rom.s
 	@mkdir -p $(BUILD)

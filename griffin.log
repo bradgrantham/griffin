@@ -1631,3 +1631,86 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   YM2149 / SN76489, the 1984 arcade sound-board form; the AY's two
   8-bit ports are a free debug port), a faster Z80, a 68010/68008 sound
   CPU, or the retired 128/128 CPLD.
+
+2026-09-27 -- Audio: Z80 ROM v2 levers after the v1 measurement (decision, Brad)
+  v1 (entry above) matched the model bit for bit at 1263 T per tick;
+  Brad kept 15,734 Hz (his own experiments ruled out a lower rate) and
+  chose these changes, all to be measured on the same harness:
+  1. Minimal NMI: accept, EX AF,AF' + EXX, JP through a patched operand
+     (reset points it at the ROM tick), the tick, EXX + EX AF,AF', RETN.
+     No supervisor (stack re-seed, re-entry flag, overrun fallback): the
+     emulator is the development tool; a bad upload is a rebuild.
+  2. Tick assembled from templates at CONFIGURE time: voice count, mode
+     and side per voice, global mono, PCM on/off, all baked into
+     straight-line code; no dispatch, no loop.  CONFIGURE = point the JP
+     at a hold stub (the NMI cannot be masked), rebuild, point it back.
+  3. SET patches immediates in the live tick with single-instruction
+     stores (INC 16-bit, AMP/page byte, PHASE word); structural fields
+     wait for CONFIGURE.  Drain cost per SET ~30-60 T against 301 mean
+     / 4268 max measured for v1.
+  4. SAMPLES FIFO pair restored on AUDIO_FIFO_W (the rev-1 footprint),
+     AUDCMD pair on SPARE.  PCM popped in the tick (~35 T mono / 60
+     stereo); the v1 ring copy cost ~290 T per pair in the drain, more
+     than a 6 MHz gap holds, so this is required, not optional.  Hold
+     the last pair on empty.  SAMPLES record and ring removed.
+  5. 74HC244 status port: /EF and /HF of both pairs.  Removes the 0xFF
+     sentinel and its author-facing warts (left sample -1, reserved SET
+     address 0x7F, one LOAD byte per word) and the pull-up pack; /HF
+     lets the drain batch 128 records blind.
+  6. Mix law unchanged (per-add saturation, the 11 T offset-binary
+     trick) so the bit-exact oracle stands; 16-bit accumulate with a
+     clamp at the end was costed at ~+20 T per stereo voice and set
+     aside; budgeted 8-bit adds would save ~6 T per voice.
+  7. Register-resident phases for the voices the alternate register set
+     and IX/IY can hold; ~43-51 T per voice against 71-79 with the
+     phase in a RAM word (all-immediates template: LD HL,(phase) 16 /
+     LD DE,#inc 10 / ADD 11 / LD (phase),HL 16 / LD L,H 4 / LD H,#page
+     7 / ADD A,(HL) 7).
+  8. Side baked into the add target (one add per voice); mono = one
+     accumulator to both DACs.  Period note: 1984 hardware panned by
+     enable bits (YM2151) or not at all (Amiga hard L/R); per-voice L/R
+     levels arrived with the PC Engine (1987).
+  9. DUMP record writes a state snapshot to the debug header.
+  Estimate, explicitly the third and to be replaced by measurement:
+  Smurf 4 voices mono + PCM ~381 T at 6 MHz (no headroom), 3 voices +
+  PCM ~310 (18 %), 4 voices at 8 MHz ~75 %.  The gate decides Z80B vs
+  Z80H.  Plan after the gate: griffin.yml and docs for the settled
+  protocol, emulator runs rom.bin on the z80emu core in place of the
+  PORTS audio model (rev-1 AUDIO_CONTROL writes become no-ops until the
+  PORTS re-fit), Smurf port on records in another session.
+
+2026-09-27 -- Audio: Z80 ROM v2 measured; gate FAILED again, 816 T against 381 / 508 (measurement, sound/)
+  rom2.s + harness2.cpp implement every lever of the entry above:
+  minimal NMI, templated tick built at CONFIGURE, SET patching immediates
+  in the live code, PCM popped from its own SAMPLES pair, a 74HC244
+  status port (no sentinel), DUMP.  All oracles pass bit for bit against
+  mixer.h over the whole Smurf trace (mono, PCM on and off), 10,000
+  synthetic stereo ticks, and a records stream with CONFIGURE rebuilds,
+  a live PCM ramp, a wavetable page, LOAD/JUMP, a refused JUMP, RESET and
+  DUMP.  `make -C sound test-v2` exit 0.  One semantic added: the tick
+  clock pauses on the hold stub (before the first CONFIGURE and during a
+  rebuild), so a rebuild shifts the WAIT chain by its own length rather
+  than skipping ticks; the harness pauses the model the same way.
+  Measured (T, clock-independent):
+    per square voice (stereo, RAM phase, per-add saturation)  111
+    NMI framing incl. DAC writes and the tick count             121
+    PCM pop with a pair (status read, two INs, two XORs)         56
+    Smurf 3 square + LFSR noise, mono + PCM: worst 816, mean 730
+    Smurf, no PCM:                            worst 756, mean 670
+    ladder 1/2/3/4 square voices, stereo, no PCM: 232/343/454/565
+    drain: SET 350 mean / 510 max; WAIT 131; CONFIGURE ~10,000 (4
+    voices); LOAD ~170 per word; RESET ~10,700; DUMP 5,093.
+  Hand count (README v2) was 102 per voice and 101 framing: close this
+  time; the drain SET count (~120-170) missed the window store and the
+  16-bit lookups.
+  GATE: FAIL.  6 MHz (381): 816, 2.1x over; 8 MHz (508): 1.6x over.  What
+  fits: 6 MHz = 1 voice + PCM or 2 voices; 8 MHz = 2 voices + PCM or 3
+  voices (3 + PCM misses by 4 T).  Register-resident phases (derived, 43-
+  51 T for two voices) would put Smurf's tick near 680, still over 508.
+  Conclusion: the v2 levers halved v1's tick (1263 -> 816) and the
+  remaining cost is structural: ~100 T per voice for a 16-bit phase add,
+  a sign test and a saturating add on a Z80, plus 121 of framing.  Four
+  stereo-capable voices at 15,734 Hz need a ~1000 T tick, i.e. a 16 MHz
+  Z80 class part, or the voices in hardware (a PSG behind the Z80), or
+  the 68010 (~790 cycles per tick at 12.5 MHz with ~50 per voice).
+  Real-period check: at 6 MHz 19,934 nested NMIs in 20,000 ticks.

@@ -1,40 +1,38 @@
-// audio_records.h — the 16-bit records ENGINE deposits into the sound FIFO
-// for the Z80 sound processor (griffin.yml AUDIO; wave-table-design.md §2).
+// audio_records.h -- the AUDCMD record encodings of the Z80 sound processor,
+// second form (sound/rom/rom2.s), shared by the harness and, in package B, by
+// 68000 applications.  Bare metal: <cstdint> only, no allocation, no I/O.
 //
-// The FIFO is one ganged 16-bit pair; the Z80 reads the HIGH byte first (port
-// 0xFF, which reads 0xFF when the FIFO is empty) and the low byte second, so
-// every record type is decided by the high byte alone and every field is a
-// byte the Z80 can use without shifting:
+// Two ganged 16-bit FIFO pairs, both written by ENGINE descriptors:
+//   SAMPLES  (AUDIO_FIFO_W strobe)  {L[15:8], R[7:0]} two's complement pairs,
+//                                   popped once per tick by the Z80
+//   AUDCMD   (SPARE strobe)         the records below, read in the gap
+// The Z80 reads a 74HC244 status port for both pairs' empty and half-full
+// flags, so every 16-bit value is legal in either stream.
 //
-//   1aaa aaaa vvvv vvvv   SET      RAM[window + a] = v (a = 0x7F reserved: the
-//                                  high byte 0xFF is the empty sentinel)
-//   00tt tttt tttt tttt   WAIT     t ticks; a WAIT n consumed at the boundary
-//                                  of tick k lets ticks k .. k+n-1 play
-//   0100 0000 rnnn nnnn   SAMPLES  n {L, R} words follow (n <= 127), copied
-//                                  into the PCM ring; r = play each pair twice
-//   0100 0001 nnnn nnnn   LOAD     word: dest; n words each carrying ONE byte in
-//                                  its low half (n = 0 means 256); word: the
-//                                  16-bit sum of those payload words
-//   0100 0010 ---- ----   JUMP     word: entry (refused if the last LOAD's sum
-//                                  failed)
-//   0100 0011 vvvv vvvv   VOICE    v; two words follow: table base, table
-//                                  length (a power of two); voice v becomes a
-//                                  wavetable voice
-//   0100 0100 ---- ----   RESET    ROM synth: voices silent, ring empty
+// AUDCMD records (the high byte is read first):
+//   1aaa aaaa vvvv vvvv   SET        window[a] = v.  INC, AMP and PHASE are
+//                                    patched into the live tick; MODE, PAN,
+//                                    the LFSR select and the voice count take
+//                                    effect at the next CONFIGURE.
+//   00tt tttt tttt tttt   WAIT       t ticks; a WAIT n consumed at the
+//                                    boundary of tick k lets ticks k..k+n-1
+//                                    play; the next record is consumed at k+n.
+//   0100 0000 cccc 00mp   CONFIGURE  c = voice count (1..14, 0 = 1),
+//                                    p = PCM on, m = mono; then c words whose
+//                                    low byte is that voice's wavetable page.
+//                                    The tick is rebuilt from templates.
+//   0100 0001 nnnn nnnn   LOAD       then: dest; n words of two bytes (high
+//                                    first, 0 = 256); the 16-bit sum of them.
+//   0100 0010 ---- ----   JUMP       then: entry.  Refused after a bad LOAD.
+//   0100 0100 ---- ----   RESET      voices silent, WAIT expired, LFSR
+//                                    seeded, the tick rebuilt.
+//   0100 0101 ---- ----   DUMP       the window (128), lfsr (2), tick vector
+//                                    (2) and status (1) bytes to the DEBUG port.
 //
-// THE SENTINEL RULE: the Z80 reads the high byte first and 0xFF there means
-// "empty" (the 7200 pair ignores the read, the bus pull-ups give 0xFF), and
-// nothing else is read until a high byte is not 0xFF.  So NO WORD IN THE
-// STREAM MAY HAVE A HIGH BYTE OF 0xFF, payloads included: SET address 0x7F is
-// reserved, a PCM left sample of -1 is sent as -2 (sample_word does it), LOAD
-// carries one byte per word, and addresses are below 0xFF00 by construction.
-//
-// SET and WAIT keep mixer/mixer.h's encoding (WAIT lost bit 14 to the control
-// records), so psg_driver and Mixer stay valid consumers and producers.
-//
-// The constants come from griffin.yml through griffin.generated.h; this header
-// gives them shape.  Bare-metal: <cstdint> only, shared by the harness and, in
-// package B, apps/smurf.
+// The Griffin:: constants come from griffin.yml.  Those that the second form
+// retired (AUDIO_REC_SAMPLES, AUDIO_REC_VOICE, AUDIO_REC_EMPTY,
+// AUDIO_SET_ADDR_RESERVED, AUDIO_SAMPLES_MAX) are not used here; CONFIGURE
+// takes SAMPLES' old type code and the YAML follows in the protocol package.
 
 #pragma once
 
@@ -45,29 +43,33 @@
 namespace griffin::audio
 {
 
-inline constexpr uint16_t SET_FLAG      = static_cast<uint16_t>(Griffin::AUDIO_REC_SET_FLAG);   // 0x80 in the high byte
-inline constexpr uint16_t CTRL_FLAG     = 0x40;                                                  // 0100 0000 in the high byte
-inline constexpr uint8_t  REC_SAMPLES   = static_cast<uint8_t>(Griffin::AUDIO_REC_SAMPLES);
-inline constexpr uint8_t  REC_LOAD      = static_cast<uint8_t>(Griffin::AUDIO_REC_LOAD);
-inline constexpr uint8_t  REC_JUMP      = static_cast<uint8_t>(Griffin::AUDIO_REC_JUMP);
-inline constexpr uint8_t  REC_VOICE     = static_cast<uint8_t>(Griffin::AUDIO_REC_VOICE);
-inline constexpr uint8_t  REC_RESET     = static_cast<uint8_t>(Griffin::AUDIO_REC_RESET);
-inline constexpr uint8_t  EMPTY         = static_cast<uint8_t>(Griffin::AUDIO_REC_EMPTY);        // the high byte of an empty read
-inline constexpr uint8_t  SET_ADDR_RESERVED = static_cast<uint8_t>(Griffin::AUDIO_SET_ADDR_RESERVED);
-inline constexpr int      SET_WINDOW    = static_cast<int>(Griffin::AUDIO_SET_WINDOW);
-inline constexpr int      VOICE_BYTES   = static_cast<int>(Griffin::AUDIO_VOICE_BYTES);
-inline constexpr int      SAMPLES_MAX   = static_cast<int>(Griffin::AUDIO_SAMPLES_MAX);
-inline constexpr uint16_t WAIT_MAX      = static_cast<uint16_t>(Griffin::AUDIO_WAIT_MAX);
-inline constexpr uint8_t  SAMPLES_REPEAT = 0x80;                                                 // the r bit of SAMPLES' low byte
+inline constexpr uint16_t SET_FLAG       = static_cast<uint16_t>(Griffin::AUDIO_REC_SET_FLAG);
+inline constexpr uint16_t CTRL_FLAG      = 0x40;
+inline constexpr uint8_t  REC_CONFIGURE  = 0x40;
+inline constexpr uint8_t  REC_LOAD       = static_cast<uint8_t>(Griffin::AUDIO_REC_LOAD);
+inline constexpr uint8_t  REC_JUMP       = static_cast<uint8_t>(Griffin::AUDIO_REC_JUMP);
+inline constexpr uint8_t  REC_RESET      = static_cast<uint8_t>(Griffin::AUDIO_REC_RESET);
+inline constexpr uint8_t  REC_DUMP       = 0x45;
+inline constexpr int      SET_WINDOW     = static_cast<int>(Griffin::AUDIO_SET_WINDOW);
+inline constexpr int      VOICE_BYTES    = static_cast<int>(Griffin::AUDIO_VOICE_BYTES);
+inline constexpr uint16_t WAIT_MAX       = static_cast<uint16_t>(Griffin::AUDIO_WAIT_MAX);
+inline constexpr int      MAX_VOICES     = 14;
+
+inline constexpr uint8_t CFG_PCM   = 0x01;
+inline constexpr uint8_t CFG_MONO  = 0x02;
+
+// Status port bits (74HC244): the FIFO flags as the pins read them.
+inline constexpr uint8_t ST_AUDCMD_NOT_EMPTY  = 0x01;
+inline constexpr uint8_t ST_AUDCMD_HALF_FULL  = 0x02;
+inline constexpr uint8_t ST_SAMPLES_NOT_EMPTY = 0x04;
+inline constexpr uint8_t ST_SAMPLES_HALF_FULL = 0x08;
 
 static_assert(SET_FLAG == 0x80 && CTRL_FLAG == 0x40);
-static_assert(REC_SAMPLES == 0x40 && REC_LOAD == 0x41 && REC_JUMP == 0x42 && REC_VOICE == 0x43 && REC_RESET == 0x44);
-static_assert(EMPTY == 0xFF && SET_ADDR_RESERVED == 0x7F, "0xFF as a high byte can only mean empty");
-static_assert(SET_WINDOW == 128 && VOICE_BYTES == 8 && SAMPLES_MAX == 127 && WAIT_MAX == 0x3FFF);
-static_assert((static_cast<uint16_t>(SET_FLAG | SET_ADDR_RESERVED) & 0xFF) == EMPTY);
-static_assert(REC_RESET < 0x80 && (REC_RESET & 0xC0) == CTRL_FLAG, "control records live in 0x40 .. 0x7F");
+static_assert(REC_CONFIGURE == static_cast<uint8_t>(Griffin::AUDIO_REC_SAMPLES), "CONFIGURE takes SAMPLES' code until griffin.yml is updated");
+static_assert(REC_LOAD == 0x41 && REC_JUMP == 0x42 && REC_RESET == 0x44 && REC_DUMP == 0x45);
+static_assert(SET_WINDOW == 128 && VOICE_BYTES == 8 && WAIT_MAX == 0x3FFF);
+static_assert((REC_DUMP & 0xC0) == CTRL_FLAG, "control records live in 0x40 .. 0x7F");
 
-// Classification of a record by its high byte.
 constexpr bool is_set(uint16_t word)
 {
     return (word & 0x8000) != 0;
@@ -93,7 +95,6 @@ constexpr uint8_t low_byte(uint16_t word)
     return static_cast<uint8_t>(word & 0xFF);
 }
 
-// Encoders.
 constexpr uint16_t set_word(uint8_t addr, uint8_t value)
 {
     return static_cast<uint16_t>(((SET_FLAG | (addr & 0x7F)) << 8) | value);
@@ -109,60 +110,61 @@ constexpr uint16_t ctrl_word(uint8_t type, uint8_t low)
     return static_cast<uint16_t>((type << 8) | low);
 }
 
-// SAMPLES header: n pairs follow, each {L, R} as one word, L in the high byte.
-constexpr uint16_t samples_header(int pairs, bool repeat = false)
-{
-    return ctrl_word(REC_SAMPLES, static_cast<uint8_t>((pairs & SAMPLES_MAX) | (repeat ? SAMPLES_REPEAT : 0)));
-}
-
+// A SAMPLES pair, deposited on the SAMPLES FIFO's own strobe.
 constexpr uint16_t sample_word(int8_t left, int8_t right)
 {
-    if (left == -1)
-    {
-        left = -2;      // the sentinel rule: no 0xFF high byte
-    }
     return static_cast<uint16_t>((static_cast<uint8_t>(left) << 8) | static_cast<uint8_t>(right));
 }
 
-// True when a word may be deposited at all.
-constexpr bool is_depositable(uint16_t word)
+constexpr uint8_t configure_flags(int voices, bool pcm, bool mono)
 {
-    return high_byte(word) != EMPTY;
+    return static_cast<uint8_t>(((voices & 0x0F) << 4) | (pcm ? CFG_PCM : 0) | (mono ? CFG_MONO : 0));
 }
 
-// LOAD header: followed by the dest word, n payload words (one byte each,
-// load_word), and the sum word.  n = 256 is sent as 0.
-constexpr uint16_t load_header(int bytes)
+constexpr uint16_t configure_header(int voices, bool pcm, bool mono)
 {
-    return ctrl_word(REC_LOAD, static_cast<uint8_t>(bytes & 0xFF));
+    return ctrl_word(REC_CONFIGURE, configure_flags(voices, pcm, mono));
 }
 
-constexpr uint16_t load_word(uint8_t byte)
+constexpr uint16_t configure_voice_word(uint8_t page)
 {
-    return byte;
+    return page;
 }
 
-// LOAD's sum: the 16-bit wrapping sum of the n payload words.
+constexpr int configure_voices(uint8_t flags)
+{
+    const int v = (flags >> 4) & 0x0F;
+    return v == 0 ? 1 : (v > MAX_VOICES ? MAX_VOICES : v);
+}
+
+constexpr uint16_t load_header(int words)
+{
+    return ctrl_word(REC_LOAD, static_cast<uint8_t>(words & 0xFF));
+}
+
+// LOAD payload: two bytes per word, the lower address in the high byte.
+constexpr uint16_t load_word(uint8_t first, uint8_t second)
+{
+    return static_cast<uint16_t>((first << 8) | second);
+}
+
 constexpr uint16_t load_sum(const uint8_t *bytes, int n)
 {
     uint16_t sum = 0;
-    for (int i = 0; i < n; ++i)
+    for (int i = 0; i + 1 < n; i += 2)
     {
-        sum = static_cast<uint16_t>(sum + load_word(bytes[i]));
+        sum = static_cast<uint16_t>(sum + load_word(bytes[i], bytes[i + 1]));
+    }
+    if (n & 1)
+    {
+        sum = static_cast<uint16_t>(sum + load_word(bytes[n - 1], 0));
     }
     return sum;
 }
 
-// JUMP header: followed by the entry address word.
 constexpr uint16_t jump_header()
 {
     return ctrl_word(REC_JUMP, 0);
-}
-
-// VOICE header: followed by the table base word and the table length word.
-constexpr uint16_t voice_header(int voice)
-{
-    return ctrl_word(REC_VOICE, static_cast<uint8_t>(voice));
 }
 
 constexpr uint16_t reset_word()
@@ -170,16 +172,22 @@ constexpr uint16_t reset_word()
     return ctrl_word(REC_RESET, 0);
 }
 
+constexpr uint16_t dump_word()
+{
+    return ctrl_word(REC_DUMP, 0);
+}
+
 constexpr uint8_t voice_addr(int voice, uint8_t offset)
 {
     return static_cast<uint8_t>((voice * VOICE_BYTES + offset) & (SET_WINDOW - 1));
 }
 
-// The SET window's control block (0x78 .. 0x7E; 0x7F reserved).  0x78 is
-// mixer.h's LFSR_VOICE_SELECT; the rest are the ROM synth's.
+// The control block of the SET window.
 inline constexpr uint8_t CONTROL_BASE       = 0x78;
-inline constexpr uint8_t LFSR_VOICE_SELECT  = CONTROL_BASE + 0;   // bits 3:0: the voice whose carry shifts the LFSR
-inline constexpr uint8_t VOICE_COUNT        = CONTROL_BASE + 1;   // voices played per tick, 1 .. 14 (sound/rom/rom.s)
-static_assert(VOICE_COUNT < SET_ADDR_RESERVED);
+inline constexpr uint8_t LFSR_VOICE_SELECT  = CONTROL_BASE + 0;   // bits 3:0, effective at CONFIGURE
+inline constexpr uint8_t VOICE_COUNT        = CONTROL_BASE + 1;   // stored; the count is CONFIGURE's
+
+// DUMP writes this many bytes to the DEBUG port.
+inline constexpr int DUMP_BYTES = SET_WINDOW + 2 + 2 + 1;
 
 }   // namespace griffin::audio

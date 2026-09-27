@@ -71,6 +71,11 @@ in hardware, only the FIFO's depth.
    tick worst-case; or 4 voices with PCM disabled and at least 15 % headroom.
    8 MHz reported alongside.**  Numbers go to `sound/README.md`, griffin.log
    and the datasheet §5.
+   **RESULT 2026-09-27: v1 1263 T, v2 (all levers) 816 T for Smurf against
+   381 / 508; every oracle bit-exact; GATE FAILED at both clocks.  What
+   fits: 6 MHz 1 voice + PCM or 2 voices; 8 MHz 2 voices + PCM or 3.  See
+   griffin.log 2026-09-27 and sound/README.md.  Open for Brad: voices in
+   hardware behind the Z80 (a PSG), a 16 MHz-class Z80, or a 68010.**
 2. **Package B**: PORTS drops the rev-1 pop logic (re-fit, pins released);
    the emulator runs the ROM image on a z80emu core in place of the PORTS
    audio model; `apps/smurf` and the firmware deposit records instead of
