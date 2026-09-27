@@ -130,7 +130,7 @@
 // COMPOSITOR: VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, SET forwarding to PIXEL, MASK overlays
 `define COMPOSITOR_CLOCK 25175000
 
-// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop/reset control
+// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and (rev 1 only) the audio FIFO pop/reset control
 `define PORTS_BASE 24'hFC0000
 `define PORTS_SIZE 24'h040000
 `define PORTS_IRQ_LEVEL 2
@@ -319,7 +319,7 @@
 `define DUART_STOPCC 24'hF8001F  // READ
 `define DUART_OPR_CLR 24'hF8001F  // WRITE
 
-// AUDIO: Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate
+// AUDIO: Z80 sound processor with wavetable and PCM voices in its own RAM, driven only by ENGINE AUDIO_FIFO_W record deposits, one stereo pair per AUDIO_TICK
 
 // RAM region — total of all RAM banks
 `define RAM_TOTAL_SIZE 23'h400000
@@ -338,6 +338,18 @@
 `define AUDIO_FIFO_DEPTH 9'h100
 `define AUDIO_SAMPLES_PER_SECOND 14'h3D76
 `define PADDLE_TICKS_PER_SECOND 14'h3D76
+`define AUDIO_REC_SET_FLAG 8'h80
+`define AUDIO_REC_SAMPLES 8'h40
+`define AUDIO_REC_LOAD 8'h41
+`define AUDIO_REC_JUMP 8'h42
+`define AUDIO_REC_VOICE 8'h43
+`define AUDIO_REC_RESET 8'h44
+`define AUDIO_REC_EMPTY 8'hFF
+`define AUDIO_SET_ADDR_RESERVED 8'h7F
+`define AUDIO_SET_WINDOW 8'h80
+`define AUDIO_VOICE_BYTES 8'h08
+`define AUDIO_SAMPLES_MAX 8'h7F
+`define AUDIO_WAIT_MAX 14'h3FFF
 `define DUART_OP_RTC_SCL 8'h04
 `define DUART_OP_RTC_SDA_DRIVE 8'h08
 `define DUART_IP_RTC_SDA 8'h04

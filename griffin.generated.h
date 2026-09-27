@@ -176,7 +176,7 @@ static constexpr uint32_t PIXEL_VSYNC_ACTIVE_LOW = 1UL;  // VSYNC is asserted lo
 static constexpr uint32_t COMPOSITOR_CLOCK = 25175000UL;
 
 // ------------------------------------------------------------
-// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and the audio FIFO pop/reset control
+// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and (rev 1 only) the audio FIFO pop/reset control
 static constexpr uint32_t PORTS_BASE = 0xFC0000UL;
 static constexpr uint32_t PORTS_SIZE = 0x040000UL;
 inline constexpr MemoryRange PORTS(0xFC0000UL, 0x040000UL);
@@ -255,13 +255,13 @@ static constexpr uint32_t PORTS_PS2_MOUSE_CTRL_DATA_SHIFT = 1U;
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA = 0xFC0015UL;  // READ: Assembled PS/2 mouse data byte; valid while RX_READY is set
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_MASK  = 0xFFU;  // bits 7:0
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_SHIFT = 0U;
-static constexpr uint32_t PORTS_AUDIO_CONTROL = 0xFC001FUL;  // WRITE: Audio FIFO pop and reset control
+static constexpr uint32_t PORTS_AUDIO_CONTROL = 0xFC001FUL;  // WRITE: Rev 1 only audio FIFO pop and reset control, retired in rev 2 where the AUDIO Z80 sound processor reads the FIFO
 static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_SHIFT = 0U;
 static constexpr uint32_t PORTS_AUDIO_CONTROL_RESET_MASK  = 0x02U;  // bits 1:1
 static constexpr uint32_t PORTS_AUDIO_CONTROL_RESET_SHIFT = 1U;
 static constexpr uint32_t PORTS_AUDIO_CONTROL_DEFAULT = 0x02U;
-static constexpr uint32_t PORTS_AUDIO_STATUS = 0xFC001FUL;  // READ: Audio FIFO status; no interrupt, poll it
+static constexpr uint32_t PORTS_AUDIO_STATUS = 0xFC001FUL;  // READ: Rev 1 only audio FIFO status with no interrupt, retired in rev 2 with AUDIO_CONTROL
 static constexpr uint32_t PORTS_AUDIO_STATUS_EMPTY_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t PORTS_AUDIO_STATUS_EMPTY_SHIFT = 0U;
 static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_MASK  = 0x02U;  // bits 1:1
@@ -375,7 +375,7 @@ static constexpr uint32_t DUART_STOPCC = 0xF8001FUL;  // READ: Stop counter/time
 static constexpr uint32_t DUART_OPR_CLR = 0xF8001FUL;  // WRITE: Output port bit reset (clears OPR bits; those OP pins go HIGH)
 
 // ------------------------------------------------------------
-// AUDIO: Stereo FIFO audio output, filled only by ENGINE AUDIO_FIFO_W deposits, drained by PORTS at the AUDIO_TICK rate
+// AUDIO: Z80 sound processor with wavetable and PCM voices in its own RAM, driven only by ENGINE AUDIO_FIFO_W record deposits, one stereo pair per AUDIO_TICK
 
 // RAM region — total of all RAM banks
 static constexpr uint32_t RAM_TOTAL_SIZE = 0x400000UL;
@@ -398,6 +398,18 @@ static constexpr uint32_t PS2_RX_QUEUE_SIZE = 0x40U;
 static constexpr uint32_t AUDIO_FIFO_DEPTH = 0x100U;
 static constexpr uint32_t AUDIO_SAMPLES_PER_SECOND = 0x3D76U;
 static constexpr uint32_t PADDLE_TICKS_PER_SECOND = 0x3D76U;
+static constexpr uint32_t AUDIO_REC_SET_FLAG = 0x80U;
+static constexpr uint32_t AUDIO_REC_SAMPLES = 0x40U;
+static constexpr uint32_t AUDIO_REC_LOAD = 0x41U;
+static constexpr uint32_t AUDIO_REC_JUMP = 0x42U;
+static constexpr uint32_t AUDIO_REC_VOICE = 0x43U;
+static constexpr uint32_t AUDIO_REC_RESET = 0x44U;
+static constexpr uint32_t AUDIO_REC_EMPTY = 0xFFU;
+static constexpr uint32_t AUDIO_SET_ADDR_RESERVED = 0x7FU;
+static constexpr uint32_t AUDIO_SET_WINDOW = 0x80U;
+static constexpr uint32_t AUDIO_VOICE_BYTES = 0x08U;
+static constexpr uint32_t AUDIO_SAMPLES_MAX = 0x7FU;
+static constexpr uint32_t AUDIO_WAIT_MAX = 0x3FFFU;
 static constexpr uint32_t DUART_OP_RTC_SCL = 0x04U;
 static constexpr uint32_t DUART_OP_RTC_SDA_DRIVE = 0x08U;
 static constexpr uint32_t DUART_IP_RTC_SDA = 0x04U;
