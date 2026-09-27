@@ -1540,3 +1540,94 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   emulator runs the ROM image on a z80emu core, smurf and firmware
   deposit records.  Rev-1 AUDIO_CONTROL/AUDIO_STATUS stay in the YAML
   marked rev-1-only until then so every consumer keeps building.
+
+2026-09-26 -- Audio: Z80 feasibility measured; gate FAILED by 3x (measurement, sound/)
+  Hand-written Z80 ROM (sound/rom/rom.s, sdasz80, 1370 lines) run on the
+  leathervision z80emu core in a flat-memory harness (sound/harness/)
+  that deposits the recorded Smurf PSG stream exactly as mixer_ab does
+  and compares every DAC pair with Mixer::tick() bit for bit.  Oracles:
+  (a) NOP ROM, 100,000 NMIs, period 381.3307 T carried exactly, handler
+  61 T every time (hand count 11 + 50), 0 failures; (b) square voices on
+  a synthetic SET/WAIT stream, 10,000 ticks, 0 mismatches on all three
+  ROM builds; (c) the whole Smurf trace, 1,285,764 ticks, 0 mismatches
+  with the PCM ring active and with NO_PCM, 0 FIFO over/underflows; (d)
+  every record type incl. LOAD/JUMP/VOICE/RESET, an uploaded tick, a
+  refused JUMP after a bad sum, and the 3-overrun fallback, 1,900 ticks,
+  0 mismatches.  `make -C sound test` exit 0, re-run by the coordinator.
+  Measured NMI T per tick, accept -> RETN (T is clock-independent):
+    Smurf, 3 square L+R + LFSR noise, PCM ring:  worst 1263, mean 1187
+      (bimodal: 1120-1151 no shift / 1248-1263 shift)
+    Smurf, NO_PCM build:                          worst 1234, mean 1106
+    4 square voices, random PAN/sign:             worst 1055, mean  941
+    FAST framing (no re-entry check, no SP re-seed, no overrun count),
+    NO_PCM, 1/2/3/4 square voices:  worst 445 / 607 / 764 / 892
+      => ~138 T per square voice, 226 T framing (347 with the safe
+      framing, 428 with the PCM pop, which is 79 T).
+    Noise voice (LFSR / periodic variant): 212-224 T.
+  Drain T per record, header read -> back to poll, NMI excluded:
+    SET 301 mean / 4268 max (INC/PHASE ~150; AMP/CTL ~500 with the
+    handler recompute; the max is LFSR_VOICE_SELECT or VOICE_COUNT
+    recomputing all voices); WAIT 113; SAMPLES ~290 T per pair (32
+    pairs 9310 mean / 10203 max); LOAD ~110 T per byte + ~250; JUMP
+    243-270; VOICE 1434; RESET 6241.
+  GATE (wave-table-design.md step 1; budget 381.3 T at 6 MHz, 508.4 at
+  8 MHz): FAIL.  4 voices + PCM: 1263 T before any drain, 3.3x over.
+  4 voices without PCM: 1234 T, 3.2x over (15 % headroom needs <= 324).
+  8 MHz: 2.5x over either way.  At the real period every tick overruns
+  and the DACs are garbage (4912/5000 mismatches, reported not
+  asserted).  What the measured ladder says fits: ONE square voice at
+  6 MHz with no PCM and no headroom (364 mean / 445 worst); two at
+  8 MHz over by 100 T.  The plan's own fallbacks (8 MHz part; 3 voices
+  + PCM) fail too.
+  Inner-loop ladder (T per square L+R voice):
+    0. HL walk, LD r,(HL)/INC L per byte: ~200, rejected on paper.
+    1. SP walk with general dispatch (this ROM): 147; 92 T prefix (POP
+       DE / POP HL / LD A,L / POP HL / ADD HL,DE / PUSH HL / LD E,A /
+       LD A,H / RLA / POP HL / POP HL / JP (HL)) + 55-60 T handler with
+       offset-binary accumulators in B/C so a saturating add is JR NC
+       7 T; the handler address lives in the record's +6/+7, computed
+       at SET time from CTL, AMP sign, LFSR select and VOICE_COUNT.
+    2. FAST framing: same 138/voice, framing 226.
+    3. Register-resident phases (derived, not built): POP DE 10, ADD
+       HL,DE 11, POP DE 10, LD A,H 4, RLA 4, JR 7, two saturating adds
+       38 = 84 T/voice, needing phases held in HL'/IX/IY across ticks
+       and a reload flag for PHASE SETs; 4 voices = 336 + framing:
+       unreachable at 6 MHz, 8 MHz only with no PCM and no headroom.
+    4. {L,R} term-pair table indexed by phase[15:9] via ADD IX,DE
+       (derived, rejected): ~84 T and every AMP SET rebuilds 256 entries.
+    Floor: INC read 10 + add 11 + sign 8 + AMP 10 + two saturating adds
+    38 + branch 7 = 84 T per voice on a Z80 with per-add saturation;
+    RAM-resident phases and mode dispatch cost the rest.  The napkin
+    budget in the decision entry (80-130 T/voice, ~100 framing) was
+    2x optimistic on framing and did not count per-add saturation.
+  Findings for the protocol (not yet in griffin.yml):
+    1. The 0xFF sentinel rule covers EVERY stream word, not just
+       headers: the drain cannot read the low byte to disambiguate
+       without losing pair step.  So a PCM left sample of -1 must be
+       sent as -2 (sample_word() does it), LOAD carries one byte per
+       word, and LOAD/JUMP addresses stay below 0xFF00.  Found by
+       oracle (d): a PCM ramp hit -1 and the drain stalled.
+    2. One stream means a WAIT blocks everything behind it, so PCM is
+       deposited AHEAD of the WAIT covering it, in chunks (harness:
+       SAMPLES 32 + WAIT 32 per boundary); a fixed-cadence deposit
+       overflowed the FIFO and starved the ring.
+    3. Records apply one at a time at the drain's store, not atomically
+       per boundary as the model does; the harness commits each record
+       to the model at the Z80's store point so the comparison is
+       exact; every 16-bit store is one instruction so nothing tears.
+       Boundary atomicity would cost ~24 T/tick plus copies.
+    4. ROM init adopts the unreset SRAM window as if SET so power-on
+       matches the model's garbage; a nested NMI clobbers the running
+       tick's A/F and pushes into voice records; three in a row restore
+       the ROM synth.  Uploaded ticks inherit AF'/BC'/DE'/HL'/IX and end
+       with JP tick_done; the tick vector is RAM 0x8082; the VOICE_COUNT
+       control byte is 0x79.
+  Conclusion: per-sample software synthesis of four stereo voices at
+  15,734 Hz needs roughly 560-700 T per tick with the best Z80 code
+  (84/voice + 130-226 framing), which no part in the bin reaches: the
+  Z80B has 381, the Z80H 508.  A 20 MHz Z84C0020 (1271 T) would carry
+  it with headroom but is a 1990s part.  Open for Brad: the Z80 as a
+  sequencer/PCM/upload processor in front of a real PSG (AY-3-8910 /
+  YM2149 / SN76489, the 1984 arcade sound-board form; the AY's two
+  8-bit ports are a free debug port), a faster Z80, a 68010/68008 sound
+  CPU, or the retired 128/128 CPLD.

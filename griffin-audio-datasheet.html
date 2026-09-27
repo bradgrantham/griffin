@@ -231,7 +231,7 @@
     </div>
   </div>
 
-  <p class="banner"><b>Proposal revision.</b> Rev 1 ships the SAMPLES path only (&sect;3.1 rev 1): ENGINE fills a FIFO pair and PORTS pops it to the DACs. Everything else on this page is the Z80 sound processor decided on 2026-09-26 after the CPLD form (&sect;7, retired row) fitted with no headroom. The tick law is the shared model that passed its A/B against the SN76489 recording; the Z80 program is being measured against that model bit for bit (&sect;5). Nothing here has run on hardware, and rev-1 boards cannot take it. <span class="st prelim">PRELIMINARY</span> marks what the model pins and the Z80 test is confirming; <span class="st adv">ADVANCE</span> marks concepts; <span class="st open">OPEN</span> marks a question no gate has answered.</p>
+  <p class="banner"><b>Proposal revision.</b> Rev 1 ships the SAMPLES path only (&sect;3.1 rev 1): ENGINE fills a FIFO pair and PORTS pops it to the DACs. Everything else on this page is the Z80 sound processor decided on 2026-09-26 after the CPLD form (&sect;7, retired row) fitted with no headroom. The tick law is the shared model that passed its A/B against the SN76489 recording; the Z80 program matches it bit for bit but costs about three times the tick at 6 MHz (&sect;5), so the sound processor&rsquo;s final form is an open decision (&sect;7). Nothing here has run on hardware, and rev-1 boards cannot take it. <span class="st prelim">PRELIMINARY</span> marks what the model pins and the Z80 test is confirming; <span class="st adv">ADVANCE</span> marks concepts; <span class="st open">OPEN</span> marks a question no gate has answered.</p>
 
   <section>
     <div class="secbar"><span>General Description</span><span class="no">1</span></div>
@@ -443,19 +443,19 @@
     </p>
     <div class="twrap"><table>
       <tr><th>Item</th><th class="num">Hand count, T</th><th class="num">Measured, T</th><th>Status</th></tr>
-      <tr><td>NMI prologue + epilogue (save, SP re-seed, overrun flag, restore, RETN)</td><td class="num">&asymp;90</td><td class="num">&mdash;</td><td><span class="st open">MEASURING</span></td></tr>
-      <tr><td>Square voice, stereo, saturating both channels</td><td class="num">&asymp;130</td><td class="num">&mdash;</td><td><span class="st open">MEASURING</span></td></tr>
-      <tr><td>Wavetable voice</td><td class="num">&asymp;100</td><td class="num">&mdash;</td><td><span class="st open">MEASURING</span></td></tr>
-      <tr><td>Noise voice (LFSR shift on carry)</td><td class="num">&asymp;150</td><td class="num">&mdash;</td><td><span class="st open">MEASURING</span></td></tr>
-      <tr><td>PCM ring pop and seed</td><td class="num">&asymp;30</td><td class="num">&mdash;</td><td><span class="st open">MEASURING</span></td></tr>
-      <tr><td>Drain: SET record</td><td class="num">&asymp;60</td><td class="num">&mdash;</td><td><span class="st open">MEASURING</span></td></tr>
-      <tr><td>Drain: WAIT record</td><td class="num">&asymp;50</td><td class="num">&mdash;</td><td><span class="st open">MEASURING</span></td></tr>
-      <tr><td>Drain: SAMPLES pair copied into the ring</td><td class="num">&asymp;42</td><td class="num">&mdash;</td><td><span class="st open">MEASURING</span></td></tr>
-      <tr><td>Drain: LOAD word</td><td class="num">&asymp;45</td><td class="num">&mdash;</td><td><span class="st open">MEASURING</span></td></tr>
-      <tr><td>Smurf: 4 voices + PCM, worst tick</td><td class="num">&asymp;560</td><td class="num">&mdash;</td><td><span class="st open">GATE</span> 381 at 6 MHz</td></tr>
-      <tr><td>Smurf: 4 voices, PCM disabled, worst tick</td><td class="num">&asymp;530</td><td class="num">&mdash;</td><td><span class="st open">GATE</span> 15 % headroom</td></tr>
+      <tr><td>NMI prologue + epilogue (save, SP re-seed, overrun flag, restore, RETN)</td><td class="num">&asymp;90</td><td class="num">347 (226 without the safety checks)</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Square voice, stereo, saturating both channels</td><td class="num">&asymp;130</td><td class="num">138&ndash;147</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Wavetable voice</td><td class="num">&asymp;100</td><td class="num">not isolated (oracle d only)</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Noise voice (LFSR shift on carry)</td><td class="num">&asymp;150</td><td class="num">212&ndash;224</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>PCM ring pop and seed</td><td class="num">&asymp;30</td><td class="num">79</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Drain: SET record</td><td class="num">&asymp;60</td><td class="num">301 mean, 4268 max</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Drain: WAIT record</td><td class="num">&asymp;50</td><td class="num">113</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Drain: SAMPLES pair copied into the ring</td><td class="num">&asymp;42</td><td class="num">&asymp;290</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Drain: LOAD word</td><td class="num">&asymp;45</td><td class="num">&asymp;110 per byte + 250</td><td><span class="st prod">MEASURED</span></td></tr>
+      <tr><td>Smurf: 4 voices + PCM, worst tick</td><td class="num">&asymp;560</td><td class="num">1263</td><td><span class="st open">GATE FAIL</span> 3.3&times; over 381 at 6 MHz, 2.5&times; over 508 at 8 MHz</td></tr>
+      <tr><td>Smurf: 4 voices, PCM disabled, worst tick</td><td class="num">&asymp;530</td><td class="num">1234</td><td><span class="st open">GATE FAIL</span> needs &le;324; one square voice is what 6 MHz carries (445 worst)</td></tr>
     </table></div>
-    <p class="note">Hand counts are the napkin budget in griffin.log 2026-09-26; the measured column is filled from sound/README.md when the feasibility test lands. The 7200 read on the Z80 bus and the SRAM cycle are ordinary Z80 timings and are not re-derived here.</p>
+    <p class="note">Hand counts are the napkin budget in griffin.log 2026-09-26; measured values are from sound/README.md and the griffin.log measurement entry of the same date, re-run by the coordinator. The best derived inner loop (register-resident phases) is 84 T per voice, so four stereo voices need about 560&ndash;700 T per tick with any Z80 code; the Z80B has 381 and the Z80H 508. A 20 MHz Z84C0020 (1271 T) would carry it. Two protocol findings from the run: the 0xFF sentinel applies to every stream word (a PCM left sample of &minus;1 is sent as &minus;2; LOAD carries one byte per word), and PCM must be deposited ahead of the WAIT that covers it.</p>
   </section>
 
   <section>
@@ -494,7 +494,7 @@
       <tr><td>Rev-1 SAMPLES path (&sect;3.1 rev 1)</td><td>rev-1 hardware; PORTS pop, DMA-only fill, two&rsquo;s complement DACs; Smurf soundtrack plays</td><td class="mono">PRODUCTION rev 1</td></tr>
       <tr><td>Tick law and PSG driver (mixer/mixer.h, mixer/psg_driver)</td><td>A/B over the 81.7 s Smurf recording against the SN76489 per-sample reference: pitch worst 1.82 cents / mean 0.48; ladder within 0.46 LSB; invariants 0 violations every tick; 10 of 10 mutants fail; listening test passed; end-of-tick LFSR, record bound and control block amended and re-verified</td><td class="mono">PASS 2026-09-26</td></tr>
       <tr><td>Decision: Z80 sound processor, record protocol, no status path, empty-read sentinel, passive debug header</td><td>griffin.log 2026-09-26 decision entry; griffin.yml AUDIO, AUDIO_REC_*, interfaces</td><td class="mono">DECIDED 2026-09-26</td></tr>
-      <tr><td>Z80 feasibility (sound/): ROM tick in assembly on the z80emu harness against the model</td><td>NOP cadence; square voices 0 mismatches over 10,000 ticks; whole Smurf trace 0 mismatches; every record type; T histograms at 6 and 8 MHz with and without PCM</td><td class="mono">RUNNING 2026-09-26 &middot; gate: 4 voices + PCM in 381 T, or 4 voices without PCM at 15 % headroom</td></tr>
+      <tr><td>Z80 feasibility (sound/): ROM tick in assembly on the z80emu harness against the model</td><td>all oracles pass with 0 mismatches (NOP cadence; 10,000 synthetic ticks; the whole 1,285,764-tick Smurf trace with and without PCM; every record type incl. uploads and the overrun fallback). Budget: worst 1263 T per tick against 381 at 6 MHz and 508 at 8 MHz</td><td class="mono">CORRECT, GATE FAIL 2026-09-26 &middot; owner&rsquo;s call: PSG chip behind the Z80, 20 MHz Z80, 68010, or the 128/128 CPLD</td></tr>
       <tr><td>8-bit AMP at the quiet end</td><td>peak 31 collapses attenuations 11..13; peak 60 measured: no collapse, 1.2 % saturating ticks where the reference clips too; listen to mixer/build/peak60/wav</td><td class="mono">OPEN (listen)</td></tr>
       <tr><td>Package B: PORTS re-fit without the pop logic, emulator Z80 model, smurf and firmware on records, rev-1 registers out of griffin.yml</td><td>emulator runs rom.bin; smurf field budget re-measured against 49,000 / 112,000</td><td class="mono">TO DO</td></tr>
       <tr><td>Breadboard prototype from the existing audio strobe; debug header as console</td><td>the first silicon check, possible before rev 2</td><td class="mono">TO DO</td></tr>
