@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 /* ====================================================================
- * PORTS CPLD (0xFC0000) — PS/2 mouse, joysticks, paddles, audio FIFO pop.
+ * PORTS CPLD (0xFC0000) — PS/2 mouse, joysticks, paddles.
  *
  * PORTS wire-ORs all of its interrupt sources onto a single ~PORTS_IRQ
  * pin at autovector level 2, so the vector belongs to PORTS rather than

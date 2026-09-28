@@ -8,9 +8,9 @@ GEN = ../griffin.generated
 
 WARNFLAGS   = -Wall -Wextra -Werror
 COMMONFLAGS = -g -O2
-CXXFLAGS    = --std=c++23 $(COMMONFLAGS) $(WARNFLAGS)
+CXXFLAGS    = --std=c++23 $(COMMONFLAGS) $(WARNFLAGS) -I../audio
 
-OBJECTS = author.o interpret.o render.o main.o
+OBJECTS = author.o interpret.o render.o main.o audio_chip.o
 
 all: super-engine
 
@@ -23,7 +23,9 @@ $(OBJECTS): $(GEN).h descriptor.h
 
 author.o:    author.cpp author.h
 interpret.o: interpret.cpp interpret.h
-render.o:    render.cpp render.h interpret.h
+render.o:    render.cpp render.h interpret.h ../audio/audio_chip.h
+audio_chip.o: ../audio/audio_chip.cpp ../audio/audio_chip.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 main.o:      main.cpp author.h interpret.h render.h
 
 %.o: %.cpp

@@ -24,9 +24,11 @@
 // AUDIO_SAMPLES_PER_SECOND the audio path assumes.  (Falling-edge-only on the
 // PORTS side is a fit result, not a preference: a both-edges XOR detector
 // doubles the product terms of every paddle-counter bit and PORTS stops
-// routing.)  They are separate registers on separate pins so the audio rate
-// can diverge later without a board change — DUART OP4..OP7 are the intended
-// selector; they have no pins here yet and float until that is designed.
+// routing.)  AUDIO_TICK was the rev-1 PORTS audio pop's tick; since
+// 2026-09-28 nothing consumes it (the AUDIO chip divides the pixel clock and
+// takes its phase from HBLANK) and it goes to a test pad.  It stays because
+// removing it measured WORSE: 126/128 LC against 123 with it, under both
+// frozen and free pin placement (griffin.log 2026-09-28).
 //
 // THE REGISTER STAGE IS KEPT, AND THAT IS WHY THE LEADS DO NOT MOVE.  Every
 // output here is registered.  That was forced when TIMING was a separate

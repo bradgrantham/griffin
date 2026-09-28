@@ -122,7 +122,7 @@
 | COMPOSITOR: VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, SET forwarding to PIXEL, MASK overlays
 .equ COMPOSITOR_CLOCK, 25175000
 
-| PORTS: PS/2 mouse, two joystick ports, two paddle counters, and (rev 1 only) the audio FIFO pop/reset control
+| PORTS: PS/2 mouse, two joystick ports and two paddle counters
 .equ PORTS_BASE, 0xFC0000
 .equ PORTS_SIZE, 0x040000
 .equ PORTS_IRQ_LEVEL, 2
@@ -197,17 +197,6 @@
 .equ PORTS_PS2_MOUSE_RX_DATA, 0xFC0015  | READ
 .equ PORTS_PS2_MOUSE_RX_DATA_MASK,  0xFF
 .equ PORTS_PS2_MOUSE_RX_DATA_SHIFT, 0
-.equ PORTS_AUDIO_CONTROL, 0xFC001F  | WRITE
-.equ PORTS_AUDIO_CONTROL_ENABLE_MASK,  0x01
-.equ PORTS_AUDIO_CONTROL_ENABLE_SHIFT, 0
-.equ PORTS_AUDIO_CONTROL_RESET_MASK,  0x02
-.equ PORTS_AUDIO_CONTROL_RESET_SHIFT, 1
-.equ PORTS_AUDIO_CONTROL_DEFAULT, 0x02
-.equ PORTS_AUDIO_STATUS, 0xFC001F  | READ
-.equ PORTS_AUDIO_STATUS_EMPTY_MASK,  0x01
-.equ PORTS_AUDIO_STATUS_EMPTY_SHIFT, 0
-.equ PORTS_AUDIO_STATUS_ENABLE_MASK,  0x02
-.equ PORTS_AUDIO_STATUS_ENABLE_SHIFT, 1
 
 | CF: Storage via CF card in True IDE 16-bit PIO mode
 .equ CF_BASE, 0xF40000

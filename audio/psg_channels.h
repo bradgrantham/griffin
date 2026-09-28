@@ -1,89 +1,63 @@
 // psg_channels.h — SN76489AN port bytes in, AUDIO channel streams out.
 //
-// The successor of mixer/psg_driver.h for the Paula-form chip: instead of
-// SETs it produces tables, periods and volumes for the Scheduler.
+// The 68000 side of an SN76489 port on the AUDIO chip.  Bare metal:
+// <cstdint>/<cstddef> only, no allocation, no floating point, no I/O; every
+// choice that needs a search or a logarithm is a lookup in psg_tables.h,
+// generated on the host by psg_tables_gen.cpp.  Memory: this object (a few
+// hundred bytes) plus one shared 32 KB white-noise sample table built on
+// first use.
 //
 //   tone c (0..2) -> channel c: a square table of LENGTH samples played at
-//                    PERIOD, chosen so 1,573,437.5 / (PERIOD+1) / LENGTH is
-//                    the tone's 3,579,545 / (32 N) Hz within a cent
-//                    (choose_tone); tables are cached by LENGTH.  Tones the
-//                    reference band-limits to silence (N <= 14, fundamental
-//                    at or above 7,867 Hz) are silenced here too, for the A/B.
-//   noise         -> channel 3: the shift register's output sequence as a
-//                    byte table (white: the 15-bit LFSR, taps 0 and 1, period
-//                    32767; periodic: 15), each bit repeated DUP times when
-//                    the shift rate is below the chip's 6.15 kHz floor,
-//                    truncated to NOISE_TABLE_CAP samples.  A noise control
-//                    write restarts the table (the chip reseeds); a rate-3
-//                    tone-2 change re-rates it in place.
-//   attenuation a -> VOLUME round(63 * 10^(-a/10)), 15 -> 0.  Channel level is
-//                    then (sample - 128) * VOLUME / 64, and the mono mixdown
-//                    of four channels at VOLUME 63 is 4 x 125, i.e. the
-//                    reference's peak 31 per voice times four, scaled by 4.
+//                    PERIOD, so 1,573,437.5 / (PERIOD+1) / LENGTH is the
+//                    tone's 3,579,545 / (32 N) Hz, within a cent where the
+//                    integers allow (TONE[N]).  All square tables are windows
+//                    of one 512-byte buffer (256 highs then 256 lows).  Tones
+//                    the reference band-limits (N <= 14) are silenced.
+//   noise         -> channel 3: the shift register's output sequence (white:
+//                    the 15-bit LFSR, 32,767 bits; periodic: 15), each bit
+//                    deposited REPEAT times when the shift rate is below the
+//                    chip's 6.15 kHz floor (NOISE[reload]); the sequence is
+//                    cut at 65,536 samples, as the reference driver's tables
+//                    were.  A noise control write restarts it (the chip
+//                    reseeds); a rate-3 tone-2 change re-rates it in place.
+//   attenuation a -> VOLUME[a], 2 dB steps, 15 -> 0.
 //
-// On a frequency change the new table starts at the old table's phase
-// fraction, and the Scheduler lands the PERIOD record when the old samples
-// have drained.  Host side today (std::map caches, double for cents); the
-// 68000 version prepares the same tables at load time.
+// Samples are two's complement, +/-127.  On a frequency change the new table
+// starts at the old one's phase fraction, and the Scheduler lands the PERIOD
+// record when the old samples have drained.
+//
+// Use: write() every byte the game sends to the PSG port; once per game tick
+// (after its bytes) call emit(scheduler); then run scheduler.line() for every
+// scanline and turn its deposits into ENGINE descriptors.
 
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
-#include <map>
-#include <vector>
 
 #include "scheduler.h"
 
 namespace griffin::audio
 {
 
-inline constexpr uint32_t PSG_CLOCK_HZ    = 3579545;
 inline constexpr int      NOISE_CHANNEL   = 3;
-inline constexpr uint32_t NOISE_TABLE_CAP = 65536;
-inline constexpr uint16_t MAX_TONE_LENGTH = 512;
-inline constexpr uint8_t  PREFERRED_MIN_PERIOD = 49;     // rates up to 31.5 kHz
-inline constexpr uint8_t  ABSOLUTE_MIN_PERIOD  = 12;     // 121 kHz, 3.85 words per line
-inline constexpr double   TONE_CENTS_GOAL = 1.0;
-
-struct ToneChoice
-{
-    uint8_t  period = 0;
-    uint16_t length = 0;
-    double   cents = 0.0;       // achieved minus wanted
-    bool     audible = false;
-};
-
-// The reference's band limit: STEP[N] >= 1 flip per sample.
-bool tone_band_limited(uint16_t effective_period);
-double tone_hz(uint16_t effective_period);
-ToneChoice choose_tone(uint16_t effective_period);
-
-// Noise: the shift rate for control bits 1:0 and tone 2's effective period,
-// and the (PERIOD, DUP) that plays a table at it.
-double noise_shift_hz(uint8_t noise_control, uint16_t tone2_effective_period);
-struct NoiseChoice
-{
-    uint8_t  period = 0;
-    uint32_t dup = 1;
-};
-NoiseChoice choose_noise(double shift_hz);
-
-uint8_t volume_for_attenuation(uint8_t attenuation);
+inline constexpr uint32_t NOISE_TABLE_CAP = 65536;   // samples, the old driver's table cap
+inline constexpr uint32_t PSG_CLOCK_HZ    = 3579545;
 
 class PsgChannels
 {
 public:
     PsgChannels() { reset(); }
 
+    // SN76489 power-on registers; the next emit() sets every channel.
     void reset();
-    void write(uint8_t byte);
-    void emit(Scheduler& scheduler);
 
-    const std::vector<uint8_t>& square_table(uint16_t length);
-    const std::vector<uint8_t>& noise_table(bool white, uint32_t dup);
-    size_t table_bytes() const;
-    size_t table_count() const { return squares_.size() + noises_.size(); }
+    // One byte of the PSG port stream, decoded as sn76489.cpp's Psg::write().
+    void write(uint8_t byte);
+
+    // Push the registers' implied streams, periods and volumes to the
+    // Scheduler.  Call once per game tick, after that tick's writes.
+    void emit(Scheduler& scheduler);
 
     // Registers, as sn76489.h names them.
     uint16_t period_reg[3]{};
@@ -93,27 +67,32 @@ public:
 
     uint16_t effective_period(int c) const { return period_reg[c] ? period_reg[c] : 1024; }
 
-    // For the A/B report.
-    std::map<uint16_t, ToneChoice> tone_choices;    // by effective period, audible tones only
-    uint64_t tone_retargets = 0;
-    uint64_t noise_restarts = 0;
-    uint64_t noise_retargets = 0;
+    // Counters and a record of which tone periods sounded, for reports.
+    uint32_t tone_retargets = 0;
+    uint32_t noise_restarts = 0;
+    uint32_t noise_retargets = 0;
+    uint8_t  periods_used[1024 / 8]{};   // bit N%1024: tone period N sounded
 
 private:
     struct Shadow
     {
         bool     active = false;
-        uint16_t psg_period = 0;
+        uint16_t psg_period = 0;         // tones: effective period; noise: reload
         uint8_t  period = 0xFF;
-        uint32_t length = 0;
+        uint32_t length = 0;             // table length in samples (length x repeat)
         uint8_t  volume = 0xFF;
         bool     white = false;
-        uint32_t dup = 0;
+        uint8_t  repeat = 0;
     };
     Shadow shadow_[CHANNELS];
     bool noise_reseed_ = false;
-    std::map<uint16_t, std::vector<uint8_t>> squares_;
-    std::map<uint32_t, std::vector<uint8_t>> noises_;   // key: dup << 1 | white
 };
+
+// The square and noise sample tables (static storage, shared by every
+// PsgChannels): the square buffer is constant; the noise table is built from
+// psg_tables.h on first call.
+const uint8_t *square_table(uint16_t length);
+const uint8_t *noise_samples(bool white);
+uint32_t noise_bits(bool white, uint8_t repeat);    // sequence length in table bytes
 
 }   // namespace griffin::audio

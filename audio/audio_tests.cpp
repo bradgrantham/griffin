@@ -8,6 +8,10 @@
 
 #include "audio_chip.h"
 #include "psg_channels.h"
+#include "psg_tables.h"
+
+#include <algorithm>
+#include <cmath>
 #include "scheduler.h"
 
 using namespace griffin::audio;
@@ -301,41 +305,42 @@ void test_period_alignment()
     printf("T5: %s\n", failures == failures_before ? "aligned within a line" : "see FAIL lines");
 }
 
-// T6: the tone chooser lands every audible SN76489 period within a cent, and
-// the noise chooser keeps PERIOD in range.
-void test_choosers()
+// T6: the generated tables.  Every tone period the reference makes audible
+// (N >= 15) has a (PERIOD, LENGTH) and the band-limited ones have none;
+// PERIOD and LENGTH are in range; the noise entries keep PERIOD in range with
+// REPEAT >= 1; the volume ladder falls from 63 to 0.
+void test_tables()
 {
+    namespace pt = griffin::audio::psg_tables;
     const int failures_before = failures;
     double worst = 0.0;
     int over_goal = 0;
     for (int n = 1; n <= 1024; ++n)
     {
-        const ToneChoice c = choose_tone(static_cast<uint16_t>(n));
-        if (!c.audible)
+        const pt::ToneEntry& t = pt::TONE[n & 1023];
+        const uint64_t numerator = 65536ull * 3579545ull * 1600ull;
+        const uint64_t denominator = 16ull * 25175000ull * static_cast<uint64_t>(n);
+        const bool limited = (numerator + denominator / 2) / denominator >= 0x10000ull;
+        CHECK(limited == (t.length == 0), "period %d: band limit %d but length %u", n, limited, t.length);
+        if (t.length == 0)
         {
-            CHECK(tone_band_limited(static_cast<uint16_t>(n)), "period %d inaudible but not band limited", n);
             continue;
         }
-        CHECK(c.length >= 2 && c.length <= MAX_TONE_LENGTH, "period %d: length %d", n, c.length);
-        if (std::fabs(c.cents) > worst)
-        {
-            worst = std::fabs(c.cents);
-        }
-        if (std::fabs(c.cents) > TONE_CENTS_GOAL)
-        {
-            ++over_goal;
-        }
+        CHECK(t.length >= 2 && t.length <= 512 && t.period >= 12, "period %d: PERIOD %u LENGTH %u", n, t.period, t.length);
+        const double cents = 1200.0 * std::log2((1573437.5 / (t.period + 1) / t.length) / (3579545.0 / (32.0 * n)));
+        worst = std::max(worst, std::fabs(cents));
+        over_goal += (std::fabs(cents) > 1.0) ? 1 : 0;
     }
-    CHECK(tone_band_limited(14) && !tone_band_limited(15), "band limit boundary is period 14/15");
-    for (int r = 0; r < 4; ++r)
+    for (int r = 1; r <= 1024; ++r)
     {
-        for (int n2 : { 1, 4, 16, 100, 1024 })
-        {
-            const NoiseChoice c = choose_noise(noise_shift_hz(static_cast<uint8_t>(r), static_cast<uint16_t>(n2)));
-            CHECK(c.dup >= 1, "noise dup 0");
-        }
+        CHECK(pt::NOISE[r].repeat >= 1 && pt::NOISE[r].period >= 12, "noise reload %d", r);
     }
-    printf("T6 choosers: worst tone error %.3f cents, %d periods over %.1f cent\n", worst, over_goal, TONE_CENTS_GOAL);
+    for (int a = 1; a < 16; ++a)
+    {
+        CHECK(pt::VOLUME[a] <= pt::VOLUME[a - 1], "volume ladder rises at %d", a);
+    }
+    CHECK(pt::VOLUME[0] == 63 && pt::VOLUME[15] == 0, "volume ends");
+    printf("T6 tables: worst tone error %.3f cents, %d periods over 1 cent\n", worst, over_goal);
     printf("T6: %s\n", failures == failures_before ? "ok" : "see FAIL lines");
 }
 
@@ -348,7 +353,7 @@ int main()
     test_gate();
     test_scheduler_feed();
     test_period_alignment();
-    test_choosers();
+    test_tables();
     printf("%s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }

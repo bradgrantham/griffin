@@ -15,12 +15,15 @@ void Scheduler::reset()
     control_records_ = 0;
 }
 
-void Scheduler::set_stream(int channel, const uint8_t *table, uint32_t length, uint32_t position)
+void Scheduler::set_stream(int channel, const uint8_t *table, uint32_t length, uint32_t position,
+                           uint32_t repeat, uint32_t repeat_count)
 {
     ChannelState& s = channels_[channel];
     s.table = table;
     s.length = length;
     s.position = (length != 0) ? position % length : 0;
+    s.repeat = (repeat != 0) ? repeat : 1;
+    s.repeat_count = (repeat_count < s.repeat) ? repeat_count : 0;
     const bool active = (table != nullptr) && (length != 0);
     if (active && !s.active)
     {
@@ -126,9 +129,13 @@ void Scheduler::line(LineDeposits& out)
             for (int i = 0; i < need; ++i)
             {
                 out.add(static_cast<uint8_t>(c), s.table[s.position]);
-                if (++s.position == s.length)
+                if (++s.repeat_count == s.repeat)
                 {
-                    s.position = 0;
+                    s.repeat_count = 0;
+                    if (++s.position == s.length)
+                    {
+                        s.position = 0;
+                    }
                 }
             }
             if (need > 0)

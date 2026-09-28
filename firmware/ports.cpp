@@ -20,17 +20,13 @@ void ports_init(void)
     /* Paddle counters to their reset default (DUMP clear = measuring).
      * The per-frame dump/measure cycle belongs to whoever owns vsync. */
     PORTS_PADDLE_CONTROL = static_cast<uint8_t>(Griffin::PORTS_PADDLE_CONTROL_DEFAULT);
-
-    /* Audio: pops disabled and the FIFO pair held in reset (the register's
-     * power-on state).  Whoever plays audio releases RESET and primes. */
-    PORTS_AUDIO_CONTROL = static_cast<uint8_t>(Griffin::PORTS_AUDIO_CONTROL_DEFAULT);
 }
 
 /* ====================================================================
  * ports_isr — level-2 autovector.
  *
  * The PS/2 mouse frame engine (RX_READY / TX_DONE) is the only source on
- * this pin; audio raises no interrupt (its FIFO flags are polled).  The
+ * this pin.  The
  * vector stays here rather than in ps2.cpp so PORTS owns its own level.
  * ==================================================================== */
 void ports_isr(void)

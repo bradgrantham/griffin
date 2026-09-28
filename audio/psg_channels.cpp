@@ -1,127 +1,91 @@
-// psg_channels.cpp — see psg_channels.h.
+// psg_channels.cpp — see psg_channels.h.  Bare metal.
 
 #include "psg_channels.h"
 
-#include <cmath>
+#include "psg_tables.h"
 
 namespace griffin::audio
 {
 
+namespace pt = psg_tables;
+
 namespace
 {
 
-constexpr uint32_t SAMPLE_RATE_NUMERATOR   = 25175000;
-constexpr uint32_t SAMPLE_RATE_DENOMINATOR = 1600;
+constexpr uint16_t NOISE_RELOAD[3] = { 0x10, 0x20, 0x40 };
+constexpr uint8_t  HIGH = 0x7F;
+constexpr uint8_t  LOW  = 0x81;      // -127
 
-constexpr double step_hz()
+struct SquareBuffer
 {
-    return static_cast<double>(STEP_HZ_NUMERATOR) / static_cast<double>(STEP_HZ_DENOMINATOR);
+    uint8_t v[512];
+};
+
+consteval SquareBuffer make_square()
+{
+    SquareBuffer b{};
+    for (int i = 0; i < 512; ++i)
+    {
+        b.v[i] = (i < 256) ? HIGH : LOW;
+    }
+    return b;
 }
 
-double cents(double achieved, double wanted)
+constinit const SquareBuffer SQUARE = make_square();
+
+uint8_t white_samples[pt::WHITE_LENGTH];
+uint8_t periodic_samples[pt::PERIODIC_LENGTH];
+bool    noise_built = false;
+
+void build_noise()
 {
-    return 1200.0 * std::log2(achieved / wanted);
+    for (uint32_t i = 0; i < pt::WHITE_LENGTH; ++i)
+    {
+        white_samples[i] = ((pt::WHITE_BITS[i / 8] >> (i % 8)) & 1) ? HIGH : LOW;
+    }
+    for (uint32_t i = 0; i < pt::PERIODIC_LENGTH; ++i)
+    {
+        periodic_samples[i] = (i == pt::PERIODIC_LENGTH - 1) ? HIGH : LOW;   // seed 0x4000: fourteen 0s, then the 1
+    }
+    noise_built = true;
+}
+
+// A new table's starting point: the old stream's phase fraction carried over,
+// in sample units (table index x repeat + copies made).
+struct Start
+{
+    uint32_t position;
+    uint32_t repeat_count;
+};
+
+Start carry_phase(const ChannelState& old, uint32_t old_samples, uint32_t new_samples, uint32_t new_repeat)
+{
+    const uint64_t at = static_cast<uint64_t>(old.position) * old.repeat + old.repeat_count;
+    const uint32_t sample = static_cast<uint32_t>((at * new_samples) / old_samples);
+    return Start{ sample / new_repeat, sample % new_repeat };
 }
 
 }   // namespace
 
-bool tone_band_limited(uint16_t effective_period)
+const uint8_t *square_table(uint16_t length)
 {
-    // sn76489.cpp make_step_table: flips per sample in 16.16.
-    const uint64_t numerator = 65536ull * PSG_CLOCK_HZ * SAMPLE_RATE_DENOMINATOR;
-    const uint64_t denominator = 16ull * SAMPLE_RATE_NUMERATOR * effective_period;
-    const uint64_t step = (numerator + denominator / 2) / denominator;
-    return step >= 0x10000ull;
+    return &SQUARE.v[256 - length / 2];
 }
 
-double tone_hz(uint16_t effective_period)
+const uint8_t *noise_samples(bool white)
 {
-    return static_cast<double>(PSG_CLOCK_HZ) / (32.0 * effective_period);
+    if (!noise_built)
+    {
+        build_noise();
+    }
+    return white ? white_samples : periodic_samples;
 }
 
-ToneChoice choose_tone(uint16_t effective_period)
+uint32_t noise_bits(bool white, uint8_t repeat)
 {
-    ToneChoice best{};
-    if (tone_band_limited(effective_period))
-    {
-        return best;
-    }
-    const double f = tone_hz(effective_period);
-    double best_error = 1e9;
-    auto consider = [&](int period_min)
-    {
-        for (int p = PERIOD_MAX; p >= period_min; --p)
-        {
-            const double rate = step_hz() / (p + 1);
-            const double exact = rate / f;
-            const long candidates[2] = { static_cast<long>(std::floor(exact)), static_cast<long>(std::ceil(exact)) };
-            for (long l : candidates)
-            {
-                if (l < 2 || l > MAX_TONE_LENGTH)
-                {
-                    continue;
-                }
-                const double err = cents(rate / static_cast<double>(l), f);
-                if (std::fabs(err) < std::fabs(best_error))
-                {
-                    best_error = err;
-                    best.period = static_cast<uint8_t>(p);
-                    best.length = static_cast<uint16_t>(l);
-                    best.cents = err;
-                    best.audible = true;
-                }
-            }
-        }
-    };
-    consider(PREFERRED_MIN_PERIOD);
-    if (!best.audible || std::fabs(best_error) > TONE_CENTS_GOAL)
-    {
-        consider(ABSOLUTE_MIN_PERIOD);
-    }
-    return best;
-}
-
-double noise_shift_hz(uint8_t noise_control, uint16_t tone2_effective_period)
-{
-    static constexpr uint16_t NOISE_RELOAD[3] = { 0x10, 0x20, 0x40 };
-    const int rate = noise_control & 3;
-    const uint16_t reload = (rate == 3) ? tone2_effective_period : NOISE_RELOAD[rate];
-    // The counter expires every `reload` clock/16 ticks and the shift register
-    // advances on every second expiry (sn76489.cpp recompute_noise_step).
-    return static_cast<double>(PSG_CLOCK_HZ) / (32.0 * reload);
-}
-
-NoiseChoice choose_noise(double shift_hz)
-{
-    NoiseChoice c{};
-    // Smallest DUP with PERIOD in range: rate = DUP * shift_hz <= step/(PERIOD+1).
-    double dup = std::ceil(step_hz() / (256.0 * shift_hz));
-    if (dup < 1.0)
-    {
-        dup = 1.0;
-    }
-    c.dup = static_cast<uint32_t>(dup);
-    long p = std::lround(step_hz() / (c.dup * shift_hz)) - 1;
-    if (p < ABSOLUTE_MIN_PERIOD)
-    {
-        p = ABSOLUTE_MIN_PERIOD;
-    }
-    if (p > PERIOD_MAX)
-    {
-        p = PERIOD_MAX;
-    }
-    c.period = static_cast<uint8_t>(p);
-    return c;
-}
-
-uint8_t volume_for_attenuation(uint8_t attenuation)
-{
-    if (attenuation >= 15)
-    {
-        return 0;
-    }
-    const double v = 63.0 * std::pow(10.0, -0.1 * attenuation);
-    return static_cast<uint8_t>(std::lround(v));
+    const uint32_t bits = white ? pt::WHITE_LENGTH : pt::PERIODIC_LENGTH;
+    const uint32_t cap = NOISE_TABLE_CAP / repeat;
+    return (bits < cap) ? bits : cap;
 }
 
 void PsgChannels::reset()
@@ -184,75 +148,6 @@ void PsgChannels::write(uint8_t byte)
     }
 }
 
-const std::vector<uint8_t>& PsgChannels::square_table(uint16_t length)
-{
-    auto it = squares_.find(length);
-    if (it == squares_.end())
-    {
-        std::vector<uint8_t> t(length);
-        const uint16_t high = static_cast<uint16_t>(length / 2);
-        for (uint16_t i = 0; i < length; ++i)
-        {
-            t[i] = (i < high) ? 0x7F : 0x81;
-        }
-        it = squares_.emplace(length, std::move(t)).first;
-    }
-    return it->second;
-}
-
-const std::vector<uint8_t>& PsgChannels::noise_table(bool white, uint32_t dup)
-{
-    const uint32_t key = (dup << 1) | (white ? 1u : 0u);
-    auto it = noises_.find(key);
-    if (it == noises_.end())
-    {
-        // The register's output bit at the seed and after each shift, until
-        // the state repeats: sn76489.cpp shift_once with the discrete chip's
-        // 15-bit register, seed 0x4000.
-        std::vector<uint8_t> bits;
-        uint16_t reg = 0x4000;
-        const uint16_t seed = reg;
-        do
-        {
-            bits.push_back(static_cast<uint8_t>(reg & 1));
-            const uint16_t feedback = white ? static_cast<uint16_t>((reg ^ (reg >> 1)) & 1)
-                                            : static_cast<uint16_t>(reg & 1);
-            reg = static_cast<uint16_t>(reg >> 1);
-            if (feedback)
-            {
-                reg = static_cast<uint16_t>(reg | 0x4000);
-            }
-        } while (reg != seed && bits.size() < 70000);
-
-        uint32_t samples = static_cast<uint32_t>(bits.size()) * dup;
-        if (samples > NOISE_TABLE_CAP)
-        {
-            samples = (NOISE_TABLE_CAP / dup) * dup;
-        }
-        std::vector<uint8_t> t(samples);
-        for (uint32_t i = 0; i < samples; ++i)
-        {
-            t[i] = bits[i / dup] ? 0x7F : 0x81;
-        }
-        it = noises_.emplace(key, std::move(t)).first;
-    }
-    return it->second;
-}
-
-size_t PsgChannels::table_bytes() const
-{
-    size_t n = 0;
-    for (const auto& kv : squares_)
-    {
-        n += kv.second.size();
-    }
-    for (const auto& kv : noises_)
-    {
-        n += kv.second.size();
-    }
-    return n;
-}
-
 void PsgChannels::emit(Scheduler& scheduler)
 {
     // Tones.
@@ -260,30 +155,28 @@ void PsgChannels::emit(Scheduler& scheduler)
     {
         Shadow& sh = shadow_[c];
         const uint16_t n = effective_period(c);
-        const bool audible = atten[c] < 15 && !tone_band_limited(n);
-        const uint8_t volume = audible ? volume_for_attenuation(atten[c]) : 0;
+        const pt::ToneEntry& tone = pt::TONE[n & 1023];
+        const bool audible = atten[c] < 15 && tone.length != 0;
+        const uint8_t volume = audible ? pt::VOLUME[atten[c] & 15] : 0;
 
         if (audible && (!sh.active || sh.psg_period != n))
         {
-            const ToneChoice choice = choose_tone(n);
-            tone_choices.emplace(n, choice);
-            const std::vector<uint8_t>& table = square_table(choice.length);
-            uint32_t position = 0;
+            periods_used[(n & 1023) / 8] = static_cast<uint8_t>(periods_used[(n & 1023) / 8] | (1u << (n % 8)));
+            Start start{ 0, 0 };
             if (sh.active && sh.length != 0)
             {
-                const uint32_t old_position = scheduler.channel(c).position;
-                position = static_cast<uint32_t>((static_cast<uint64_t>(old_position) * choice.length) / sh.length);
+                start = carry_phase(scheduler.channel(c), sh.length, tone.length, 1);
                 ++tone_retargets;
             }
-            scheduler.set_stream(c, table.data(), choice.length, position);
-            if (choice.period != sh.period)
+            scheduler.set_stream(c, square_table(tone.length), tone.length, start.position);
+            if (tone.period != sh.period)
             {
-                scheduler.set_period(c, choice.period);
-                sh.period = choice.period;
+                scheduler.set_period(c, tone.period);
+                sh.period = tone.period;
             }
             sh.active = true;
             sh.psg_period = n;
-            sh.length = choice.length;
+            sh.length = tone.length;
         }
         else if (!audible && sh.active)
         {
@@ -301,25 +194,29 @@ void PsgChannels::emit(Scheduler& scheduler)
     {
         Shadow& sh = shadow_[NOISE_CHANNEL];
         const bool audible = atten[3] < 15;
-        const uint8_t volume = audible ? volume_for_attenuation(atten[3]) : 0;
+        const uint8_t volume = audible ? pt::VOLUME[atten[3] & 15] : 0;
         const bool white = (noise_control & 4) != 0;
-        const NoiseChoice choice = choose_noise(noise_shift_hz(noise_control, effective_period(2)));
+        const int rate = noise_control & 3;
+        const uint16_t reload = (rate == 3) ? effective_period(2) : NOISE_RELOAD[rate];
+        const pt::NoiseEntry& choice = pt::NOISE[reload];
 
-        if (audible && (noise_reseed_ || !sh.active || sh.white != white || sh.dup != choice.dup || sh.period != choice.period))
+        if (audible && (noise_reseed_ || !sh.active || sh.white != white || sh.repeat != choice.repeat
+                        || sh.period != choice.period))
         {
-            const std::vector<uint8_t>& table = noise_table(white, choice.dup);
-            uint32_t position = 0;
+            const uint32_t bits = noise_bits(white, choice.repeat);
+            const uint32_t samples = bits * choice.repeat;
+            Start start{ 0, 0 };
             if (!noise_reseed_ && sh.active && sh.length != 0)
             {
-                const uint32_t old_position = scheduler.channel(NOISE_CHANNEL).position;
-                position = static_cast<uint32_t>((static_cast<uint64_t>(old_position) * table.size()) / sh.length);
+                start = carry_phase(scheduler.channel(NOISE_CHANNEL), sh.length, samples, choice.repeat);
                 ++noise_retargets;
             }
             else
             {
                 ++noise_restarts;
             }
-            scheduler.set_stream(NOISE_CHANNEL, table.data(), static_cast<uint32_t>(table.size()), position);
+            scheduler.set_stream(NOISE_CHANNEL, noise_samples(white), bits, start.position, choice.repeat,
+                                 start.repeat_count);
             if (choice.period != sh.period)
             {
                 scheduler.set_period(NOISE_CHANNEL, choice.period);
@@ -327,8 +224,8 @@ void PsgChannels::emit(Scheduler& scheduler)
             }
             sh.active = true;
             sh.white = white;
-            sh.dup = choice.dup;
-            sh.length = static_cast<uint32_t>(table.size());
+            sh.repeat = choice.repeat;
+            sh.length = samples;
         }
         else if (!audible && sh.active)
         {

@@ -356,8 +356,8 @@ peripherals:
   #   today (negative, 2 lines at v = 490..491); polarity fixed for every
   #   future raster mode independent of the connector's VSYNC polarity.
   #   GLUE edge-latches it (VSYNC_STATUS).
-  # - PADDLE_TICK -> PORTS and AUDIO_TICK -> a test pad (rev 1: both to
-  #   PORTS; the rev-2 AUDIO chip divides the pixel clock itself): square waves toggling on the clock that starts every
+  # - PADDLE_TICK -> PORTS and AUDIO_TICK -> a test pad (no consumer; the
+  #   AUDIO chip divides the pixel clock itself): square waves toggling on the clock that starts every
   #   line (period 1600 clocks, free-running from reset, no frame-boundary
   #   exception).  Consumers act on FALLING edges only: 15.734 kHz events
   #   (PADDLE_TICKS_PER_SECOND, AUDIO_SAMPLES_PER_SECOND).  Separate nets
@@ -477,13 +477,12 @@ peripherals:
     clock: 25175000
 
   # GLUE decodes the region, hands over ~PORTS_SELECT and answers DTACK.
-  # Time base is PIXEL's PADDLE_TICK (and, rev 1 only, AUDIO_TICK for the
-  # audio pop; see PIXEL); PORTS counts falling edges only and has no
+  # Time base is PIXEL's PADDLE_TICK; PORTS counts falling edges only and has no
   # divider, so a rate change is a PIXEL change.
   # The mouse channel mirrors GLUE's keyboard register layout and offsets.
   PORTS:
     part: ATF1508AS
-    description: "PS/2 mouse, two joystick ports, two paddle counters, and (rev 1 only) the audio FIFO pop/reset control"
+    description: "PS/2 mouse, two joystick ports and two paddle counters"
     address_range:
       base: 0xFC0000
       size: 0x040000
@@ -626,40 +625,6 @@ peripherals:
         description: "Assembled PS/2 mouse data byte; valid while RX_READY is set."
         bits:
           - { bit: "7:0", name: DATA, description: "Received packet byte" }
-      - offset: 0x1F
-        name: AUDIO_CONTROL
-        access: write
-        width: 8
-        description: |
-          Rev 1 only audio FIFO pop and reset control, retired in rev 2 where the AUDIO chip pops its own FIFOs.
-          ENABLE gates the read strobe PORTS sends to both 7200s on every
-          AUDIO_TICK event; clearing it freezes the DACs on their last sample
-          without disturbing FIFO contents.  RESET drives both 7200 /RS pins
-          low, discarding every queued pair; its reset value 1 holds the FIFOs
-          in reset from power-on until software releases it.  The 7200's /RS
-          setup/recovery rule (see PIXEL nRS) means PORTS holds its own /RE
-          off while RESET is set, and software must change RESET only when no
-          descriptor list that deposits AUDIO_FIFO_W is armed.  Flush
-          sequence: ENABLE=0, RESET=1, RESET=0, deposit, ENABLE=1.
-        bits:
-          - { bit: "0", name: ENABLE, default: 0,
-              description: "1 = pop one stereo sample pair per AUDIO_TICK event; 0 = hold" }
-          - { bit: "1", name: RESET, default: 1,
-              description: "1 = hold both 7200 /RS low (FIFOs empty, pops suppressed); 0 = run" }
-      - offset: 0x1F
-        name: AUDIO_STATUS
-        access: read
-        width: 8
-        description: |
-          Rev 1 only audio FIFO status with no interrupt, retired in rev 2 with AUDIO_CONTROL.
-          EMPTY is the raw 7200 /EF pin, read like the joystick switches
-          (nothing in PORTS acts on it): the last pair has been popped and
-          the DACs hold it.
-        bits:
-          - { bit: "0", name: EMPTY,
-              description: "Live 7200 /EF: 1 = no pairs queued" }
-          - { bit: "1", name: ENABLE,
-              description: "Current AUDIO_CONTROL ENABLE state" }
 
   # 16-bit True IDE PIO.  GLUE gates IOWR with AS.  Sideband pins INTRQ and
   # IORDY go to GLUE (see GLUE CF_PINS).  The dtack entries below are the
@@ -1052,7 +1017,7 @@ issues:
   - "VIDCMD SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  Swapping the target NUMBERS to match the colour numbers is a wire-contract change, not yet decided."
   - "Only one raster mode (640x480 in 800x525 @ 60) is specified.  Alternate rasters (the DUART OP4..OP7 selector into PIXEL) have no video_timing entry and no consumer contract."
   - "The PIXELS and VIDCMD stream FIFOs (ENGINE -> PIXEL / COMPOSITOR) are described in comments and constants, not as first-class entries."
-  - "Audio package B is pending: PORTS still carries the rev-1 AUDIO_CONTROL/AUDIO_STATUS pop logic and the emulator, apps/smurf and firmware still use it; rev 2 retires them into the AUDIO chip (PORTS re-fit releasing those pins, emulator model of AUDIO behind the ENGINE deposit, smurf and firmware migration to channel deposits)."
+  - "apps/smurf still streams the retired rev-1 stereo pair (PORTS AUDIO_CONTROL/AUDIO_STATUS, one ENGINE destination) and does not build until it moves to the AUDIO channels (audio/psg_channels.h + audio/scheduler.h)."
   - "D[7:0] carries nine 7200 data-pin loads in rev 2 (four video, five audio) against the six the 2026-08 electrical review accepted; re-check the loading or put the five audio FIFOs behind a transceiver."
   - "The AUDIO analog stage (ladders straight off the 7200 Q pins, 74HC4066 duty-cycle gates into a 2.5 V-biased inverting summer) has not been breadboarded; switch on-resistance and switching time at low volumes are the open risk."
   - "BERR in 0x400000-0x7FFFFF, 0xC00000-0xCFFFFF and 0xE00000-0xEFFFFF is by DTACK timeout (no decode); state whether that is the intended contract."
@@ -1096,8 +1061,7 @@ interfaces:
     nAUDCTL_FIFO_W; their /R and /EF pins go to the AUDIO CPLD (/R held
     low, pulsed high to advance); /RS from the system ~RESET.  Channel n's
     Q[7:0] drives its R-2R ladder, Q7 through a 74HC04 section; the control
-    FIFO's Q[7:0] goes to the AUDIO CPLD.  /HF unconnected.  (Rev 1: one
-    chip per channel, /R, /RS and /EF at PORTS.)
+    FIFO's Q[7:0] goes to the AUDIO CPLD.  /HF unconnected.
     XI/XO cascade is an unpopulated-footprint option if depth is ever
     needed.
   - |
@@ -1223,7 +1187,7 @@ interfaces:
     opens both contacts and mutes the speaker.  Behaviour: RCA line out
     ignores the knob; the knob governs headphones and speaker together;
     headphones mute the speaker.  Software mute is VOLUME 0 on all four
-    channels (rev 1: AUDIO_CONTROL.ENABLE) and silences all three.
+    channels and silences all three.
     Ladders, switches and summers placed at the FIFOs/RCAs; headphone
     amps at the 3.5 mm jack; pot and speaker are panel/case parts.  BOM:
     4x 4610X-R2R-103LF, 1x 74HC04, 1x 74HC4066, 1x LM358, 3x LM386, dual 10kA pot +

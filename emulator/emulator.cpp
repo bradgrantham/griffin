@@ -1920,13 +1920,11 @@ struct PS2Mouse : PS2Device
 // ---------------------------------------------------------------------------
 // Audio sink — host capture (--wav-out) and host playback.
 //
-// PORTS' two R2R DACs are loaded by the FIFO pop strobe at
-// AUDIO_SAMPLES_PER_SECOND and hold their value between pops, so a faithful
-// recording is "whatever the output registers hold, sampled once per pop
-// tick" — including the ticks where the FIFO was empty and the DAC simply
-// held its last sample.  That makes the sample rate a property of the raster
-// line rate alone (TIMING's AUDIO_TICK, one pop per two lines), so a capture
-// is exactly as deterministic as the run.
+// The AUDIO chip model hands over one stereo frame every second scanline
+// (AUDIO_SAMPLES_PER_SECOND): its analog output, the two summers through the
+// output stage's pole, whether or not any channel is playing.  That makes the
+// sample rate a property of the raster alone, so a capture is exactly as
+// deterministic as the run.
 //
 // This is a sink only: nothing here is ever read back into the emulation, so
 // neither the capture nor the playback can perturb guest timing.  Playback
@@ -1940,8 +1938,7 @@ class AudioOutput
 public:
     ~AudioOutput() { close(); }
 
-    // Canonical 44-byte PCM WAV, 8-bit unsigned (the DAC's own format, so the
-    // samples are stored verbatim), stereo.  The header is rewritten at close
+    // Canonical 44-byte PCM WAV, 8-bit unsigned, stereo.  The header is rewritten at close
     // with the final frame count.
     bool open_wav(const char *path)
     {
@@ -1985,7 +1982,7 @@ public:
 
     bool active() const { return wav != nullptr || stream != nullptr; }
 
-    // One DAC update, called from the PORTS pop strobe.
+    // One stereo frame, called every second scanline by the AUDIO chip model.
     void sample(uint8_t left, uint8_t right)
     {
         if (!active())
@@ -2108,19 +2105,15 @@ private:
 // Byte-wide registers, zero wait states (GLUE decodes the region and answers
 // DTACK for it, as it does for CF), and a single wire-ORed level-2 IRQ.  It
 // holds a PS/2 mouse frame engine, two joystick ports, two paddle counters
-// with a shared dump control, and the audio FIFO pop strobe with its
-// half-full IRQ latch.
+// with a shared dump control.  (Rev 1 also popped the audio FIFO pair here;
+// rev 2's AUDIO chip pops its own FIFOs, see AudioChipState.)
 //
-// PORTS has NO timebase of its own: everything periodic runs off the two
-// square waves TIMING emits for it, PADDLE_TICK and AUDIO_TICK.  Each toggles
-// once per scanline and PORTS counts only their FALLING edges (a both-edges
-// detector does not fit in the CPLD), so each consumer sees one event every
-// two lines: paddle steps at 15.734 kHz -- half the old line-rate stepping,
-// deliberately, because full scale 255 counts is then 16.2 ms, one frame,
-// which is the Atari 2600's scanline-counted pot measurement window -- and
-// audio pops at 15.734 kHz, unchanged (AUDIO_SAMPLES_PER_SECOND).  The two
-// ticks are identical today, so one shared phase bit below serves both and
-// paddle steps land on the same lines as audio pops.  Here that means
+// PORTS has NO timebase of its own: everything periodic runs off the square
+// wave TIMING emits for it, PADDLE_TICK, which toggles once per scanline;
+// PORTS counts only its FALLING edges (a both-edges detector does not fit in
+// the CPLD), so paddles step at 15.734 kHz -- deliberately, because full
+// scale 255 counts is then 16.2 ms, one frame, which is the Atari 2600's
+// scanline-counted pot measurement window.  Here that means
 // advance_scanlines() is driven from VideoState's scanline counter, never
 // from a private timer -- a private timer would drift against the raster and
 // destroy the design property.  The mouse channel is the exception: it is in
@@ -2172,64 +2165,23 @@ struct PortsState
     PaddleCounter paddle_b;
     bool paddle_dump = false;
 
-    // --- audio FIFO (the 7200 pair), its pop strobe and its reset ---
-    std::deque<uint16_t> audio_fifo;    // one entry per stereo pair, L<<8 | R
-    bool audio_enable = false;
-    bool audio_reset = true;            // AUDIO_CONTROL.RESET, 1 from power-on
-    bool tick_phase = false;            // level of TIMING's ticks: they toggle
-                                        // once per line and the falling edge
+    bool tick_phase = false;            // level of PADDLE_TICK: it toggles once
+                                        // per line and the falling edge
                                         // (phase 1 -> 0) is the event
-    // Post-inverter DAC codes (offset binary).  The board flips each
-    // channel's Q7 through a CD4049 between FIFO and ladder, so guest
-    // samples are two's complement and 0x80 here = guest 0x00 = silence.
-    uint8_t dac_left = 0x80;
-    uint8_t dac_right = 0x80;           // 7202 output registers hold last sample
-
-    // Optional host sink for what the DACs present (--wav-out / playback).
-    // Write-only from here: PORTS never reads it back, so attaching one cannot
-    // change guest behaviour or timing.
-    AudioOutput *audio_out = nullptr;
 
     bool init()
     {
         return mouse.init(PORTS_BASE, mouse_device);
     }
 
-    // --- audio FIFO ------------------------------------------------------
-
-    void audio_fifo_push(uint16_t pair)
-    {
-        if (audio_reset || audio_fifo.size() >= AUDIO_FIFO_DEPTH)
-        {
-            return;             // held in reset, or 7200 full: the write is swallowed
-        }
-        audio_fifo.push_back(pair);
-    }
-
-    void audio_fifo_pop()
-    {
-        if (audio_fifo.empty())
-        {
-            return;             // output register holds the last sample
-        }
-        uint16_t pair = audio_fifo.front();
-        audio_fifo.pop_front();
-        // ^ 0x80 models the CD4049 MSB inverters: two's complement in
-        // memory -> offset binary at the ladders.
-        dac_left = static_cast<uint8_t>((pair >> 8) ^ 0x80);
-        dac_right = static_cast<uint8_t>((pair & 0xFF) ^ 0x80);
-    }
-
-    // --- PADDLE_TICK / AUDIO_TICK ----------------------------------------
+    // --- PADDLE_TICK -----------------------------------------------------
 
     // Advance by `lines` VGA scanlines and deliver the tick events they carry.
-    // TIMING toggles both ticks at the start of every line, PORTS counts the
+    // TIMING toggles the tick at the start of every line, PORTS counts the
     // falling edges, so an event lands at the start of every even-numbered
     // line counted from reset: `tick_phase` carries the tick's current level
     // between calls and the count of falling edges crossed is just the number
-    // of times that level returns to 0.  PADDLE_TICK and AUDIO_TICK are the
-    // same waveform today, so one event stream feeds both consumers; if TIMING
-    // ever divides the audio rate down, this is where the two split.
+    // of times that level returns to 0.
     void advance_scanlines(uint32_t lines)
     {
         if (lines == 0)
@@ -2251,22 +2203,6 @@ struct PortsState
         {
             paddle_a.tick(paddle_dump);
             paddle_b.tick(paddle_dump);
-        }
-
-        for (uint32_t i = 0; i < events; i++)
-        {
-            if (audio_enable && !audio_reset)
-            {
-                audio_fifo_pop();
-            }
-            // The DACs are sampled on every pop tick whether or not the pop
-            // strobe is enabled and whether or not the FIFO had anything: the
-            // converters are always converting whatever their registers hold.
-            // That keeps the capture rate exactly AUDIO_SAMPLES_PER_SECOND.
-            if (audio_out)
-            {
-                audio_out->sample(dac_left, dac_right);
-            }
         }
     }
 
@@ -2305,10 +2241,6 @@ struct PortsState
             case PORTS_JOYSTICK_PORT_2: return joystick_byte(1);
             case PORTS_PADDLE_A_COUNT:  return paddle_a.count;
             case PORTS_PADDLE_B_COUNT:  return paddle_b.count;
-            case PORTS_AUDIO_STATUS:
-                return static_cast<uint8_t>(
-                      (audio_fifo.empty() ? PORTS_AUDIO_STATUS_EMPTY_MASK : 0)
-                    | (audio_enable       ? PORTS_AUDIO_STATUS_ENABLE_MASK : 0));
             default:
                 break;
         }
@@ -2328,16 +2260,6 @@ struct PortsState
             {
                 paddle_a.count = 0;
                 paddle_b.count = 0;
-            }
-            return;
-        }
-        if (abs_addr == PORTS_AUDIO_CONTROL)
-        {
-            audio_enable = (val & PORTS_AUDIO_CONTROL_ENABLE_MASK) != 0;
-            audio_reset  = (val & PORTS_AUDIO_CONTROL_RESET_MASK) != 0;
-            if (audio_reset)
-            {
-                audio_fifo.clear();     // /RS low: every queued pair is gone
             }
             return;
         }
@@ -2907,7 +2829,7 @@ struct ClockGovernor
 };
 
 // ---------------------------------------------------------------------------
-// AUDIO — the rev-2 four-channel chip (cpld/audio/audio.v), --audio-chip.
+// AUDIO — the four-channel chip (cpld/audio/audio.v).
 //
 // The model is audio/audio_chip.{h,cpp}, the chip's executable spec, compiled
 // in unchanged the way the super-engine models are, so the emulator cannot
@@ -2923,9 +2845,6 @@ struct ClockGovernor
 // the FIFOs is here: a dropped deposit (a full FIFO) is reported on stderr
 // the first time per FIFO, and every run ends with a per-channel summary of
 // drops and of the times each channel ran dry after holding samples.
-//
-// Without --audio-chip the emulator is a rev-1 board: code 3 is still the
-// PORTS-popped stereo pair (DEST_AUDIO_PAIR_REV1) until audio package B.
 // ---------------------------------------------------------------------------
 
 struct AudioChipState
@@ -3080,7 +2999,6 @@ class GriffinEmulator : public moira::Moira
     mutable PS2Keyboard ps2_keyboard;
     mutable PortsState ports;
     mutable AudioChipState audio_chip;
-    bool audio_chip_enabled = false;     // --audio-chip: rev-2 AUDIO, not the rev-1 pair
     StdinConsole stdin_console;
 
     // SDL gamepads mapped onto the two joystick ports.  Deliberately NOT the
@@ -3471,13 +3389,6 @@ public:
     }
     ClockGovernor governor;
 
-    // Left-channel R2R DAC level: whatever the 7202 output register last
-    // presented, held between pops.  Feeds the audio.raw capture.
-    uint8_t GetAudioDACValue() const
-    {
-        return ports.dac_left;
-    }
-
     // Scripted keystroke injection (--ps2-in) feeds the PS/2 model directly.
     PS2State &ps2_model() { return ps2; }
 
@@ -3691,8 +3602,6 @@ public:
     // instead of to the PS/2 keyboard.  Interactive only (headless runs get no
     // SDL key events; they use --joystick-in).
     void set_keys_to_joystick(bool on) { keys_to_joystick = on; }
-    void set_audio_chip(bool on) { audio_chip_enabled = on; }
-    bool audio_chip_on() const { return audio_chip_enabled; }
     AudioChipState &audio_chip_model() { return audio_chip; }
 
     // Interactive joystick input comes from SDL gamepads.  Only meaningful
@@ -3981,20 +3890,13 @@ public:
 
         void deposit(uint64_t, uint8_t destination, uint16_t word) override
         {
-            // AUDIO is guest-visible through PORTS' half-full status, so it is
-            // fed unconditionally.  PIXELS and VIDCMD reach nothing the guest
+            // AUDIO is fed unconditionally: what it plays is the run's sound,
+            // and the scheduler's arithmetic depends on nothing being skipped.  PIXELS and VIDCMD reach nothing the guest
             // can read, so they are skipped when no one is looking at the
             // framebuffer — see want_pixels below.
-            if (emu->audio_chip_enabled)
+            if (destination >= SuperEngine::DEST_AUDCTL_FIFO_W)
             {
-                if (destination >= SuperEngine::DEST_AUDCTL_FIFO_W)
-                {
-                    emu->audio_chip.deposit(destination, word);
-                }
-            }
-            else if (destination == SuperEngine::DEST_AUDIO_PAIR_REV1)
-            {
-                emu->ports.audio_fifo_push(word);
+                emu->audio_chip.deposit(destination, word);
             }
             if (!emu->video.want_pixels)
             {
@@ -4088,7 +3990,7 @@ public:
     }
 
 
-    // Audio self-check (--selftest-audio, implies --audio-chip), no firmware
+    // Audio self-check (--selftest-audio), no firmware
     // needed: the emulator plays the 68000's part with audio/scheduler.h, the
     // policy an application would run.  At every frame it asks the Scheduler
     // for 525 lines of deposits, writes them as a descriptor list (one
@@ -4526,10 +4428,7 @@ public:
         {
             const uint32_t lines = static_cast<uint32_t>(video.line_count - ports_line_count);
             ports.advance_scanlines(lines);
-            if (audio_chip_enabled)
-            {
-                audio_chip.advance_scanlines(lines);
-            }
+            audio_chip.advance_scanlines(lines);
             ports_line_count = video.line_count;
         }
         update_ipl();
@@ -4678,11 +4577,9 @@ void usage(const char *progname)
     printf("  --serialb-out FILE            write DUART channel B output to FILE\n");
     printf("  --keys-to-joystick            host arrows + space/left-ctrl drive joystick\n");
     printf("                                port 1 instead of the PS/2 keyboard\n");
-    printf("  --audio-chip                  rev-2 AUDIO chip (four channels, ENGINE codes 3..7)\n");
-    printf("                                instead of the rev-1 PORTS-popped stereo pair\n");
     printf("  --selftest-audio              no firmware needed: drive the AUDIO chip through\n");
     printf("                                ENGINE with the scheduler; nonzero exit on failure\n");
-    printf("  --wav-out FILE                record the audio DACs to FILE (8-bit stereo WAV)\n");
+    printf("  --wav-out FILE                record the AUDIO output to FILE (8-bit stereo WAV)\n");
     printf("  --headless                    do not open an SDL video window (also no sound)\n");
     printf("  --screenshot FILE             write the framebuffer to FILE (BMP) on exit\n");
     printf("  --run-cycles N                stop after N emulated SYSCLK cycles\n");
@@ -4711,7 +4608,6 @@ int main(int argc, const char** argv)
     const char *screenshot_path = nullptr;
     const char *wav_out_path = nullptr;
     bool keys_to_joystick = false;
-    bool audio_chip = false;
     bool selftest_audio = false;
     bool selftest_displaylist = false;
     bool headless = false;
@@ -4821,11 +4717,6 @@ int main(int argc, const char** argv)
             argc -= 1;
         } else if(strcmp(argv[0], "--selftest-audio") == 0) {
             selftest_audio = true;
-            audio_chip = true;
-            argv += 1;
-            argc -= 1;
-        } else if(strcmp(argv[0], "--audio-chip") == 0) {
-            audio_chip = true;
             argv += 1;
             argc -= 1;
         } else if(strcmp(argv[0], "--wav-out") == 0) {
@@ -5017,7 +4908,6 @@ int main(int argc, const char** argv)
         emulator.init_gamepads();
     }
     emulator.set_keys_to_joystick(keys_to_joystick);
-    emulator.set_audio_chip(audio_chip);
 
     // Attach the DAC sink before the CPU is released so a capture always
     // starts at reset and is reproducible for a given --run-cycles.  Host
@@ -5034,14 +4924,7 @@ int main(int argc, const char** argv)
     }
     if (audio_output.active())
     {
-        if (audio_chip)
-        {
-            emulator.audio_chip_model().audio_out = &audio_output;
-        }
-        else
-        {
-            emulator.ports_model().audio_out = &audio_output;
-        }
+        emulator.audio_chip_model().audio_out = &audio_output;
     }
 
     // Bring-up self-check: poke a descriptor list into RAM and arm ENGINE
@@ -5084,10 +4967,6 @@ int main(int argc, const char** argv)
 
     int throttle_counter = 0;
 
-    static constexpr uint64_t audio_rate_hertz = 11025;
-    static constexpr uint64_t sysclk_per_audio = SYSCLK_HZ / audio_rate_hertz;
-    uint64_t clock_next_audio = sysclk_per_audio;
-    FILE *audio = fopen("audio.raw", "wb");
 
     bool running = true;
 
@@ -5116,11 +4995,6 @@ int main(int argc, const char** argv)
             now = time(0);
         }
 
-        while(clock_now > clock_next_audio) {
-            uint8_t dac_value = emulator.GetAudioDACValue();
-            fwrite(&dac_value, 1, 1, audio);
-            clock_next_audio += sysclk_per_audio;
-        }
 
         if (selftest_displaylist)
         {
@@ -5196,21 +5070,13 @@ int main(int argc, const char** argv)
     }
 
 
-    if (audio)
-    {
-        fclose(audio);
-    }
 
     // Patch the WAV header with the final frame count and let go of the host
     // audio device while SDL is still up (VideoState's destructor calls
     // SDL_Quit).
-    emulator.ports_model().audio_out = nullptr;
     emulator.audio_chip_model().audio_out = nullptr;
     audio_output.close();
-    if (audio_chip)
-    {
-        emulator.audio_chip_model().print_summary();
-    }
+    emulator.audio_chip_model().print_summary();
 
     if (selftest_displaylist)
     {

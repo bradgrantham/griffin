@@ -105,10 +105,10 @@ constexpr uint32_t TABLE_A            = DESC_TABLE_BASE;
 constexpr uint32_t TABLE_B            = DESC_TABLE_BASE + DESC_TABLE_BYTES / 2;
 constexpr uint32_t TABLE_HALF_BYTES   = DESC_TABLE_BYTES / 2;
 
-// The audio FIFO starts empty, so the very first list has to prime it as well
-// as carry vertical blanking's share.  A real driver does this once at startup
-// and then rides the PORTS HALF_FULL status; here it is one bigger preamble on
-// list A.  Without it the steady-state low water is 1 pair.
+// The audio FIFOs start empty, so the very first list has to prime them as
+// well as carry vertical blanking's share.  A real driver does this once at
+// startup (audio/scheduler.h keeps a margin instead); here it is one bigger
+// preamble on list A.  Without it the steady-state low water is 1 sample.
 constexpr uint32_t AUDIO_PRIME_PAIRS  = 48;
 
 // ---------------------------------------------------------------------------
@@ -549,10 +549,10 @@ void print_report(const CaseSpec &spec, const CaseResult &res)
            rr.stats.vidcmd_mask_records, rr.stats.vidcmd_mask_stalls);
     if (spec.base.audio)
     {
-        printf("  AUDIO FIFO          high %4u low %4u underruns %u  overflows %u  (depth %u)\n",
+        printf("  AUDIO FIFO (ch 0)   high %4u low %4u underruns %u  overflows %u  (depth %u)\n",
                rr.audio_fifo_high, rr.audio_fifo_low, rr.audio_underruns,
-               rr.audio_overflows, AUDIO_FIFO_PAIRS);
-        printf("  AUDIO pairs         %u deposited inside the %u rendered frames, %u consumed\n",
+               rr.audio_overflows, AUDIO_FIFO_SAMPLES);
+        printf("  AUDIO samples/ch    %u deposited inside the %u rendered frames, %u consumed\n",
                rr.audio_pairs_deposited, RENDER_FRAMES, rr.audio_pairs_consumed);
     }
 
@@ -2840,6 +2840,7 @@ int main()
     common.fb_stride_bytes = FB_STRIDE_BYTES;
     common.vidcmd_base     = VIDCMD_BASE;
     common.audio_base      = AUDIO_BASE;
+    common.audio_source_pairs = AUDIO_SOURCE_PAIRS;
 
     printf("Griffin super-engine display-list + VIDCMD validation suite\n");
     printf("  SYSCLK %llu Hz, pixel clock %llu Hz, %ux%u of %ux%u, line %llu SYSCLK, "
@@ -3789,7 +3790,7 @@ int main()
     {
         CaseSpec s;
         s.name  = "m4-audio";
-        s.title = "M2 plus 16 audio pairs every 32 lines and a 23-pair vblank preamble";
+        s.title = "M2 plus 16 samples per channel (L on 0, R on 2) every 32 lines, a 23-sample preamble";
         s.base  = common;
         s.base.per_line_palette = true;
         s.base.per_line_mode    = true;
@@ -4161,9 +4162,9 @@ int main()
            "     MODE word, which could only reach pixel offsets 16n+0..16n+7.  As a 12-bit\n"
            "     SET value it spans a whole FIFO word, so every horizontal scroll offset is\n"
            "     now reachable; the m2-perline 3-pixel scroll check confirms it.\n");
-    printf("  3. STILL HOLDS. PORTS pops audio through vertical blanking too, where no\n"
-           "     per-line group exists to feed it, so a frame's list must carry vblank's\n"
-           "     45/2 = 23 pairs in its preamble on top of the 15x16 the visible lines give.\n");
+    printf("  3. STILL HOLDS. AUDIO pops through vertical blanking too, where no per-line\n"
+           "     group exists to feed it, so a frame's list must carry vblank's 45/2 = 23\n"
+           "     samples per channel in its preamble on top of the 15x16 the visible lines give.\n");
     printf("  4. SUPERSEDED. Landing a mid-line register change no longer needs mask=0 bus\n"
            "     pacing descriptors.  The old technique cost ~45 wasted payload words per\n"
            "     line, drove the case to 57%% bus utilization, and still only placed the\n"

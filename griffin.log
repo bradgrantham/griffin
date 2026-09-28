@@ -1938,3 +1938,36 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   per channel equal 50 x lines / (PERIOD + 1) exactly.  The WAV's spectrum
   shows 439.0 and 655.6 Hz left, 491.7 Hz and the 252.5 Hz noise-table
   repeat right, as derived.  Firmware still boots on the rev-1 path.
+
+2026-09-28 -- Audio package B: the rev-1 audio path retired
+  Emulator: the AUDIO chip model is always on (--audio-chip removed), the
+  PORTS-popped stereo pair, its registers and the audio.raw capture are
+  gone; --wav-out and playback carry the chip's analog output.  Suite: the
+  m4-audio case streams L on channel 0 and R on channel 2 at PERIOD 99
+  (control records in each frame's preamble) through the chip model,
+  stepped every 16 pixel clocks in the cycle driver and 50 per line in the
+  lumped one; all cases pass, 0 underruns, 262.5 samples per channel per
+  frame.  descriptor.h: DEST_AUDIO_PAIR_REV1 and the pair helpers removed,
+  AUDIO_FIFO_PAIRS -> AUDIO_FIFO_SAMPLES.  Firmware: no audio init.
+  PORTS: audio pop, reset and status logic and AUDIO_TICK removed; pins 45,
+  48, 52, 61 released; 106/128 LC (from 120), 74 FF, 324 PT, 38 pins, fits
+  under keep.  PIXEL keeps AUDIO_TICK to a test pad: removing it MEASURED
+  WORSE, 126/128 LC against 123 (93 FF vs 94 but 419/400 PT vs 384), under
+  both the frozen pinout and free placement, so the unused output stays;
+  timing-sim and clut-pair-sim pass.  griffin.yml: PORTS AUDIO_CONTROL and
+  AUDIO_STATUS removed, rev-1 audio notes removed, issue: apps/smurf does
+  not build until it moves to the channels.
+  68000 driver: scheduler.h gains a per-stream repeat (each table byte
+  deposited n times), so slow noise needs no stretched table copy;
+  psg_channels.* is now bare metal (no std::map/vector, no float at run
+  time): tone and noise choices and the volume ladder are lookups in
+  psg_tables.h, generated on the host by psg_tables_gen.cpp from the same
+  choosers and checked by `make -C audio tables-check`; every square is a
+  window of one 512-byte buffer; the white sequence is one 32,767-byte
+  table built on first use.  The Smurf A/B WAV is bit-identical to the
+  host driver's (same MD5).  `make -C audio m68k` builds audio_chip,
+  scheduler and psg_channels with the app toolchain and finds no float or
+  heap symbols in the latter two.  68000 cost: psg_channels 2.2 KB text +
+  12 KB tables + 32 KB bss, scheduler 1.7 KB text; objects 220 bytes
+  (PsgChannels), 312 (Scheduler), 2,096 (LineDeposits).
+  Datasheet artifact version 10.

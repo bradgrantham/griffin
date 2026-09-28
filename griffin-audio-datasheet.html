@@ -401,7 +401,7 @@ dest  0 none   1 PIXELS   2 VIDCMD   3 AUDCTL (control FIFO)   4..7 SAMPLES0..3 
       <div class="recipe-head"><b>PSG port: three tones and noise, SN76489-class</b><span class="cost">Smurf: 364 words, 153 descriptors per frame mean &middot; 0.97 %</span><span class="st prelim">PRELIMINARY (model)</span></div>
       <div class="recipe-body">
         <p><b>Recipe:</b> tone c plays on channel c as a square table of LENGTH samples at PERIOD, chosen so 1,573,437.5 / (PERIOD + 1) / LENGTH lands within a cent of the tone&rsquo;s 3,579,545 / (32 N) where (PERIOD + 1) &times; LENGTH allows; tables are cached by length. Noise plays on channel 3 as the shift register&rsquo;s output sequence stored as a table (white: the 15-bit LFSR, period 32,767; periodic: 15), each bit repeated when the shift rate is below the 6.15 kHz floor, capped at 65,536 samples. Attenuation a becomes VOLUME round(63 &times; 10<sup>&minus;a/10</sup>), 15 becomes 0. On a frequency change the new table starts at the old one&rsquo;s phase fraction.</p>
-        <p><b>Notes:</b> tones at or above 7,867 Hz (N &le; 14) are silenced, as the reference band-limits them. The ladder gives 63, 50, 40, 32, 25, 20, 16, 13, 10, 8, 6, 5, 4, 3, 3, 0, so attenuations 13 and 14 coincide. Smurf used 33 tables, 3.7 KB as words. Code: audio/psg_channels.h.</p>
+        <p><b>Notes:</b> tones at or above 7,867 Hz (N &le; 14) are silenced, as the reference band-limits them. The ladder gives 63, 50, 40, 32, 25, 20, 16, 13, 10, 8, 6, 5, 4, 3, 3, 0, so attenuations 13 and 14 coincide. The 68000 needs no per-title tables: every square is a window of one 512-byte buffer and the noise is one 32,767-byte white sequence (or 15 bytes periodic), each bit deposited REPEAT times at slow rates; the tone and noise choices are lookups in psg_tables.h. Code: audio/psg_channels.h.</p>
       </div>
     </div>
 
@@ -452,7 +452,7 @@ dest  0 none   1 PIXELS   2 VIDCMD   3 AUDCTL (control FIFO)   4..7 SAMPLES0..3 
       <tr><td>Mirror fill against the chip</td><td class="num">identical on every line</td></tr>
       <tr><td>Maximum fill per channel</td><td class="num">7, 7, 20, 7</td></tr>
       <tr><td>Control records (control FIFO maximum fill)</td><td class="num">2,606 (12)</td></tr>
-      <tr><td>Tables</td><td class="num">33; 1,840 bytes, 3,680 as words</td></tr>
+      <tr><td>Tables (68000 driver)</td><td class="num">one 512-byte square buffer, one 32,767-byte noise table</td></tr>
       <tr><td>Descriptors per frame</td><td class="num">mean 153, max 268</td></tr>
       <tr><td>Words per frame</td><td class="num">mean 364, max 1,715</td></tr>
       <tr><td>Worst line</td><td class="num">4 descriptors, 26 words, &le; 92 of 445 SYSCLK</td></tr>
@@ -491,7 +491,7 @@ dest  0 none   1 PIXELS   2 VIDCMD   3 AUDCTL (control FIFO)   4..7 SAMPLES0..3 
       <tr><td class="mono">AR5</td><td>Latency from a table change to the speaker is the burst wait (up to 8 lines, 0.25 ms) plus the queued fill (pops per burst + 2 samples): under 1 ms by the README&rsquo;s derivation; the log estimates about 8 ticks (0.5 ms) for Smurf.</td></tr>
       <tr><td class="mono">AR6</td><td>PERIOD is 8 bits: 6.15 kHz is the slowest rate. Below it, repeat samples in the table.</td></tr>
       <tr><td class="mono">AR7</td><td>Samples are two&rsquo;s complement, 0x00 silent. An empty FIFO is silent too, so a channel can simply be allowed to run dry to stop.</td></tr>
-      <tr><td class="mono">AR8</td><td>Nothing on the 68000 side can observe the chip. Development uses the model (and, when built, the emulator); the scheduler&rsquo;s mirror is the only fill gauge.</td></tr>
+      <tr><td class="mono">AR8</td><td>Nothing on the 68000 side can observe the chip. Development uses the model and the emulator, which reports every dropped deposit and every channel that runs dry; on the target, the scheduler&rsquo;s mirror is the only fill gauge.</td></tr>
     </table></div>
     <p class="note">Steps are raster-locked: HBLANK re-phases the divider every line, so the model&rsquo;s line alignment holds on the chip from the first line after reset. The testbench checks this with the chip&rsquo;s reset released 5 clocks early: pops are out of phase until the first re-sync, then identical to the model.</p>
   </section>
@@ -506,7 +506,9 @@ dest  0 none   1 PIXELS   2 VIDCMD   3 AUDCTL (control FIFO)   4..7 SAMPLES0..3 
       <tr><td>RTL testbench against the model (cpld/audio/audio_tb.v, <code>make -C cpld audio-sim</code>)</td><td>1,200 random lines: 5,190 pops at the right step and none elsewhere, registers after every line, gate law on 960,000 clocks, FIFO protocol; run aligned and again with the chip&rsquo;s reset skewed 5 clocks (out of phase until the first HBLANK re-sync, then identical to the model); negative controls 1..6 all fail</td><td class="mono">PASS 2026-09-27</td></tr>
       <tr><td>Scheduler and PSG driver, Smurf A/B</td><td>&sect;5 numbers, reproduced exactly with two&rsquo;s complement samples; by ear judged much better than the reference path by the owner</td><td class="mono">PASS 2026-09-27</td></tr>
       <tr><td>griffin.yml for the AUDIO chip (destination codes, registers, parts, HBLANK input)</td><td>written; matches this sheet</td><td class="mono">DONE 2026-09-27</td></tr>
-      <tr><td>Emulator AUDIO model</td><td>links audio_chip.cpp, with FIFO overflow and underflow assertions</td><td class="mono">TO DO</td></tr>
+      <tr><td>Emulator AUDIO model</td><td>always on; links audio_chip.cpp, reports drops and dry channels; <code>--selftest-audio</code> drives it through the real ENGINE walker with the scheduler: 0 drops, 0 dry, mirror within 1</td><td class="mono">DONE 2026-09-28</td></tr>
+      <tr><td>68000 driver (scheduler.h, psg_channels.h)</td><td>bare metal, no float or heap, tables generated on the host (psg_tables.h); Smurf A/B bit-identical to the host version; about 4 KB code, 12 KB tables, 32 KB noise buffer</td><td class="mono">DONE 2026-09-28</td></tr>
+      <tr><td>Rev-1 audio path</td><td>PORTS pop, AUDIO_CONTROL/AUDIO_STATUS removed; PORTS 106/128 with four pins released</td><td class="mono">RETIRED 2026-09-28</td></tr>
       <tr><td>Analog PWM stage on a breadboard</td><td>74HC4066 on-resistance and switching time at low VOLUME; bias and DC behaviour across volume changes</td><td class="mono">OPEN</td></tr>
       <tr><td>Rev-2 schematic and //PIN block</td><td>not started</td><td class="mono">TO DO</td></tr>
       <tr><td>Multi-cycle tables for high tones; the 21 low-similarity fields</td><td>not yet tried / not characterised</td><td class="mono">OPEN</td></tr>

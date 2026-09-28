@@ -23,6 +23,8 @@
 
 #include "render.h"
 
+#include "audio_chip.h"
+
 #include <cstdio>
 
 namespace SuperEngine
@@ -969,52 +971,62 @@ void render_active_line(PixelUnit &pix, CompositorUnit &cmp, Rgb444 *out)
 namespace
 {
 
+// The AUDIO chip's own model (audio/audio_chip.h), so the suite measures the
+// FIFOs the hardware has.  The stereo stream is channel 0 (left) and channel 2
+// (right) at PERIOD 99; channels 1 and 3 are never fed.
 struct AudioModel
 {
-    std::vector<uint16_t> fifo = std::vector<uint16_t>(AUDIO_FIFO_PAIRS, 0);
-    uint32_t head   = 0;
-    uint32_t count  = 0;
-    uint8_t  last_l = 0x80;
-    uint8_t  last_r = 0x80;
+    griffin::audio::AudioChip chip;
 
-    bool push(uint16_t w)
+    void deposit(uint8_t destination, uint16_t word, RenderResult &r, bool keep)
     {
-        if (count >= fifo.size())
+        const uint8_t byte = static_cast<uint8_t>(word & 0xFF);
+        if (destination == DEST_AUDCTL_FIFO_W)
         {
-            return false;
+            chip.deposit_control(byte);
+            return;
         }
-        fifo[(head + count) % fifo.size()] = w;
-        count++;
-        return true;
+        const int channel = destination - DEST_SAMPLES0_FIFO_W;
+        if (channel < 0 || channel >= griffin::audio::CHANNELS)
+        {
+            return;
+        }
+        const bool ok = chip.deposit_sample(channel, byte);
+        if (keep)
+        {
+            if (!ok)
+            {
+                r.audio_overflows++;
+            }
+            else if (channel == 0)
+            {
+                r.audio_pairs_deposited++;
+            }
+        }
     }
 
-    bool pop(uint16_t &w)
+    // One step of the period counters (every 16 pixel clocks).
+    void step(RenderResult &r, bool keep)
     {
-        if (count == 0)
+        const uint64_t empty0 = chip.stats.pops_empty[0];
+        const uint64_t empty2 = chip.stats.pops_empty[2];
+        const uint64_t pops0  = chip.stats.pops[0];
+        chip.step();
+        if (keep)
         {
-            return false;
+            r.audio_underruns += static_cast<uint32_t>((chip.stats.pops_empty[0] - empty0) +
+                                                       (chip.stats.pops_empty[2] - empty2));
+            r.audio_pairs_consumed += static_cast<uint32_t>((chip.stats.pops[0] - pops0) -
+                                                            (chip.stats.pops_empty[0] - empty0));
         }
-        w = fifo[head];
-        head = (head + 1) % static_cast<uint32_t>(fifo.size());
-        count--;
-        return true;
     }
 
-    void tick(RenderResult &r)
+    // What the two ladders present, once per tick, as unsigned bytes.
+    void sample(RenderResult &r)
     {
-        uint16_t w = 0;
-        if (pop(w))
-        {
-            last_l = audio_pair_left(w);
-            last_r = audio_pair_right(w);
-            r.audio_pairs_consumed++;
-        }
-        else
-        {
-            r.audio_underruns++;   // hardware holds the last sample
-        }
-        r.audio.push_back(last_l);
-        r.audio.push_back(last_r);
+        r.audio.push_back(static_cast<uint8_t>(chip.sample(0) ^ 0x80));
+        r.audio.push_back(static_cast<uint8_t>(chip.sample(2) ^ 0x80));
+        const uint32_t count = static_cast<uint32_t>(chip.fill(0));
         if (count > r.audio_fifo_high)
         {
             r.audio_fifo_high = count;
@@ -1040,7 +1052,7 @@ void finish(RenderResult &r)
     {
         r.stats.vidcmd_fifo_low = 0;
     }
-    if (r.audio_fifo_low > AUDIO_FIFO_PAIRS)
+    if (r.audio_fifo_low > AUDIO_FIFO_SAMPLES)
     {
         r.audio_fifo_low = 0;
     }
@@ -1114,21 +1126,18 @@ RenderResult render(const std::vector<DepositEvent> &events, const RenderParams 
                             r.stats.vidcmd_late_words++;
                         }
                     }
-                    if (e.destination == DEST_AUDIO_PAIR_REV1)
+                    if (e.destination >= DEST_AUDCTL_FIFO_W)
                     {
-                        if (!audio.push(e.word))
-                        {
-                            if (keep)
-                            {
-                                r.audio_overflows++;
-                            }
-                        }
-                        else if (keep)
-                        {
-                            r.audio_pairs_deposited++;
-                        }
+                        audio.deposit(e.destination, e.word, r, keep);
                     }
                     ev++;
+                }
+
+                // AUDIO's period counters step every 16 pixel clocks, at
+                // h_cnt 0 mod 16 (its divider is HBLANK-locked).
+                if (p.audio_enabled && (h % 16) == 0)
+                {
+                    audio.step(r, keep);
                 }
 
                 if (h == 0)
@@ -1136,7 +1145,7 @@ RenderResult render(const std::vector<DepositEvent> &events, const RenderParams 
                     // TIMING pulses /RS on PIXELS and VIDCMD during vertical
                     // sync: both machines clear, held colours return to
                     // 0xFFF/0x000 and the source returns to passthrough.  The
-                    // audio FIFO lives in PORTS and is not part of that reset.
+                    // AUDIO FIFOs are not on /RS and are not part of that reset.
                     if (line == V_SYNC_START)
                     {
                         pix.reset();
@@ -1145,7 +1154,7 @@ RenderResult render(const std::vector<DepositEvent> &events, const RenderParams 
 
                     if (p.audio_enabled && keep && (abs_line % AUDIO_LINES_PER_SAMPLE) == 0)
                     {
-                        audio.tick(r);
+                        audio.sample(r);
                     }
 
                     if (line < V_ACTIVE)
@@ -1249,7 +1258,7 @@ RenderResult render_line_at_a_time(const std::vector<DepositEvent> &events,
             }
             if (p.audio_enabled && keep && (abs_line % AUDIO_LINES_PER_SAMPLE) == 0)
             {
-                audio.tick(r);
+                audio.sample(r);
             }
 
             // The emulator's documented simplification: a line's deposits are
@@ -1269,21 +1278,18 @@ RenderResult render_line_at_a_time(const std::vector<DepositEvent> &events,
                 {
                     cmp.push_word(e.word);
                 }
-                if (e.destination == DEST_AUDIO_PAIR_REV1)
+                if (e.destination >= DEST_AUDCTL_FIFO_W)
                 {
-                    if (!audio.push(e.word))
-                    {
-                        if (keep)
-                        {
-                            r.audio_overflows++;
-                        }
-                    }
-                    else if (keep)
-                    {
-                        r.audio_pairs_deposited++;
-                    }
+                    audio.deposit(e.destination, e.word, r, keep);
                 }
                 ev++;
+            }
+            if (p.audio_enabled)
+            {
+                for (uint32_t k = 0; k < H_TOTAL / 16; k++)
+                {
+                    audio.step(r, keep);
+                }
             }
 
             if (line < V_ACTIVE)

@@ -176,7 +176,7 @@ static constexpr uint32_t PIXEL_VSYNC_ACTIVE_LOW = 1UL;  // VSYNC is asserted lo
 static constexpr uint32_t COMPOSITOR_CLOCK = 25175000UL;
 
 // ------------------------------------------------------------
-// PORTS: PS/2 mouse, two joystick ports, two paddle counters, and (rev 1 only) the audio FIFO pop/reset control
+// PORTS: PS/2 mouse, two joystick ports and two paddle counters
 static constexpr uint32_t PORTS_BASE = 0xFC0000UL;
 static constexpr uint32_t PORTS_SIZE = 0x040000UL;
 inline constexpr MemoryRange PORTS(0xFC0000UL, 0x040000UL);
@@ -255,17 +255,6 @@ static constexpr uint32_t PORTS_PS2_MOUSE_CTRL_DATA_SHIFT = 1U;
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA = 0xFC0015UL;  // READ: Assembled PS/2 mouse data byte; valid while RX_READY is set
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_MASK  = 0xFFU;  // bits 7:0
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_SHIFT = 0U;
-static constexpr uint32_t PORTS_AUDIO_CONTROL = 0xFC001FUL;  // WRITE: Rev 1 only audio FIFO pop and reset control, retired in rev 2 where the AUDIO chip pops its own FIFOs
-static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_MASK  = 0x01U;  // bits 0:0
-static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_SHIFT = 0U;
-static constexpr uint32_t PORTS_AUDIO_CONTROL_RESET_MASK  = 0x02U;  // bits 1:1
-static constexpr uint32_t PORTS_AUDIO_CONTROL_RESET_SHIFT = 1U;
-static constexpr uint32_t PORTS_AUDIO_CONTROL_DEFAULT = 0x02U;
-static constexpr uint32_t PORTS_AUDIO_STATUS = 0xFC001FUL;  // READ: Rev 1 only audio FIFO status with no interrupt, retired in rev 2 with AUDIO_CONTROL
-static constexpr uint32_t PORTS_AUDIO_STATUS_EMPTY_MASK  = 0x01U;  // bits 0:0
-static constexpr uint32_t PORTS_AUDIO_STATUS_EMPTY_SHIFT = 0U;
-static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_MASK  = 0x02U;  // bits 1:1
-static constexpr uint32_t PORTS_AUDIO_STATUS_ENABLE_SHIFT = 1U;
 
 // ------------------------------------------------------------
 // CF: Storage via CF card in True IDE 16-bit PIO mode

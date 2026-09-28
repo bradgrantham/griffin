@@ -214,10 +214,6 @@ inline constexpr uint8_t DEST_SAMPLES1_FIFO_W = Griffin::ENGINE_DEST_SAMPLES1_FI
 inline constexpr uint8_t DEST_SAMPLES2_FIFO_W = Griffin::ENGINE_DEST_SAMPLES2_FIFO_W;
 inline constexpr uint8_t DEST_SAMPLES3_FIFO_W = Griffin::ENGINE_DEST_SAMPLES3_FIFO_W;
 inline constexpr uint8_t DEST_CODE_MAX        = 7;
-// The rev-1 stereo pair popped by PORTS sat on the pin that was nAUDIO_FIFO_W
-// and is now nAUDCTL_FIFO_W.  The emulator and apps/smurf still stream it;
-// audio package B retires this name.
-inline constexpr uint8_t DEST_AUDIO_PAIR_REV1 = DEST_AUDCTL_FIFO_W;
 
 // ============================================================================
 // Descriptor format (edma3.v:15-24, with the narrowed signal field)
@@ -1399,26 +1395,24 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
 }
 
 // ============================================================================
-// AUDIO — unchanged by the 12-bit colour move
+// AUDIO — the four-channel chip (cpld/audio/audio.v; laws in
+// audio/audio_chip.h)
 // ============================================================================
 //
-// One deposited word is a stereo pair {L[15:8], R[7:0]}, unsigned 8-bit per
-// channel.  TIMING toggles AUDIO_TICK once per line and PORTS pops one pair
-// on each FALLING edge, so the sample rate is exactly half the 31.46875 kHz
-// line rate — 15734.375 Hz, which is what griffin.yml rounds to
-// AUDIO_SAMPLES_PER_SECOND.  The /2 phase is TIMING's free-running toggle
-// (not frame-locked), so it must be carried across frames here too:
-// V_TOTAL is odd, so a frame alternately consumes 263 and 262 pairs.
-inline constexpr uint32_t AUDIO_FIFO_PAIRS   = Griffin::AUDIO_FIFO_DEPTH;          // 256
-inline constexpr uint32_t AUDIO_SAMPLE_RATE  = Griffin::AUDIO_SAMPLES_PER_SECOND;  // 15734
-inline constexpr uint32_t AUDIO_LINES_PER_SAMPLE = 2;
+// Five byte-wide FIFOs: DEST_SAMPLES0..3_FIFO_W feed the channels (0,1 left,
+// 2,3 right) and DEST_AUDCTL_FIFO_W takes control records, two bytes each,
+// {register, value}.  Every deposited word carries one byte in D[7:0]; the
+// high byte is ignored.  Samples are two's complement.  A channel at PERIOD
+// 99 pops once per 100 steps, i.e. once per two lines: 15,734.375 Hz,
+// AUDIO_SAMPLES_PER_SECOND, the rate the suite's stereo stream uses (left on
+// channel 0, right on channel 2).
+inline constexpr uint32_t AUDIO_FIFO_SAMPLES     = Griffin::AUDIO_FIFO_DEPTH;          // 256 per FIFO
+inline constexpr uint32_t AUDIO_SAMPLE_RATE      = Griffin::AUDIO_SAMPLES_PER_SECOND;  // 15734
+inline constexpr uint32_t AUDIO_LINES_PER_SAMPLE = 2;                                  // at PERIOD 99
 
-constexpr uint16_t audio_pair_word(uint8_t left, uint8_t right)
+constexpr uint16_t audio_byte_word(uint8_t byte)
 {
-    return static_cast<uint16_t>((static_cast<uint16_t>(left) << 8) | right);
+    return byte;
 }
-
-constexpr uint8_t audio_pair_left(uint16_t w)  { return static_cast<uint8_t>(w >> 8); }
-constexpr uint8_t audio_pair_right(uint16_t w) { return static_cast<uint8_t>(w & 0xFF); }
 
 }  // namespace SuperEngine

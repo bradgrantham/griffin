@@ -796,8 +796,8 @@ void write_audio_source(Memory ram, uint32_t base, uint32_t pairs)
 {
     // ~437 Hz sawtooth left / ~218 Hz triangle right at 15734.375 Hz.  Integer
     // only: no <cmath> (the target toolchain would pull in libm) and no
-    // rounding differences between hosts.  Audio samples are unaffected by the
-    // move to 12-bit colour — they are still 8-bit unsigned per channel.
+    // rounding differences between hosts.  Computed as unsigned 8-bit and
+    // stored two's complement (bit 7 flipped), as the AUDIO chip takes it.
     constexpr uint32_t SAW_PERIOD = 36;   // 15734 / 36 = 437 Hz
     constexpr uint32_t TRI_PERIOD = 72;
 
@@ -810,7 +810,15 @@ void write_audio_source(Memory ram, uint32_t base, uint32_t pairs)
         const uint32_t up = (tri_phase < TRI_PERIOD / 2) ? tri_phase : (TRI_PERIOD - 1 - tri_phase);
         const uint8_t  right = static_cast<uint8_t>((up * 512u) / TRI_PERIOD);
 
-        ram[base + i * 2] = audio_pair_word(left, right);
+        ram[base + i * 2] = audio_byte_word(static_cast<uint8_t>(left ^ 0x80));
+        ram[audio_right_base(base, pairs) + i * 2] = audio_byte_word(static_cast<uint8_t>(right ^ 0x80));
+    }
+
+    // PERIOD 99 and VOLUME 63 for channels 0 and 2 (registers 0, 2, 4, 6).
+    const uint8_t control[AUDIO_CONTROL_WORDS] = { 0, 99, 2, 99, 4, 63, 6, 63 };
+    for (uint32_t i = 0; i < AUDIO_CONTROL_WORDS; i++)
+    {
+        ram[audio_control_base(base, pairs) + i * 2] = audio_byte_word(control[i]);
     }
 }
 
@@ -1434,12 +1442,21 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
 
     // --- VBLANK preamble -----------------------------------------------------
     // The list is armed during vertical blanking, so this runs immediately with
-    // no HBLANK wait.  PORTS keeps popping audio through the 45 blanked lines,
-    // and no per-line group exists to feed it there, so the preamble carries
-    // vblank's share: 45 lines / 2 = 22.5 pairs, rounded up to 23.
+    // no HBLANK wait.  AUDIO keeps popping through the 45 blanked lines, and
+    // no per-line group exists to feed it there, so the preamble carries
+    // vblank's share: 45 lines / 2 = 22.5 samples per channel, rounded up to
+    // 23.  The control records go first, every frame: re-sending PERIOD and
+    // VOLUME is harmless, and the first frame needs them before any sample.
+    if (p.audio)
+    {
+        emit_stream(w, DEST_AUDCTL_FIFO_W, audio_control_base(p.audio_base, p.audio_source_pairs),
+                    AUDIO_CONTROL_WORDS, false, DESC_MAX_COUNT);
+    }
     if (p.audio && p.audio_preamble_pairs > 0)
     {
-        emit_stream(w, DEST_AUDIO_PAIR_REV1, p.audio_base + audio_pair * 2,
+        emit_stream(w, DEST_SAMPLES0_FIFO_W, p.audio_base + audio_pair * 2,
+                    p.audio_preamble_pairs, false, DESC_MAX_COUNT);
+        emit_stream(w, DEST_SAMPLES2_FIFO_W, audio_right_base(p.audio_base, p.audio_source_pairs) + audio_pair * 2,
                     p.audio_preamble_pairs, false, DESC_MAX_COUNT);
         audio_pair += p.audio_preamble_pairs;
         audio_pairs_emitted += p.audio_preamble_pairs;
@@ -1522,12 +1539,14 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
             }
         }
 
-        // Audio last in the group: the audio FIFO is 1024 pairs deep and is
-        // being drained at one pair per two lines, so it is the one consumer
+        // Audio last in the group: each channel FIFO is 256 samples deep and
+        // drains at one sample per two lines, so audio is the one consumer
         // with enough slack to be scheduled behind everything else.
         if (p.audio && (line % p.audio_burst_interval) == 0)
         {
-            emit_stream(w, DEST_AUDIO_PAIR_REV1, p.audio_base + audio_pair * 2,
+            emit_stream(w, DEST_SAMPLES0_FIFO_W, p.audio_base + audio_pair * 2,
+                        p.audio_burst_pairs, false, DESC_MAX_COUNT);
+            emit_stream(w, DEST_SAMPLES2_FIFO_W, audio_right_base(p.audio_base, p.audio_source_pairs) + audio_pair * 2,
                         p.audio_burst_pairs, false, DESC_MAX_COUNT);
             audio_pair += p.audio_burst_pairs;
             audio_pairs_emitted += p.audio_burst_pairs;

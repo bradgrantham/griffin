@@ -28,6 +28,7 @@
 
 #include "audio_chip.h"
 #include "psg_channels.h"
+#include "psg_tables.h"
 #include "scheduler.h"
 
 namespace
@@ -362,8 +363,8 @@ int main(int argc, char **argv)
     printf("  tone retargets %llu, noise restarts %llu, noise retargets %llu\n",
            static_cast<unsigned long long>(driver.tone_retargets), static_cast<unsigned long long>(driver.noise_restarts),
            static_cast<unsigned long long>(driver.noise_retargets));
-    printf("  tables: %zu, %zu bytes (as 68000 words: %zu bytes)\n", driver.table_count(), driver.table_bytes(),
-           driver.table_bytes() * 2);
+    printf("  tables: one 512-byte square buffer and a %u-byte white-noise table (static)\n",
+           static_cast<unsigned>(griffin::audio::psg_tables::WHITE_LENGTH));
 
     printf("\nENGINE LOAD\n");
     const size_t full_frames = frames.size() > 1 ? frames.size() - 1 : frames.size();
@@ -385,7 +386,8 @@ int main(int argc, char **argv)
            mean_desc * ENGINE_DESCRIPTOR_CYCLES + mean_words * ENGINE_WORD_CYCLES, 445 * LINES_PER_FRAME,
            100.0 * (mean_desc * ENGINE_DESCRIPTOR_CYCLES + mean_words * ENGINE_WORD_CYCLES) / (445.0 * LINES_PER_FRAME));
 
-    printf("\nPITCH (audible tones the trace used: %zu periods)\n", driver.tone_choices.size());
+    // Pitch of every tone period the trace sounded, from the driver's table.
+    size_t periods = 0;
     double worst_cents = 0.0;
     double sum_cents = 0.0;
     {
@@ -395,32 +397,33 @@ int main(int argc, char **argv)
         {
             fprintf(fp, "N      Hz    PERIOD  LENGTH  rate_Hz   cents\n");
         }
-        for (const auto& kv : driver.tone_choices)
+        for (int n = 1; n <= 1024; ++n)
         {
-            const ga::ToneChoice& c = kv.second;
-            const double rate = 1573437.5 / (c.period + 1);
+            const int idx = n & 1023;
+            if (((driver.periods_used[idx / 8] >> (n % 8)) & 1) == 0)
+            {
+                continue;
+            }
+            const auto& t = griffin::audio::psg_tables::TONE[idx];
+            const double want = 3579545.0 / (32.0 * n);
+            const double rate = 1573437.5 / (t.period + 1);
+            const double cents = 1200.0 * std::log2(rate / t.length / want);
             if (fp)
             {
-                fprintf(fp, "%4u %8.2f  %3u  %4u  %9.1f  %+.3f\n", kv.first, ga::tone_hz(kv.first), c.period, c.length, rate, c.cents);
+                fprintf(fp, "%4d %8.2f  %3u  %4u  %9.1f  %+.3f\n", n, want, t.period, t.length, rate, cents);
             }
-            worst_cents = std::max(worst_cents, std::fabs(c.cents));
-            sum_cents += std::fabs(c.cents);
+            worst_cents = std::max(worst_cents, std::fabs(cents));
+            sum_cents += std::fabs(cents);
+            ++periods;
         }
         if (fp)
         {
             fclose(fp);
         }
     }
+    printf("\nPITCH (audible tones the trace used: %zu periods)\n", periods);
     printf("  worst |error| %.3f cents, mean %.3f cents (table %s/pitch_table.txt)\n", worst_cents,
-           driver.tone_choices.empty() ? 0.0 : sum_cents / driver.tone_choices.size(), opt.out.c_str());
-    for (const auto& kv : driver.tone_choices)
-    {
-        if (std::fabs(kv.second.cents) > ga::TONE_CENTS_GOAL)
-        {
-            printf("    N %4u (%.1f Hz): PERIOD %u LENGTH %u, %+.2f cents\n", kv.first, ga::tone_hz(kv.first),
-                   kv.second.period, kv.second.length, kv.second.cents);
-        }
-    }
+           periods ? sum_cents / periods : 0.0, opt.out.c_str());
 
     printf("\nAGAINST THE REFERENCE (mono mixdown, same scale)\n");
     {

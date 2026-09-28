@@ -462,7 +462,8 @@ struct FrameParams
     uint32_t fb_base          = 0;
     uint32_t fb_stride_bytes  = 0;
     uint32_t vidcmd_base      = 0;
-    uint32_t audio_base       = 0;
+    uint32_t audio_base       = 0;   // write_audio_source's layout, see below
+    uint32_t audio_source_pairs = 0;
 
     // --- raster content ---
     PixelMode mode            = PixelMode::DIRECT_1BPP;
@@ -691,6 +692,13 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
 
 // An integer sawtooth on left and triangle on right — no <cmath>, so this
 // compiles for the target and produces identical bytes on every host.
+// The suite's stereo test signal, as the AUDIO chip takes it: `pairs` left
+// samples (words, byte in D[7:0]) at base, the right samples after them, then
+// AUDIO_CONTROL_WORDS control bytes setting channels 0 and 2 to PERIOD 99
+// (the tick rate) and VOLUME 63.
+inline constexpr uint32_t AUDIO_CONTROL_WORDS = 8;
+constexpr uint32_t audio_right_base(uint32_t base, uint32_t pairs)   { return base + pairs * 2; }
+constexpr uint32_t audio_control_base(uint32_t base, uint32_t pairs) { return base + pairs * 4; }
 void write_audio_source(Memory ram, uint32_t base, uint32_t pairs);
 
 // --- the list itself --------------------------------------------------------

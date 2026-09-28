@@ -120,6 +120,8 @@ struct ChannelState
     const uint8_t *table = nullptr;
     uint32_t length = 0;
     uint32_t position = 0;
+    uint32_t repeat = 1;            // each table byte is deposited this many times
+    uint32_t repeat_count = 0;      // deposits of table[position] already made
     bool     active = false;
     bool     burst_now = false;     // deposit at the next line, not the stagger slot
 
@@ -147,8 +149,11 @@ public:
     void reset();
 
     // The channel plays `table` (two's complement bytes) as a loop of `length`,
-    // starting at `position`, from this channel's next burst.
-    void set_stream(int channel, const uint8_t *table, uint32_t length, uint32_t position);
+    // each byte deposited `repeat` times (a slow sequence at a rate the period
+    // counter cannot reach, without a stretched copy of the table), starting
+    // at `position` with `repeat_count` of that byte's copies already made.
+    void set_stream(int channel, const uint8_t *table, uint32_t length, uint32_t position,
+                    uint32_t repeat = 1, uint32_t repeat_count = 0);
     void set_period(int channel, uint8_t period);
     void set_volume(int channel, uint8_t volume);
     void stop(int channel);         // no more deposits; the FIFO drains to silence

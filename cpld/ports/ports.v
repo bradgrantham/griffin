@@ -16,15 +16,9 @@
 //      pot comparator sense is still low, plus a CPU-controlled dump bit that
 //      drives the discharge FET and holds the counters at zero (this retires
 //      the two 74HC590s and the rev-1 DUART OP4/OP5 dump/clear dance).
-//   4. The audio FIFO pop strobe, the FIFO reset line, and the empty flag
-//      as pollable status.  The pop is timed off TIMING's AUDIO_TICK,
-//      so there is no divider register and no counter — one enable bit and
-//      one reset bit.  The rate is TIMING's to choose (15.734 kHz today);
-//      PORTS only edge-detects.  Audio raises no interrupt.
 //
-// PORTS does not write the audio FIFOs: their /W is ENGINE's AUDIO_FIFO_W
-// deposit strobe (griffin.yml AUDIO), so the audio pins here are the 7200
-// pair's empty flag, their shared read strobe, and their shared reset.
+// Rev 1's audio FIFO pop, reset and status (AUDIO_CONTROL/AUDIO_STATUS,
+// AUDIO_TICK) left on 2026-09-28: the AUDIO chip pops its own FIFOs.
 //
 // No nDTACK here: GLUE decodes the region, hands over the cycle-qualified
 // ~PORTS_SELECT, and answers threshold DTACK for it, exactly as it does for
@@ -52,14 +46,12 @@ module ports
     input  wire       R_nW,
     inout  wire [7:0] D,
 
-    // Time bases from TIMING.  Pixel-clock domain, ASYNCHRONOUS to SYSCLK.
-    // Both are square waves, not pulses — a one-pixel-clock pulse (39.7 ns)
-    // is narrower than a SYSCLK and the synchronizer below would miss it —
-    // and the FALLING edge is the event.  Today both toggle once per scanline
-    // (15.734 kHz falling edges); they are separate nets so TIMING can move
-    // the audio rate later without touching the paddles.
+    // Time base from TIMING.  Pixel-clock domain, ASYNCHRONOUS to SYSCLK.
+    // A square wave, not a pulse — a one-pixel-clock pulse (39.7 ns) is
+    // narrower than a SYSCLK and the synchronizer below would miss it — and
+    // the FALLING edge is the event: it toggles once per scanline (15.734 kHz
+    // falling edges).
     input  wire       PADDLE_TICK,
-    input  wire       AUDIO_TICK,
 
     inout  wire       PS2_MOUSE_CLK,     // open-drain, external pull-ups
     inout  wire       PS2_MOUSE_DATA,
@@ -84,10 +76,6 @@ module ports
 
     output wire       PADDLE_DUMP,       // gate of the paddle discharge FET
 
-    input  wire       nAUDIO_FIFO_EF,          // 7200 pair empty flag
-    output wire       nAUDIO_FIFO_RE,          // 7200 pair read strobe
-    output wire       nAUDIO_FIFO_RS,          // 7200 pair reset, held low from power-on
-
     output wire       nPORTS_IRQ         // push-pull, into GLUE's IPL encoder
 );
 
@@ -107,7 +95,6 @@ module ports
     //   0x11       R  PS2_MOUSE_STATUS   W  PS2_MOUSE_CLEAR (W1C)
     //   0x13       W  PS2_MOUSE_CTRL     (bit0 CLK low, bit1 DATA low)
     //   0x15       R  PS2_MOUSE_RX_DATA
-    //   0x1F       R  AUDIO_STATUS       W  AUDIO_CONTROL
     // ----------------------------------------------------------------
     localparam [23:0] JOYSTICK_PORT_1_ADDR   = `PORTS_JOYSTICK_PORT_1;
     localparam [23:0] JOYSTICK_PORT_2_ADDR   = `PORTS_JOYSTICK_PORT_2;
@@ -115,12 +102,10 @@ module ports
     localparam [23:0] PADDLE_B_COUNT_ADDR    = `PORTS_PADDLE_B_COUNT;
     localparam [23:0] PS2_MOUSE_TX_DATA_ADDR = `PORTS_PS2_MOUSE_TX_DATA;
     localparam [23:0] PADDLE_CONTROL_ADDR    = `PORTS_PADDLE_CONTROL;
-    // PS2_MOUSE_STATUS and PS2_MOUSE_CLEAR are the R/W sides of one slot,
-    // as are AUDIO_STATUS and AUDIO_CONTROL.
+    // PS2_MOUSE_STATUS and PS2_MOUSE_CLEAR are the R/W sides of one slot.
     localparam [23:0] PS2_MOUSE_STATUS_ADDR  = `PORTS_PS2_MOUSE_STATUS;
     localparam [23:0] PS2_MOUSE_CTRL_ADDR    = `PORTS_PS2_MOUSE_CTRL;
     localparam [23:0] PS2_MOUSE_RX_DATA_ADDR = `PORTS_PS2_MOUSE_RX_DATA;
-    localparam [23:0] AUDIO_CONTROL_ADDR     = `PORTS_AUDIO_CONTROL;
 
     wire register_access = select & ~nLDS;
     wire ports_write     = register_access & ~R_nW;
@@ -193,28 +178,23 @@ module ports
                                   JOYSTICK_2_UP};
 
     // ----------------------------------------------------------------
-    // Time bases.  TIMING hands PORTS two square waves, so PORTS needs no
-    // prescaler and no phase bit: each goes through a 2-FF synchronizer and a
+    // Time base.  TIMING hands PORTS a square wave, so PORTS needs no
+    // prescaler and no phase bit: it goes through a 2-FF synchronizer and a
     // falling-edge detector, and every falling edge is one event.
     // Paddles: 15.734 kHz — full scale 255 x 63.6 us ~= 16.2 ms, one frame,
     // which is the 2600's measurement window and how its pot/cap values are
-    // sized.  Audio: half of whatever rate TIMING toggles AUDIO_TICK at
-    // (15.734 kHz, AUDIO_SAMPLES_PER_SECOND, today).
+    // sized.
     //
     // NEGATIVE RESULT (2026-08-26): a both-edges detector (sync ^ delayed)
     // does not fit — it doubles the product terms of every paddle-counter bit
-    // equation and the fitter fails routing in Block 5 even with AUDIO_TICK
-    // unpinned.  Falling-edge-only is one product term and fits at 122/128.
+    // equation and the fitter fails routing in Block 5 (then with a second,
+    // audio, tick also present).  Falling-edge-only is one product term and fits at 122/128.
     // ----------------------------------------------------------------
     reg paddle_tick_meta;
     reg paddle_tick_sync;
     reg paddle_tick_sync_delayed;
-    reg audio_tick_meta;
-    reg audio_tick_sync;
-    reg audio_tick_sync_delayed;
 
     wire line_tick      = paddle_tick_sync_delayed & ~paddle_tick_sync;
-    wire audio_pop_tick = audio_tick_sync_delayed  & ~audio_tick_sync;
 
     always @(posedge SYSCLK)
     begin
@@ -223,18 +203,12 @@ module ports
             paddle_tick_meta         <= 1'b0;
             paddle_tick_sync         <= 1'b0;
             paddle_tick_sync_delayed <= 1'b0;
-            audio_tick_meta          <= 1'b0;
-            audio_tick_sync          <= 1'b0;
-            audio_tick_sync_delayed  <= 1'b0;
         end
         else
         begin
             paddle_tick_meta         <= PADDLE_TICK;
             paddle_tick_sync         <= paddle_tick_meta;
             paddle_tick_sync_delayed <= paddle_tick_sync;
-            audio_tick_meta          <= AUDIO_TICK;
-            audio_tick_sync          <= audio_tick_meta;
-            audio_tick_sync_delayed  <= audio_tick_sync;
         end
     end
 
@@ -308,58 +282,12 @@ module ports
     assign PADDLE_DUMP = paddle_dump;
 
     // ----------------------------------------------------------------
-    // Audio FIFO pop and reset.  The pop strobe is TIMING's AUDIO_TICK edge,
-    // so there is no period register and no counter — one enable bit and
-    // one reset bit.  No interrupt: the level is dead-reckoned by whoever
-    // arms the display list, and the flags are polled.
-    //
-    // nAUDIO_FIFO_EF is the 7200 empty flag, active low.  Nothing in this chip
-    // acts on it; it only passes through the read mux to the CPU, so like
-    // the joystick switch inputs it is read raw (a synchronizer here would
-    // protect downstream synchronous logic, of which there is none, and
-    // PORTS has no cells to spare).  nAUDIO_FIFO_RS comes up ASSERTED
-    // (audio_reset = 1 at reset): the 7200 requires a reset before its first
-    // write, so the FIFOs are held until software releases them.  The 7200
-    // needs /W and /RE inactive around the /RS rise (tRSS/tRSR): /RE is
-    // gated off here while reset is set, and the /W side is software's (no
-    // audio deposits while changing RESET).
-    //
-    //   0x1F write AUDIO_CONTROL : bit0 = ENABLE, bit1 = RESET
-    //   0x1F read  AUDIO_STATUS  : bit0 = EMPTY, bit1 = ENABLE
-    // ----------------------------------------------------------------
-    wire audio_control_write_select = ports_write & (A == AUDIO_CONTROL_ADDR[4:1]);
-    wire audio_status_read_select   = ports_read  & (A == AUDIO_CONTROL_ADDR[4:1]);
-
-    reg audio_enable;
-    reg audio_reset;
-
-    always @(posedge SYSCLK)
-    begin
-        if (reset)
-        begin
-            audio_enable <= 1'b0;
-            audio_reset  <= 1'b1;
-        end
-        else if (audio_control_write_select)
-        begin
-            audio_enable <= D[`PORTS_AUDIO_CONTROL_ENABLE_SHIFT];
-            audio_reset  <= D[`PORTS_AUDIO_CONTROL_RESET_SHIFT];
-        end
-    end
-
-    // One SYSCLK low per pop; the 7200 output register holds the sample on Q
-    // until the next read, so the R2R DACs are fed with no latch in the CPLD.
-    assign nAUDIO_FIFO_RE = ~(audio_pop_tick & audio_enable & ~audio_reset);
-    assign nAUDIO_FIFO_RS = ~audio_reset;
-
-    // ----------------------------------------------------------------
     // Read mux.  One combinational selection; the pins are tri-stated
     // whenever this CPLD is not the addressed reader.
     // ----------------------------------------------------------------
     wire read_active = mouse_status_read_select | mouse_receive_read_select
                      | joystick_1_read_select   | joystick_2_read_select
-                     | paddle_a_read_select     | paddle_b_read_select
-                     | audio_status_read_select;
+                     | paddle_a_read_select     | paddle_b_read_select;
 
     reg [7:0] read_data;
 
@@ -389,12 +317,6 @@ module ports
         else if (paddle_b_read_select)
         begin
             read_data = paddle_b_count;
-        end
-        else if (audio_status_read_select)
-        begin
-            read_data = {6'b0,
-                         audio_enable,             // bit 1: ENABLE
-                         ~nAUDIO_FIFO_EF};               // bit 0: EMPTY (raw)
         end
     end
 
@@ -625,9 +547,9 @@ endmodule
 // with `-preassign keep`.  The Rev 2 PCB is routed from these numbers, so do
 // not renumber them; a netlist change that makes the fitter want a different
 // placement is a board respin, not a re-fit.
-// Appended on spare pins by -preassign keep fits, no frozen pin moved:
-// AUDIO_TICK 45 (2026-08-26), nAUDIO_FIFO_EF 48 and nAUDIO_FIFO_RS 52 (2026-08-29).
-// Released: nAUDIO_FIFO_HF pin 34 (2026-08-30).
+// Released: nAUDIO_FIFO_HF pin 34 (2026-08-30); AUDIO_TICK 45,
+// nAUDIO_FIFO_EF 48, nAUDIO_FIFO_RE 61 and nAUDIO_FIFO_RS 52 (2026-09-28,
+// the rev-1 audio pop moved to the AUDIO chip).
 // Pins 34 and 41 are routed to the PORTS spare header (griffin.yml
 // interfaces) but are not ports of this module: unused I/O, tri-state
 // under the fitter's pin keeper.  Give them explicit pins here if a
@@ -664,7 +586,6 @@ endmodule
 //PIN: D_6               : 20
 //PIN: D_7               : 29
 //PIN: PADDLE_TICK       : 44
-//PIN: AUDIO_TICK        : 45
 //PIN: PS2_MOUSE_CLK     : 81
 //PIN: PS2_MOUSE_DATA    : 80
 //PIN: JOYSTICK_1_UP     : 9
@@ -682,7 +603,4 @@ endmodule
 //PIN: JOYSTICK_2_PIN9   : 37
 //PIN: JOYSTICK_2_PIN5   : 8
 //PIN: PADDLE_DUMP       : 33
-//PIN: nAUDIO_FIFO_EF          : 48
-//PIN: nAUDIO_FIFO_RE          : 61
-//PIN: nAUDIO_FIFO_RS          : 52
 //PIN: nPORTS_IRQ        : 17

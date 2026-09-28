@@ -433,12 +433,12 @@ struct RenderParams
 struct RenderResult
 {
     std::vector<FrameImage>  frames;
-    std::vector<uint8_t>     audio;   // interleaved L,R unsigned 8-bit
+    std::vector<uint8_t>     audio;   // interleaved L,R unsigned 8-bit (channels 0 and 2)
     std::vector<std::string> violations;
     RenderStats              stats;
 
     uint32_t audio_fifo_high       = 0;
-    uint32_t audio_fifo_low        = AUDIO_FIFO_PAIRS + 1;
+    uint32_t audio_fifo_low        = AUDIO_FIFO_SAMPLES + 1;
     uint32_t audio_underruns       = 0;
     uint32_t audio_overflows       = 0;
     uint32_t audio_pairs_deposited = 0;

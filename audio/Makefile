@@ -18,7 +18,7 @@ BUILD    ?= build
 AB_FLAGS ?=
 
 MODEL_SRC = audio_chip.cpp scheduler.cpp psg_channels.cpp
-MODEL_HDR = audio_chip.h scheduler.h psg_channels.h
+MODEL_HDR = audio_chip.h scheduler.h psg_channels.h psg_tables.h
 MODEL_OBJ = $(MODEL_SRC:%.cpp=$(BUILD)/%.o)
 REF_HDR   = $(PSG_DIR)/sn76489.h $(PSG_DIR)/frame_audio.h $(PSG_DIR)/tests/trace_io.h
 
@@ -52,7 +52,7 @@ vectors: $(BUILD)/tb_vectors
 $(BUILD)/audio_ab: $(BUILD)/audio_ab.o $(MODEL_OBJ) $(BUILD)/ref/sn76489.o
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
-test: $(BUILD)/audio_tests ab
+test: $(BUILD)/audio_tests ab tables-check
 	./$(BUILD)/audio_tests
 
 ab: $(BUILD)/audio_ab
@@ -62,4 +62,30 @@ ab: $(BUILD)/audio_ab
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test ab vectors clean
+.PHONY: all test ab vectors tables tables-check m68k clean
+
+# psg_tables.h is generated on the host and checked in (the choices need a
+# search and logarithms); tables-check proves it matches its generator.
+$(BUILD)/psg_tables_gen: psg_tables_gen.cpp
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $< -o $@
+
+tables: $(BUILD)/psg_tables_gen
+	./$(BUILD)/psg_tables_gen > psg_tables.h
+
+tables-check: $(BUILD)/psg_tables_gen
+	@./$(BUILD)/psg_tables_gen | cmp -s - psg_tables.h || { echo "psg_tables.h is stale: make tables"; exit 1; }
+	@echo "psg_tables.h matches its generator"
+
+# The code a 68000 application links must build bare metal (no allocation,
+# I/O, exceptions or floating point): compile-check with the app toolchain.
+M68K_GXX   = ../apps/m68k-g++
+M68K_FLAGS = -std=c++23 -O2 -Wall -Wextra -Wpedantic -Werror -fno-exceptions -fno-rtti
+m68k:
+	@mkdir -p $(BUILD)/m68k
+	$(M68K_GXX) $(M68K_FLAGS) -c audio_chip.cpp -o $(BUILD)/m68k/audio_chip.o
+	$(M68K_GXX) $(M68K_FLAGS) -c scheduler.cpp -o $(BUILD)/m68k/scheduler.o
+	$(M68K_GXX) $(M68K_FLAGS) -c psg_channels.cpp -o $(BUILD)/m68k/psg_channels.o
+	@if ../apps/m68k-objdump -t $(BUILD)/m68k/scheduler.o $(BUILD)/m68k/psg_channels.o | grep -E "__(add|mul|div|sub|fix|float)[sd]f|malloc|_Znw"; then \
+	    echo "floating point or allocation in the 68000 audio code"; exit 1; fi
+	@echo "scheduler and psg_channels build bare metal: no float, no heap"
