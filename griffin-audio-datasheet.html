@@ -192,14 +192,14 @@
   <div class="masthead">
     <div>
       <h1>Griffin Audio Pipeline</h1>
-      <div class="sub">Four DMA-fed sample channels with duty-cycle volume, the Paula form: mechanism reference and application notes</div>
+      <div class="sub">Four DMA-fed sample channels with duty-cycle volume: mechanism reference and application notes</div>
     </div>
     <div class="docmeta">
       REV 2 PROPOSAL &middot; DRAFT 2026-09-27<br>
       branch indexed-pixel<br>
       sources: cpld/audio/audio.v, audio/audio_chip.h (the laws),<br>
       audio/scheduler.h, audio/psg_channels.h, audio/README.md,<br>
-      cpld/audio/audio_tb.v, griffin.log 2026-09-27 (Paula form, step 2, step 4)
+      cpld/audio/audio_tb.v, griffin.log 2026-09-27 (step 2, step 4)
     </div>
   </div>
 
@@ -230,7 +230,7 @@
     </div>
   </div>
 
-  <p class="banner"><b>Proposal revision.</b> This sheet describes the Paula form adopted on 2026-09-27. The chip fits, its host model is the executable spec, and the RTL passes a testbench against the model&rsquo;s vectors; nothing has run on hardware, and the analog stage has not been breadboarded. griffin.yml matches this sheet. <span class="st prelim">PRELIMINARY</span> marks what the model and testbench pin; <span class="st adv">ADVANCE</span> marks recipes not yet run; <span class="st open">OPEN</span> marks a question no gate has answered.</p>
+  <p class="banner"><b>Proposal revision.</b> This sheet describes the four-channel design adopted on 2026-09-27. The chip fits, its host model is the executable spec, and the RTL passes a testbench against the model&rsquo;s vectors; nothing has run on hardware, and the analog stage has not been breadboarded. griffin.yml matches this sheet. <span class="st prelim">PRELIMINARY</span> marks what the model and testbench pin; <span class="st adv">ADVANCE</span> marks recipes not yet run; <span class="st open">OPEN</span> marks a question no gate has answered.</p>
 
   <section>
     <div class="secbar"><span>General Description</span><span class="no">1</span></div>
@@ -239,7 +239,7 @@
       AUDIO CPLD only decides <em>when</em> each FIFO advances and <em>how much of the time</em> each ladder is connected to the
       output. The display list is the loop hardware: the 68000 prepares waveform tables in RAM at load time and ENGINE
       descriptors deposit them, byte by byte, a few words per line. Pitch is the channel&rsquo;s rate divided by the table&rsquo;s
-      length. Volume is Paula&rsquo;s mechanism, a duty cycle: the switch between a ladder and its side&rsquo;s summing node is
+      length. Volume is a duty cycle: the switch between a ladder and its side&rsquo;s summing node is
       closed for VOLUME/64 of every 49.17 kHz frame, and the output stage averages it. Registers arrive through a fifth FIFO as
       two-byte records, so the whole subsystem stays DMA-only.
     </p>
@@ -496,7 +496,7 @@
       <tr><td>Host model and tests (audio/audio_chip.h, T1..T6)</td><td>rate-multiplier on-count = VOLUME, disjoint windows; closed form = chip over 200k random lines; gate off when empty; mirror-fed exact; PERIOD alignment within a line; every audible PSG period mapped</td><td class="mono">PASS 2026-09-27</td></tr>
       <tr><td>RTL testbench against the model (cpld/audio/audio_tb.v, <code>make -C cpld audio-sim</code>)</td><td>1,200 random lines: 5,190 pops at the right step and none elsewhere, registers after every line, gate law on 960,000 clocks, FIFO protocol; negative controls 1..5 all fail</td><td class="mono">PASS 2026-09-27</td></tr>
       <tr><td>Scheduler and PSG driver, Smurf A/B</td><td>&sect;5 numbers; by ear judged much better than the reference path by the owner</td><td class="mono">PASS 2026-09-27</td></tr>
-      <tr><td>griffin.yml for the Paula form (deposit tag, registers, parts)</td><td>written; matches this sheet</td><td class="mono">DONE 2026-09-27</td></tr>
+      <tr><td>griffin.yml for the AUDIO chip (deposit tag, registers, parts)</td><td>written; matches this sheet</td><td class="mono">DONE 2026-09-27</td></tr>
       <tr><td>Emulator AUDIO model</td><td>links audio_chip.cpp, with FIFO overflow and underflow assertions</td><td class="mono">TO DO</td></tr>
       <tr><td>Analog PWM stage on a breadboard</td><td>74HC4066 on-resistance and switching time at low VOLUME; bias and DC behaviour across volume changes</td><td class="mono">OPEN</td></tr>
       <tr><td>Rev-2 schematic and //PIN block</td><td>not started</td><td class="mono">TO DO</td></tr>
