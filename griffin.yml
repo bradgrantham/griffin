@@ -325,10 +325,9 @@ peripherals:
   # them only through ENGINE's PIXELS/VIDCMD FIFO streams.  The frame IRQ is
   # PIXEL's nVSYNC_IRQ latched in GLUE (VSYNC_STATUS/VSYNC_CLEAR).
 
-  # PIXEL (cpld/pixel/pixel.v) is BOTH the raster time base and the PIXELS
-  # stream unpacker: timing.v's Timing module is instantiated inside it, so
-  # PIX_CONSUME / PIX_PRELOAD / PIX_LAST are internal nets, there is no TIMING
-  # chip and no TIMING socket.  Raster output contracts, enforced by
+  # PIXEL (cpld/pixel/pixel.v) is both the raster time base and the PIXELS
+  # stream unpacker.
+  # Raster output contracts, enforced by
   # cpld/pixel/timing_tb.v (`make timing-sim`) against the merged top level:
   # - nRS: 8 pixel clocks at the top of the vsync line (v_cnt==V_SYNC_START
   #   & h_cnt<8).  Consumers: COMPOSITOR machine reset (GCLR) and /RS of the
@@ -834,14 +833,13 @@ peripherals:
       - { offset: 0x1F, name: OPR_CLR, access: write, width: 8,
           description: "Output port bit reset (clears OPR bits; those OP pins go HIGH)" }
 
-  # AUDIO (rev 2) is a four-channel DMA sample player with no CPU-visible
-  # registers and, by design, no status path back to the 68000.  The 68000
-  # reaches it only through ENGINE descriptors whose destination is one of
-  # the five byte-wide 7200s (ENGINE_DEST_SAMPLES0..3_FIFO_W for the
+  # AUDIO (rev 2) is a four-channel DMA sample player.
+  # The 68000 reaches it through ENGINE descriptors whose destination is one of
+  # the five 7200s (ENGINE_DEST_SAMPLES0..3_FIFO_W for the
   # channels, ENGINE_DEST_AUDCTL_FIFO_W for control): each deposited word
-  # carries one byte in D[7:0], the high byte is ignored.  Channel n's FIFO
-  # Q bus drives its own R-2R ladder (bit 7 through a 74HC04, since samples
-  # are two's complement and the ladder wants offset binary); the AUDIO CPLD
+  # carries one byte in D[7:0], the high byte is discarded.  Channel n's FIFO
+  # Q bus drives its own R-2R ladder (bit 7 through a 74HC04, since 
+  # the ladder wants offset binary); the AUDIO CPLD
   # holds /R low and pulses it to advance at the channel's rate,
   # AUDIO_STEP_HZ / (PERIOD + 1) with AUDIO_STEP_HZ = the pixel clock /
   # AUDIO_STEP_CLOCKS, the divider's phase pulled onto the raster by PIXEL's
@@ -856,8 +854,7 @@ peripherals:
   # reset PERIOD is 0 and a channel advances every step.  A write to a full
   # FIFO is dropped, a pop of an empty one is silent; the display-list
   # author schedules deposits against the rates (audio/scheduler.h is the
-  # reference policy; the chip's laws are audio/audio_chip.h).  Rev 1 keeps
-  # the PORTS pop path (AUDIO_CONTROL, AUDIO_STATUS) and the CD4049s.
+  # reference policy; the chip's laws are audio/audio_chip.h).
   AUDIO:
     part: "ATF1508AS + 5x IDT7200 (byte wide) + 74HC04 + 4x 4610X-R2R-103LF + 74HC4066 + LM358 summers + 3x LM386"
     description: "Four DMA-fed sample channels with period counters and duty-cycle volume, driven only by ENGINE deposits"
