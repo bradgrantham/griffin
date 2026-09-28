@@ -1817,3 +1817,47 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   not touched).  Time alignment used: m edges since the last reset edge,
   timebase = m mod 512, line k at edge 800 k, step s's update at edge
   16 (s + 1).
+
+2026-09-27 -- Audio step 5: griffin.yml for the AUDIO chip; two decisions
+  griffin.yml: AUDIO peripheral (parts, the deposit word, laws in brief,
+  authoring contract), constants AUDIO_CHANNELS / STEP_CLOCKS /
+  PERIOD_TICK / PERIOD_MAX / VOLUME_MAX / SILENCE / WORD_DEST_SHIFT /
+  DEST_CONTROL / REG_PERIOD / REG_VOLUME; the Z80 record constants
+  removed (sound/audio_records.h carries them locally now, as the record
+  of that experiment; its v1 harness was already not building at HEAD,
+  harness2 builds); PORTS audio registers still rev-1-only; interfaces
+  "Stream FIFO parts", "Audio output stage" and the new "AUDIO chip"
+  entry; ENGINE and PIXEL comments; issues for package B, the D[7:0]
+  loading and the unbreadboarded analog stage.  griffin.md Audio section
+  rewritten.  `make` at the root, then firmware, emulator, apps, mixer,
+  audio and super-engine all build.
+  Decision 1: the FIFO is chosen by the DEPOSITED WORD, not by ENGINE.
+  nAUDIO_FIFO_W enables a 74HC138 whose select is D[10:8], so a word is
+  {destination[10:8], byte[7:0]}; destinations 0..3 are the channels, 4
+  the control FIFO.  ENGINE's RTL, pinout and descriptor format are
+  untouched (it sits at 123 LC with the PIXELS /W path timing-critical),
+  the otherwise idle high byte does the work, and ENGINE's SETTLE cycle
+  puts the word on the bus a SYSCLK before the strobe so the decoder's
+  select is stable when its enable falls.  Brad had floated a descriptor
+  destination number with an external decoder; this reaches the same
+  one-hot decode without an ENGINE change, and is his to reverse.
+  Decision 2 (corrects the 2026-09-27 "Paula form" entry above): no
+  offset-cancel switch and no -2.5 V reference.  Each side's two ladders
+  feed, through their 74HC4066 switches, the virtual-ground node of an
+  LM358 inverting summer biased at 2.5 V.  A ladder at midscale (0x80 =
+  2.5 V) injects no current whether its switch is open or closed, so
+  volume changes make no DC step, and a virtual ground keeps the two
+  channels from loading each other (a passive sum's gain would depend on
+  how many switches were closed at that instant).  Feedback 2k || 8.2 nF
+  for the ~9.7 kHz pole; +/-0.625 V per channel, +/-1.25 V per side.
+  74HC4066 preferred over CD4066 for on-resistance (about 50 vs 250 ohm
+  against the ladder's 10k).  Not yet breadboarded.
+  Also: AUDIO_TICK goes to a test pad in rev 2 (the chip divides the pixel
+  clock itself); the model's line-start alignment is ideal, hardware
+  deposits land anywhere in the line and the timebase may be a clock or
+  two off the raster, bounded to one pop and covered by margin 2
+  (scheduler.h).  The audio datasheet artifact was rewritten for the
+  Paula form by an Opus agent and republished as version 6 at
+  https://claude.ai/artifact/62PxBVurMSFzXX6hmBb4N8; its consistency
+  review flagged the driver's "8 words per line" comment (fixed: 3.85)
+  and the pin count 19 + 9 vs 27 (the fitter's own totals; left).

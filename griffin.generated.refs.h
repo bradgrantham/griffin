@@ -41,7 +41,7 @@ inline volatile uint8_t &PORTS_PS2_MOUSE_STATUS = *reinterpret_cast<volatile uin
 inline volatile uint8_t &PORTS_PS2_MOUSE_CLEAR = *reinterpret_cast<volatile uint8_t *>(0xFC0011UL);  // WRITE: Write-1-to-clear for PS2_MOUSE_STATUS latched flags / IRQ ack
 inline volatile uint8_t &PORTS_PS2_MOUSE_CTRL = *reinterpret_cast<volatile uint8_t *>(0xFC0013UL);  // WRITE: Open-drain drive control for PS2_MOUSE_CLK and PS2_MOUSE_DATA for the TX inhibit handshake
 inline volatile uint8_t &PORTS_PS2_MOUSE_RX_DATA = *reinterpret_cast<volatile uint8_t *>(0xFC0015UL);  // READ: Assembled PS/2 mouse data byte; valid while RX_READY is set
-inline volatile uint8_t &PORTS_AUDIO_CONTROL = *reinterpret_cast<volatile uint8_t *>(0xFC001FUL);  // WRITE: Rev 1 only audio FIFO pop and reset control, retired in rev 2 where the AUDIO Z80 sound processor reads the FIFO
+inline volatile uint8_t &PORTS_AUDIO_CONTROL = *reinterpret_cast<volatile uint8_t *>(0xFC001FUL);  // WRITE: Rev 1 only audio FIFO pop and reset control, retired in rev 2 where the AUDIO chip pops its own FIFOs
 inline volatile uint8_t &PORTS_AUDIO_STATUS = *reinterpret_cast<volatile uint8_t *>(0xFC001FUL);  // READ: Rev 1 only audio FIFO status with no interrupt, retired in rev 2 with AUDIO_CONTROL
 
 // CF: Storage via CF card in True IDE 16-bit PIO mode

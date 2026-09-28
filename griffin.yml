@@ -271,10 +271,11 @@ peripherals:
   # ENGINE's state is read through GLUE ENGINE_STATUS.
   # ENGINE is a bus master: each 4-word descriptor reads count words from
   # any address and pulses one active-low deposit strobe per word, chosen
-  # by the descriptor's mask (ENGINE_SIGNAL_*): the nets nPIXELS_FIFO_W,
-  # nVIDCMD_FIFO_W and nAUDIO_FIFO_W are the /W pins of the three FIFO
-  # pairs (see interfaces, Stream FIFO parts); nSIGNAL_SPARE (mask bit 3)
-  # goes only to a header.
+  # by the descriptor's mask (ENGINE_SIGNAL_*): the nets nPIXELS_FIFO_W
+  # and nVIDCMD_FIFO_W are the /W pins of the two video FIFO pairs;
+  # nAUDIO_FIFO_W enables the AUDIO decoder, which routes the word to one
+  # of five byte-wide FIFOs by D[10:8] (see AUDIO and interfaces, Stream
+  # FIFO parts); nSIGNAL_SPARE (mask bit 3) goes only to a header.
   # ~ENGINE_IRQ asserts when a stop_after descriptor completes and clears on
   # any DESC or CTRL write.
   # Descriptors themselves are read only from the top 64K of RAM.
@@ -356,8 +357,8 @@ peripherals:
   #   today (negative, 2 lines at v = 490..491); polarity fixed for every
   #   future raster mode independent of the connector's VSYNC polarity.
   #   GLUE edge-latches it (VSYNC_STATUS).
-  # - PADDLE_TICK -> PORTS and AUDIO_TICK -> the AUDIO Z80's /NMI (rev 1:
-  #   both to PORTS): square waves toggling on the clock that starts every
+  # - PADDLE_TICK -> PORTS and AUDIO_TICK -> a test pad (rev 1: both to
+  #   PORTS; the rev-2 AUDIO chip divides the pixel clock itself): square waves toggling on the clock that starts every
   #   line (period 1600 clocks, free-running from reset, no frame-boundary
   #   exception).  Consumers act on FALLING edges only: 15.734 kHz events
   #   (PADDLE_TICKS_PER_SECOND, AUDIO_SAMPLES_PER_SECOND).  Separate nets
@@ -631,7 +632,7 @@ peripherals:
         access: write
         width: 8
         description: |
-          Rev 1 only audio FIFO pop and reset control, retired in rev 2 where the AUDIO Z80 sound processor reads the FIFO.
+          Rev 1 only audio FIFO pop and reset control, retired in rev 2 where the AUDIO chip pops its own FIFOs.
           ENABLE gates the read strobe PORTS sends to both 7200s on every
           AUDIO_TICK event; clearing it freezes the DACs on their last sample
           without disturbing FIFO contents.  RESET drives both 7200 /RS pins
@@ -833,26 +834,32 @@ peripherals:
       - { offset: 0x1F, name: OPR_CLR, access: write, width: 8,
           description: "Output port bit reset (clears OPR bits; those OP pins go HIGH)" }
 
-  # AUDIO (rev 2) is a Z80 sound processor with no CPU-visible registers
-  # and, by design, no status path back to the 68000.  The 68000 reaches
-  # it only through ENGINE AUDIO_FIFO_W deposits into one ganged 16-bit
-  # 7200 pair (the rev-1 audio pair's footprint; the L and R chips carry
-  # a record's high and low bytes).  Every deposited word is a record:
-  # voice SET, WAIT, inline PCM SAMPLES, VOICE table descriptor, LOAD/JUMP
-  # program upload, RESET (encodings: sound/audio_records.h; semantics:
-  # wave-table-design.md).  The Z80 owns the pair's /R pins; /RS is the
-  # system ~RESET; there is no /EF input: a 7200 ignores a read while
-  # empty and leaves Q high-Z, so the Z80's pulled-up data bus reads
-  # AUDIO_REC_EMPTY and SET address AUDIO_SET_ADDR_RESERVED is never used.
-  # AUDIO_TICK (PIXEL) is the Z80's /NMI: one tick, one stereo sample.
-  # The display-list author schedules deposits against the ROM program's
-  # documented drain rates; an over-scheduled list drops words at the
-  # full FIFO.  Samples and amplitudes are two's complement inside the
-  # Z80 and offset binary on the DAC latches.  Rev 1 keeps the PORTS pop
-  # path (AUDIO_CONTROL, AUDIO_STATUS) and the CD4049 inverters.
+  # AUDIO (rev 2) is a four-channel DMA sample player with no CPU-visible
+  # registers and, by design, no status path back to the 68000.  The 68000
+  # reaches it only through ENGINE AUDIO_FIFO_W deposits; that strobe
+  # enables a 74HC138 whose select is D[10:8], so every deposited word is
+  # {destination[10:8], byte[7:0]} (bits 15:11 zero) into one of five
+  # byte-wide 7200s: destinations 0..3 are the sample channels, 4 the
+  # control FIFO (AUDIO_DEST_CONTROL).  Channel n's FIFO Q bus drives its
+  # own R-2R ladder directly; the AUDIO CPLD holds /R low and pulses it to
+  # advance at the channel's rate, AUDIO_STEP_HZ / (PERIOD + 1) with
+  # AUDIO_STEP_HZ = the pixel clock / AUDIO_STEP_CLOCKS; PERIOD
+  # AUDIO_PERIOD_TICK is the 15,734.375 Hz tick.  Pitch is rate over table
+  # length; the 68000 chooses both.  VOLUME (6 bits) is a duty cycle,
+  # VOLUME/64 of every 512-clock frame, applied by a 74HC4066 switch
+  # between the ladder and its side's summing node (channels 0,1 left,
+  # 2,3 right); the gate is off while the FIFO is empty and during the
+  # advance clock.  Control records are two bytes, {register, value}:
+  # AUDIO_REG_PERIOD + n and AUDIO_REG_VOLUME + n.  Samples are offset
+  # binary (AUDIO_SILENCE = midscale).  Set PERIOD before depositing: at
+  # reset PERIOD is 0 and a channel advances every step.  A write to a full
+  # FIFO is dropped, a pop of an empty one is silent; the display-list
+  # author schedules deposits against the rates (audio/scheduler.h is the
+  # reference policy; the chip's laws are audio/audio_chip.h).  Rev 1 keeps
+  # the PORTS pop path (AUDIO_CONTROL, AUDIO_STATUS) and the CD4049s.
   AUDIO:
-    part: "Z80B 6 MHz + 27C128 program/table ROM + 6264 8Kx8 RAM + 2x IDT7200 (7201 drops in) + 74HC138/74HC139 decode + 4.7k data-bus pull-up pack + 2x 74HC574 DAC latches + 2x 8-bit R2R DAC + LM358 buffer + 3x LM386; 12-pin debug header"
-    description: "Z80 sound processor with wavetable and PCM voices in its own RAM, driven only by ENGINE AUDIO_FIFO_W record deposits, one stereo pair per AUDIO_TICK"
+    part: "ATF1508AS + 5x IDT7200 (byte wide) + 74HC138 + 4x 4610X-R2R-103LF + 74HC4066 + LM358 summers + 3x LM386"
+    description: "Four DMA-fed sample channels with period counters and duty-cycle volume, driven only by ENGINE AUDIO_FIFO_W deposits"
 
 constants:
   CF_STATUS_BSY:   0x80
@@ -866,32 +873,22 @@ constants:
   CF_DH_LBA:            0xE0
   PS2_RX_QUEUE_SIZE:    64
 
-  # Audio FIFO geometry (2x IDT7200, 256 x 9, ganged 16-bit): 256 records;
-  # as inline PCM that is 16.3 ms at one pair per tick.  Deposits are
-  # sized and placed against this and the Z80's drain rates.
+  # AUDIO: five byte-wide 7200s (256 x 9), the tick, and the chip's laws
+  # (audio/audio_chip.h).  Sample rate of a channel = pixel clock /
+  # AUDIO_STEP_CLOCKS / (PERIOD + 1).
   AUDIO_FIFO_DEPTH:          256
-  AUDIO_SAMPLES_PER_SECOND:  15734   # PIXEL AUDIO_TICK falling edges: every second 31.469 kHz line
+  AUDIO_SAMPLES_PER_SECOND:  15734   # PIXEL AUDIO_TICK falling edges: every second 31.469 kHz line; PERIOD 99
   PADDLE_TICKS_PER_SECOND:   15734   # PIXEL PADDLE_TICK falling edges: same
-
-  # AUDIO record types.  A record is one 16-bit FIFO word; the Z80 reads
-  # the high byte first.  High byte >= 0x80: SET {1, addr[6:0], value[7:0]}
-  # into the Z80's 128-byte voice window (AUDIO_VOICE_BYTES per voice);
-  # < 0x40: WAIT {00, ticks[13:0]}; 0x40..0x4F: a control record whose low
-  # byte and following words are per sound/audio_records.h.  An empty
-  # FIFO reads back AUDIO_REC_EMPTY, so SET address AUDIO_SET_ADDR_RESERVED
-  # is illegal.
-  AUDIO_REC_SET_FLAG:        0x80
-  AUDIO_REC_SAMPLES:         0x40   # low byte {repeat, n[6:0]}; n words of {L, R} follow
-  AUDIO_REC_LOAD:            0x41   # low byte n; then dest address, n words, 16-bit sum
-  AUDIO_REC_JUMP:            0x42   # then entry address
-  AUDIO_REC_VOICE:           0x43   # low byte voice; then table base, table length
-  AUDIO_REC_RESET:           0x44
-  AUDIO_REC_EMPTY:           0xFF
-  AUDIO_SET_ADDR_RESERVED:   0x7F
-  AUDIO_SET_WINDOW:          128
-  AUDIO_VOICE_BYTES:         8
-  AUDIO_SAMPLES_MAX:         127
-  AUDIO_WAIT_MAX:            0x3FFF
+  AUDIO_CHANNELS:            4
+  AUDIO_STEP_CLOCKS:         16      # period counters step every 16 pixel clocks (1,573,437.5 Hz)
+  AUDIO_PERIOD_TICK:         99      # PERIOD for exactly AUDIO_SAMPLES_PER_SECOND
+  AUDIO_PERIOD_MAX:          255
+  AUDIO_VOLUME_MAX:          63      # of 64; the frame is 512 pixel clocks
+  AUDIO_SILENCE:             0x80    # offset binary midscale
+  AUDIO_WORD_DEST_SHIFT:     8       # deposited word = destination << 8 | byte
+  AUDIO_DEST_CONTROL:        4       # destinations 0..3 are the channels
+  AUDIO_REG_PERIOD:          0       # control record register = AUDIO_REG_PERIOD + channel
+  AUDIO_REG_VOLUME:          4       # or AUDIO_REG_VOLUME + channel (low 6 bits)
 
   # DUART OP/IP masks (see the DUART pin wiring).  OP pins drive the
   # COMPLEMENT of their OPR bits; RTC_SDA_DRIVE inverts again through the
@@ -919,7 +916,8 @@ constants:
   # in vidcmd-spec.md; implementations in cpld/{engine,compositor,pixel}.
 
   # ENGINE descriptor word0 one-hot deposit strobe mask bits; each drives the
-  # ENGINE pin of the same name.  SPARE goes to a header, not to a FIFO.
+  # ENGINE pin of the same name.  AUDIO_FIFO_W enables the AUDIO decoder
+  # (the word's D[10:8] choose the FIFO); SPARE goes to a header.
   ENGINE_SIGNAL_PIXELS_FIFO_W:  0x01
   ENGINE_SIGNAL_VIDCMD_FIFO_W:  0x02
   ENGINE_SIGNAL_AUDIO_FIFO_W:   0x04
@@ -1055,7 +1053,9 @@ issues:
   - "VIDCMD SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  Swapping the target NUMBERS to match the colour numbers is a wire-contract change, not yet decided."
   - "Only one raster mode (640x480 in 800x525 @ 60) is specified.  Alternate rasters (the DUART OP4..OP7 selector into PIXEL) have no video_timing entry and no consumer contract."
   - "The PIXELS and VIDCMD stream FIFOs (ENGINE -> PIXEL / COMPOSITOR) are described in comments and constants, not as first-class entries."
-  - "Audio package B is pending: PORTS still carries the rev-1 AUDIO_CONTROL/AUDIO_STATUS pop logic and the emulator, apps/smurf and firmware still use it; rev 2 retires them into the AUDIO Z80 sound processor (PORTS re-fit releasing those pins, emulator Z80 model running the ROM image, smurf and firmware migration to record deposits)."
+  - "Audio package B is pending: PORTS still carries the rev-1 AUDIO_CONTROL/AUDIO_STATUS pop logic and the emulator, apps/smurf and firmware still use it; rev 2 retires them into the AUDIO chip (PORTS re-fit releasing those pins, emulator model of AUDIO behind the ENGINE deposit, smurf and firmware migration to channel deposits)."
+  - "D[7:0] carries nine 7200 data-pin loads in rev 2 (four video, five audio) against the six the 2026-08 electrical review accepted; re-check the loading or put the five audio FIFOs behind a transceiver."
+  - "The AUDIO analog stage (ladders straight off the 7200 Q pins, 74HC4066 duty-cycle gates into a 2.5 V-biased inverting summer) has not been breadboarded; switch on-resistance and switching time at low volumes are the open risk."
   - "BERR in 0x400000-0x7FFFFF, 0xC00000-0xCFFFFF and 0xE00000-0xEFFFFF is by DTACK timeout (no decode); state whether that is the intended contract."
   - "BERR in unassigned IO spaces is unspecified."
   - "Writes to bank 1 during ROM overlay are unspecified."
@@ -1084,21 +1084,23 @@ interfaces:
     Layout: ladders + shunts at the DE-15, not at the buffers; 12 DAC traces
     short and roughly matched; solid ground return from shunts to shell.
   - |
-    Stream FIFO parts: no transceivers anywhere on D[15:0] -- the six
-    7200 data-pin loads sit directly on the bus alongside CPU, 8 RAM,
-    2 ROM, 3 CPLDs, DUART and CF.
-    All three streams use 2x IDT7200 (256x9) -- PIXELS ganged 16-bit
+    Stream FIFO parts: no transceivers anywhere on D[15:0] -- the 7200
+    data-pin loads sit directly on the bus alongside CPU, 8 RAM, 2 ROM,
+    3 CPLDs, DUART and CF (nine on D[7:0], four on D[15:8]; see issues).
+    Video streams use 2x IDT7200 (256x9) each -- PIXELS ganged 16-bit
     (PIXELS_Q[15:0], ONE /RE from PIXEL driving both parts; PIXELS_Q[15:8] is
-    the part on D[15:8]), VIDCMD ganged 16-bit (/RE from COMPOSITOR), AUDIO
-    ganged 16-bit on the Z80 sound processor's data bus (one /R per chip
-    from the Z80's port decode, the D[15:8] chip read first).  Each pair's
-    /W pins are one ENGINE deposit strobe: nPIXELS_FIFO_W, nVIDCMD_FIFO_W,
-    nAUDIO_FIFO_W (ENGINE pins per engine.v); data pins on D[15:0].
-    PIXELS and VIDCMD /RS from PIXEL nRS; AUDIO /RS from the system ~RESET,
-    AUDIO /EF and /HF to the debug header only (rev 1: AUDIO /R, /RS and
-    /EF at PORTS, one chip per channel).  The AUDIO footprint also takes a
-    7201 (512x9).  XI/XO cascade is an unpopulated-footprint option if
-    depth is ever needed.
+    the part on D[15:8]), VIDCMD ganged 16-bit (/RE from COMPOSITOR); each
+    pair's /W pins are one ENGINE deposit strobe, nPIXELS_FIFO_W or
+    nVIDCMD_FIFO_W, data pins on D[15:0], /RS from PIXEL nRS.
+    AUDIO uses five byte-wide IDT7200 on D[7:0]: channels 0..3 and the
+    control FIFO.  Their /W pins are the 74HC138's outputs Y0..Y4 (G
+    enables from nAUDIO_FIFO_W, A[2:0] from D[10:8]; Y5..Y7 unused); their
+    /R and /EF pins go to the AUDIO CPLD (/R held low, pulsed high to
+    advance); /RS from the system ~RESET.  Channel n's Q[7:0] drives its
+    R-2R ladder; the control FIFO's Q[7:0] goes to the AUDIO CPLD.  /HF
+    unconnected.  (Rev 1: one chip per channel, /R, /RS and /EF at PORTS.)
+    XI/XO cascade is an unpopulated-footprint option if depth is ever
+    needed.
   - |
     FIFO control strobes: every 7200 /RE and /W line (PIXELS, VIDCMD,
     AUDIO) has a series axial footprint at its driver, stuffed 0R; 33-47R
@@ -1191,15 +1193,19 @@ interfaces:
     oscillator (25.175 MHz can) -> GCLK1 of PIXEL and COMPOSITOR.
     The DUART runs its own 3.6864 MHz crystal on X1/X2.
   - |
-    Audio output stage, per channel (x2, L and R identical): 74HC574 DAC
-    latch Q[7:0], written by the Z80 sound processor with bit 7 already
-    inverted (samples are two's complement inside the Z80 and offset
-    binary on the latch, so 0x00 = silence = midscale; rev 1 instead fed
-    the ladder from the 7200's Q through a CD4049 on Q7) -> 4610X-R2R-103LF
-    10k R2R network -> 10k
-    to GND (2:1 divider with the ladder: 0-2.5 V, 5k source) -> 3.3 nF
-    to GND (single pole ~9.7 kHz) -> LM358 half as unity buffer -> 4.7k
-    to GND at the op-amp output -> 100 uF AC coupling -> the LINE node.
+    Audio output stage, per side (x2, L and R identical; channels 0,1 are
+    left, 2,3 right): each channel's 7200 Q[7:0] -> 4610X-R2R-103LF 10k
+    R-2R network (offset binary, 0x80 = 2.5 V = silence; no inverters) ->
+    one 74HC4066 switch, control = AUDIO GATE[n] -> the side's summing
+    node.  The node is the inverting input of an LM358 half whose
+    non-inverting input sits at 2.5 V (10k/10k divider + 10 uF, shared by
+    both sides), so a ladder at midscale injects no current whether its
+    switch is open or closed (no DC step with volume) and the two channels
+    add without interacting.  Feedback 2k in parallel with 8.2 nF (single
+    pole ~9.7 kHz, which also averages the 49 kHz gate pattern): full
+    scale per channel +/-0.625 V, both +/-1.25 V about 2.5 V.  Then 4.7k
+    to GND at the op-amp output (class-A bias) -> 100 uF AC coupling ->
+    the LINE node.
     Three consumers hang on LINE, so the level there is knob-independent:
     (1) LINE OUT: LINE -> 100R series -> RCA jack (L and R, a pair).
     Fixed level, always on: 2.5 Vpp max ~= 0.88 Vrms at full scale.
@@ -1217,36 +1223,28 @@ interfaces:
     250 uF -> 8 ohm speaker (~1.3 Vrms, ~200 mW).  Inserting a plug
     opens both contacts and mutes the speaker.  Behaviour: RCA line out
     ignores the knob; the knob governs headphones and speaker together;
-    headphones mute the speaker.  Software mute is an AUDIO RESET
-    record (the Z80 parks both DACs at midscale; rev 1: AUDIO_CONTROL.ENABLE)
-    and silences all three.  Ladder, divider,
-    filter and buffer placed at the RCAs; headphone amps at the 3.5 mm
-    jack; pot and speaker are panel/case parts.  BOM: 2x
-    4610X-R2R-103LF, 2x 74HC574 (the DAC latches, counted under the sound
-    processor), 1x LM358, 3x LM386, dual 10kA pot + knob, 8-ohm speaker, 2x RCA
-    jack, 1x switched 3.5 mm stereo jack; per channel 10k + 4.7k + 100R
-    + 3.3 nF + 100 uF (DAC/buffer/line), 10k + 1k (pad), 10R + 47 nF +
-    250 uF (headphone amp); speaker: 2x 47k sum, 1k, 10R + 47 nF,
-    250 uF.
+    headphones mute the speaker.  Software mute is VOLUME 0 on all four
+    channels (rev 1: AUDIO_CONTROL.ENABLE) and silences all three.
+    Ladders, switches and summers placed at the FIFOs/RCAs; headphone
+    amps at the 3.5 mm jack; pot and speaker are panel/case parts.  BOM:
+    4x 4610X-R2R-103LF, 1x 74HC4066, 1x LM358, 3x LM386, dual 10kA pot +
+    knob, 8-ohm speaker, 2x RCA jack, 1x switched 3.5 mm stereo jack;
+    bias 2x 10k + 10 uF; per side 2k + 8.2 nF + 4.7k + 100R + 100 uF
+    (summer/line), 10k + 1k (pad), 10R + 47 nF + 250 uF (headphone amp);
+    speaker: 2x 47k sum, 1k, 10R + 47 nF, 250 uF.
   - |
-    Z80 sound processor (AUDIO): Z80B on its own 6.000 MHz can, 27C128 at
-    0x0000-0x3FFF, 6264 at 0x8000 (mirrored above), ROM/RAM select from a
-    74HC139 half on /MREQ and A15.  I/O from a 74HC138 on /IORQ and
-    A4..A2, qualified by /RD or /WR: FIFO high-byte /R (port 0xFF, so the
-    operand fetch before an IN leaves the bus at all ones), FIFO low-byte
-    /R, DAC L latch clock, DAC R latch clock, DEBUG write select; three
-    spare.  The two 7200 Q buses, the ROM and the RAM share the Z80 data
-    bus with a 4.7k pull-up pack (an empty FIFO read returns 0xFF within
-    about 120 ns; 1k would exceed the EPROM's 2 mA sink).  AUDIO_TICK ->
-    /NMI (falling edge); the NMI vector is in ROM, so the ROM's tick entry
-    runs first even under an uploaded program.  No /INT, no /WAIT, no bus
-    request; nothing on the 68000 side reads the Z80.  Debug header, 0.1
-    in, 12 pins: /WR, /IORQ, DEBUG select, D0..D7, GND; a probe (Pico 2 or
-    a logic analyzer) decodes OUT (DEBUG),A bytes as a console.  /EF and
-    /HF of the FIFO pair go to two test pads.  Reset: system ~RESET only.
-    BOM: Z80B, 27C128 (a W27C512 stands in during development), 6264,
-    74HC138, 74HC139, 2x 74HC574, 8x 4.7k SIP, 6.000 MHz can, 12-pin
-    header.
+    AUDIO chip (ATF1508AS PLCC84, cpld/audio/audio.v): CLK from the
+    25.175 MHz pixel oscillator (a fourth GCLK1 load alongside PIXEL and
+    COMPOSITOR), nRESET from the system ~RESET.  Inputs: the control
+    FIFO's Q[7:0] and /EF, the four sample FIFOs' /EF.  Outputs: the five
+    /R lines (held low; a one-clock high pulse advances; high through
+    reset because the 7200 wants /R inactive while /RS is low) and
+    GATE[3:0] to the 74HC4066 controls.  No 68000 bus, no AUDIO_TICK
+    input, nothing read back.  Decoder: 74HC138, G2A/G2B from
+    nAUDIO_FIFO_W (G1 high), A0..A2 from D[8], D[9], D[10]; ENGINE's
+    SETTLE cycle puts the word on the bus before the strobe, so the
+    select is stable when the enable falls.  Test pads: the five /EF and
+    AUDIO_TICK.  BOM: ATF1508AS, 74HC138.
   - |
     RS-232 level stage: both DUART channels are real RS-232 at the rear
     panel; the TTL bench headers remain.  One MAX232 per channel (its 2

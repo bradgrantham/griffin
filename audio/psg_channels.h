@@ -43,7 +43,7 @@ inline constexpr int      NOISE_CHANNEL   = 3;
 inline constexpr uint32_t NOISE_TABLE_CAP = 65536;
 inline constexpr uint16_t MAX_TONE_LENGTH = 512;
 inline constexpr uint8_t  PREFERRED_MIN_PERIOD = 49;     // rates up to 31.5 kHz
-inline constexpr uint8_t  ABSOLUTE_MIN_PERIOD  = 12;     // 121 kHz, 8 words per line
+inline constexpr uint8_t  ABSOLUTE_MIN_PERIOD  = 12;     // 121 kHz, 3.85 words per line
 inline constexpr double   TONE_CENTS_GOAL = 1.0;
 
 struct ToneChoice

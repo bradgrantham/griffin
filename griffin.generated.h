@@ -255,7 +255,7 @@ static constexpr uint32_t PORTS_PS2_MOUSE_CTRL_DATA_SHIFT = 1U;
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA = 0xFC0015UL;  // READ: Assembled PS/2 mouse data byte; valid while RX_READY is set
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_MASK  = 0xFFU;  // bits 7:0
 static constexpr uint32_t PORTS_PS2_MOUSE_RX_DATA_SHIFT = 0U;
-static constexpr uint32_t PORTS_AUDIO_CONTROL = 0xFC001FUL;  // WRITE: Rev 1 only audio FIFO pop and reset control, retired in rev 2 where the AUDIO Z80 sound processor reads the FIFO
+static constexpr uint32_t PORTS_AUDIO_CONTROL = 0xFC001FUL;  // WRITE: Rev 1 only audio FIFO pop and reset control, retired in rev 2 where the AUDIO chip pops its own FIFOs
 static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_MASK  = 0x01U;  // bits 0:0
 static constexpr uint32_t PORTS_AUDIO_CONTROL_ENABLE_SHIFT = 0U;
 static constexpr uint32_t PORTS_AUDIO_CONTROL_RESET_MASK  = 0x02U;  // bits 1:1
@@ -375,7 +375,7 @@ static constexpr uint32_t DUART_STOPCC = 0xF8001FUL;  // READ: Stop counter/time
 static constexpr uint32_t DUART_OPR_CLR = 0xF8001FUL;  // WRITE: Output port bit reset (clears OPR bits; those OP pins go HIGH)
 
 // ------------------------------------------------------------
-// AUDIO: Z80 sound processor with wavetable and PCM voices in its own RAM, driven only by ENGINE AUDIO_FIFO_W record deposits, one stereo pair per AUDIO_TICK
+// AUDIO: Four DMA-fed sample channels with period counters and duty-cycle volume, driven only by ENGINE AUDIO_FIFO_W deposits
 
 // RAM region — total of all RAM banks
 static constexpr uint32_t RAM_TOTAL_SIZE = 0x400000UL;
@@ -398,18 +398,16 @@ static constexpr uint32_t PS2_RX_QUEUE_SIZE = 0x40U;
 static constexpr uint32_t AUDIO_FIFO_DEPTH = 0x100U;
 static constexpr uint32_t AUDIO_SAMPLES_PER_SECOND = 0x3D76U;
 static constexpr uint32_t PADDLE_TICKS_PER_SECOND = 0x3D76U;
-static constexpr uint32_t AUDIO_REC_SET_FLAG = 0x80U;
-static constexpr uint32_t AUDIO_REC_SAMPLES = 0x40U;
-static constexpr uint32_t AUDIO_REC_LOAD = 0x41U;
-static constexpr uint32_t AUDIO_REC_JUMP = 0x42U;
-static constexpr uint32_t AUDIO_REC_VOICE = 0x43U;
-static constexpr uint32_t AUDIO_REC_RESET = 0x44U;
-static constexpr uint32_t AUDIO_REC_EMPTY = 0xFFU;
-static constexpr uint32_t AUDIO_SET_ADDR_RESERVED = 0x7FU;
-static constexpr uint32_t AUDIO_SET_WINDOW = 0x80U;
-static constexpr uint32_t AUDIO_VOICE_BYTES = 0x08U;
-static constexpr uint32_t AUDIO_SAMPLES_MAX = 0x7FU;
-static constexpr uint32_t AUDIO_WAIT_MAX = 0x3FFFU;
+static constexpr uint32_t AUDIO_CHANNELS = 0x04U;
+static constexpr uint32_t AUDIO_STEP_CLOCKS = 0x10U;
+static constexpr uint32_t AUDIO_PERIOD_TICK = 0x63U;
+static constexpr uint32_t AUDIO_PERIOD_MAX = 0xFFU;
+static constexpr uint32_t AUDIO_VOLUME_MAX = 0x3FU;
+static constexpr uint32_t AUDIO_SILENCE = 0x80U;
+static constexpr uint32_t AUDIO_WORD_DEST_SHIFT = 0x08U;
+static constexpr uint32_t AUDIO_DEST_CONTROL = 0x04U;
+static constexpr uint32_t AUDIO_REG_PERIOD = 0x00U;
+static constexpr uint32_t AUDIO_REG_VOLUME = 0x04U;
 static constexpr uint32_t DUART_OP_RTC_SCL = 0x04U;
 static constexpr uint32_t DUART_OP_RTC_SDA_DRIVE = 0x08U;
 static constexpr uint32_t DUART_IP_RTC_SDA = 0x04U;

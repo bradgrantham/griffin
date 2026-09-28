@@ -29,30 +29,28 @@
 //   0100 0101 ---- ----   DUMP       the window (128), lfsr (2), tick vector
 //                                    (2) and status (1) bytes to the DEBUG port.
 //
-// The Griffin:: constants come from griffin.yml.  Those that the second form
-// retired (AUDIO_REC_SAMPLES, AUDIO_REC_VOICE, AUDIO_REC_EMPTY,
-// AUDIO_SET_ADDR_RESERVED, AUDIO_SAMPLES_MAX) are not used here; CONFIGURE
-// takes SAMPLES' old type code and the YAML follows in the protocol package.
+// RETIRED 2026-09-27: the Z80 sound processor gave way to the AUDIO chip
+// (griffin.log).  The record constants below were griffin.yml's until then;
+// they live here now so this record of the experiment still builds.
 
 #pragma once
 
 #include <cstdint>
 
-#include "../griffin.generated.h"
 
 namespace griffin::audio
 {
 
-inline constexpr uint16_t SET_FLAG       = static_cast<uint16_t>(Griffin::AUDIO_REC_SET_FLAG);
+inline constexpr uint16_t SET_FLAG       = 0x80;
 inline constexpr uint16_t CTRL_FLAG      = 0x40;
 inline constexpr uint8_t  REC_CONFIGURE  = 0x40;
-inline constexpr uint8_t  REC_LOAD       = static_cast<uint8_t>(Griffin::AUDIO_REC_LOAD);
-inline constexpr uint8_t  REC_JUMP       = static_cast<uint8_t>(Griffin::AUDIO_REC_JUMP);
-inline constexpr uint8_t  REC_RESET      = static_cast<uint8_t>(Griffin::AUDIO_REC_RESET);
+inline constexpr uint8_t  REC_LOAD       = 0x41;
+inline constexpr uint8_t  REC_JUMP       = 0x42;
+inline constexpr uint8_t  REC_RESET      = 0x44;
 inline constexpr uint8_t  REC_DUMP       = 0x45;
-inline constexpr int      SET_WINDOW     = static_cast<int>(Griffin::AUDIO_SET_WINDOW);
-inline constexpr int      VOICE_BYTES    = static_cast<int>(Griffin::AUDIO_VOICE_BYTES);
-inline constexpr uint16_t WAIT_MAX       = static_cast<uint16_t>(Griffin::AUDIO_WAIT_MAX);
+inline constexpr int      SET_WINDOW     = 128;
+inline constexpr int      VOICE_BYTES    = 8;
+inline constexpr uint16_t WAIT_MAX       = 0x3FFF;
 inline constexpr int      MAX_VOICES     = 14;
 
 inline constexpr uint8_t CFG_PCM   = 0x01;
@@ -65,7 +63,6 @@ inline constexpr uint8_t ST_SAMPLES_NOT_EMPTY = 0x04;
 inline constexpr uint8_t ST_SAMPLES_HALF_FULL = 0x08;
 
 static_assert(SET_FLAG == 0x80 && CTRL_FLAG == 0x40);
-static_assert(REC_CONFIGURE == static_cast<uint8_t>(Griffin::AUDIO_REC_SAMPLES), "CONFIGURE takes SAMPLES' code until griffin.yml is updated");
 static_assert(REC_LOAD == 0x41 && REC_JUMP == 0x42 && REC_RESET == 0x44 && REC_DUMP == 0x45);
 static_assert(SET_WINDOW == 128 && VOICE_BYTES == 8 && WAIT_MAX == 0x3FFF);
 static_assert((REC_DUMP & 0xC0) == CTRL_FLAG, "control records live in 0x40 .. 0x7F");
