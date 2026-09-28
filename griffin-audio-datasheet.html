@@ -196,7 +196,7 @@
     </div>
     <div class="docmeta">
       REV 2 PROPOSAL &middot; DRAFT 2026-09-27<br>
-      branch indexed-pixel; rev-1 audio = SAMPLES pair popped by PORTS<br>
+      branch indexed-pixel<br>
       sources: cpld/audio/audio.v, audio/audio_chip.h (the laws),<br>
       audio/scheduler.h, audio/psg_channels.h, audio/README.md,<br>
       cpld/audio/audio_tb.v, griffin.log 2026-09-27 (Paula form, step 2, step 4)
@@ -230,7 +230,7 @@
     </div>
   </div>
 
-  <p class="banner"><b>Proposal revision.</b> This sheet describes the Paula form adopted on 2026-09-27 after the Z80 sound processor failed its tick budget twice. The chip fits, its host model is the executable spec, and the RTL passes a testbench against the model&rsquo;s vectors; nothing has run on hardware, and the analog stage has not been breadboarded. griffin.yml is being rewritten to match and, at the time of writing, still describes the Z80 form. Rev-1 boards keep their PORTS-popped SAMPLES pair. <span class="st prelim">PRELIMINARY</span> marks what the model and testbench pin; <span class="st adv">ADVANCE</span> marks recipes not yet run; <span class="st open">OPEN</span> marks a question no gate has answered.</p>
+  <p class="banner"><b>Proposal revision.</b> This sheet describes the Paula form adopted on 2026-09-27. The chip fits, its host model is the executable spec, and the RTL passes a testbench against the model&rsquo;s vectors; nothing has run on hardware, and the analog stage has not been breadboarded. griffin.yml matches this sheet. <span class="st prelim">PRELIMINARY</span> marks what the model and testbench pin; <span class="st adv">ADVANCE</span> marks recipes not yet run; <span class="st open">OPEN</span> marks a question no gate has answered.</p>
 
   <section>
     <div class="secbar"><span>General Description</span><span class="no">1</span></div>
@@ -278,7 +278,7 @@
       <tr><td>Channel sample rate</td><td class="num">1,573,437.5 / (P + 1)</td><td>P = PERIOD, 8 bits; 9-bit periods do not fit the chip</td></tr>
       <tr><td>Volume frame</td><td class="num">49,169.9 Hz</td><td>512 clocks, 64 ticks of 8 clocks; switching residue lands at multiples of this</td></tr>
       <tr><td>Volume</td><td class="num">6 bits, 0..63</td><td>contribution = (sample &minus; 128) &times; VOLUME / 64; 63 is the loudest, 0 is off</td></tr>
-      <tr><td>Sample format</td><td class="num">8-bit offset binary</td><td>0x80 = midscale. Rev-1 tables are two&rsquo;s complement and need bit 7 flipped</td></tr>
+      <tr><td>Sample format</td><td class="num">8-bit offset binary</td><td>0x80 = midscale</td></tr>
       <tr><td>FIFO depth</td><td class="num">256 bytes each</td><td>five FIFOs; a write when full is dropped, a pop when empty is silent</td></tr>
       <tr><td>Deposit word</td><td class="num mono">{dest[10:8], byte[7:0]}</td><td>dest 0..3 = sample channel, 4 = control FIFO</td></tr>
       <tr><td>Control record</td><td class="num">2 bytes</td><td>{register, value}; 4 clocks per byte, so 8 per record</td></tr>
@@ -377,7 +377,7 @@
       both sides. A ladder at midscale (0x80 = 2.5 V) injects zero current whether its switch is closed or open, so volume changes
       cause no DC step, and each channel&rsquo;s contribution is independent of the other switch&rsquo;s state, which a passive sum would
       not give. Feedback is 2k in parallel with 8.2 nF (the 9.7 kHz corner, which averages the switching), then 4.7k to GND,
-      100 &micro;F coupling and LINE as before. Full scale is &plusmn;0.625 V per channel at the summer, &plusmn;1.25 V for two,
+      100 &micro;F coupling to LINE. Full scale is &plusmn;0.625 V per channel at the summer, &plusmn;1.25 V for two,
       about 2.5 V. There is no clamp.</p>
     <p>
       This stage has not been breadboarded. The open risk is the 4066&rsquo;s on-resistance and switching time at low volumes, where
@@ -496,23 +496,16 @@
       <tr><td>Host model and tests (audio/audio_chip.h, T1..T6)</td><td>rate-multiplier on-count = VOLUME, disjoint windows; closed form = chip over 200k random lines; gate off when empty; mirror-fed exact; PERIOD alignment within a line; every audible PSG period mapped</td><td class="mono">PASS 2026-09-27</td></tr>
       <tr><td>RTL testbench against the model (cpld/audio/audio_tb.v, <code>make -C cpld audio-sim</code>)</td><td>1,200 random lines: 5,190 pops at the right step and none elsewhere, registers after every line, gate law on 960,000 clocks, FIFO protocol; negative controls 1..5 all fail</td><td class="mono">PASS 2026-09-27</td></tr>
       <tr><td>Scheduler and PSG driver, Smurf A/B</td><td>&sect;5 numbers; by ear judged much better than the reference path by the owner</td><td class="mono">PASS 2026-09-27</td></tr>
-      <tr><td>griffin.yml for the Paula form (deposit tag, registers, parts)</td><td>being written; still describes the Z80 form</td><td class="mono">IN PROGRESS</td></tr>
+      <tr><td>griffin.yml for the Paula form (deposit tag, registers, parts)</td><td>written; matches this sheet</td><td class="mono">DONE 2026-09-27</td></tr>
       <tr><td>Emulator AUDIO model</td><td>links audio_chip.cpp, with FIFO overflow and underflow assertions</td><td class="mono">TO DO</td></tr>
       <tr><td>Analog PWM stage on a breadboard</td><td>74HC4066 on-resistance and switching time at low VOLUME; bias and DC behaviour across volume changes</td><td class="mono">OPEN</td></tr>
       <tr><td>Rev-2 schematic and //PIN block</td><td>not started</td><td class="mono">TO DO</td></tr>
-      <tr><td>Rev-1 SAMPLES path</td><td>rev-1 hardware; PORTS pop, DMA-only fill, two&rsquo;s complement DACs</td><td class="mono">PRODUCTION rev 1</td></tr>
       <tr><td>Multi-cycle tables for high tones; the 21 low-similarity fields</td><td>not yet tried / not characterised</td><td class="mono">OPEN</td></tr>
     </table></div>
-    <p>
-      <b>Retired forms.</b> The CPLD MIXER, voices time-shared through an SRAM behind an ATF1508, filled the chip at 128/128 with
-      no LFSR (griffin.log 2026-09-26). The Z80 sound processor matched its law bit for bit, but its second ROM needed 816 T per
-      tick against 381 at 6 MHz and 508 at 8 MHz (griffin.log 2026-09-26 and 2026-09-27). Both stay on disk as records:
-      cpld/mixer (untracked) and sound/.
-    </p>
   </section>
 
   <div class="footer">
-    <span>Griffin audio, rev 2 proposal. Working design record; normative sources are audio.v, audio/audio_chip.h and, when landed, griffin.yml AUDIO.</span>
+    <span>Griffin audio, rev 2 proposal. Working design record; normative sources are audio.v, audio/audio_chip.h and griffin.yml AUDIO.</span>
     <span>DRAFT &middot; 2026-09-27</span>
   </div>
 
