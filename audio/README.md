@@ -75,6 +75,17 @@ make ab AB_FLAGS="--burst 4 --margin 3 --seconds 20"
   at a lag of a few ticks; bit identity is not a goal.  The WAV is the gate,
   by ear, as gate 1 was.
 
+## Changes after the first run
+
+* 2026-09-27, later: samples are two's complement again (0x00 = silence; a
+  74HC04 inverts bit 7 into the ladder), and the chip re-phases its by-16
+  divider from PIXEL's HBLANK every line, so steps are raster-locked (a
+  per-step pulse fed in on a pin cost six cells or failed grouping;
+  griffin.log).  The model's laws are unchanged, it always assumed that
+  alignment; the A/B numbers below reproduce.  Deposits go to the FIFO an
+  ENGINE descriptor names by its destination code; the word's high byte is
+  ignored.
+
 ## Measured (2026-09-27, first full run after the line-length correction)
 
 `make test`: T1..T6 pass.  T4 max fill: PERIOD 99 -> 7, 49 -> 9, 255 -> 4,

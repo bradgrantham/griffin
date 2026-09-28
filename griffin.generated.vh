@@ -319,7 +319,7 @@
 `define DUART_STOPCC 24'hF8001F  // READ
 `define DUART_OPR_CLR 24'hF8001F  // WRITE
 
-// AUDIO: Four DMA-fed sample channels with period counters and duty-cycle volume, driven only by ENGINE AUDIO_FIFO_W deposits
+// AUDIO: Four DMA-fed sample channels with period counters and duty-cycle volume, driven only by ENGINE deposits
 
 // RAM region — total of all RAM banks
 `define RAM_TOTAL_SIZE 23'h400000
@@ -343,9 +343,7 @@
 `define AUDIO_PERIOD_TICK 8'h63
 `define AUDIO_PERIOD_MAX 8'hFF
 `define AUDIO_VOLUME_MAX 8'h3F
-`define AUDIO_SILENCE 8'h80
-`define AUDIO_WORD_DEST_SHIFT 8'h08
-`define AUDIO_DEST_CONTROL 8'h04
+`define AUDIO_SILENCE 8'h00
 `define AUDIO_REG_PERIOD 8'h00
 `define AUDIO_REG_VOLUME 8'h04
 `define DUART_OP_RTC_SCL 8'h04
@@ -358,10 +356,14 @@
 `define PS2_TX_DATA_PARITY 8'h02
 `define ENGINE_WORDS_PER_BURST 8'h14
 `define VSYNC_IRQ_LEVEL 8'h06
-`define ENGINE_SIGNAL_PIXELS_FIFO_W 8'h01
-`define ENGINE_SIGNAL_VIDCMD_FIFO_W 8'h02
-`define ENGINE_SIGNAL_AUDIO_FIFO_W 8'h04
-`define ENGINE_SIGNAL_SPARE 8'h08
+`define ENGINE_DEST_NONE 8'h00
+`define ENGINE_DEST_PIXELS_FIFO_W 8'h01
+`define ENGINE_DEST_VIDCMD_FIFO_W 8'h02
+`define ENGINE_DEST_AUDCTL_FIFO_W 8'h03
+`define ENGINE_DEST_SAMPLES0_FIFO_W 8'h04
+`define ENGINE_DEST_SAMPLES1_FIFO_W 8'h05
+`define ENGINE_DEST_SAMPLES2_FIFO_W 8'h06
+`define ENGINE_DEST_SAMPLES3_FIFO_W 8'h07
 `define VIDCMD_SET_CMP_COLOR1 8'h00
 `define VIDCMD_SET_CMP_COLOR0 8'h01
 `define VIDCMD_SET_PIX_CLUT_INDEX 8'h02

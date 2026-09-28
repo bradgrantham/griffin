@@ -13,10 +13,11 @@
 //   word 0: [15]    wait_hblank  wait for HBLANK rising edge before payload
 //           [14]    stop_after   last entry: assert nENGINE_IRQ and stop
 //           [13:9]  count        payload words, 0-biased (0 = 1, 31 = 32)
-//           [8:4]   reserved
-//           [3:0]   signal mask  one-hot (or multi-cast) deposit strobes:
-//                   0 nPIXELS_FIFO_W, 1 nVIDCMD_FIFO_W, 2 nAUDIO_FIFO_W,
-//                   3 nSIGNAL_SPARE (griffin.yml ENGINE_SIGNAL_*)
+//           [8:3]   reserved
+//           [2:0]   destination code, decoded on chip to one deposit strobe:
+//                   0 none (burns the bus time, no strobe), 1 nPIXELS_FIFO_W,
+//                   2 nVIDCMD_FIFO_W, 3 nAUDCTL_FIFO_W, 4..7 nSAMPLES0..3_FIFO_W
+//                   (griffin.yml ENGINE_DEST_*)
 //   word 1: [15:7]  reserved
 //           [6:0]   src[22:16]
 //   word 2: [15:1]  src[15:1]
@@ -75,13 +76,17 @@ module Edma3
     output reg         nBR,             // pin 79
     output reg         nBGACK,          // pin 77
 
-    // Deposit strobes — one active-low /W per consumer FIFO, driven straight
-    // from the descriptor's mask bit, so no off-chip decoder.  The consumer's
-    // data pins sit on D[15:0].  nSIGNAL_SPARE (mask bit 3) goes to a header.
-    output wire        nPIXELS_FIFO_W,  // mask bit 0
-    output wire        nVIDCMD_FIFO_W,  // mask bit 1
-    output wire        nAUDIO_FIFO_W,   // mask bit 2
-    output wire        nSIGNAL_SPARE,   // mask bit 3
+    // Deposit strobes — one active-low /W per consumer FIFO, decoded on chip
+    // from the descriptor's destination code, so no off-chip decoder.  The
+    // video consumers' data pins sit on D[15:0]; the five audio FIFOs are
+    // byte wide on D[7:0] (the high byte of an audio word is ignored).
+    output wire        nPIXELS_FIFO_W,    // code 1
+    output wire        nVIDCMD_FIFO_W,    // code 2
+    output wire        nAUDCTL_FIFO_W,    // code 3: AUDIO control records
+    output wire        nSAMPLES0_FIFO_W,  // code 4: AUDIO channel 0
+    output wire        nSAMPLES1_FIFO_W,  // code 5
+    output wire        nSAMPLES2_FIFO_W,  // code 6
+    output wire        nSAMPLES3_FIFO_W,  // code 7
 
     // Status wires to GLUE (ENGINE_STATUS register), see header.
     output wire        ENGINE_ACTIVE,   // dma_en
@@ -109,7 +114,7 @@ module Edma3
     reg [14:0] desc_ptr;                // A[15:1] of the current descriptor word
     reg [22:1] src_addr;                // A[22:1] of the current payload word
     reg [4:0]  words_left;              // complemented; all-1s = last word
-    reg [3:0]  signal_mask;             // latched at descriptor word 0
+    reg [2:0]  dest_code;               // latched at descriptor word 0
     reg        deposit;                 // strobe phase, one cycle per word
     reg        wait_hblank;
     reg        stop_after;
@@ -117,13 +122,23 @@ module Edma3
     reg        phase_payload;           // 0 = fetching descriptor, 1 = payload
 
     // Combinational fan-out of one strobe-phase flip-flop through the latched
-    // mask: 4 pin cells plus 1 buried flip-flop, rather than 4 output
-    // flip-flops each carrying the full state decode.
-    wire [3:0] nSIGNAL = ~(signal_mask & {4{deposit}});
-    assign nPIXELS_FIFO_W = nSIGNAL[0];
-    assign nVIDCMD_FIFO_W = nSIGNAL[1];
-    assign nAUDIO_FIFO_W  = nSIGNAL[2];
-    assign nSIGNAL_SPARE  = nSIGNAL[3];
+    // code: one product term per pin cell plus 3 buried flip-flops, rather
+    // than 7 output flip-flops each carrying the full state decode.
+    localparam [2:0] DEST_NONE     = 3'd0;
+    localparam [2:0] DEST_PIXELS   = 3'd1;
+    localparam [2:0] DEST_VIDCMD   = 3'd2;
+    localparam [2:0] DEST_AUDCTL   = 3'd3;
+    localparam [2:0] DEST_SAMPLES0 = 3'd4;
+    localparam [2:0] DEST_SAMPLES1 = 3'd5;
+    localparam [2:0] DEST_SAMPLES2 = 3'd6;
+    localparam [2:0] DEST_SAMPLES3 = 3'd7;
+    assign nPIXELS_FIFO_W   = ~(deposit & (dest_code == DEST_PIXELS));
+    assign nVIDCMD_FIFO_W   = ~(deposit & (dest_code == DEST_VIDCMD));
+    assign nAUDCTL_FIFO_W   = ~(deposit & (dest_code == DEST_AUDCTL));
+    assign nSAMPLES0_FIFO_W = ~(deposit & (dest_code == DEST_SAMPLES0));
+    assign nSAMPLES1_FIFO_W = ~(deposit & (dest_code == DEST_SAMPLES1));
+    assign nSAMPLES2_FIFO_W = ~(deposit & (dest_code == DEST_SAMPLES2));
+    assign nSAMPLES3_FIFO_W = ~(deposit & (dest_code == DEST_SAMPLES3));
 
     // ----------------------------------------------------------------
     // Bus tri-state — drive only when BGACK is asserted (mastering)
@@ -246,7 +261,7 @@ module Edma3
             desc_ptr      <= 15'd0;
             src_addr      <= 22'd0;
             words_left    <= 5'd0;
-            signal_mask   <= 4'd0;
+            dest_code     <= 3'd0;
             wait_hblank   <= 1'b0;
             stop_after    <= 1'b0;
         end
@@ -334,7 +349,7 @@ module Edma3
                             wait_hblank <= D[15];
                             stop_after  <= D[14];
                             words_left  <= ~D[13:9];
-                            signal_mask <= D[3:0];
+                            dest_code   <= D[2:0];
                         end
 
                         2'b01:
@@ -473,80 +488,92 @@ endmodule
 // 8, 6 and the spare strobe on 9; HBLANK on 2; the two GLUE status wires on
 // 80 and 4.  Pins 40, 41, 46 and 81 are released (unconnected).
 //
-//PIN: CHIP "engine" ASSIGNED TO AN PLCC84
 //
 // System
-//PIN: CPUCLK         : 83
-//PIN: nRESET         : 1
-//PIN: nENGINE_SELECT : 84
 //
 // Bus arbitration
-//PIN: nBG            : 76
-//PIN: nBR            : 79
-//PIN: nBGACK         : 77
 //
 // IRQ and status to GLUE
-//PIN: nENGINE_IRQ    : 5
-//PIN: ENGINE_ACTIVE  : 80
-//PIN: ENGINE_WAITING : 4
 //
 // Bus control
-//PIN: R_nW           : 25
-//PIN: nAS            : 21
-//PIN: nUDS           : 22
-//PIN: nLDS           : 64
-//PIN: FC_2           : 35
-//PIN: FC_1           : 34
-//PIN: FC_0           : 33
 //
 // Address bus — EDIF 0-based: A_N = Verilog A[N+1] = bus signal A(N+1)
-//PIN: A_22           : 61
-//PIN: A_21           : 60
-//PIN: A_20           : 28
-//PIN: A_19           : 58
-//PIN: A_18           : 30
-//PIN: A_17           : 31
-//PIN: A_16           : 57
-//PIN: A_15           : 56
-//PIN: A_14           : 74
-//PIN: A_13           : 75
-//PIN: A_12           : 36
-//PIN: A_11           : 29
-//PIN: A_10           : 37
-//PIN: A_9            : 39
-//PIN: A_8            : 44
-//PIN: A_7            : 45
-//PIN: A_6            : 50
-//PIN: A_5            : 52
-//PIN: A_4            : 55
-//PIN: A_3            : 54
-//PIN: A_2            : 51
-//PIN: A_1            : 49
-//PIN: A_0            : 48
 //
 // Data bus (input only — consumers latch directly from the bus)
-//PIN: D_15           : 27
-//PIN: D_14           : 63
-//PIN: D_13           : 24
-//PIN: D_12           : 65
-//PIN: D_11           : 20
-//PIN: D_10           : 67
-//PIN: D_9            : 69
-//PIN: D_8            : 16
-//PIN: D_7            : 70
-//PIN: D_6            : 73
-//PIN: D_5            : 11
-//PIN: D_4            : 12
-//PIN: D_3            : 15
-//PIN: D_2            : 17
-//PIN: D_1            : 68
-//PIN: D_0            : 18
 //
-// Deposit strobes, active low: FIFO /W pins; the spare goes to a header
-//PIN: nPIXELS_FIFO_W : 10
-//PIN: nVIDCMD_FIFO_W : 8
-//PIN: nAUDIO_FIFO_W  : 6
-//PIN: nSIGNAL_SPARE  : 9
+// Deposit strobes, active low: FIFO /W pins
 //
 // Raster pacing from TIMING
-//PIN: HBLANK         : 2
+
+// ---------------------------------------------------------------------------
+// Pinout FROZEN 2026-09-27 from the free fit that added the destination code
+// and the seven strobes (griffin.log); -preassign keep re-verifies it.  Rev 1
+// board pins (four one-hot strobes) are in git before this date.
+// ---------------------------------------------------------------------------
+//PIN: D_13              : 12
+//PIN: D_12              : 11
+//PIN: D_11              : 10
+//PIN: D_10              : 9
+//PIN: D_9               : 8
+//PIN: D_3               : 6
+//PIN: D_5               : 5
+//PIN: D_6               : 4
+//PIN: D_2               : 22
+//PIN: nBG               : 21
+//PIN: D_15              : 20
+//PIN: nENGINE_SELECT    : 18
+//PIN: D_0               : 17
+//PIN: D_7               : 16
+//PIN: D_4               : 15
+//PIN: TDI               : 14
+//PIN: ENGINE_WAITING    : 31
+//PIN: ENGINE_ACTIVE     : 30
+//PIN: nBGACK            : 29
+//PIN: A_22              : 28
+//PIN: R_nW              : 27
+//PIN: FC_2              : 25
+//PIN: nBR               : 24
+//PIN: TMS               : 23
+//PIN: nSAMPLES2_FIFO_W  : 41
+//PIN: nSAMPLES1_FIFO_W  : 40
+//PIN: nSAMPLES3_FIFO_W  : 39
+//PIN: nAUDCTL_FIFO_W    : 37
+//PIN: nVIDCMD_FIFO_W    : 36
+//PIN: nSAMPLES0_FIFO_W  : 35
+//PIN: nPIXELS_FIFO_W    : 34
+//PIN: nENGINE_IRQ       : 33
+//PIN: A_3               : 44
+//PIN: A_6               : 45
+//PIN: A_7               : 46
+//PIN: A_8               : 48
+//PIN: A_10              : 49
+//PIN: A_9               : 50
+//PIN: A_11              : 51
+//PIN: A_12              : 52
+//PIN: A_14              : 54
+//PIN: A_13              : 55
+//PIN: A_0               : 56
+//PIN: A_1               : 57
+//PIN: A_2               : 58
+//PIN: A_4               : 60
+//PIN: A_5               : 61
+//PIN: TCK               : 62
+//PIN: nLDS              : 63
+//PIN: A_18              : 64
+//PIN: A_17              : 65
+//PIN: A_15              : 67
+//PIN: A_20              : 68
+//PIN: A_21              : 69
+//PIN: A_19              : 70
+//PIN: TDO               : 71
+//PIN: D_8               : 73
+//PIN: D_14              : 74
+//PIN: D_1               : 75
+//PIN: FC_1              : 76
+//PIN: FC_0              : 77
+//PIN: nUDS              : 79
+//PIN: nAS               : 80
+//PIN: A_16              : 81
+//PIN: HBLANK            : 2
+//PIN: CPUCLK            : 83
+//PIN: nRESET            : 1

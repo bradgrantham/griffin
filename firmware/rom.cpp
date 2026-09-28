@@ -763,7 +763,7 @@ static void dl_emit_pacer(bool stop_after)
     se::Descriptor d;
     d.src         = FB_ADDR;          // any readable word; nothing latches it
     d.count       = 1;
-    d.signal_mask = se::SIGNAL_NONE;
+    d.destination = se::DEST_NONE;
     d.wait_hblank = true;
     d.stop_after  = stop_after;
     dl_emit(d);
@@ -798,7 +798,7 @@ static void dl_emit_pixel_line(unsigned line, bool wait_first)
         se::Descriptor d;
         d.src         = src + half * (FB_WORDS_PER_LINE / 2) * 2;
         d.count       = FB_WORDS_PER_LINE / 2;
-        d.signal_mask = se::SIGNAL_PIXELS_FIFO_W;
+        d.destination = se::DEST_PIXELS_FIFO_W;
         d.wait_hblank = wait_first && (half == 0);
         dl_emit(d);
     }
@@ -879,7 +879,7 @@ static void dl_build_console_list()
     se::Descriptor pre;
     pre.src         = pre_addr;
     pre.count       = CONSOLE_PREAMBLE_WORDS;
-    pre.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+    pre.destination = se::DEST_VIDCMD_FIFO_W;
     dl_emit(pre);
 
     for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
@@ -966,7 +966,7 @@ static void dl_build_viewer_list(const uint16_t *palettes)
     se::Descriptor pre;
     pre.src         = pre_addr;
     pre.count       = 2;
-    pre.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+    pre.destination = se::DEST_VIDCMD_FIFO_W;
     dl_emit(pre);
 
     for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
@@ -994,7 +994,7 @@ static void dl_build_viewer_list(const uint16_t *palettes)
         se::Descriptor d;
         d.src         = at;
         d.count       = VIEWER_LINE_WORDS;
-        d.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+        d.destination = se::DEST_VIDCMD_FIFO_W;
         d.wait_hblank = true;
         dl_emit(d);
 
@@ -1049,7 +1049,7 @@ static unsigned  gc4_packet_stride = 0;
 
 // `n` words from `src` into one FIFO, split into descriptors of at most
 // DESC_MAX_COUNT words; only the first may wait for the HBLANK edge.
-static void dl_emit_stream(uint32_t src, unsigned n, uint8_t signal_mask, bool wait_first)
+static void dl_emit_stream(uint32_t src, unsigned n, uint8_t destination, bool wait_first)
 {
     unsigned done = 0;
     while (done < n)
@@ -1059,7 +1059,7 @@ static void dl_emit_stream(uint32_t src, unsigned n, uint8_t signal_mask, bool w
         se::Descriptor d;
         d.src         = src + done * 2;
         d.count       = static_cast<uint16_t>(count);
-        d.signal_mask = signal_mask;
+        d.destination = destination;
         d.wait_hblank = wait_first && (done == 0);
         dl_emit(d);
         done += count;
@@ -1095,7 +1095,7 @@ static void dl_build_gc4_list(const Gc4Target::Picture &pic)
     preamble[n++] = se::vidcmd_set(se::SET_PIX_MODE, pic.pix_mode());
 
     const uint32_t pre_at = dl_put_vidcmd(preamble, n);
-    dl_emit_stream(pre_at, n, se::SIGNAL_VIDCMD_FIFO_W, false);
+    dl_emit_stream(pre_at, n, se::DEST_VIDCMD_FIFO_W, false);
 
     for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
     {
@@ -1121,9 +1121,9 @@ static void dl_build_gc4_list(const Gc4Target::Picture &pic)
         packet[k++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1);
 
         // VIDCMD first in the line's group: its loads must commit before pixel 0.
-        dl_emit_stream(reinterpret_cast<uint32_t>(packet), k, se::SIGNAL_VIDCMD_FIFO_W, true);
+        dl_emit_stream(reinterpret_cast<uint32_t>(packet), k, se::DEST_VIDCMD_FIFO_W, true);
         dl_emit_stream(reinterpret_cast<uint32_t>(pic.pixels(line)),
-                       Gc4Target::WORDS_PER_LINE, se::SIGNAL_PIXELS_FIFO_W, false);
+                       Gc4Target::WORDS_PER_LINE, se::DEST_PIXELS_FIFO_W, false);
     }
     dl_emit_pacer(true);
 }

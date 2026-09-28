@@ -1099,11 +1099,11 @@ RenderResult render(const std::vector<DepositEvent> &events, const RenderParams 
                 while (ev < events.size() && events[ev].cycle <= cycle)
                 {
                     const DepositEvent &e = events[ev];
-                    if ((e.signal_mask & SIGNAL_PIXELS_FIFO_W) != 0)
+                    if (e.destination == DEST_PIXELS_FIFO_W)
                     {
                         pix.push_word(e.word);
                     }
-                    if ((e.signal_mask & SIGNAL_VIDCMD_FIFO_W) != 0)
+                    if (e.destination == DEST_VIDCMD_FIFO_W)
                     {
                         cmp.push_word(e.word);
                         if (keep && line < V_ACTIVE && h < H_ACTIVE)
@@ -1114,7 +1114,7 @@ RenderResult render(const std::vector<DepositEvent> &events, const RenderParams 
                             r.stats.vidcmd_late_words++;
                         }
                     }
-                    if ((e.signal_mask & SIGNAL_AUDIO_FIFO_W) != 0)
+                    if (e.destination == DEST_AUDIO_PAIR_REV1)
                     {
                         if (!audio.push(e.word))
                         {
@@ -1261,15 +1261,15 @@ RenderResult render_line_at_a_time(const std::vector<DepositEvent> &events,
             while (ev < events.size() && events[ev].cycle < sysclk_of_pixel(line_end))
             {
                 const DepositEvent &e = events[ev];
-                if ((e.signal_mask & SIGNAL_PIXELS_FIFO_W) != 0)
+                if (e.destination == DEST_PIXELS_FIFO_W)
                 {
                     pix.push_word(e.word);
                 }
-                if ((e.signal_mask & SIGNAL_VIDCMD_FIFO_W) != 0)
+                if (e.destination == DEST_VIDCMD_FIFO_W)
                 {
                     cmp.push_word(e.word);
                 }
-                if ((e.signal_mask & SIGNAL_AUDIO_FIFO_W) != 0)
+                if (e.destination == DEST_AUDIO_PAIR_REV1)
                 {
                     if (!audio.push(e.word))
                     {

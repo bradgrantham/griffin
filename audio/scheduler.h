@@ -22,13 +22,12 @@
 //     tail of the old one (within a line, the mirror's resolution).
 //   * VOLUME changes are deposited at the next line.
 //   * Control records are two deposits (register, value) to DEST_CONTROL.
-//   * The mirror assumes a line's deposits land before its first step and
-//     that lines start on step boundaries.  In hardware an ENGINE deposit
-//     lands wherever its descriptor executes within the line, and the AUDIO
-//     timebase may sit a clock or two off the raster after reset.  Both move
-//     a pop across a line boundary at most; the fill error is bounded by one
-//     sample and MARGIN covers it.  The model and the testbench use the ideal
-//     alignment so that they can be exact against each other.
+//   * The mirror assumes a line's deposits land before its first step.  The
+//     step edges themselves are raster-locked in hardware (the chip re-phases
+//     its divider from HBLANK every line), so the only approximation is that
+//     an ENGINE deposit lands wherever its descriptor executes within the
+//     line.  That moves a pop across a line boundary at most; the fill error
+//     is bounded by one sample and MARGIN covers it.
 //
 // Deposits are what the display list carries: a run of bytes to one
 // destination is one ENGINE descriptor of at most MAX_DESCRIPTOR_WORDS words
@@ -147,7 +146,7 @@ public:
 
     void reset();
 
-    // The channel plays `table` (offset binary bytes) as a loop of `length`,
+    // The channel plays `table` (two's complement bytes) as a loop of `length`,
     // starting at `position`, from this channel's next burst.
     void set_stream(int channel, const uint8_t *table, uint32_t length, uint32_t position);
     void set_period(int channel, uint8_t period);

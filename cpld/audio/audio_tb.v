@@ -36,9 +36,14 @@
 //      never reads an empty FIFO (the behavioural FIFO counts it as an error).
 //
 // Time.  m counts clock edges from the last edge at which nRESET was low
-// (m = 0); after edge m the chip's timebase is m mod 512, line k starts at
-// edge 800 k (800 = 50 x 16, so lines are step-aligned), and step s's counter
-// update is edge 16 (s + 1).  Deposits for line k are made #1 after edge
+// (m = 0), and the bench plays PIXEL's raster with h = m mod 800: HBLANK is
+// high after edge m when (m - 1) mod 800 >= 640, exactly PIXEL's law.  Line
+// k starts at edge 800 k (800 = 50 x 16, so lines are step-aligned), and step
+// s's counter update is edge 16 (s + 1).  With -DSKEW=n the chip's reset is
+// released n edges early, so its divider starts out of phase; the pops must
+// disagree with the model before the first HBLANK rise (edge 641) and agree
+// from the resynchronized step on (edge 656).  SKEW 0 is the aligned run,
+// where the re-sync must be a no-op on every line.  Deposits for line k are made #1 after edge
 // 800 k, which is when ENGINE's word would land in the model's ordering
 // (deposits, then the 16-clock reader window, then the counter update).
 //
@@ -54,6 +59,8 @@
 //   MUTATE 3  the gate law ignores the empty flag
 //   MUTATE 4  registers expected one line late
 //   MUTATE 5  a two-clock /R pulse accepted
+//   MUTATE 6  (with SKEW) pops accepted from the chip's own reset phase, i.e.
+//             a chip that ignored HBLANK would pass
 
 `timescale 1ns / 1ps
 
@@ -134,8 +141,13 @@ module audio_tb;
     `define MUTATE 0
 `endif
 
+`ifndef SKEW
+    `define SKEW 0
+`endif
+
     reg CLK = 0;
     reg nRESET = 0;
+    reg HBLANK = 0;
 
     wire       nCONTROL_EF;
     wire [7:0] CONTROL_Q;
@@ -146,7 +158,7 @@ module audio_tb;
 
     Audio dut
     (
-        .CLK(CLK), .nRESET(nRESET),
+        .CLK(CLK), .nRESET(nRESET), .HBLANK(HBLANK),
         .nCONTROL_EF(nCONTROL_EF), .CONTROL_Q(CONTROL_Q), .nCONTROL_R(nCONTROL_R),
         .nSAMPLE_EF(nSAMPLE_EF), .nSAMPLE_R(nSAMPLE_R), .GATE(GATE)
     );
@@ -192,6 +204,8 @@ module audio_tb;
     reg       on_bit;
     integer   control_low_run;
     integer   step;
+    integer   pops_before_sync_bad;
+    integer   first_synced_step;
 
     function on_window;
         input [5:0] volume;
@@ -267,12 +281,18 @@ module audio_tb;
         #1;
         if (nSAMPLE_R !== 4'b1111) fail("nSAMPLE_R not high through reset");
         if (nCONTROL_R !== 1'b1) fail("nCONTROL_R not high through reset");
-        // The edge just passed is m = 0: the last edge with reset asserted.
+        // With SKEW the chip leaves reset `SKEW edges before the raster's
+        // m = 0, so its divider is out of phase until HBLANK pulls it in.
+        nRESET = 1;
+        repeat (`SKEW) @(posedge CLK);
+        #1;
+        // The edge just passed is m = 0 of the raster.
         m = 0;
         line = 0;
         next_event = 0;
         next_pop = 0;
-        nRESET = 1;
+        pops_before_sync_bad = 0;
+        first_synced_step = 656 / 16 - 1;      // the first update after the load at edge 642
         // Line 0's deposits, right after edge 0.
         apply_line_events(0);
 
@@ -282,6 +302,7 @@ module audio_tb;
             @(posedge CLK);
             m = m + 1;
             #1;
+            HBLANK = (((m - 1) % 800) >= 640);
 
             // 1. Pops: at a step edge the pin must match the model; at every
             //    other edge it must be low (one-clock pulse).
@@ -301,7 +322,14 @@ module audio_tb;
                 end
                 if (nSAMPLE_R !== expected_pop)
                 begin
-                    fail("nSAMPLE_R differs from the model's pops at this step");
+                    if (`SKEW != 0 && step < first_synced_step && `MUTATE != 6)
+                    begin
+                        pops_before_sync_bad = pops_before_sync_bad + 1;   // expected while out of phase
+                    end
+                    else
+                    begin
+                        fail("nSAMPLE_R differs from the model's pops at this step");
+                    end
                 end
                 pop_checks = pop_checks + 1;
             end
@@ -312,7 +340,14 @@ module audio_tb;
                 obs_nsample_r = (`MUTATE == 5) ? (nSAMPLE_R | prev_nsample_r) : nSAMPLE_R;
                 if (obs_nsample_r !== 4'b0000)
                 begin
-                    fail("nSAMPLE_R high off a step edge (pulse longer than one clock?)");
+                    if (`SKEW != 0 && (m / 16 - 1) < first_synced_step && `MUTATE != 6)
+                    begin
+                        pops_before_sync_bad = pops_before_sync_bad + 1;   // out of phase, expected
+                    end
+                    else
+                    begin
+                        fail("nSAMPLE_R high off a step edge (pulse longer than one clock?)");
+                    end
                 end
                 pulse_checks = pulse_checks + 1;
             end
@@ -359,6 +394,11 @@ module audio_tb;
         $display("checks: %0d pop edges, %0d off-edge pulse checks, %0d gate clocks, %0d register lines; %0d pops consumed of %0d",
                  pop_checks, pulse_checks, gate_checks, reg_checks, next_pop, n_pops);
         if (next_pop != n_pops) fail("model pops left unconsumed");
+        if (`SKEW != 0)
+        begin
+            $display("skew %0d: %0d pop-edge disagreements before the first HBLANK re-sync (must be > 0)", `SKEW, pops_before_sync_bad);
+            if (pops_before_sync_bad == 0 && `MUTATE != 6) fail("skewed divider agreed before the re-sync: the test proves nothing");
+        end
         if (errors == 0)
         begin
             $display("TESTBENCH RESULT: PASS");

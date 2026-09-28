@@ -3848,13 +3848,13 @@ public:
     {
         GriffinEmulator *emu = nullptr;
 
-        void deposit(uint64_t, uint8_t signal_mask, uint16_t word) override
+        void deposit(uint64_t, uint8_t destination, uint16_t word) override
         {
             // AUDIO is guest-visible through PORTS' half-full status, so it is
             // fed unconditionally.  PIXELS and VIDCMD reach nothing the guest
             // can read, so they are skipped when no one is looking at the
             // framebuffer — see want_pixels below.
-            if ((signal_mask & SuperEngine::SIGNAL_AUDIO_FIFO_W) != 0)
+            if (destination == SuperEngine::DEST_AUDIO_PAIR_REV1)
             {
                 emu->ports.audio_fifo_push(word);
             }
@@ -3862,11 +3862,11 @@ public:
             {
                 return;
             }
-            if ((signal_mask & SuperEngine::SIGNAL_PIXELS_FIFO_W) != 0)
+            if (destination == SuperEngine::DEST_PIXELS_FIFO_W)
             {
                 emu->pixel_unit.push_word(word);
             }
-            if ((signal_mask & SuperEngine::SIGNAL_VIDCMD_FIFO_W) != 0)
+            if (destination == SuperEngine::DEST_VIDCMD_FIFO_W)
             {
                 emu->compositor_unit.push_word(word);
             }
@@ -3907,7 +3907,7 @@ public:
             Descriptor d;
             d.src         = SELFTEST_PACKET;
             d.count       = 4;
-            d.signal_mask = SIGNAL_VIDCMD_FIFO_W;
+            d.destination = DEST_VIDCMD_FIFO_W;
             d.wait_hblank = true;
             const DescriptorWords w = encode_descriptor(d);
             for (uint32_t i = 0; i < DESC_WORDS; i++)
@@ -3922,7 +3922,7 @@ public:
         Descriptor stop;
         stop.src         = SELFTEST_PACKET;
         stop.count       = 1;
-        stop.signal_mask = SIGNAL_NONE;
+        stop.destination = DEST_NONE;
         stop.wait_hblank = true;
         stop.stop_after  = true;
         const DescriptorWords sw = encode_descriptor(stop);

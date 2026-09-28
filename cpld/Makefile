@@ -141,6 +141,8 @@ audio-sim: audio/audio_tb.v audio/audio.v
 	$(MAKE) --no-print-directory -C ../audio vectors
 	cd audio && iverilog -g2012 -o audio_tb.vvp audio_tb.v audio.v && vvp audio_tb.vvp | grep -v WARNING | tee audio_tb.log
 	@grep -q "TESTBENCH RESULT: PASS" audio/audio_tb.log || { echo "AUDIO TESTBENCH FAILED"; exit 1; }
+	cd audio && iverilog -g2012 -DSKEW=5 -o audio_tb_skew.vvp audio_tb.v audio.v && vvp audio_tb_skew.vvp | grep -v WARNING | tee audio_tb_skew.log
+	@grep -q "TESTBENCH RESULT: PASS" audio/audio_tb_skew.log || { echo "AUDIO TESTBENCH (SKEW 5) FAILED"; exit 1; }
 	@# vvp exits 0 even on $$finish(1) in this oss-cad-suite, so the verdict is the printed line.
 	@for n in 1 2 3 4 5; do \
 	    (cd audio && iverilog -g2012 -DMUTATE=$$n -o audio_tb_mut.vvp audio_tb.v audio.v \
@@ -148,6 +150,10 @@ audio-sim: audio/audio_tb.v audio/audio.v
 	    if [ $$? -eq 0 ]; then echo "NEGATIVE CONTROL MUTATE=$$n DID NOT FAIL"; exit 1; \
 	    else echo "negative control MUTATE=$$n fails as required"; fi; \
 	done
+	@(cd audio && iverilog -g2012 -DSKEW=5 -DMUTATE=6 -o audio_tb_mut.vvp audio_tb.v audio.v \
+	    && vvp audio_tb_mut.vvp 2>&1 | grep -q "TESTBENCH RESULT: PASS"); \
+	if [ $$? -eq 0 ]; then echo "NEGATIVE CONTROL MUTATE=6 (SKEW) DID NOT FAIL"; exit 1; \
+	else echo "negative control MUTATE=6 (SKEW) fails as required"; fi
 
 # ------------------------------------------------------------
 # PORTS (ATF1508AS) — Rev 2, built by `all` alongside GLUE/VIDEO/ENGINE

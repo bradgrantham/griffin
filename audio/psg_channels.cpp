@@ -193,7 +193,7 @@ const std::vector<uint8_t>& PsgChannels::square_table(uint16_t length)
         const uint16_t high = static_cast<uint16_t>(length / 2);
         for (uint16_t i = 0; i < length; ++i)
         {
-            t[i] = (i < high) ? 0xFF : 0x01;
+            t[i] = (i < high) ? 0x7F : 0x81;
         }
         it = squares_.emplace(length, std::move(t)).first;
     }
@@ -232,7 +232,7 @@ const std::vector<uint8_t>& PsgChannels::noise_table(bool white, uint32_t dup)
         std::vector<uint8_t> t(samples);
         for (uint32_t i = 0; i < samples; ++i)
         {
-            t[i] = bits[i / dup] ? 0xFF : 0x01;
+            t[i] = bits[i / dup] ? 0x7F : 0x81;
         }
         it = noises_.emplace(key, std::move(t)).first;
     }

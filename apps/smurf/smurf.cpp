@@ -877,7 +877,7 @@ void init_list_layout()
     se::Descriptor d;
     d.src         = reinterpret_cast<uint32_t>(&g_static_pool[0]);
     d.count       = 1;
-    d.signal_mask = se::SIGNAL_NONE;
+    d.destination = se::DEST_NONE;
     d.wait_hblank = true;
     g_pacer = se::encode_descriptor(d);
 
@@ -914,7 +914,7 @@ void put_line_vidcmd(unsigned which, unsigned line, uint32_t src, unsigned count
     se::Descriptor d;
     d.src         = src;
     d.count       = static_cast<uint16_t>(count);
-    d.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+    d.destination = se::DEST_VIDCMD_FIFO_W;
     d.wait_hblank = true;
     put_desc(table_at(which, g_line_desc_word[line]), se::encode_descriptor(d));
 }
@@ -1063,7 +1063,7 @@ bool build_scene(const SceneSpec &spec)
             se::Descriptor pd;
             pd.src         = reinterpret_cast<uint32_t>(&g_preamble[done]);
             pd.count       = static_cast<uint16_t>(count);
-            pd.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+            pd.destination = se::DEST_VIDCMD_FIFO_W;
             pd.wait_hblank = false;
             put_desc(p, se::encode_descriptor(pd));
             p += se::DESC_WORDS;
@@ -1090,7 +1090,7 @@ bool build_scene(const SceneSpec &spec)
                 se::Descriptor pd;
                 pd.src         = src + done * 2;
                 pd.count       = static_cast<uint16_t>(count);
-                pd.signal_mask = se::SIGNAL_PIXELS_FIFO_W;
+                pd.destination = se::DEST_PIXELS_FIFO_W;
                 pd.wait_hblank = false;
                 put_desc(d, se::encode_descriptor(pd));
                 d += se::DESC_WORDS;
@@ -1108,7 +1108,7 @@ bool build_scene(const SceneSpec &spec)
             se::Descriptor ad;
             ad.src         = reinterpret_cast<uint32_t>(&g_audio_buf[which][before]);
             ad.count       = g_audio_burst[which][b];
-            ad.signal_mask = se::SIGNAL_AUDIO_FIFO_W;
+            ad.destination = se::DEST_AUDIO_PAIR_REV1;
             ad.wait_hblank = false;
             put_desc(table_at(which, g_audio_desc_word[b]), se::encode_descriptor(ad));
         }
@@ -1116,7 +1116,7 @@ bool build_scene(const SceneSpec &spec)
         se::Descriptor sd;
         sd.src         = reinterpret_cast<uint32_t>(&g_static_pool[0]);
         sd.count       = 1;
-        sd.signal_mask = se::SIGNAL_NONE;
+        sd.destination = se::DEST_NONE;
         sd.wait_hblank = true;
         sd.stop_after  = true;
         put_desc(table_at(which, g_stop_desc_word), se::encode_descriptor(sd));
@@ -1586,7 +1586,7 @@ void audio_prime()
         se::Descriptor d;
         d.src         = reinterpret_cast<uint32_t>(&g_prime_buf[done]);
         d.count       = burst;
-        d.signal_mask = se::SIGNAL_AUDIO_FIFO_W;
+        d.destination = se::DEST_AUDIO_PAIR_REV1;
         d.wait_hblank = false;
         put_desc(p + n * se::DESC_WORDS, se::encode_descriptor(d));
         done += burst;
@@ -1595,7 +1595,7 @@ void audio_prime()
     se::Descriptor sd;
     sd.src         = reinterpret_cast<uint32_t>(&g_static_pool[0]);
     sd.count       = 1;
-    sd.signal_mask = se::SIGNAL_NONE;
+    sd.destination = se::DEST_NONE;
     sd.stop_after  = true;
     put_desc(p + n * se::DESC_WORDS, se::encode_descriptor(sd));
 

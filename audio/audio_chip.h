@@ -9,11 +9,13 @@
 // ---------------------------------------------------------------------------
 // THE LAWS (audio.v header, griffin.log 2026-09-27)
 //
-// Time.  CLK is the 25.175 MHz pixel clock.  A free-running 9-bit timebase
-// counts CLK: bits 3:0 make a STEP every 16 clocks (1,573,437.5 Hz), bits 8:3
-// are the 64-tick volume FRAME (a tick every 8 clocks, a frame every 512 =
-// 49.17 kHz).  A scanline is 800 clocks = 50 steps exactly, so steps are
-// line-locked and an AUDIO_TICK (two lines, 1600 clocks) is 100 steps.
+// Time.  CLK is the 25.175 MHz pixel clock.  A 9-bit timebase counts CLK:
+// bits 3:0 make a STEP every 16 clocks (1,573,437.5 Hz), bits 8:3 are the
+// 64-tick volume FRAME (a tick every 8 clocks, a frame every 512 = 49.17
+// kHz).  PIXEL's HBLANK rising edge loads the low nibble once per line so
+// that the step edges fall at h_cnt 0 mod 16: 50 steps per 800-clock line,
+// locked to the raster (a no-op once in phase, so the frame counter is
+// undisturbed).  Two lines are 100 steps.
 //
 // Channels 0..3.  Each has an 8-bit PERIOD register and an 8-bit down counter
 // COUNT.  At every step: if COUNT == 0 the channel POPS (its FIFO's /R rises
@@ -22,7 +24,8 @@
 // channel's sample rate is 1,573,437.5 / (PERIOD + 1) Hz; PERIOD 99 is the
 // 15,734.375 Hz tick exactly, PERIOD 49 is 31.47 kHz, PERIOD 255 is 6.15 kHz.
 // The FIFO's Q bus, held valid with /R low, IS the channel's current sample
-// (offset binary, 0x80 = midscale), driving that channel's ladder directly.
+// (two's complement, 0x00 = silence), driving that channel's ladder through
+// a 74HC04 on bit 7, since the ladder wants offset binary.
 // Reset: COUNT 0 and PERIOD 0, so an unconfigured channel pops every step;
 // set PERIOD before depositing samples.
 //
@@ -37,7 +40,7 @@
 // is exactly VOLUME (of 64) and 63 is the loudest.  The gate is forced off
 // while the channel's FIFO is empty and during its pop clock (Q floats then).
 // The analog stage averages the gate, so the channel's contribution is
-// (sample - 128) * VOLUME / 64 plus components at multiples of 49.17 kHz.
+// sample * VOLUME / 64 plus components at multiples of 49.17 kHz.
 //
 // Control.  A fifth byte-wide FIFO carries two-byte records {register,
 // value}: registers 0..3 are PERIOD of channel n, 4..7 VOLUME of channel n
@@ -47,7 +50,7 @@
 // that step's counter update.  A record split by an empty FIFO waits.
 //
 // Deposits.  ENGINE writes a word per FIFO byte (the low byte; the high byte
-// carries the destination for the decoder).  A write to a full 7200 is
+// is ignored) to the FIFO its descriptor's destination code names.  A write to a full 7200 is
 // ignored (samples lost); a pop of an empty one is ignored (the channel
 // holds its Q while /R is low, but the gate is off).  Nothing is read back.
 // ---------------------------------------------------------------------------
@@ -75,7 +78,7 @@ inline constexpr int      LINES_PER_TICK    = 2;                                
 inline constexpr int      PERIOD_MAX        = 255;
 inline constexpr int      PERIOD_TICK       = 99;      // 15,734.375 Hz
 inline constexpr int      VOLUME_MAX        = 63;
-inline constexpr uint8_t  SILENCE           = 0x80;    // offset binary midscale
+inline constexpr uint8_t  SILENCE           = 0x00;    // two's complement
 inline constexpr uint8_t  REG_PERIOD        = 0;       // + channel
 inline constexpr uint8_t  REG_VOLUME        = 4;       // + channel
 inline constexpr int      CONTROL_CLOCKS_PER_BYTE = 4;

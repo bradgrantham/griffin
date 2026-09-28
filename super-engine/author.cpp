@@ -49,7 +49,7 @@ void ListWriter::emit(const Descriptor &d)
     cursor += DESC_BYTES;
     count++;
     payload_words += d.count;
-    if (d.signal_mask == SIGNAL_NONE)
+    if (d.destination == DEST_NONE)
     {
         pacing_words += d.count;
     }
@@ -79,7 +79,7 @@ void emit_stream(ListWriter &w, uint8_t mask, uint32_t src, uint32_t words,
         Descriptor d;
         d.src         = addr;
         d.count       = static_cast<uint16_t>(share + (i < extra ? 1u : 0u));
-        d.signal_mask = mask;
+        d.destination = mask;
         d.wait_hblank = wait_first && (i == 0);
         w.emit(d);
         addr += static_cast<uint32_t>(d.count) * 2;
@@ -1429,7 +1429,7 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
                 n++;
             }
         }
-        emit_stream(w, SIGNAL_VIDCMD_FIFO_W, addr, n, false, DESC_MAX_COUNT);
+        emit_stream(w, DEST_VIDCMD_FIFO_W, addr, n, false, DESC_MAX_COUNT);
     }
 
     // --- VBLANK preamble -----------------------------------------------------
@@ -1439,7 +1439,7 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
     // vblank's share: 45 lines / 2 = 22.5 pairs, rounded up to 23.
     if (p.audio && p.audio_preamble_pairs > 0)
     {
-        emit_stream(w, SIGNAL_AUDIO_FIFO_W, p.audio_base + audio_pair * 2,
+        emit_stream(w, DEST_AUDIO_PAIR_REV1, p.audio_base + audio_pair * 2,
                     p.audio_preamble_pairs, false, DESC_MAX_COUNT);
         audio_pair += p.audio_preamble_pairs;
         audio_pairs_emitted += p.audio_preamble_pairs;
@@ -1451,7 +1451,7 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
         Descriptor d;
         d.src         = p.fb_base;
         d.count       = 1;
-        d.signal_mask = SIGNAL_NONE;
+        d.destination = DEST_NONE;
         d.wait_hblank = true;
         w.emit(d);
     }
@@ -1490,7 +1490,7 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
         // at the top of the screen section).
         if (p.pure_vidcmd)
         {
-            emit_stream(w, SIGNAL_VIDCMD_FIFO_W, vidcmd_addr, vidcmd_words, wait,
+            emit_stream(w, DEST_VIDCMD_FIFO_W, vidcmd_addr, vidcmd_words, wait,
                         DESC_MAX_COUNT);
             wait = false;
         }
@@ -1501,23 +1501,23 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
             if (p.pixels_head_words > 0 && p.pixels_head_words < line_words)
             {
                 pix_head = p.pixels_head_words;
-                emit_stream(w, SIGNAL_PIXELS_FIFO_W, src, pix_head, wait, pixel_chunk);
+                emit_stream(w, DEST_PIXELS_FIFO_W, src, pix_head, wait, pixel_chunk);
                 wait = false;
             }
 
             if (head > 0)
             {
-                emit_stream(w, SIGNAL_VIDCMD_FIFO_W, vidcmd_addr, head, wait, DESC_MAX_COUNT);
+                emit_stream(w, DEST_VIDCMD_FIFO_W, vidcmd_addr, head, wait, DESC_MAX_COUNT);
                 wait = false;
             }
 
-            emit_stream(w, SIGNAL_PIXELS_FIFO_W, src + pix_head * 2, line_words - pix_head,
+            emit_stream(w, DEST_PIXELS_FIFO_W, src + pix_head * 2, line_words - pix_head,
                         wait, pixel_chunk);
             wait = false;
 
             if (vidcmd_words > head)
             {
-                emit_stream(w, SIGNAL_VIDCMD_FIFO_W, vidcmd_addr + head * 2,
+                emit_stream(w, DEST_VIDCMD_FIFO_W, vidcmd_addr + head * 2,
                             vidcmd_words - head, false, DESC_MAX_COUNT);
             }
         }
@@ -1527,7 +1527,7 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
         // with enough slack to be scheduled behind everything else.
         if (p.audio && (line % p.audio_burst_interval) == 0)
         {
-            emit_stream(w, SIGNAL_AUDIO_FIFO_W, p.audio_base + audio_pair * 2,
+            emit_stream(w, DEST_AUDIO_PAIR_REV1, p.audio_base + audio_pair * 2,
                         p.audio_burst_pairs, false, DESC_MAX_COUNT);
             audio_pair += p.audio_burst_pairs;
             audio_pairs_emitted += p.audio_burst_pairs;
@@ -1544,7 +1544,7 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
         Descriptor d;
         d.src         = p.fb_base;
         d.count       = 1;
-        d.signal_mask = SIGNAL_NONE;
+        d.destination = DEST_NONE;
         d.wait_hblank = true;
         d.stop_after  = true;
         w.emit(d);

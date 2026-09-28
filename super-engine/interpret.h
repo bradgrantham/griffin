@@ -24,7 +24,7 @@ namespace SuperEngine
 // pushes straight into the PIXEL/VIDCMD/AUDIO models.
 struct DepositSink
 {
-    virtual void deposit(uint64_t cycle, uint8_t signal_mask, uint16_t word) = 0;
+    virtual void deposit(uint64_t cycle, uint8_t destination, uint16_t word) = 0;
 
 protected:
     ~DepositSink() = default;
@@ -134,7 +134,7 @@ struct DepositEvent
 {
     uint64_t cycle       = 0;
     uint16_t word        = 0;
-    uint8_t  signal_mask = 0;
+    uint8_t  destination = 0;
 };
 
 // Per *line group*: all the work anchored to one HBLANK edge, i.e. everything

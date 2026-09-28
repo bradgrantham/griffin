@@ -1861,3 +1861,56 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   https://claude.ai/artifact/62PxBVurMSFzXX6hmBb4N8; its consistency
   review flagged the driver's "8 words per line" comment (fixed: 3.85)
   and the pin count 19 + 9 vs 27 (the fitter's own totals; left).
+
+2026-09-27 -- Audio: ENGINE destination code, raster-locked AUDIO divider, two's complement
+  Three changes Brad asked for, each with its fit ladder.
+  ENGINE (cpld/engine/engine.v): descriptor word 0 bits 2:0 are now a
+  DESTINATION CODE decoded on chip to seven strobes -- 1 nPIXELS_FIFO_W,
+  2 nVIDCMD_FIFO_W, 3 nAUDCTL_FIFO_W, 4..7 nSAMPLES0..3_FIFO_W, 0 none --
+  instead of the 4-bit one-hot mask; nSIGNAL_SPARE and its header are gone
+  (nothing multicast: the only combined mask in the tree was the
+  SIGNAL_MASK_ALL constant).  The board has not been sent, so every ENGINE
+  pin was freed for the fitter and the result frozen: 120/128 LC (as
+  before: 3 code flip-flops + 7 output cells vs 4 + 4), 393 PT, pass 2,
+  64/64 I/O -- ENGINE is pin-full.  A wider 8-bit mask would have been +8
+  cells (no fit); the code costs +3 output cells and saves the 74HC138 the
+  previous entry planned.  The fallback, had it failed, was the code passed
+  out on pins to a support-chip decoder.  descriptor.h: SIGNAL_* masks ->
+  DEST_* codes from griffin.yml ENGINE_DEST_*, field `destination`,
+  DESC_RESERVED_MASK 0x01F8; render.cpp and emulator.cpp test equality, not
+  bits; DEST_AUDIO_PAIR_REV1 = DEST_AUDCTL_FIFO_W names the rev-1 stereo
+  pair (on the pin that was nAUDIO_FIFO_W) until package B.  super-engine
+  `make check` all cases pass; emulator, firmware, apps build.
+  AUDIO step phase.  Goal: steps at fixed raster positions so the 68000
+  mirror's line alignment is exact.  Tried first: PIXEL's AUDIO_TICK
+  redefined as a one-clock pulse at h_cnt 14 mod 16 and fed to AUDIO as a
+  STEP input.  PIXEL fitted at 126/128 (from 123; free pins made no
+  difference) and timing-sim passed with all 10 negative controls; but
+  AUDIO with STEP on a pin FAILED GROUPING under -preassign keep in every
+  form (raw input; registered once; xor_synthesis), and fitted only under
+  -preassign ignore at 126 or 127/128 -- 6 or 7 cells worse than the
+  internal &timebase[3:0] step, which the fitter duplicates as foldback
+  nodes per LAB.  Adopted instead: PIXEL unchanged (reverted, 123/128,
+  AUDIO_TICK stays a square wave to a test pad); AUDIO takes PIXEL's
+  existing HBLANK as an input and, on its rising edge (seen at h_cnt 642),
+  loads the divider's low nibble with 2, which puts the step edges at
+  h_cnt 0 mod 16; once in phase the load is a no-op every line, so the
+  frame counter's carry is undisturbed and only the first line after reset
+  moves anything.  AUDIO 121/128 LC, 113 FF, 384 PT, 28 pins, pass 1 under
+  keep (free placement; no pin block yet).  audio_tb.v plays PIXEL's
+  HBLANK law and runs twice: aligned (re-sync must be a no-op) and with
+  the chip's reset released 5 edges early (-DSKEW=5: 80 out-of-phase pop
+  edges before edge 656, then identical to the model for the rest of the
+  run); MUTATE 6 accepts the chip's own phase and must fail.  All six
+  negative controls fail as required.
+  Two's complement.  Samples are two's complement again (AUDIO_SILENCE 0):
+  the SN76489 reference, rev-1 assets and the emulator already are, and a
+  single 74HC04 does the four MSB inversions into the ladders (CMOS output,
+  as reminders.md requires; a ladder at 0x00 -> 0x80 -> 2.5 V injects no
+  current into the 2.5 V-biased summer).  Routing Q7 through AUDIO would
+  have cost 8 pins and 4 cells.  Model, driver and A/B changed by a
+  constant and a cast; the Smurf numbers reproduce exactly.
+  griffin.yml: ENGINE_DEST_* replace ENGINE_SIGNAL_*, AUDIO_WORD_DEST_SHIFT
+  and AUDIO_DEST_CONTROL removed, AUDIO parts 74HC04 not 74HC138, the
+  AUDIO chip entry takes HBLANK, Stream FIFO parts /W from ENGINE's own
+  strobes, the ENGINE spare header gone.

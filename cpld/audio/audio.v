@@ -9,8 +9,10 @@
 //     which drives that channel's R-2R ladder directly, always shows the
 //     current sample; a one-clock HIGH pulse on /R advances to the next.  The
 //     pulse comes from the channel's 8-bit period counter, stepped at CLK/16
-//     (1.573 MHz): rate = CLK / 16 / (PERIOD + 1), so PERIOD = 99 is exactly
-//     the 15,734.375 Hz AUDIO_TICK.  Pitch is rate / table length; the 68000
+//     (1.573 MHz) by a divider whose phase PIXEL's HBLANK rising edge pulls
+//     onto the raster once per line, so steps fall at h_cnt 0 mod 16, 50 per
+//     line: rate = CLK / 16 / (PERIOD + 1), PERIOD = 99 is exactly the
+//     15,734.375 Hz tick.  Pitch is rate / table length; the 68000
 //     chooses both.
 //
 //   * Volume is Paula's trick, a duty cycle in the time domain: GATE[n]
@@ -34,6 +36,7 @@ module Audio
 (
     input  wire       CLK,            // 25.175 MHz pixel clock
     input  wire       nRESET,
+    input  wire       HBLANK,         // PIXEL: high for h_cnt >= 640; its rise re-syncs the divider
 
     // Control FIFO (IDT7200, byte wide)
     input  wire       nCONTROL_EF,    // low = empty
@@ -52,20 +55,31 @@ module Audio
 
     // ----------------------------------------------------------------
     // Timebase.  Bits 3:0 divide CLK by 16 for the period counters; bits
-    // 8:3 are the 64-step volume frame.
+    // 8:3 are the 64-step volume frame.  HBLANK's rising edge (PIXEL sets
+    // it after the edge at which h_cnt was 640, so it is seen here two
+    // edges later, at h_cnt 642) loads the low nibble with 2, which puts the
+    // step edges at h_cnt 0 mod 16.  Once in phase the load is a no-op
+    // every line, so the frame counter's carry is undisturbed; only the
+    // first line after reset moves anything.  Feeding a per-step pulse in
+    // on a pin instead failed grouping or cost six cells (griffin.log).
     // ----------------------------------------------------------------
 
     reg [8:0] timebase;
+    reg       hblank_q;
+    wire      resync = HBLANK & ~hblank_q;
 
     always @(posedge CLK)
     begin
         if (reset)
         begin
             timebase <= 9'd0;
+            hblank_q <= 1'b0;
         end
         else
         begin
-            timebase <= timebase + 9'd1;
+            hblank_q      <= HBLANK;
+            timebase[3:0] <= resync ? 4'd2 : timebase[3:0] + 4'd1;
+            timebase[8:4] <= timebase[8:4] + {4'd0, &timebase[3:0]};
         end
     end
 

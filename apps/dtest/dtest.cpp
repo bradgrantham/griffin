@@ -146,7 +146,7 @@ void init_descriptor_templates()
     // A pacer strobes nothing, so the source only has to be a readable word.
     d.src         = reinterpret_cast<uint32_t>(&g_payload[0][0]);
     d.count       = 1;
-    d.signal_mask = se::SIGNAL_NONE;
+    d.destination = se::DEST_NONE;
     d.wait_hblank = true;
     g_pacer = se::encode_descriptor(d);
 
@@ -193,7 +193,7 @@ void put_vidcmd_line(uint16_t *&p, uint32_t src, unsigned n)
     se::Descriptor d;
     d.src         = src;
     d.count       = static_cast<uint16_t>(n);
-    d.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+    d.destination = se::DEST_VIDCMD_FIFO_W;
     d.wait_hblank = true;
     put_desc(p, se::encode_descriptor(d));
 }

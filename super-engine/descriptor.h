@@ -196,17 +196,28 @@ struct Memory
 // a VIDCMD SET instruction, so the only things the engine has to strobe are
 // the three FIFOs.
 //
-// A mask of 0 strobes nothing: the descriptor still reads its payload words
-// off the bus, so it is a *pure pacing* descriptor that costs bus time and
-// nothing else.  It is free in hardware and it is how a list waits (see
+// A destination of 0 strobes nothing: the descriptor still reads its payload
+// words off the bus, so it is a *pure pacing* descriptor that costs bus time
+// and nothing else.  It is free in hardware and it is how a list waits (see
 // vblank_pacing_lines in author.h).
+//
+// Since 2026-09-27 the field is a 3-bit CODE, decoded on chip to one of seven
+// strobes (griffin.yml ENGINE_DEST_*), not a one-hot mask: the five AUDIO
+// FIFOs are byte wide and take the low byte of each word.
 
-inline constexpr uint8_t SIGNAL_NONE          = 0x00;
-inline constexpr uint8_t SIGNAL_PIXELS_FIFO_W = 0x01;  // bit 0
-inline constexpr uint8_t SIGNAL_VIDCMD_FIFO_W = 0x02;  // bit 1
-inline constexpr uint8_t SIGNAL_AUDIO_FIFO_W  = 0x04;  // bit 2
-inline constexpr uint8_t SIGNAL_SPARE         = 0x08;  // bit 3: ENGINE nSIGNAL_SPARE header, no FIFO
-inline constexpr uint8_t SIGNAL_MASK_ALL      = 0x0F;
+inline constexpr uint8_t DEST_NONE            = Griffin::ENGINE_DEST_NONE;
+inline constexpr uint8_t DEST_PIXELS_FIFO_W   = Griffin::ENGINE_DEST_PIXELS_FIFO_W;
+inline constexpr uint8_t DEST_VIDCMD_FIFO_W   = Griffin::ENGINE_DEST_VIDCMD_FIFO_W;
+inline constexpr uint8_t DEST_AUDCTL_FIFO_W   = Griffin::ENGINE_DEST_AUDCTL_FIFO_W;
+inline constexpr uint8_t DEST_SAMPLES0_FIFO_W = Griffin::ENGINE_DEST_SAMPLES0_FIFO_W;
+inline constexpr uint8_t DEST_SAMPLES1_FIFO_W = Griffin::ENGINE_DEST_SAMPLES1_FIFO_W;
+inline constexpr uint8_t DEST_SAMPLES2_FIFO_W = Griffin::ENGINE_DEST_SAMPLES2_FIFO_W;
+inline constexpr uint8_t DEST_SAMPLES3_FIFO_W = Griffin::ENGINE_DEST_SAMPLES3_FIFO_W;
+inline constexpr uint8_t DEST_CODE_MAX        = 7;
+// The rev-1 stereo pair popped by PORTS sat on the pin that was nAUDIO_FIFO_W
+// and is now nAUDCTL_FIFO_W.  The emulator and apps/smurf still stream it;
+// audio package B retires this name.
+inline constexpr uint8_t DEST_AUDIO_PAIR_REV1 = DEST_AUDCTL_FIFO_W;
 
 // ============================================================================
 // Descriptor format (edma3.v:15-24, with the narrowed signal field)
@@ -222,14 +233,14 @@ inline constexpr uint16_t DESC_WAIT_HBLANK_MASK  = 0x8000;
 inline constexpr uint16_t DESC_STOP_AFTER_MASK   = 0x4000;
 inline constexpr uint16_t DESC_COUNT_MASK        = 0x3E00;
 inline constexpr uint16_t DESC_COUNT_SHIFT       = 9;
-inline constexpr uint16_t DESC_SIGNAL_MASK       = 0x000F;
+inline constexpr uint16_t DESC_DEST_MASK         = 0x0007;
 
-// word0 [8:7] were always reserved; [6:4] became reserved when the strobe
-// count dropped from seven to four.  The fit experiment may well reclaim them
+// word0 [8:3] are reserved (the destination code took [2:0]; the fourth
+// mask bit is gone).  The fit experiment may well reclaim them
 // (a wider count field is the obvious customer — a 6-bit count would let one
 // descriptor carry a whole 40-word 1bpp line), so they are checked for zero
 // here rather than quietly ignored.
-inline constexpr uint16_t DESC_RESERVED_MASK     = 0x01F0;
+inline constexpr uint16_t DESC_RESERVED_MASK     = 0x01F8;
 
 // Host/target-side view of one descriptor.  `src` is a *byte* address (even);
 // the engine keeps A[22:1] so bit 0 is not representable.
@@ -237,7 +248,7 @@ struct Descriptor
 {
     uint32_t src         = 0;
     uint16_t count       = 1;      // payload words, 1..32
-    uint8_t  signal_mask = SIGNAL_NONE;
+    uint8_t  destination = DEST_NONE;
     bool     wait_hblank = false;
     bool     stop_after  = false;
 };
@@ -254,7 +265,7 @@ constexpr DescriptorWords encode_descriptor(const Descriptor &d)
     out.w[0] = static_cast<uint16_t>((d.wait_hblank ? DESC_WAIT_HBLANK_MASK : 0) |
                                      (d.stop_after ? DESC_STOP_AFTER_MASK : 0) |
                                      (biased << DESC_COUNT_SHIFT) |
-                                     (d.signal_mask & DESC_SIGNAL_MASK));
+                                     (d.destination & DESC_DEST_MASK));
     out.w[1] = static_cast<uint16_t>((d.src >> 16) & 0x7F);
     out.w[2] = static_cast<uint16_t>(d.src & 0xFFFE);
     out.w[3] = 0;
@@ -267,7 +278,7 @@ constexpr Descriptor decode_descriptor(const uint16_t *w)
     d.wait_hblank = (w[0] & DESC_WAIT_HBLANK_MASK) != 0;
     d.stop_after  = (w[0] & DESC_STOP_AFTER_MASK) != 0;
     d.count       = static_cast<uint16_t>(((w[0] & DESC_COUNT_MASK) >> DESC_COUNT_SHIFT) + 1);
-    d.signal_mask = static_cast<uint8_t>(w[0] & DESC_SIGNAL_MASK);
+    d.destination = static_cast<uint8_t>(w[0] & DESC_DEST_MASK);
     d.src         = (static_cast<uint32_t>(w[1] & 0x7F) << 16) |
                     static_cast<uint32_t>(w[2] & 0xFFFE);
     return d;

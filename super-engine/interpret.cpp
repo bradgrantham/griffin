@@ -121,20 +121,20 @@ void EngineWalker::run_payload(Memory ram, const Descriptor &d, DepositSink &sin
     for (uint32_t i = 0; i < d.count; i++)
     {
         cycle_ += ENGINE_CYCLES_PER_WORD;
-        sink.deposit(cycle_, d.signal_mask, ram[d.src + i * 2]);
+        sink.deposit(cycle_, d.destination, ram[d.src + i * 2]);
     }
     cycle_ += ENGINE_RELEASE_CYCLES;   // RELEASE, or STOP for the last one
 
     out.words += d.count;
     out.busy_cycles += static_cast<uint64_t>(d.count) * ENGINE_CYCLES_PER_WORD +
                        ENGINE_RELEASE_CYCLES;
-    if (d.signal_mask == SIGNAL_NONE)
+    if (d.destination == DEST_NONE)
     {
         out.pacing_words += d.count;
     }
 
     total_words_ += d.count;
-    if (d.signal_mask == SIGNAL_NONE)
+    if (d.destination == DEST_NONE)
     {
         total_pacing_words_ += d.count;
     }
@@ -260,12 +260,12 @@ struct RecordingSink final : DepositSink
 {
     InterpretResult *result = nullptr;
 
-    void deposit(uint64_t cycle, uint8_t signal_mask, uint16_t word) override
+    void deposit(uint64_t cycle, uint8_t destination, uint16_t word) override
     {
         DepositEvent e;
         e.cycle       = cycle;
         e.word        = word;
-        e.signal_mask = signal_mask;
+        e.destination = destination;
         result->events.push_back(e);
     }
 };

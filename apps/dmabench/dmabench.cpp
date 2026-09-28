@@ -386,7 +386,7 @@ struct Builder
         se::Descriptor d;
         d.src         = reinterpret_cast<uint32_t>(&g_fb[0][0]);
         d.count       = 1;
-        d.signal_mask = se::SIGNAL_NONE;
+        d.destination = se::DEST_NONE;
         d.wait_hblank = true;
         d.stop_after  = stop_after;
         emit(d);
@@ -394,7 +394,7 @@ struct Builder
 
     // `n` words from `src` into one FIFO, split into descriptors of at most
     // `chunk` words.  Only the first may wait for the HBLANK edge.
-    void stream(uint32_t src, unsigned n, uint8_t signal_mask, bool wait_first, unsigned chunk)
+    void stream(uint32_t src, unsigned n, uint8_t destination, bool wait_first, unsigned chunk)
     {
         if (chunk == 0 || chunk > se::DESC_MAX_COUNT)
         {
@@ -407,7 +407,7 @@ struct Builder
             se::Descriptor d;
             d.src         = src + done * 2u;
             d.count       = static_cast<uint16_t>(take);
-            d.signal_mask = signal_mask;
+            d.destination = destination;
             d.wait_hblank = wait_first && (done == 0);
             emit(d);
             done += take;
@@ -446,7 +446,7 @@ unsigned put_preamble(Builder &b, const se::Rgb444 *entries, unsigned count,
     se::Descriptor d;
     d.src         = reinterpret_cast<uint32_t>(&g_preamble[0]);
     d.count       = static_cast<uint16_t>(n);
-    d.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+    d.destination = se::DEST_VIDCMD_FIFO_W;
     b.emit(d);
     return n;
 }
@@ -475,7 +475,7 @@ void build_blank(Builder &b)
     se::Descriptor d;
     d.src         = vidcmd_addr(0);
     d.count       = 1;
-    d.signal_mask = se::SIGNAL_VIDCMD_FIFO_W;
+    d.destination = se::DEST_VIDCMD_FIFO_W;
     b.emit(d);
     b.pacer(true);
 }
@@ -502,7 +502,7 @@ void build_1bpp(Builder &b)
     }
     for (unsigned line = 0; line < LINES; line++)
     {
-        b.stream(fb_addr(line), CONSOLE_1BPP_WORDS, se::SIGNAL_PIXELS_FIFO_W, true,
+        b.stream(fb_addr(line), CONSOLE_1BPP_WORDS, se::DEST_PIXELS_FIFO_W, true,
                  CONSOLE_1BPP_CHUNK);
     }
     b.pacer(true);
@@ -582,7 +582,7 @@ void build_text(Builder &b)
     for (unsigned line = 0; line < LINES; line++)
     {
         const unsigned n = (line == 0) ? TEXT_WORDS_LINE0 : TEXT_WORDS;
-        b.stream(vidcmd_addr(line), n, se::SIGNAL_VIDCMD_FIFO_W, true, se::DESC_MAX_COUNT);
+        b.stream(vidcmd_addr(line), n, se::DEST_VIDCMD_FIFO_W, true, se::DESC_MAX_COUNT);
     }
     b.pacer(true);
 }
@@ -662,9 +662,9 @@ void build_2bpp(Builder &b)
     }
     for (unsigned line = 0; line < LINES; line++)
     {
-        b.stream(vidcmd_addr(line), IDX2_VIDCMD_WORDS, se::SIGNAL_VIDCMD_FIFO_W, true,
+        b.stream(vidcmd_addr(line), IDX2_VIDCMD_WORDS, se::DEST_VIDCMD_FIFO_W, true,
                  se::DESC_MAX_COUNT);
-        b.stream(fb_addr(line), se::PIXELS_WORDS_2BPP, se::SIGNAL_PIXELS_FIFO_W, false,
+        b.stream(fb_addr(line), se::PIXELS_WORDS_2BPP, se::DEST_PIXELS_FIFO_W, false,
                  se::DESC_MAX_COUNT);
     }
     b.pacer(true);
@@ -733,9 +733,9 @@ void build_sprites(Builder &b)
     }
     for (unsigned line = 0; line < LINES; line++)
     {
-        b.stream(vidcmd_addr(line), SPRITE_VIDCMD_WORDS, se::SIGNAL_VIDCMD_FIFO_W, true,
+        b.stream(vidcmd_addr(line), SPRITE_VIDCMD_WORDS, se::DEST_VIDCMD_FIFO_W, true,
                  se::DESC_MAX_COUNT);
-        b.stream(fb_addr(line), se::PIXELS_WORDS_1BPP_HALF, se::SIGNAL_PIXELS_FIFO_W, false,
+        b.stream(fb_addr(line), se::PIXELS_WORDS_1BPP_HALF, se::DEST_PIXELS_FIFO_W, false,
                  se::DESC_MAX_COUNT);
     }
     b.pacer(true);

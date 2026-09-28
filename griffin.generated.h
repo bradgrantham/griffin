@@ -375,7 +375,7 @@ static constexpr uint32_t DUART_STOPCC = 0xF8001FUL;  // READ: Stop counter/time
 static constexpr uint32_t DUART_OPR_CLR = 0xF8001FUL;  // WRITE: Output port bit reset (clears OPR bits; those OP pins go HIGH)
 
 // ------------------------------------------------------------
-// AUDIO: Four DMA-fed sample channels with period counters and duty-cycle volume, driven only by ENGINE AUDIO_FIFO_W deposits
+// AUDIO: Four DMA-fed sample channels with period counters and duty-cycle volume, driven only by ENGINE deposits
 
 // RAM region — total of all RAM banks
 static constexpr uint32_t RAM_TOTAL_SIZE = 0x400000UL;
@@ -403,9 +403,7 @@ static constexpr uint32_t AUDIO_STEP_CLOCKS = 0x10U;
 static constexpr uint32_t AUDIO_PERIOD_TICK = 0x63U;
 static constexpr uint32_t AUDIO_PERIOD_MAX = 0xFFU;
 static constexpr uint32_t AUDIO_VOLUME_MAX = 0x3FU;
-static constexpr uint32_t AUDIO_SILENCE = 0x80U;
-static constexpr uint32_t AUDIO_WORD_DEST_SHIFT = 0x08U;
-static constexpr uint32_t AUDIO_DEST_CONTROL = 0x04U;
+static constexpr uint32_t AUDIO_SILENCE = 0x00U;
 static constexpr uint32_t AUDIO_REG_PERIOD = 0x00U;
 static constexpr uint32_t AUDIO_REG_VOLUME = 0x04U;
 static constexpr uint32_t DUART_OP_RTC_SCL = 0x04U;
@@ -418,10 +416,14 @@ static constexpr uint32_t RTC_I2C_ADDR = 0x6FU;
 static constexpr uint32_t PS2_TX_DATA_PARITY = 0x02U;
 static constexpr uint32_t ENGINE_WORDS_PER_BURST = 0x14U;
 static constexpr uint32_t VSYNC_IRQ_LEVEL = 0x06U;
-static constexpr uint32_t ENGINE_SIGNAL_PIXELS_FIFO_W = 0x01U;
-static constexpr uint32_t ENGINE_SIGNAL_VIDCMD_FIFO_W = 0x02U;
-static constexpr uint32_t ENGINE_SIGNAL_AUDIO_FIFO_W = 0x04U;
-static constexpr uint32_t ENGINE_SIGNAL_SPARE = 0x08U;
+static constexpr uint32_t ENGINE_DEST_NONE = 0x00U;
+static constexpr uint32_t ENGINE_DEST_PIXELS_FIFO_W = 0x01U;
+static constexpr uint32_t ENGINE_DEST_VIDCMD_FIFO_W = 0x02U;
+static constexpr uint32_t ENGINE_DEST_AUDCTL_FIFO_W = 0x03U;
+static constexpr uint32_t ENGINE_DEST_SAMPLES0_FIFO_W = 0x04U;
+static constexpr uint32_t ENGINE_DEST_SAMPLES1_FIFO_W = 0x05U;
+static constexpr uint32_t ENGINE_DEST_SAMPLES2_FIFO_W = 0x06U;
+static constexpr uint32_t ENGINE_DEST_SAMPLES3_FIFO_W = 0x07U;
 static constexpr uint32_t VIDCMD_SET_CMP_COLOR1 = 0x00U;
 static constexpr uint32_t VIDCMD_SET_CMP_COLOR0 = 0x01U;
 static constexpr uint32_t VIDCMD_SET_PIX_CLUT_INDEX = 0x02U;
