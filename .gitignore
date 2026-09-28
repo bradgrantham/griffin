@@ -90,3 +90,6 @@ sound/build/
 # Editor swap files
 *.swp
 *.swo
+
+# AUDIO model build tree
+audio/build/

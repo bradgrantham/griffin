@@ -1714,3 +1714,82 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   Z80 class part, or the voices in hardware (a PSG behind the Z80), or
   the 68010 (~790 cycles per tick at 12.5 MHz with ~50 per voice).
   Real-period check: at 6 MHz 19,934 nested NMIs in 20,000 ticks.
+
+2026-09-27 -- Audio: "Paula form" chosen over the Z80; AUDIO CPLD fit rungs
+  Direction (after the Z80 v2 gate failure above): no per-voice arithmetic
+  anywhere.  Four byte-wide IDT7200 sample FIFOs, each filled by ENGINE
+  descriptors through a destination decoder (the descriptor destination
+  becomes a number, a 74HC138 makes it one-hot), are the wavetable readers;
+  the display list is the loop hardware; pitch = rate / table length with
+  the 68000 preparing tables of assorted lengths at load time; noise is a
+  streamed poly-sequence table.  Each FIFO's /R is held low so its Q bus
+  drives that channel's own R-2R ladder directly (IDT7200 read cycle: Q
+  valid while /R low, pointer advances on the rising edge); a one-clock high
+  pulse advances.  Volume is Paula's mechanism, a duty cycle: GATE[n] closes
+  a CD4066 switch between ladder n and its side's LM358 summing node
+  (two channels per side, no clamp, capacitor across the feedback resistor
+  averages the switching); a second switch per channel, driven by the same
+  gate, injects -2.5 V to cancel the offset-binary midscale at exactly the
+  channel's duty.  Registers arrive through a fifth byte-wide FIFO as
+  two-byte {register, value} records, so AUDIO stays DMA-only with no
+  68000-bus interface and no readback.  An empty sample FIFO forces its gate
+  off (silence, not a DC step).  Rejected on the way: external shift-and-add
+  volume (~18 TTL chips), digital PWM gating (~14 chips and a 3 MHz DAC
+  update), hardware 6-bit volume registers in the two-adder digital-sum
+  form (over 128 FF).  Paula's volume being PWM is from memory of the 14-bit
+  playback analyses, not checked against a primary source.
+  Chip: cpld/audio/audio.v (module Audio), CLK = 25.175 MHz pixel clock, a
+  9-bit free-running timebase: bits 3:0 step the four 8-bit down counters
+  (1.573 MHz; PERIOD 99 = the 15,734.375 Hz tick exactly), bits 8:3 are the
+  64-step volume frame (49.2 kHz).  The gate is a binary rate multiplier
+  (SN7497 style): six disjoint windows of the frame bits with duties 1/2 ..
+  1/64, each enabled by a VOLUME bit, so a gate is six product terms and no
+  comparator (a 6-bit magnitude compare would be ~7 macrocells per
+  channel).  Rate-multiplier residue is at multiples of 49.2 kHz like plain
+  PWM.  Control reader: /R low two clocks (tA margin), high one (tRR).
+  Fit ladder (ATF1508AS PLCC84, -preassign keep with no //PIN block = free
+  placement, production strategy flags):
+    rung 1  behavioural counters (count - 1)          122 LC / 114 FF / 367 PT, pass 1
+    rung 2  + toggle-chain counters, fsm_encoding none 123 LC / 112 FF / 515 PT, pass 1
+    rung 2b rung 1 counters + fsm_encoding none       120 LC / 112 FF / 376 PT, pass 1  <- kept
+    9-bit PERIOD (+10 FF)                             INTERNAL ERROR plain; xor_synthesis: no fit at pass 5
+    10-bit PERIOD                                     refused, 130 flip-flops
+  yosys one-hot-recodes the 4-state control FSM unless fsm_encoding is
+  pinned (2 FF).  Pins 27/64 (19 in incl. JTAG, 9 out).  So the 8-bit
+  period is the ceiling on this chip; fine pitch modulation comes from
+  table switching at cycle boundaries or dithering PERIOD at frame rate.
+  Headroom 8 LC.  Next: host model as the spec, PSG driver v2 and the
+  Smurf A/B by ear, scheduler library, testbench, YAML (ENGINE destination
+  field), emulator with FIFO over/underflow assertions, breadboard PWM
+  linearity test.  Z80 v2 (sound/) and the MIXER stay on disk as records.
+
+2026-09-27 -- Audio step 2: AUDIO host model, PSG channel driver, Smurf A/B
+  audio/ (new): audio_chip.h/.cpp is the executable spec of cpld/audio/
+  audio.v (five FIFOs, timebase, counters, 4-clock control reader, the
+  rate-multiplier gate) plus an analog render; scheduler.h/.cpp is the
+  68000's side (per-line bursts every 8 lines staggered by channel, margin
+  2, the closed-form line_pops mirror of the counter law, PERIOD records
+  landed when the old samples have drained); psg_channels.h/.cpp turns
+  SN76489 bytes into square tables (PERIOD, LENGTH chosen per tone within a
+  cent where (PERIOD+1) x LENGTH allows), LFSR sequence tables for noise
+  (bit repeated DUP times below the 6.15 kHz floor, capped at 65536
+  samples) and the 2 dB ladder as VOLUME.  Exact tests T1..T6 pass
+  (rate-multiplier on-count == VOLUME and disjoint windows; closed form ==
+  chip over 200k random lines incl. two PERIOD records per line; gate off
+  when empty; fed with the mirror exact; PERIOD alignment within a line).
+  Correction on the way: a line is 800 pixel clocks = 50 steps (the first
+  draft used the 1600-clock tick), found because every note came out an
+  octave high in the spectral comparison.
+  Smurf A/B (81.7 s): 0 underruns, 0 dropped deposits, mirror fill identical
+  to the chip on every line, max fill 7/7/20/7, 2,606 control records, 33
+  tables (3.7 KB as words), ENGINE 153 descriptors and 364 words per frame
+  mean (max 268 / 1,715), worst line 4 descriptors 26 words <= 92 of 445
+  SYSCLK, 0.97 % of the frame.  Pitch: mean 0.94 cents over Smurf's 43
+  periods, worst 8.15 at N=15 (7.46 kHz; 211 is prime), the rest over a
+  cent all above 4.6 kHz.  Per-field spectral similarity vs the reference
+  0.939 mean, 89 % of fields >= 0.9, 21 of 4,510 below 0.5 (uncharacterised,
+  suspected sweep transitions at our ~8-tick latency).  RMS 0.925 of the
+  reference (the 9.7 kHz corner).  Gate for step 2: the ear, on
+  audio/build/wav/{reference,audio,audio_stereo}.wav.
+  Open: multi-cycle tables (edges rounded per cycle) would take the high
+  tones under a cent at the cost of edge jitter; the 21 fields.

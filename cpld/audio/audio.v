@@ -1,233 +1,227 @@
-// audio.v — Griffin stereo audio peripheral (ATF1504AS) — FIT EXPERIMENT
+// audio.v — Griffin AUDIO (ATF1508AS): four DMA-fed sample channels with
+// hardware volume — the "Paula form" (griffin.log 2026-09-27).  FIT RUNG 1:
+// no //PIN: block yet, the fitter places pins freely.
 //
-// NOT wired to any manufactured pinout; pins are left for the fitter to
-// place (no //PIN: lines, fit with -preassign ignore) so we can measure the
-// logic-cell / FF / product-term cost on the smaller ATF1504 (64 macrocells).
+// What the chip does:
 //
-// Three combined functions (see plan i-d-like-to-estimate-velvety-allen.md):
+//   * Four IDT7200 sample FIFOs, byte wide, each filled by ENGINE descriptors
+//     through the destination decoder.  A FIFO's /R is held LOW, so its Q bus,
+//     which drives that channel's R-2R ladder directly, always shows the
+//     current sample; a one-clock HIGH pulse on /R advances to the next.  The
+//     pulse comes from the channel's 8-bit period counter, stepped at CLK/16
+//     (1.573 MHz): rate = CLK / 16 / (PERIOD + 1), so PERIOD = 99 is exactly
+//     the 15,734.375 Hz AUDIO_TICK.  Pitch is rate / table length; the 68000
+//     chooses both.
 //
-//   1. Audio address decode.  GLUE already decodes the 0xFC0000 region and
-//      hands this CPLD a cycle-qualified select (nAUDIO_SEL).  The 256 KB
-//      region is split in half on A17:
-//        - low  half (A17=0): the register file (DIVLO/DIVHI/CTRL/CLRINT/STATUS)
-//        - high half (A17=1): aliased to the FIFO write strobe, so a plain
-//          memcpy()/move.w/move.l/movem.l streams stereo samples into a pair
-//          of 7202s (left=D[15:8], right=D[7:0], each feeding an 8-bit DAC).
-//          The CPU data bus wires straight to the FIFO D-inputs; this CPLD is
-//          not in the data path and only generates one /W per full-word write.
+//   * Volume is Paula's trick, a duty cycle in the time domain: GATE[n]
+//     closes a CD4066 switch between channel n's ladder and its side's summing
+//     node for VOLUME/64 of every 512-clock frame (49.2 kHz).  The pattern is
+//     a binary rate multiplier (SN7497 style): six disjoint windows of the
+//     free-running timebase with duties 1/2 .. 1/64, each enabled by one
+//     VOLUME bit, so a gate is six product terms and no comparator.  The gate
+//     is forced off while the FIFO is empty (silence, not a DC step) and
+//     during the /R pulse (Q is high-impedance then).
 //
-//   2. A CPU-configurable divider from SYSCLK (14 MHz) down to the audio
-//      sample rate: a 12-bit programmable period producing a sample tick that
-//      pulses both FIFOs' /R so samples stream to the DACs.
+//   * A fifth byte-wide FIFO carries control records of two bytes,
+//     {register, value}: register 0..3 = PERIOD of channel n, 4..7 = VOLUME
+//     of channel n (low six bits).  Records are consumed as soon as the FIFO
+//     is not empty.
 //
-//   3. The 7202 half-full flag (/HF) turned into a latched, CPU-clearable IRQ.
-//      When the FIFO drains below half-full (nFIFO_HF deasserts/rises) the
-//      latch sets nAUDIO_IRQ so firmware refills; a write to CLRINT clears it.
+// There is no 68000 bus interface: everything arrives through ENGINE, and
+// nothing is read back (AUDIO is DMA-only, decision of 2026-08-29).
 
-module audio
+module Audio
 (
-    input  wire       SYSCLK,
+    input  wire       CLK,            // 25.175 MHz pixel clock
     input  wire       nRESET,
 
-    // GLUE-provided region select (asserted low for reads and writes in the
-    // whole 0xFC0000 region) plus the low address bits this CPLD needs.
-    input  wire       nAUDIO_SEL,
-    input  wire       A17,          // region-half split: 0=registers, 1=FIFO alias
-    input  wire [4:1] A,            // register offset within the low half
-    input  wire       nUDS,
-    input  wire       nLDS,
-    input  wire       R_nW,
+    // Control FIFO (IDT7200, byte wide)
+    input  wire       nCONTROL_EF,    // low = empty
+    input  wire [7:0] CONTROL_Q,
+    output reg        nCONTROL_R,     // low = read; high pulse advances
 
-    // 7202 half-full flag (active low; both FIFOs run in lockstep so one
-    // suffices).  Brought in through a 2-FF synchronizer.
-    input  wire       nFIFO_HF,
+    // Sample FIFOs (4 x IDT7200, byte wide); Q buses go to the ladders
+    input  wire [3:0] nSAMPLE_EF,     // low = empty
+    output reg  [3:0] nSAMPLE_R,      // held low, one-clock high pulse advances
 
-    // CPLD register data: only this CPLD's own byte registers ride D[7:0].
-    // The 16-bit sample data bus bypasses the CPLD into the two 7202s.
-    inout  wire [7:0] D,
-
-    output wire       nFIFO_W,      // one pulse per full-word high-half write
-    output wire       nFIFO_RE,     // sample tick (to both FIFOs' /R)
-    output wire       nAUDIO_IRQ,
-    output wire       nDTACK
+    // Volume switches (CD4066 control inputs, high = ladder connected)
+    output reg  [3:0] GATE
 );
 
-    wire RESET = ~nRESET;
-    wire sel   = ~nAUDIO_SEL;
+    wire reset = ~nRESET;
 
     // ----------------------------------------------------------------
-    // Register offsets in the low half (A17=0).  Byte registers live on
-    // odd addresses (LDS / D[7:0]); A[4:1] selects between them.
+    // Timebase.  Bits 3:0 divide CLK by 16 for the period counters; bits
+    // 8:3 are the 64-step volume frame.
     // ----------------------------------------------------------------
-    localparam [4:1] OFF_DIVLO  = 4'd0;   // 0x01 : divider reload [7:0]
-    localparam [4:1] OFF_DIVHI  = 4'd1;   // 0x03 : divider reload [11:8]
-    localparam [4:1] OFF_CTRL   = 4'd2;   // 0x05 : control (write) / status (read)
-    localparam [4:1] OFF_CLRINT = 4'd3;   // 0x07 : write-any clears the IRQ latch
 
-    wire reg_access = sel & ~A17 & ~nLDS;
-    wire reg_write  = reg_access & ~R_nW;
-    wire reg_read   = reg_access &  R_nW;
+    reg [8:0] timebase;
 
-    wire divlo_write  = reg_write & (A == OFF_DIVLO);
-    wire divhi_write  = reg_write & (A == OFF_DIVHI);
-    wire ctrl_write   = reg_write & (A == OFF_CTRL);
-    wire clrint_write = reg_write & (A == OFF_CLRINT);
-    wire status_read  = reg_read  & (A == OFF_CTRL);
-
-    // ----------------------------------------------------------------
-    // FIFO write window: any full-word write to the high half pushes one
-    // stereo sample.  The word strobe qualification (both UDS+LDS) is what
-    // makes stereo correct — L on D[15:8] and R on D[7:0] captured together;
-    // a stray byte write (one strobe) is ignored, avoiding L/R desync.
-    // Combinational, chip-select style: one clean /W per 68000 word cycle,
-    // captured by the 7202s on the rising (deasserting) edge.
-    // ----------------------------------------------------------------
-    wire fifo_write = sel & A17 & ~R_nW & ~nUDS & ~nLDS;
-    assign nFIFO_W = ~fifo_write;
-
-    // ----------------------------------------------------------------
-    // Configurable sample-rate divider: 12-bit upcounter from 0 compared
-    // for equality against the reload register (upcounter+compare per the
-    // ATF15xx constant-cost guidance).  On match, restart and emit a
-    // one-SYSCLK sample tick.  Gated by CTRL.ENABLE.
-    // ----------------------------------------------------------------
-    reg [11:0] div_reload;
-    reg        enable;
-
-    always @(posedge SYSCLK or posedge RESET)
+    always @(posedge CLK)
     begin
-        if (RESET)
+        if (reset)
         begin
-            div_reload <= 12'd0;
-            enable     <= 1'b0;
+            timebase <= 9'd0;
         end
         else
         begin
-            if (divlo_write)
-            begin
-                div_reload[7:0] <= D[7:0];
-            end
-            if (divhi_write)
-            begin
-                div_reload[11:8] <= D[3:0];
-            end
-            if (ctrl_write)
-            begin
-                enable <= D[0];
-            end
+            timebase <= timebase + 9'd1;
         end
     end
 
-    reg [11:0] div_count;
-    reg        sample_tick;
-    wire       div_match = (div_count == div_reload);
+    wire       step  = &timebase[3:0];
+    wire [5:0] frame = timebase[8:3];
 
-    always @(posedge SYSCLK or posedge RESET)
+    // Rate-multiplier windows: disjoint, duty 1/2, 1/4, ... 1/64, summing to
+    // 63/64.  VOLUME = 63 is the loudest, VOLUME = 0 is off.
+    wire window5 = frame[0];
+    wire window4 = ~frame[0] & frame[1];
+    wire window3 = ~frame[0] & ~frame[1] & frame[2];
+    wire window2 = ~frame[0] & ~frame[1] & ~frame[2] & frame[3];
+    wire window1 = ~frame[0] & ~frame[1] & ~frame[2] & ~frame[3] & frame[4];
+    wire window0 = ~frame[0] & ~frame[1] & ~frame[2] & ~frame[3] & ~frame[4] & frame[5];
+
+    // ----------------------------------------------------------------
+    // Control FIFO reader.  /R is held low for two clocks so the byte is
+    // valid (tA) with margin before it is latched, then high for one clock
+    // (tRR) to advance.  The first byte of a record is the register number,
+    // the second its value; an empty FIFO between the two just waits.
+    // ----------------------------------------------------------------
+
+    localparam CONTROL_IDLE    = 2'd0;
+    localparam CONTROL_READ_0  = 2'd1;
+    localparam CONTROL_READ_1  = 2'd2;
+    localparam CONTROL_ADVANCE = 2'd3;
+
+    (* fsm_encoding = "none" *) reg [1:0] control_state;
+    reg       control_have_register;   // the register byte has been read
+    reg [2:0] control_register;
+
+    wire control_latch = (control_state == CONTROL_READ_1);
+    wire control_write = control_latch & control_have_register;
+
+    always @(posedge CLK)
     begin
-        if (RESET)
+        if (reset)
         begin
-            div_count   <= 12'd0;
-            sample_tick <= 1'b0;
-        end
-        else if (~enable)
-        begin
-            div_count   <= 12'd0;
-            sample_tick <= 1'b0;
-        end
-        else if (div_match)
-        begin
-            div_count   <= 12'd0;
-            sample_tick <= 1'b1;
+            control_state         <= CONTROL_IDLE;
+            nCONTROL_R            <= 1'b1;
+            control_have_register <= 1'b0;
+            control_register      <= 3'd0;
         end
         else
         begin
-            div_count   <= div_count + 12'd1;
-            sample_tick <= 1'b0;
+            case (control_state)
+                CONTROL_IDLE:
+                begin
+                    if (nCONTROL_EF)
+                    begin
+                        nCONTROL_R    <= 1'b0;
+                        control_state <= CONTROL_READ_0;
+                    end
+                end
+                CONTROL_READ_0:
+                begin
+                    control_state <= CONTROL_READ_1;
+                end
+                CONTROL_READ_1:
+                begin
+                    nCONTROL_R            <= 1'b1;
+                    control_have_register <= ~control_have_register;
+                    if (!control_have_register)
+                    begin
+                        control_register <= CONTROL_Q[2:0];
+                    end
+                    control_state <= CONTROL_ADVANCE;
+                end
+                default:
+                begin
+                    control_state <= CONTROL_IDLE;
+                end
+            endcase
         end
     end
 
-    // The tick drives both FIFOs' /R low for one SYSCLK; the 7202 output
-    // registers hold each sample on Q until the next read, so the R2R DACs
-    // are fed directly with no latch in the CPLD.
-    assign nFIFO_RE = ~sample_tick;
-
     // ----------------------------------------------------------------
-    // 7202 /HF -> latched, CPU-clearable IRQ.  nFIFO_HF is active low while
-    // the FIFO holds half or more; it rises when the FIFO drops below half
-    // full, which is when the CPU must refill.  Detect that rising edge
-    // through a 2-FF synchronizer (+1 delay), latch, clear on CLRINT.
+    // Registers.  Written from the control reader only.
     // ----------------------------------------------------------------
-    reg hf_meta, hf_sync, hf_sync_d;
-    reg irq_latched;
 
-    wire hf_below_edge = hf_sync & ~hf_sync_d;   // rising edge of nFIFO_HF
+    reg [7:0] period0, period1, period2, period3;
+    reg [5:0] volume0, volume1, volume2, volume3;
 
-    always @(posedge SYSCLK or posedge RESET)
+    always @(posedge CLK)
     begin
-        if (RESET)
+        if (reset)
         begin
-            hf_meta     <= 1'b1;   // empty FIFO at reset reads as below-half
-            hf_sync     <= 1'b1;
-            hf_sync_d   <= 1'b1;
-            irq_latched <= 1'b0;
+            period0 <= 8'd0; period1 <= 8'd0; period2 <= 8'd0; period3 <= 8'd0;
+            volume0 <= 6'd0; volume1 <= 6'd0; volume2 <= 6'd0; volume3 <= 6'd0;
+        end
+        else if (control_write)
+        begin
+            case (control_register)
+                3'd0: begin period0 <= CONTROL_Q; end
+                3'd1: begin period1 <= CONTROL_Q; end
+                3'd2: begin period2 <= CONTROL_Q; end
+                3'd3: begin period3 <= CONTROL_Q; end
+                3'd4: begin volume0 <= CONTROL_Q[5:0]; end
+                3'd5: begin volume1 <= CONTROL_Q[5:0]; end
+                3'd6: begin volume2 <= CONTROL_Q[5:0]; end
+                default: begin volume3 <= CONTROL_Q[5:0]; end
+            endcase
+        end
+    end
+
+    // ----------------------------------------------------------------
+    // Channels.  Down counter reloaded from PERIOD at zero; the reload step
+    // is the pop.  GATE is registered so the switch never sees decode
+    // glitches.
+    // ----------------------------------------------------------------
+
+    reg [7:0] count0, count1, count2, count3;
+
+    wire zero0 = ~|count0;
+    wire zero1 = ~|count1;
+    wire zero2 = ~|count2;
+    wire zero3 = ~|count3;
+
+    wire pop0 = step & zero0;
+    wire pop1 = step & zero1;
+    wire pop2 = step & zero2;
+    wire pop3 = step & zero3;
+
+    wire on0 = (volume0[5] & window5) | (volume0[4] & window4) | (volume0[3] & window3) |
+               (volume0[2] & window2) | (volume0[1] & window1) | (volume0[0] & window0);
+    wire on1 = (volume1[5] & window5) | (volume1[4] & window4) | (volume1[3] & window3) |
+               (volume1[2] & window2) | (volume1[1] & window1) | (volume1[0] & window0);
+    wire on2 = (volume2[5] & window5) | (volume2[4] & window4) | (volume2[3] & window3) |
+               (volume2[2] & window2) | (volume2[1] & window1) | (volume2[0] & window0);
+    wire on3 = (volume3[5] & window5) | (volume3[4] & window4) | (volume3[3] & window3) |
+               (volume3[2] & window2) | (volume3[1] & window1) | (volume3[0] & window0);
+
+    always @(posedge CLK)
+    begin
+        if (reset)
+        begin
+            // /R high through reset: the 7200 wants /R inactive while /RS is low.
+            count0 <= 8'd0; count1 <= 8'd0; count2 <= 8'd0; count3 <= 8'd0;
+            nSAMPLE_R <= 4'b1111;
+            GATE      <= 4'b0000;
         end
         else
         begin
-            hf_meta   <= nFIFO_HF;
-            hf_sync   <= hf_meta;
-            hf_sync_d <= hf_sync;
-
-            if (hf_below_edge)
+            if (step)
             begin
-                irq_latched <= 1'b1;
+                count0 <= zero0 ? period0 : count0 - 8'd1;
+                count1 <= zero1 ? period1 : count1 - 8'd1;
+                count2 <= zero2 ? period2 : count2 - 8'd1;
+                count3 <= zero3 ? period3 : count3 - 8'd1;
             end
-            else if (clrint_write)
-            begin
-                irq_latched <= 1'b0;
-            end
+            nSAMPLE_R <= {pop3, pop2, pop1, pop0};
+            GATE      <= {on3 & nSAMPLE_EF[3] & ~pop3,
+                          on2 & nSAMPLE_EF[2] & ~pop2,
+                          on1 & nSAMPLE_EF[1] & ~pop1,
+                          on0 & nSAMPLE_EF[0] & ~pop0};
         end
     end
-
-    assign nAUDIO_IRQ = ~irq_latched;
-
-    // ----------------------------------------------------------------
-    // STATUS readback (offset 0x05 read): live FIFO_HF and divider enable.
-    // FIFO_HF reads 1 when HF is asserted (half-full or more), matching the
-    // ENGINE STATUS convention.
-    // ----------------------------------------------------------------
-    reg [7:0] read_data;
-
-    always @*
-    begin
-        read_data = 8'h00;
-        if (status_read)
-        begin
-            read_data = {6'b0, ~hf_sync, enable};
-        end
-    end
-
-    assign D = status_read ? read_data : 8'bz;
-
-    // ----------------------------------------------------------------
-    // DTACK for the AUDIO access (1 wait state: threshold = 2 + 2*ws = 4).
-    // ws_cnt counts SYSCLKs while selected, cleared when the select drops.
-    // Open-drain so it can be wire-ORed with GLUE on the shared bus.
-    // ----------------------------------------------------------------
-    reg [3:0] ws_cnt;
-
-    always @(posedge SYSCLK or posedge nAUDIO_SEL)
-    begin
-        if (nAUDIO_SEL)
-        begin
-            ws_cnt <= 4'd0;
-        end
-        else if (ws_cnt != 4'd15)
-        begin
-            ws_cnt <= ws_cnt + 4'd1;
-        end
-    end
-
-    wire dtack_active = sel & (ws_cnt >= 4'd4);
-    assign nDTACK = dtack_active ? 1'b0 : 1'bz;
 
 endmodule

@@ -114,24 +114,24 @@ engine/engine.svf: engine/engine.jed
 # No flash-engine target yet — ENGINE is not in the JTAG chain on Rev 1
 
 # ------------------------------------------------------------
-# AUDIO (ATF1504AS) — FIT EXPERIMENT, not in `all`
+# AUDIO (ATF1508AS) — Paula-form sound chip, FIT RUNGS, not in `all`
 #
-# Stereo audio peripheral fit test on the smaller 64-macrocell ATF1504.
-# Self-contained (no griffin.generated.vh), no //PIN: lines, and fit with
-# -preassign ignore so the fitter places pins freely to maximize layout.
-# Run on demand: `make audio`, then read audio/audio.fit utilization.
+# Four byte-wide sample FIFOs popped by period counters, PWM volume gates to
+# CD4066 switches, a control FIFO for the registers (cpld/audio/audio.v).
+# No //PIN: block yet: with none, `-preassign keep` places freely.  The rung
+# ladder is in griffin.log; read audio/audio.fit for utilization.
 # ------------------------------------------------------------
 
-audio: audio/audio.svf
+audio: audio/audio.jed
 
 audio/audio.edif: audio/audio.v
 	cd audio && $(YOSYS) audio
 
 audio/audio.jed: audio/audio.edif
-	cd audio && $(FITTER) -d ATF1504AS -p PLCC44 audio -preassign ignore -strategy JTAG = on
+	cd audio && $(FITTER) audio -preassign keep -strategy TDI_pullup = on -strategy TMS_pullup = on -strategy power_reset on -strategy JTAG = on
 
 audio/audio.svf: audio/audio.jed
-	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1504AS $(CURDIR)/audio/audio.jed $(CURDIR)/audio/audio.svf
+	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/audio/audio.jed $(CURDIR)/audio/audio.svf
 
 # ------------------------------------------------------------
 # PORTS (ATF1508AS) — Rev 2, built by `all` alongside GLUE/VIDEO/ENGINE
