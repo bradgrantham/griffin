@@ -187,10 +187,11 @@
       <div class="sub">Two-stream display subsystem &mdash; mechanism reference and screen-mode application notes</div>
     </div>
     <div class="docmeta">
-      REV 3 PROPOSAL &middot; DRAFT 2026-09-20<br>
+      REV 3 PROPOSAL &middot; DRAFT 2026-09-26<br>
       branch indexed-pixel; rev-1 state = tag rev1-video<br>
       sources: indexed-pixel-spec-draft.md, compositor.v,<br>
-      griffin.yml interfaces, vidcmd-spec.md, super-engine suite
+      griffin.yml interfaces, vidcmd-spec.md, super-engine suite,<br>
+      compositor_tb measured constants (179 checks, run 2026-09-24)
     </div>
   </div>
 
@@ -201,6 +202,7 @@
         <li>VGA 640&times;480@59.94, R4G4B4 (12-bit) color throughout</li>
         <li>Fixed-rate indexed pixel stream through a 16&times;12-bit palette RAM + beam-locked RLE command stream</li>
         <li>Pixel-exact mid-line register writes (SET, banked-pair law)</li>
+        <li>MASK: 16 px of per-pixel three-way overlay in two words; masks chain gapless</li>
         <li>Palette entries reloadable per line in hblank (3 words per entry, 8 per line)</li>
         <li>1 / 2 / 4 bpp and an attribute-word tile mode (TMS9918 Graphics II, inline)</li>
         <li>No CPU bus on PIXEL / COMPOSITOR &mdash; all state in-band, palette included</li>
@@ -209,7 +211,7 @@
     <div>
       <h2>Device Complement</h2>
       <ul>
-        <li>ENGINE &mdash; ATF1508AS, descriptor DMA master (123/128 LC)</li>
+        <li>ENGINE &mdash; ATF1508AS, descriptor DMA master (120/128 LC, 60/64 I/O)</li>
         <li>PIXEL + TIMING &mdash; one ATF1508AS: stream unpacker, palette writer, raster + syncs + board time bases (123/128 LC, 94 FF, 43 I/O, fitter pass 1; pinout proposed, not frozen)</li>
         <li>COMPOSITOR &mdash; ATF1508AS, VIDCMD playback (122/128 LC)</li>
         <li>Palette &mdash; 3&times; 16&times;4 separate-I/O bipolar RAM, 74F219 pinout (non-inverting; &le;22.7 ns address access required)</li>
@@ -318,18 +320,26 @@
     </p>
 
     <h3><span class="mnum">3.2</span> VIDCMD playback &mdash; beam-locked control plane <span class="st prod">PRODUCTION</span></h3>
-    <pre>RUN        { 2'b00, src[1:0],  ~count[11:0] }   src: 00 passthrough  01 held_fg  10 held_bg
-RUN_COLOR  { 2'b00, 2'b11, colour[2:0], ~count[8:0] }   8 saturated corners, inline
-SET        { 1'b1,  target[2:0], value[11:0] }  0 held_fg  1 held_bg  2 clut_index  3 clut_data
-                                                4 pix_base  5 pix_mode  6 pixel_skip  7 filler (ignored)
-reserved   { 2'b01, ... }                       1-slot no-op (mask record candidate, &sect;3.5)</pre>
+    <pre>RUN        { 2'b00, src[1:0],  ~count[11:0] }   src: 00 passthrough  01 cmp_color1  10 cmp_color0   count 1..4095
+RUN_COLOR  { 2'b00, 2'b11, colour[2:0], ~count[8:0] }   8 saturated corners, inline; count 1..511
+MASK       { 2'b01, d1..d7 } + { d8..d15 }      two words, 16 px; pixel 0 implicit opaque cmp_color0 (&sect;3.5)
+SET        { 1'b1,  target[2:0], value[11:0] }  0 cmp_color1  1 cmp_color0  2 clut_index  3 clut_data
+                                                4 pix_base  5 pix_mode  6 pixel_skip  7 filler (PIXEL ignores)</pre>
     <p>
-      Every active pixel clock is one <b>slot</b>; a record occupies exactly one slot when it
-      executes, with <b>entry-edge commit</b>: a SET&rsquo;s effect is visible in the pixel of its own
-      slot. When the count is terminal and nothing is staged, <b>HOLD</b> continues the current
+      Four record types, one word each except MASK. Target 0 writes <code>cmp_color1</code> and target 1
+      writes <code>cmp_color0</code>; the number/name mismatch is a frozen wire contract
+      (<code>super-engine/descriptor.h</code>). Counts are stored complemented; a count of 0 is not a
+      no-op (it wraps to a 4096-slot run).
+    </p>
+    <p>
+      Every active pixel clock is one <b>slot</b>; a record occupies its count of slots (SET one, MASK
+      sixteen) when it executes, with <b>entry-edge commit</b>: a SET&rsquo;s effect is visible in the pixel
+      of its own slot. When the count is terminal and nothing is staged, <b>HOLD</b> continues the current
       source &mdash; first-class framing (a whole passthrough frame costs one word). During blanking,
-      staged SETs execute immediately in stream order (<b>eager</b>, and positional: a staged RUN
-      blocks everything behind it). <code>/RS</code> at vsync resets held colors and all machine state.
+      staged SETs execute immediately in stream order (<b>eager</b>, and positional: a staged RUN or MASK
+      header blocks everything behind it). <code>/RS</code> at vsync resets all machine state:
+      <code>cmp_color1</code> = FFF, <code>cmp_color0</code> = 000, source passthrough. What a record costs
+      to <em>deliver</em> is a separate number from what it costs to execute (&sect;3.3, &sect;6.1).
     </p>
 
     <h3><span class="mnum">3.3</span> Fetch engine &mdash; cadence and the banked pair <span class="st prod">PRODUCTION</span></h3>
@@ -347,10 +357,14 @@ reserved   { 2'b01, ... }                       1-slot no-op (mask record candid
       <tr><td class="mono">L5</td><td><b>Banked-pair law:</b> two banked records execute on consecutive slots; the third arrives 2 slots later</td></tr>
     </table></div>
     <p class="note">
-      Consequences: a SET fg + SET bg pair behind any run &ge;4 px lands on adjacent pixels
-      (both palette entries change across two pixels); 1-px spans need &ge;4-px pitch to land as
-      authored (2&ndash;3-px pitch stretches them to 2 px); a back-to-back triple lands at slots
-      N, N+2, N+4 relative&nbsp;to&nbsp;N&minus;1.
+      Consequences (hand-derived from the fetch rules and reproduced by the shared model; the testbench
+      exercises the RUN(4) form): any RUN or RUN_COLOR of &ge;2 px ends exactly where authored; every
+      run of <b>&ge;3 px re-arms the pair</b>, so the two records behind it land on consecutive pixels
+      (a SET color1 + SET color0 pair changes both colours across two pixels); the third and later
+      1-slot records land every other pixel (N, N+1, N+3, N+5&hellip;). A run of exactly 2 keeps its own
+      boundary exact but re-arms the pair only when the record behind it was already parked. 1-px
+      features therefore land as authored at &ge;4-px pitch (RUN 3 + feature) and stretch to 2 px at
+      2&ndash;3-px pitch. Authoring rules of thumb: &sect;6.1.
     </p>
 
     <h3><span class="mnum">3.4</span> SET conduit to PIXEL &mdash; the value bus <span class="st prod">PRODUCTION</span></h3>
@@ -410,10 +424,13 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
 
     <h3><span class="mnum">3.8</span> LITERAL record &mdash; direct-color spans <span class="st adv">ADVANCE</span></h3>
     <p>
-      &ldquo;Next N VIDCMD words are raw R4G4B4 pixels.&rdquo; At the 2-clock cadence each literal
-      paints a 2-clock-wide pixel &mdash; which in a &sect;3.7 half-rate mode is <b>exactly one game
-      pixel</b>: full 12-bit per-pixel sprites and cursor at one word per game pixel, no palette
-      involvement. COMPOSITOR decode + counter; specify after &sect;3.5 fits.
+      Current form (griffin.log 2026-09-20): a one-word direct pixel <code>{ 2'b00, 2'b11, colour[11:0] }</code>
+      that would <em>replace</em> RUN_COLOR, no count, no refetch sequencing. As an ordinary 1-slot record it
+      paints its slot plus one HOLD slot at the 2-clock cadence &mdash; exactly one half-rate (&sect;3.7) game
+      pixel &mdash; and a banked pair gives two adjacent 640-res pixels; HOLD lasts only until the next word
+      stages, so it is not a span. Trades the eight one-word corner-colour spans for true-colour pixels
+      (~16 words per 16-px sprite row against 2 for a MASK row). Parked until the Smurf port on attribute
+      mode shows whether it is needed.
     </p>
 
     <h3><span class="mnum">3.9</span> Descriptor techniques &mdash; zero hardware <span class="st prod">PRODUCTION</span></h3>
@@ -449,11 +466,10 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
       the 74AC541 buffers and the connector. Fit 35/64 LC, 15/32 I/O, <code>-preassign keep</code>
       with the production strategy flags (JTAG on, TDI/TMS pullups, power_reset on); the four new
       pins were appended to the frozen //PIN block and the original nine did not move. Pins
-      <span class="mono">20 / 21 / 24 / 25</span> are RESERVED for DUART OP4..OP7, the intended
-      future TIMING mode/rate selector (alternate rasters, audio rate), with no logic behind them
-      yet; GCLK2 (pin 44) is left free for an optional second oscillator.
-      <b>These new pins are bitfile-usable only because the schematic routes them</b> &mdash; and the
-      schematic must route the reserved OP pins likewise.
+      <span class="mono">20 / 21 / 24 / 25</span> were reserved for DUART OP4..OP7 on the rev-2 part; that
+      reservation is withdrawn (rev-3 note above) and OP4..OP7 float until a raster/rate selector is
+      designed. GCLK2 (pin 44) is left free for an optional second oscillator.
+      <b>These new pins are bitfile-usable only because the schematic routes them.</b>
     </p>
   </section>
 
@@ -568,18 +584,50 @@ VIDCMD_Q     ----------&lt;==word==&gt;-  valid &le; 25.0 ns after a (tCO 8.0 + 
       against 2&ndash;5 ns margins; and 1 word/clock would not solve per-pixel economics anyway
       (640 words/line = 2.5 FIFO fills). Per-pixel work belongs to MASK words, &sect;3.5.
     </p>
+    <p class="note">
+      <b>Revisited 2026-09-22..24, closed</b> (griffin.log 2026-09-24). Working back from any capture edge C with the pinned
+      numbers: the fall&rsquo;s clock edge must sit no later than C&minus;32 (tCO 8 + tA 15 + flight 2 + tSU 7),
+      the rise&rsquo;s no earlier than C&minus;8 (tCO min 3 + tDV 5, tH 0), and the next fall at least 15 ns after
+      the rise (tRR 10 + the 5 ns tCO spread): <b>39 ns per read against a 39.72 ns period, 0.7 ns of
+      slack</b>. Any /RE low time L gives a guaranteed Q window of L&minus;10 ns, so the half-period pulse
+      (rising-edge assert / falling-edge release, or the mirror, or a 74AC00 shaping the clock) leaves a
+      10 ns window that no edge reaches; a 50.35 MHz quadrature clock (10 ns edge grid) or a 2&times; fetch
+      clock cannot land inside 0.7 ns either. The only sound route to one word per clock is reading two
+      FIFO pairs at once (32 more COMPOSITOR inputs, which the 64/64 part does not have), or faster parts
+      (IDT7200L12 + ATF1508AS-7 would open the chain to roughly 14 ns of slack &mdash; figures to be read from
+      those datasheets before relying on them). Waveforms: the <em>VIDCMD Fetch Cascade</em> page,
+      <a href="https://claude.ai/artifact/6pwSZyqXnKi6sfzW7Sa559">claude.ai/artifact/6pwSZyqXnKi6sfzW7Sa559</a>.
+    </p>
   </section>
 
   <section>
     <div class="secbar"><span>Authoring Rules and Limitations</span><span class="no">6</span></div>
+    <h3><span class="mnum">6.1</span> Rules of thumb for a line program <span class="st prod">PRODUCTION (model)</span></h3>
+    <p class="note">
+      The short form a developer can hold in their head. Derived by hand from the fetch rules (&sect;3.3) and
+      reproduced by the shared fetch-engine model on 2026-09-24 (griffin.log 2026-09-24); the testbench pins the
+      constants they rest on (2-slot cadence, pair gap 1, mask seams). Runs for anything 2 px or wider, one pair of fine records
+      free after every run of 3 or more, masks for anything finer.
+    </p>
+    <div class="twrap"><table>
+      <tr><th>#</th><th>Rule of thumb</th></tr>
+      <tr><td class="mono">RT1</td><td><b>Per-pixel detail is MASK.</b> Sixteen pixels per two words, each pixel passthrough, <code>cmp_color0</code> or <code>cmp_color1</code>, pixel 0 always <code>cmp_color0</code>. Masks chain with zero seam, and a mask directly after a RUN starts exactly where the run ends. Changing a colour between masks (mask, SET, mask) costs 2 px of seam; so does a 1-px RUN_COLOR between masks.</td></tr>
+      <tr><td class="mono">RT2</td><td><b>Any RUN or RUN_COLOR of 2 px or more ends exactly where you said.</b> Boundaries are free at any x; alternating 2-px runs render pixel-exact across the whole line.</td></tr>
+      <tr><td class="mono">RT3</td><td><b>Every RUN of 3 px or more re-arms the pair.</b> The two records behind it fire on consecutive pixels, whatever they are (SET then SET, SET then RUN, RUN_COLOR then MASK). The third and later 1-px records land every other pixel until the next run of 3 or more. A run of exactly 2 keeps its own boundary exact but only sometimes re-arms; do not count on it.</td></tr>
+      <tr><td class="mono">RT4</td><td><b>A 1-px record is exact inside the pair and costs 2 px outside it.</b> After a long run: one 1-px feature is free, two are free, three cost. Outside the pair a 1-px SET, RUN or RUN_COLOR paints its pixel plus a HOLD pixel of the same colour. Measured on the model after RUN(10): RC&times;1, RUN &rarr; 10, 11; RC&times;1 &times;2, RUN &rarr; 10, 11, 13; RC&times;1 &times;3, RUN &rarr; 10, 11, 13, 15. Repeated 1-px features are exact at 4-px pitch (RUN 3 + feature) and stretch at 2&ndash;3-px pitch.</td></tr>
+      <tr><td class="mono">RT5</td><td><b>HOLDs are insertions, not overwrites.</b> Everything after a HOLD shifts right by one pixel and the line must still occupy exactly 640 slots (PN1), so a list with more than one 1-px record per run goes through <code>vidcmd_plan_line()</code> or the Line Player page, not a hand sum.</td></tr>
+      <tr><td class="mono">RT6</td><td><b>Blanking is free.</b> SETs execute in hblank at zero pixel cost and 160 clocks hold 80 words, so colour setup and palette writes belong there. A palette write inside active video steals the four pixels after the DATA SET; cover them with a colour run or an opaque mask (PN8).</td></tr>
+      <tr><td class="mono">RT7</td><td><b>The per-line budget is delivery, not fetch.</b> About 147 words from ENGINE per line and 256 in the FIFO (&sect;2). A full-line mask is 80 words, so two-colour per-pixel detail across the whole width is affordable; the fetch cadence only sets local pitch, never the line total.</td></tr>
+    </table></div>
+    <h3><span class="mnum">6.2</span> Rules and limitations <span class="st prod">PRODUCTION</span></h3>
     <div class="twrap"><table>
       <tr><th>#</th><th>Rule</th></tr>
       <tr><td class="mono">PN1</td><td>Each CUSHION line&rsquo;s records must occupy exactly 640 slots as <em>executed</em> (the builder&rsquo;s <code>vidcmd_plan_line()</code> simulation sizes trailing fillers; occupancy &ne; authored sum under cadence).</td></tr>
-      <tr><td class="mono">PN2</td><td>Place a SET pair behind &ge;4 px of playback (or in hblank) for consecutive-pixel commit; order the pair so the target needed first commits first.</td></tr>
+      <tr><td class="mono">PN2</td><td>Place a SET pair behind &ge;3 px of playback (RT3; the testbench pins the &ge;4 form) or in hblank for consecutive-pixel commit; order the pair so the target needed first commits first.</td></tr>
       <tr><td class="mono">PN3</td><td>An overrunning record (&gt;640 slots) plays at the start of the next line and blocks that line&rsquo;s eager SETs &mdash; overrun steals eagerness.</td></tr>
       <tr><td class="mono">PN4</td><td>Any RAM a display list points at is frame-owned: double-buffer lists and data; re-arm from the vsync ISR (DESC write also acks the level-3 IRQ). <b>The list must be idle before the ISR&rsquo;s re-arm write</b> &mdash; a DESC write mid-walk clobbers the walk; CTRL=0 abort is the safety net but forfeits the list&rsquo;s remaining deposits.</td></tr>
       <tr><td class="mono">PN5</td><td>Two /RS deadlines, split by stream. <b>Video-writing descriptors</b> (PIXELS/VIDCMD /W) must complete before vsync: no video write strobe may overlap TIMING&rsquo;s 318 ns nRS pulse (+15 ns setup / +10 ns after its rise). <b>Audio-writing descriptors are exempt</b> &mdash; AUDIO is not on the nRS net; its drain and both fill paths run straight through vblank. The re-armed list may open with audio-only descriptors immediately: ISR latency (&asymp;3 &micro;s minimum) outlasts the pulse. Do not stream video FIFOs before the first vsync (their first /RS).</td></tr>
-      <tr><td class="mono">PN6</td><td>1-px spans below 4-px pitch render 2 px wide (L4); use MASK words for sub-floor art.</td></tr>
+      <tr><td class="mono">PN6</td><td>1-px records outside the banked pair render 2 px wide (L4, RT4): exact at &ge;4-px pitch, stretched at 2&ndash;3-px pitch; use MASK words for sub-floor art.</td></tr>
       <tr><td class="mono">PN7</td><td><b>The line&rsquo;s first PIXELS word is read 16 pixel clocks before the line starts</b> (PIX_PRELOAD), and <code>pix_mode</code>, <code>pix_base</code> and <code>pixel_skip</code> are sampled on that same clock. The word must already be in the FIFO and those SETs already executed by then: the usable part of the 160-clock blank is about 144 clocks (&asymp;80 SYSCLK), which a full 26-word hblank packet plus its descriptor overheads nearly fills. Deliver a line&rsquo;s PIXELS words early (the FIFO holds 256; PIXEL stops reading at the end of each line) rather than after a long packet. Found by the clocked model; slack on hardware is unverified (&sect;7).</td></tr>
       <tr><td class="mono">PN8</td><td>Palette entries cost three words &mdash; <code>SET clut_index</code>, <code>SET clut_data</code>, then <code>SET target 7</code> carrying the <em>same</em> value &mdash; and the four pixel clocks after the data SET must be blanking or covered by a non-passthrough RUN / opaque MASK; the word after the filler must not be the RUN that resumes passthrough (&sect;3.6). Mid-line recolouring of passthrough pixels is done with <code>SET pix_base</code> (one word, pairs or quads preloaded), never with a palette write.</td></tr>
       <tr><td class="mono">PN9</td><td>The palette RAM is never reset and powers up undefined: load every entry a screen can show, each frame or once per screen. Registers return to 0 at every vsync (<code>pix_mode</code>, <code>pix_base</code>, <code>pixel_skip</code>, <code>clut_index</code>); the palette does not.</td></tr>
@@ -593,7 +641,9 @@ VIDCMD_Q     ----------&lt;==word==&gt;-  valid &le; 25.0 ns after a (tCO 8.0 + 
     <div class="secbar"><span>Qualification Status</span><span class="no">7</span></div>
     <div class="twrap"><table>
       <tr><th>Item</th><th>Gate</th><th>Status</th></tr>
-      <tr><td>Fetch cadence + banked pair (&sect;3.3)</td><td>compositor_tb 102 checks; suite model equation-identical</td><td class="mono">PASS 2026-08-19</td></tr>
+      <tr><td>Fetch cadence + banked pair (&sect;3.3)</td><td>compositor_tb 102 checks at landing, 179 checks / 0 failures on the 2026-09-24 re-run; suite model equation-identical</td><td class="mono">PASS 2026-08-19</td></tr>
+      <tr><td>Rules of thumb RT1..RT7 (&sect;6.1)</td><td>hand derivation from the fetch rules + shared fetch-engine model runs (pitch 2/3/4/5, RUN 2/3/4 histories, mask seams); RUN&ge;3 pair re-arm is not yet a compositor_tb case</td><td class="mono">MODEL PASS 2026-09-24</td></tr>
+      <tr><td>One word per clock read (&sect;5)</td><td>closed-form: 0.7 ns slack with L15 + AS-10; half-period, NAND-shaped, quadrature and 2&times; clocks all rejected; two-pair gang or faster parts are the routes</td><td class="mono">CLOSED 2026-09-24</td></tr>
       <tr><td>Read-port electricals (&sect;5)</td><td>pinned datasheet table, worst case</td><td class="mono">CLOSED 2026-08-18</td></tr>
       <tr><td>MASK record (&sect;3.5)</td><td>fitted 121/128; tb + suite model + plan sim + author + 2 pure-VIDCMD screen cases</td><td class="mono">PASS 2026-08-24</td></tr>
       <tr><td>Pure-VIDCMD screens (&sect;4)</td><td>m6-console (82 w/line worst, pixel-exact) + m7-kiosk (30 w/line, measured seams)</td><td class="mono">PASS 2026-08-24</td></tr>
@@ -607,15 +657,15 @@ VIDCMD_Q     ----------&lt;==word==&gt;-  valid &le; 25.0 ns after a (tCO 8.0 + 
       <tr><td>2bpp indexed + half-rate, rev-1 form (tag rev1-video)</td><td>fitted (PIXEL 105/128, pinout frozen); pixel_tb 9 cases; model + suite (m8/m9) + emulator</td><td class="mono">PASS 2026-08-26</td></tr>
       <tr><td>TIMING testbench (timing_tb.v): closed-form laws + 12 relations + 10 negative controls</td><td>every output vs its griffin.yml-derived law on every clock of two frames (0 mismatches / 841,600 clocks); 12 relation checks between outputs; 10 mutations each required to FAIL (<code>make timing-sim</code>)</td><td class="mono">PASS 2026-08-26</td></tr>
       <tr><td>TIMING fan-out outputs (&sect;3.10)</td><td>fitted 35/64 LC, 15/32 I/O under -preassign keep with production flags; four pins appended to the frozen //PIN block, original nine unmoved</td><td class="mono">PASS 2026-08-26</td></tr>
-      <tr><td>Pinout freeze: COMPOSITOR (still frozen); PIXEL / TIMING superseded by the merged chip&rsquo;s proposed rev-2 pinout</td><td>//PIN blocks harvested from production-flag fits, re-verified IDENTICAL under -preassign keep; TIMING&rsquo;s HBLANK / nVSYNC_IRQ / PADDLE_TICK / AUDIO_TICK appended same day, plus pins 20/21/24/25 reserved for DUART OP4..OP7</td><td class="mono">COMPOSITOR FROZEN 2026-08-26</td></tr>
-      <tr><td>LITERAL record (&sect;3.8)</td><td>specify after MASK verdict</td><td class="mono">CONCEPT</td></tr>
+      <tr><td>Pinout freeze: COMPOSITOR (still frozen); PIXEL / TIMING superseded by the merged chip&rsquo;s proposed rev-2 pinout</td><td>//PIN blocks harvested from production-flag fits, re-verified IDENTICAL under -preassign keep; TIMING&rsquo;s HBLANK / nVSYNC_IRQ / PADDLE_TICK / AUDIO_TICK appended same day (the pins 20/21/24/25 OP4..OP7 reservation has since been withdrawn)</td><td class="mono">COMPOSITOR FROZEN 2026-08-26</td></tr>
+      <tr><td>LITERAL record (&sect;3.8)</td><td>one-word direct pixel replacing RUN_COLOR; decide after the Smurf port on attribute mode</td><td class="mono">PARKED 2026-09-20</td></tr>
       <tr><td>Dual-playfield delivery margin</td><td>suite case at 66% bus model</td><td class="mono">TO WRITE</td></tr>
     </table></div>
   </section>
 
   <div class="footer">
     <span>Griffin video, rev 3 proposal &mdash; working design record; normative sources are the RTL headers, griffin.yml and, until landed, indexed-pixel-spec-draft.md.</span>
-    <span>DRAFT &middot; 2026-09-20</span>
+    <span>DRAFT &middot; 2026-09-26</span>
   </div>
 
 </div>
