@@ -43,8 +43,12 @@ add_executable(emulator
     emulator.cpp
     ${PROJECT_SOURCE_DIR}/../super-engine/interpret.cpp
     ${PROJECT_SOURCE_DIR}/../super-engine/render.cpp
+    ${PROJECT_SOURCE_DIR}/../audio/audio_chip.cpp
+    ${PROJECT_SOURCE_DIR}/../audio/scheduler.cpp
 )
-target_include_directories(emulator PRIVATE ${PROJECT_SOURCE_DIR}/../super-engine)
+# The AUDIO chip model (audio/audio_chip.*) is the rev-2 sound chip's
+# executable spec, compiled in unchanged for the same reason (--audio-chip).
+target_include_directories(emulator PRIVATE ${PROJECT_SOURCE_DIR}/../super-engine ${PROJECT_SOURCE_DIR}/../audio)
 add_dependencies(emulator griffin_generated)
 target_link_libraries(emulator PRIVATE SDL3::SDL3 Moira)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

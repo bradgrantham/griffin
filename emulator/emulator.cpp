@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cinttypes>
 #include <cstdlib>
@@ -19,6 +20,8 @@
 // emulator is one of that suite's two drivers; the suite itself is the other,
 // so a behaviour that only exists here is a bug rather than a convenience.
 #include "descriptor.h"
+#include "audio_chip.h"
+#include "scheduler.h"
 #include "interpret.h"
 #include "render.h"
 
@@ -2903,6 +2906,129 @@ struct ClockGovernor
     }
 };
 
+// ---------------------------------------------------------------------------
+// AUDIO — the rev-2 four-channel chip (cpld/audio/audio.v), --audio-chip.
+//
+// The model is audio/audio_chip.{h,cpp}, the chip's executable spec, compiled
+// in unchanged the way the super-engine models are, so the emulator cannot
+// drift from the RTL's bench.  ENGINE deposits reach it by destination code:
+// AUDCTL (3) is the control FIFO, SAMPLES0..3 (4..7) the channels, one byte
+// per word in D[7:0].  It is clocked from the raster alone: 50 steps per
+// scanline (the chip's divider is HBLANK-locked), handed over by the same
+// scanline counter that drives PORTS.
+//
+// The host hears the analog model (the two summers through their 9.7 kHz
+// pole) sampled every second line, 15,734 Hz, the rate the WAV and SDL sinks
+// already use.  The guest reads nothing back; the developer's only view of
+// the FIFOs is here: a dropped deposit (a full FIFO) is reported on stderr
+// the first time per FIFO, and every run ends with a per-channel summary of
+// drops and of the times each channel ran dry after holding samples.
+//
+// Without --audio-chip the emulator is a rev-1 board: code 3 is still the
+// PORTS-popped stereo pair (DEST_AUDIO_PAIR_REV1) until audio package B.
+// ---------------------------------------------------------------------------
+
+struct AudioChipState
+{
+    griffin::audio::AudioChip chip;
+    griffin::audio::AnalogRender analog;
+    AudioOutput *audio_out = nullptr;
+
+    uint64_t lines = 0;
+    bool     had_samples[griffin::audio::CHANNELS] = {};
+    uint64_t dry_events[griffin::audio::CHANNELS] = {};
+    bool     drop_reported[griffin::audio::CHANNELS + 1] = {};
+
+    AudioChipState()
+    {
+        analog.configure(9700.0);       // griffin.yml Audio output stage: 2k || 8.2 nF
+    }
+
+    void deposit(uint8_t destination, uint16_t word)
+    {
+        const uint8_t byte = static_cast<uint8_t>(word & 0xFF);
+        if (destination == SuperEngine::DEST_AUDCTL_FIFO_W)
+        {
+            if (!chip.deposit_control(byte))
+            {
+                report_drop(griffin::audio::CHANNELS, "AUDCTL");
+            }
+            return;
+        }
+        const int channel = destination - SuperEngine::DEST_SAMPLES0_FIFO_W;
+        if (channel >= 0 && channel < griffin::audio::CHANNELS)
+        {
+            if (!chip.deposit_sample(channel, byte))
+            {
+                static const char *const NAMES[griffin::audio::CHANNELS] =
+                    { "SAMPLES0", "SAMPLES1", "SAMPLES2", "SAMPLES3" };
+                report_drop(channel, NAMES[channel]);
+            }
+        }
+    }
+
+    void advance_scanlines(uint32_t count)
+    {
+        for (uint32_t l = 0; l < count; l++)
+        {
+            for (int s = 0; s < griffin::audio::STEPS_PER_LINE; s++)
+            {
+                chip.step();
+                analog.step(chip);
+            }
+            for (int c = 0; c < griffin::audio::CHANNELS; c++)
+            {
+                const bool has = !chip.fifo_empty(c);
+                if (had_samples[c] && !has)
+                {
+                    dry_events[c]++;
+                }
+                had_samples[c] = has;
+            }
+            lines++;
+            if ((lines & 1) == 0 && audio_out)
+            {
+                audio_out->sample(to_u8(analog.left), to_u8(analog.right));
+            }
+        }
+    }
+
+    void print_summary() const
+    {
+        fprintf(stderr, "AUDIO chip: %" PRIu64 " lines, %" PRIu64 " control records\n",
+                lines, chip.stats.control_records);
+        for (int c = 0; c < griffin::audio::CHANNELS; c++)
+        {
+            fprintf(stderr, "  channel %d: pops %" PRIu64 ", deposits dropped %" PRIu64
+                    ", ran dry %" PRIu64 " times, max fill %u\n",
+                    c, chip.stats.pops[c], chip.stats.deposits_dropped[c], dry_events[c],
+                    static_cast<unsigned>(chip.stats.max_fill[c]));
+        }
+        fprintf(stderr, "  control: bytes dropped %" PRIu64 ", max fill %u\n",
+                chip.stats.control_dropped, static_cast<unsigned>(chip.stats.max_control_fill));
+    }
+
+private:
+    // Two channels at full scale and full volume sum to about +/-250 in the
+    // model's units (one 8-bit LSB of one channel); halve it into the host's
+    // unsigned 8-bit format, midscale 0x80.
+    static uint8_t to_u8(double v)
+    {
+        long code = std::lround(v / 2.0) + 128;
+        return static_cast<uint8_t>(std::clamp(code, 0L, 255L));
+    }
+
+    void report_drop(int index, const char *name)
+    {
+        if (!drop_reported[index])
+        {
+            drop_reported[index] = true;
+            fprintf(stderr, "AUDIO: %s FIFO full at scanline %" PRIu64
+                    ", deposit dropped (first occurrence; summary at exit)\n", name, lines);
+        }
+    }
+};
+
 class GriffinEmulator : public moira::Moira
 {
     // Fully-populated 4MB RAM (4 banks of 2x AS6C4008, one contiguous region from 0).
@@ -2953,6 +3079,8 @@ class GriffinEmulator : public moira::Moira
     mutable PS2State ps2;
     mutable PS2Keyboard ps2_keyboard;
     mutable PortsState ports;
+    mutable AudioChipState audio_chip;
+    bool audio_chip_enabled = false;     // --audio-chip: rev-2 AUDIO, not the rev-1 pair
     StdinConsole stdin_console;
 
     // SDL gamepads mapped onto the two joystick ports.  Deliberately NOT the
@@ -3563,6 +3691,9 @@ public:
     // instead of to the PS/2 keyboard.  Interactive only (headless runs get no
     // SDL key events; they use --joystick-in).
     void set_keys_to_joystick(bool on) { keys_to_joystick = on; }
+    void set_audio_chip(bool on) { audio_chip_enabled = on; }
+    bool audio_chip_on() const { return audio_chip_enabled; }
+    AudioChipState &audio_chip_model() { return audio_chip; }
 
     // Interactive joystick input comes from SDL gamepads.  Only meaningful
     // when SDL is up (i.e. not headless); scripted input needs none of this.
@@ -3854,7 +3985,14 @@ public:
             // fed unconditionally.  PIXELS and VIDCMD reach nothing the guest
             // can read, so they are skipped when no one is looking at the
             // framebuffer — see want_pixels below.
-            if (destination == SuperEngine::DEST_AUDIO_PAIR_REV1)
+            if (emu->audio_chip_enabled)
+            {
+                if (destination >= SuperEngine::DEST_AUDCTL_FIFO_W)
+                {
+                    emu->audio_chip.deposit(destination, word);
+                }
+            }
+            else if (destination == SuperEngine::DEST_AUDIO_PAIR_REV1)
             {
                 emu->ports.audio_fifo_push(word);
             }
@@ -3947,6 +4085,191 @@ public:
         }
         engine_write8(ENGINE_CTRL, ENGINE_CTRL_ENABLE_MASK);   // ack, stay enabled
         engine_write16(ENGINE_DESC, 0);
+    }
+
+
+    // Audio self-check (--selftest-audio, implies --audio-chip), no firmware
+    // needed: the emulator plays the 68000's part with audio/scheduler.h, the
+    // policy an application would run.  At every frame it asks the Scheduler
+    // for 525 lines of deposits, writes them as a descriptor list (one
+    // wait_hblank group per line, runs of one destination split at 32 words,
+    // a DEST_NONE pacer on lines with nothing to deposit, stop_after on the
+    // last), and re-arms on the frame IRQ.  So the bytes reach the chip through
+    // the real EngineWalker and deposit sink, and the chip is stepped by the
+    // real raster.  Four sources: two squares, a sine and a 5-bit poly-noise
+    // table, with volumes changed every half second.
+    //
+    // Pass: every list spans exactly 525 lines, no deposit dropped, no active
+    // channel ran dry after its first burst, and the Scheduler's mirror of each
+    // FIFO's fill stays within one line's pops of the chip's.  The mirror is
+    // not exact here because ENGINE executes a line's descriptors in the
+    // previous line's HBLANK, before that line's steps rather than after them.
+    static constexpr uint32_t AUDIO_TEST_PAYLOAD = 0x100000;
+    static constexpr uint32_t AUDIO_TEST_LINES   = 525;
+
+    griffin::audio::Scheduler audio_test_sched;
+    griffin::audio::LineDeposits audio_test_dep;
+    std::array<uint8_t, 32> audio_test_square_a{};
+    std::array<uint8_t, 24> audio_test_square_b{};
+    std::array<uint8_t, 64> audio_test_sine{};
+    std::array<uint8_t, 31> audio_test_noise{};
+    uint64_t audio_test_frames = 0;
+    uint64_t audio_test_last_line = 0;
+    uint64_t audio_test_bad_spans = 0;
+    int      audio_test_mirror_max = 0;
+    uint64_t audio_test_dry_active = 0;
+    uint64_t audio_test_descriptors = 0;
+
+    void audio_test_setup()
+    {
+        for (size_t i = 0; i < audio_test_square_a.size(); i++)
+        {
+            audio_test_square_a[i] = (i < audio_test_square_a.size() / 2) ? 0x60 : 0xA0;
+        }
+        for (size_t i = 0; i < audio_test_square_b.size(); i++)
+        {
+            audio_test_square_b[i] = (i < audio_test_square_b.size() / 2) ? 0x60 : 0xA0;
+        }
+        for (size_t i = 0; i < audio_test_sine.size(); i++)
+        {
+            const double v = 100.0 * std::sin(6.283185307179586 * static_cast<double>(i) / 64.0);
+            audio_test_sine[i] = static_cast<uint8_t>(static_cast<int8_t>(std::lround(v)));
+        }
+        uint8_t reg = 0x1F;
+        for (size_t i = 0; i < audio_test_noise.size(); i++)    // 5-bit maximal LFSR, taps 5,3
+        {
+            audio_test_noise[i] = (reg & 1) ? 0x50 : 0xB0;
+            const uint8_t fb = static_cast<uint8_t>(((reg >> 0) ^ (reg >> 2)) & 1);
+            reg = static_cast<uint8_t>((reg >> 1) | (fb << 4));
+        }
+        auto &sc = audio_test_sched;
+        sc.set_period(0, 111);  sc.set_volume(0, 40);           // 441 Hz square, left
+        sc.set_stream(0, audio_test_square_a.data(), audio_test_square_a.size(), 0);
+        sc.set_period(1, 99);   sc.set_volume(1, 24);           // 656 Hz square, left
+        sc.set_stream(1, audio_test_square_b.data(), audio_test_square_b.size(), 0);
+        sc.set_period(2, 49);   sc.set_volume(2, 63);           // 492 Hz sine, right
+        sc.set_stream(2, audio_test_sine.data(), audio_test_sine.size(), 0);
+        sc.set_period(3, 200);  sc.set_volume(3, 12);           // 7.8 kHz noise, right
+        sc.set_stream(3, audio_test_noise.data(), audio_test_noise.size(), 0);
+        audio_test_build_frame();
+        audio_test_last_line = video.line_count;
+        engine_write16(ENGINE_DESC, 0);
+    }
+
+    void audio_test_build_frame()
+    {
+        using namespace SuperEngine;
+        auto &sc = audio_test_sched;
+
+        // Volume envelope: every 30 frames swap the two squares' levels.
+        if (audio_test_frames % 30 == 0 && audio_test_frames != 0)
+        {
+            const uint8_t v0 = sc.channel(0).volume;
+            sc.set_volume(0, sc.channel(1).volume);
+            sc.set_volume(1, v0);
+        }
+
+        uint32_t at = DESC_TABLE_BASE;
+        uint32_t payload = AUDIO_TEST_PAYLOAD;
+        auto put_desc = [&](const Descriptor &d)
+        {
+            const DescriptorWords w = encode_descriptor(d);
+            for (uint32_t i = 0; i < DESC_WORDS; i++)
+            {
+                RAM[(at + i * 2) >> 1] = w.w[i];
+            }
+            at += DESC_BYTES;
+            audio_test_descriptors++;
+        };
+        for (uint32_t line = 0; line < AUDIO_TEST_LINES; line++)
+        {
+            sc.line(audio_test_dep);
+            const bool last_line = (line == AUDIO_TEST_LINES - 1);
+            bool first = true;
+            int i = 0;
+            if (audio_test_dep.count == 0)
+            {
+                Descriptor d;
+                d.src = AUDIO_TEST_PAYLOAD;
+                d.count = 1;
+                d.destination = DEST_NONE;
+                d.wait_hblank = true;
+                d.stop_after = last_line;
+                put_desc(d);
+                continue;
+            }
+            while (i < audio_test_dep.count)
+            {
+                const uint8_t dest_index = audio_test_dep.items[i].destination;
+                Descriptor d;
+                d.src = payload;
+                d.destination = (dest_index == griffin::audio::DEST_CONTROL)
+                              ? DEST_AUDCTL_FIFO_W
+                              : static_cast<uint8_t>(DEST_SAMPLES0_FIFO_W + dest_index);
+                d.wait_hblank = first;
+                uint16_t n = 0;
+                while (i < audio_test_dep.count && audio_test_dep.items[i].destination == dest_index
+                       && n < DESC_MAX_COUNT)
+                {
+                    RAM[payload >> 1] = audio_test_dep.items[i].byte;   // high byte ignored
+                    payload += 2;
+                    n++;
+                    i++;
+                }
+                d.count = n;
+                d.stop_after = last_line && i == audio_test_dep.count;
+                put_desc(d);
+                first = false;
+            }
+        }
+        audio_test_frames++;
+    }
+
+    void audio_test_rearm_if_idle()
+    {
+        if (!engine.walker.irq_pending())
+        {
+            return;
+        }
+        // Measure before building: the frame that just ended.
+        const uint64_t span = video.line_count - audio_test_last_line;
+        if (audio_test_frames > 1 && span != AUDIO_TEST_LINES)
+        {
+            audio_test_bad_spans++;
+        }
+        audio_test_last_line = video.line_count;
+        for (int c = 0; c < griffin::audio::CHANNELS; c++)
+        {
+            const int diff = std::abs(audio_chip.chip.fill(c) - audio_test_sched.channel(c).fill);
+            audio_test_mirror_max = std::max(audio_test_mirror_max, diff);
+        }
+        audio_test_build_frame();
+        engine_write8(ENGINE_CTRL, ENGINE_CTRL_ENABLE_MASK);   // ack, stay enabled
+        engine_write16(ENGINE_DESC, 0);
+    }
+
+    bool audio_test_check() const
+    {
+        // Every channel is active from the first frame on; after the first
+        // frame's bursts have landed, running dry is an underrun.
+        uint64_t dry = 0;
+        uint64_t dropped = audio_chip.chip.stats.control_dropped;
+        for (int c = 0; c < griffin::audio::CHANNELS; c++)
+        {
+            dry += audio_chip.dry_events[c];
+            dropped += audio_chip.chip.stats.deposits_dropped[c];
+        }
+        fprintf(stderr, "audio self-test: %" PRIu64 " frames, %" PRIu64 " descriptors, "
+                "%" PRIu64 " lists not 525 lines, %" PRIu64 " deposits dropped, "
+                "%" PRIu64 " dry events, mirror vs chip fill max |diff| %d\n",
+                audio_test_frames, audio_test_descriptors, audio_test_bad_spans, dropped, dry,
+                audio_test_mirror_max);
+        for (const std::string &v : engine.walker.violations())
+        {
+            fprintf(stderr, "audio self-test: VIOLATION %s\n", v.c_str());
+        }
+        return audio_test_frames >= 3 && audio_test_bad_spans == 0 && dropped == 0 && dry == 0
+            && audio_test_mirror_max <= 2 && engine.walker.violations().empty();
     }
 
     // Returns true if the rendered frame is what the list asked for.
@@ -4201,7 +4524,12 @@ public:
         // so this is its only clock for the paddle counters and the audio pop.
         if (video.line_count != ports_line_count)
         {
-            ports.advance_scanlines(static_cast<uint32_t>(video.line_count - ports_line_count));
+            const uint32_t lines = static_cast<uint32_t>(video.line_count - ports_line_count);
+            ports.advance_scanlines(lines);
+            if (audio_chip_enabled)
+            {
+                audio_chip.advance_scanlines(lines);
+            }
             ports_line_count = video.line_count;
         }
         update_ipl();
@@ -4350,6 +4678,10 @@ void usage(const char *progname)
     printf("  --serialb-out FILE            write DUART channel B output to FILE\n");
     printf("  --keys-to-joystick            host arrows + space/left-ctrl drive joystick\n");
     printf("                                port 1 instead of the PS/2 keyboard\n");
+    printf("  --audio-chip                  rev-2 AUDIO chip (four channels, ENGINE codes 3..7)\n");
+    printf("                                instead of the rev-1 PORTS-popped stereo pair\n");
+    printf("  --selftest-audio              no firmware needed: drive the AUDIO chip through\n");
+    printf("                                ENGINE with the scheduler; nonzero exit on failure\n");
     printf("  --wav-out FILE                record the audio DACs to FILE (8-bit stereo WAV)\n");
     printf("  --headless                    do not open an SDL video window (also no sound)\n");
     printf("  --screenshot FILE             write the framebuffer to FILE (BMP) on exit\n");
@@ -4379,6 +4711,8 @@ int main(int argc, const char** argv)
     const char *screenshot_path = nullptr;
     const char *wav_out_path = nullptr;
     bool keys_to_joystick = false;
+    bool audio_chip = false;
+    bool selftest_audio = false;
     bool selftest_displaylist = false;
     bool headless = false;
     bool no_throttle = false;
@@ -4483,6 +4817,15 @@ int main(int argc, const char** argv)
             argc -= 1;
         } else if(strcmp(argv[0], "--keys-to-joystick") == 0) {
             keys_to_joystick = true;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--selftest-audio") == 0) {
+            selftest_audio = true;
+            audio_chip = true;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--audio-chip") == 0) {
+            audio_chip = true;
             argv += 1;
             argc -= 1;
         } else if(strcmp(argv[0], "--wav-out") == 0) {
@@ -4674,6 +5017,7 @@ int main(int argc, const char** argv)
         emulator.init_gamepads();
     }
     emulator.set_keys_to_joystick(keys_to_joystick);
+    emulator.set_audio_chip(audio_chip);
 
     // Attach the DAC sink before the CPU is released so a capture always
     // starts at reset and is reproducible for a given --run-cycles.  Host
@@ -4690,7 +5034,14 @@ int main(int argc, const char** argv)
     }
     if (audio_output.active())
     {
-        emulator.ports_model().audio_out = &audio_output;
+        if (audio_chip)
+        {
+            emulator.audio_chip_model().audio_out = &audio_output;
+        }
+        else
+        {
+            emulator.ports_model().audio_out = &audio_output;
+        }
     }
 
     // Bring-up self-check: poke a descriptor list into RAM and arm ENGINE
@@ -4700,6 +5051,10 @@ int main(int argc, const char** argv)
     if (selftest_displaylist)
     {
         emulator.selftest_build_list();
+    }
+    if (selftest_audio)
+    {
+        emulator.audio_test_setup();
     }
 
     SoftUART debug_uart(emulator.get_debug_latch() & 1); // Bit 0 = DEBUG_OUT serial line
@@ -4770,6 +5125,10 @@ int main(int argc, const char** argv)
         if (selftest_displaylist)
         {
             emulator.selftest_rearm_if_idle();
+        }
+        if (selftest_audio)
+        {
+            emulator.audio_test_rearm_if_idle();
         }
 
         if (run_cycles != 0 && clock_now >= run_cycles)
@@ -4846,7 +5205,12 @@ int main(int argc, const char** argv)
     // audio device while SDL is still up (VideoState's destructor calls
     // SDL_Quit).
     emulator.ports_model().audio_out = nullptr;
+    emulator.audio_chip_model().audio_out = nullptr;
     audio_output.close();
+    if (audio_chip)
+    {
+        emulator.audio_chip_model().print_summary();
+    }
 
     if (selftest_displaylist)
     {
@@ -4856,6 +5220,12 @@ int main(int argc, const char** argv)
     if (screenshot_path)
     {
         emulator.dump_framebuffer(screenshot_path);
+    }
+
+    if (selftest_audio && !emulator.audio_test_check())
+    {
+        fflush(stdout);
+        return 1;
     }
 
     if (selftest_displaylist && !selftest_ok)

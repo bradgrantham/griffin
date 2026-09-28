@@ -1921,3 +1921,20 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   that cite sound/ refer to it there.
   wave-table-design.md (the Z80 plan, also the MIXER's §2 spec that mixer/
   cites) moved to z80-audio the same day.
+
+2026-09-28 -- Audio step 6: the AUDIO chip in the emulator
+  emulator --audio-chip compiles audio/audio_chip.cpp in unchanged (as it
+  does super-engine's models) and routes ENGINE destination codes 3..7 to
+  it, stepping it 50 times per scanline from the same line counter that
+  drives PORTS; the host sinks (--wav-out, SDL) hear the analog model at
+  15,734 Hz.  Dropped deposits are reported on stderr (first per FIFO) and
+  a per-channel summary ends every run.  Default stays rev 1 (code 3 = the
+  PORTS pair) until package B moves smurf and firmware.
+  --selftest-audio (idle-loop ROM, 5 s): the emulator runs audio/
+  scheduler.cpp as the 68000 would, 300 lists of 525 lines through the real
+  EngineWalker: 0 lists off 525 lines, 0 drops, 0 dry events, mirror vs chip
+  fill max 1 (ENGINE runs a line's descriptors in the previous HBLANK, so
+  deposits land a line early relative to the mirror; within margin).  Pops
+  per channel equal 50 x lines / (PERIOD + 1) exactly.  The WAV's spectrum
+  shows 439.0 and 655.6 Hz left, 491.7 Hz and the 252.5 Hz noise-table
+  repeat right, as derived.  Firmware still boots on the rev-1 path.
