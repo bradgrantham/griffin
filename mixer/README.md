@@ -1,5 +1,8 @@
 # MIXER: the shared model and the SN76489 A/B
 
+`wave-table-design.md`, cited throughout this directory, lives on branch
+`z80-audio` since 2026-09-28 (`git show z80-audio:wave-table-design.md`).
+
 Step 1 of `../wave-table-design.md` §3.  The pinned semantics are §2 of that
 file; this directory is a host model of them, the PSG-bytes-to-SETs driver the
 68000 app will run, and an A/B tool that plays the recorded Smurf PSG stream

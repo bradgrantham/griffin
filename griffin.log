@@ -1919,3 +1919,5 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   The Z80 sound-processor experiment (ROMs, z80emu harnesses, record
   encodings, measurements) lives on branch z80-audio; the entries above
   that cite sound/ refer to it there.
+  wave-table-design.md (the Z80 plan, also the MIXER's §2 spec that mixer/
+  cites) moved to z80-audio the same day.
