@@ -15,8 +15,8 @@
 //     15,734.375 Hz tick.  Pitch is rate / table length; the 68000
 //     chooses both.
 //
-//   * Volume is Paula's trick, a duty cycle in the time domain: GATE[n]
-//     closes a CD4066 switch between channel n's ladder and its side's summing
+//   * Volume is a duty cycle in the time domain: GATE[n]
+//     closes a 74HC4066 switch between channel n's ladder and its side's summing
 //     node for VOLUME/64 of every 512-clock frame (49.2 kHz).  The pattern is
 //     a binary rate multiplier (SN7497 style): six disjoint windows of the
 //     free-running timebase with duties 1/2 .. 1/64, each enabled by one
@@ -47,7 +47,7 @@ module Audio
     input  wire [3:0] nSAMPLE_EF,     // low = empty
     output reg  [3:0] nSAMPLE_R,      // held low, one-clock high pulse advances
 
-    // Volume switches (CD4066 control inputs, high = ladder connected)
+    // Volume switches (74HC4066 control inputs, high = ladder connected)
     output reg  [3:0] GATE
 );
 

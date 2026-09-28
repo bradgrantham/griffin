@@ -199,7 +199,8 @@
       branch indexed-pixel<br>
       sources: cpld/audio/audio.v, audio/audio_chip.h (the laws),<br>
       audio/scheduler.h, audio/psg_channels.h, audio/README.md,<br>
-      cpld/audio/audio_tb.v, griffin.log 2026-09-27 (step 2, step 4)
+      cpld/audio/audio_tb.v, super-engine/descriptor.h,<br>
+      griffin.log 2026-09-27 (step 2, step 4, destination code)
     </div>
   </div>
 
@@ -212,18 +213,19 @@
         <li>Pitch = rate / table length, both chosen by the 68000; tables loop by re-pointing descriptors</li>
         <li>6-bit linear volume per channel as a duty cycle on an analog switch, 64 steps, averaged by the output stage</li>
         <li>An empty channel is silent, not a DC step; no per-voice arithmetic anywhere</li>
-        <li>DMA-only: samples and control records arrive through ENGINE; no 68000 bus interface, no readback</li>
+        <li>DMA-only: samples and control records arrive through ENGINE descriptors, each naming one FIFO by its destination code; no 68000 bus interface, no readback</li>
+        <li>Two&rsquo;s complement samples, 0x00 = silence; period counters step at fixed raster positions, re-phased by HBLANK every line</li>
         <li>Smurf&rsquo;s SN76489 soundtrack costs ENGINE 0.97 % of a frame on the model, 0 underruns</li>
       </ul>
     </div>
     <div>
       <h2>Device Complement</h2>
       <ul>
-        <li>ENGINE: existing descriptor DMA master, unchanged; the <code>AUDIO_FIFO_W</code> strobe carries every audio deposit</li>
-        <li>74HC138: enabled by the strobe, decodes bits 10:8 of each word into one FIFO&rsquo;s /W</li>
+        <li>ENGINE: descriptor DMA master; word 0 bits 2:0 of each descriptor are a destination code decoded on chip to seven strobes, five of them the audio FIFOs&rsquo; /W (120/128 LC, all 64 I/O pins used)</li>
+        <li>74HC04: inverts bit 7 of each channel&rsquo;s FIFO Q bus into its ladder (two&rsquo;s complement samples in, offset binary on the ladder)</li>
         <li>5&times; IDT7200 (256&times;9, byte wide): four sample FIFOs and one control FIFO</li>
-        <li>AUDIO: ATF1508AS on the 25.175 MHz pixel clock; period counters, volume gates, control reader (120/128 LC)</li>
-        <li>4&times; 4610X-R2R-103LF: 8-bit R-2R ladders, one per channel, driven by the FIFO Q buses</li>
+        <li>AUDIO: ATF1508AS on the 25.175 MHz pixel clock; period counters re-phased by PIXEL&rsquo;s HBLANK, volume gates, control reader (121/128 LC, 28 pins)</li>
+        <li>4&times; 4610X-R2R-103LF: 8-bit R-2R ladders, one per channel, driven by the FIFO Q buses (bit 7 through the 74HC04)</li>
         <li>1&times; 74HC4066: one switch per channel between its ladder and its side&rsquo;s summing node (HC preferred over CD4066 for on-resistance)</li>
         <li>1&times; LM358: an inverting summer per side, virtual ground biased at 2.5 V by a shared 10k/10k divider with 10 &micro;F; per side 2k &parallel; 8.2 nF feedback, 4.7k to GND, 100 &micro;F coupling to LINE</li>
       </ul>
@@ -245,20 +247,18 @@
     </p>
     <div class="bd">
       <div class="bd-row">
-        <div class="bd-box"><b>ENGINE</b><span>descriptor DMA<br>AUDIO_FIFO_W strobe<br>&le;32 words per descriptor</span></div>
-        <div class="bd-arrow">word<br>{dest 10:8, byte 7:0}<br>&rarr;</div>
-        <div class="bd-box"><b>74HC138</b><span>G = strobe<br>bits 10:8 &rarr; one /W<br>0..3 samples, 4 control</span></div>
-        <div class="bd-arrow">/W[4:0]<br>&rarr;</div>
+        <div class="bd-box"><b>ENGINE</b><span>descriptor DMA<br>destination code, word 0 [2:0]<br>&le;32 words per descriptor</span></div>
+        <div class="bd-arrow">D[7:0] (high byte ignored)<br>nSAMPLES0..3_FIFO_W<br>&rarr;</div>
         <div class="bd-box"><b>SAMPLE FIFOs 0..3</b><span>4&times;7200, byte wide<br>/R held low<br>Q = current sample</span></div>
         <div class="bd-arrow">Q[7:0]<br>&rarr;</div>
-        <div class="bd-box"><b>R-2R &times;4</b><span>one ladder<br>per channel<br>offset binary</span></div>
+        <div class="bd-box"><b>74HC04 + R-2R &times;4</b><span>one ladder per channel<br>Q7 inverted: two&rsquo;s complement<br>in, offset binary on the ladder</span></div>
         <div class="bd-arrow">&rarr;</div>
         <div class="bd-box"><b>74HC4066 + LM358</b><span>switch per channel<br>inverting summer at 2.5 V<br>L: ch 0,1 &middot; R: ch 2,3</span></div>
       </div>
       <div class="bd-row" style="margin-top:8px">
-        <div class="bd-box" style="border-style:dashed"><b>CONTROL FIFO</b><span>7200, byte wide<br>{register, value} records</span></div>
+        <div class="bd-box" style="border-style:dashed"><b>CONTROL FIFO</b><span>7200, byte wide, /W = nAUDCTL_FIFO_W<br>{register, value} records</span></div>
         <div class="bd-arrow">Q[7:0], /EF<br>&rarr;</div>
-        <div class="bd-box" style="border-style:dashed"><b>AUDIO (ATF1508AS)</b><span>9-bit timebase on the pixel clock<br>4&times; PERIOD + down counter<br>4&times; VOLUME rate multiplier</span></div>
+        <div class="bd-box" style="border-style:dashed"><b>AUDIO (ATF1508AS)</b><span>9-bit timebase on the pixel clock<br>re-phased by PIXEL&rsquo;s HBLANK<br>4&times; PERIOD + down counter<br>4&times; VOLUME rate multiplier</span></div>
         <div class="bd-arrow">/R pulses to FIFOs 0..3<br>GATE[3:0] to 74HC4066<br>&rarr;</div>
         <div class="bd-box" style="border-style:dashed"><b>/EF of FIFOs 0..3</b><span>back to AUDIO<br>empty forces the gate off</span></div>
       </div>
@@ -274,18 +274,19 @@
     <div class="twrap"><table>
       <tr><th>Parameter</th><th class="num">Value</th><th>Notes</th></tr>
       <tr><td>Clock</td><td class="num">25.175 MHz</td><td>the pixel clock; a line is 800 clocks</td></tr>
-      <tr><td>Step (counter clock)</td><td class="num">1,573,437.5 Hz</td><td>every 16 clocks; 50 steps per line, 100 per AUDIO_TICK</td></tr>
+      <tr><td>Step (counter clock)</td><td class="num">1,573,437.5 Hz</td><td>every 16 clocks, at h_cnt 0 mod 16 (HBLANK re-phases the divider each line); 50 steps per line, 100 per AUDIO_TICK period; AUDIO_TICK is a square wave to a test pad, not the step</td></tr>
       <tr><td>Channel sample rate</td><td class="num">1,573,437.5 / (P + 1)</td><td>P = PERIOD, 8 bits; 9-bit periods do not fit the chip</td></tr>
       <tr><td>Volume frame</td><td class="num">49,169.9 Hz</td><td>512 clocks, 64 ticks of 8 clocks; switching residue lands at multiples of this</td></tr>
-      <tr><td>Volume</td><td class="num">6 bits, 0..63</td><td>contribution = (sample &minus; 128) &times; VOLUME / 64; 63 is the loudest, 0 is off</td></tr>
-      <tr><td>Sample format</td><td class="num">8-bit offset binary</td><td>0x80 = midscale</td></tr>
+      <tr><td>Volume</td><td class="num">6 bits, 0..63</td><td>contribution = sample &times; VOLUME / 64, sample signed; 63 is the loudest, 0 is off</td></tr>
+      <tr><td>Sample format</td><td class="num">8-bit two&rsquo;s complement</td><td>0x00 = silence (AUDIO_SILENCE); a 74HC04 inverts bit 7 into the ladder, which wants offset binary</td></tr>
       <tr><td>FIFO depth</td><td class="num">256 bytes each</td><td>five FIFOs; a write when full is dropped, a pop when empty is silent</td></tr>
-      <tr><td>Deposit word</td><td class="num mono">{dest[10:8], byte[7:0]}</td><td>dest 0..3 = sample channel, 4 = control FIFO</td></tr>
+      <tr><td>Deposit word</td><td class="num mono">{ignored, byte[7:0]}</td><td>one word per FIFO byte; the descriptor&rsquo;s destination code picks the FIFO: 3 = control, 4..7 = channel 0..3</td></tr>
       <tr><td>Control record</td><td class="num">2 bytes</td><td>{register, value}; 4 clocks per byte, so 8 per record</td></tr>
       <tr><td>Mix</td><td class="num">analog sum, no clamp</td><td>two channels per side into an LM358 inverting summer; &plusmn;0.625 V full scale per channel, &plusmn;1.25 V for two, about 2.5 V; the author keeps the sum of levels sane</td></tr>
       <tr><td>Output corner</td><td class="num">&asymp;9.7 kHz</td><td>2k &parallel; 8.2 nF in the summer&rsquo;s feedback; the model&rsquo;s listening render uses the same single pole</td></tr>
       <tr><td>ENGINE load, Smurf</td><td class="num">0.97 % of a frame</td><td>2,260 of 233,625 SYSCLK per frame, model measurement (&sect;5)</td></tr>
-      <tr><td>CPLD fit</td><td class="num">120 / 128 LC</td><td>ATF1508AS PLCC84: 112 flip-flops, 376 product terms, 27 pins; no //PIN block yet (free placement)</td></tr>
+      <tr><td>CPLD fit</td><td class="num">121 / 128 LC</td><td>ATF1508AS PLCC84: 113 flip-flops, 384 product terms, 28 pins (HBLANK is the 28th); no //PIN block yet (free placement)</td></tr>
+      <tr><td>ENGINE fit</td><td class="num">120 / 128 LC</td><td>with the destination code: 393 product terms, 64/64 I/O; ENGINE is pin-full</td></tr>
     </table></div>
   </section>
 
@@ -297,25 +298,30 @@
       against the model; no silicon. <span class="st open">OPEN</span> = not yet built or measured.
     </p>
 
-    <h3><span class="mnum">3.1</span> Deposit path: the destination rides in the word <span class="st prelim">PRELIMINARY</span></h3>
+    <h3><span class="mnum">3.1</span> Deposit path: ENGINE&rsquo;s destination code <span class="st prelim">PRELIMINARY</span></h3>
     <p>
-      Every audio byte is one 16-bit word deposited by ENGINE on the <code>AUDIO_FIFO_W</code> strobe. A 74HC138 enabled by that
-      strobe decodes the word&rsquo;s bits 10:8 into one FIFO&rsquo;s /W, and the low byte is what that FIFO stores. Destinations 0 to 3
-      are the sample channels, 4 is the control FIFO; 5 to 7 are not assigned. The ENGINE RTL and its descriptor format do not
-      change: a descriptor is a run of words, at most 32, and a run to one destination is simply words that all carry the same
-      tag. The tag-in-the-word decode was chosen on 2026-09-27 over adding a destination field to ENGINE&rsquo;s descriptor.
+      Every audio byte is one 16-bit word read by an ENGINE descriptor; the FIFO stores the low byte and the high byte is
+      ignored. The FIFO is chosen per descriptor, not per word: bits 2:0 of the descriptor&rsquo;s word 0 are a destination code
+      that ENGINE decodes on chip to one of seven active-low strobes, each the /W of one FIFO (or FIFO pair). An audio deposit is
+      therefore an ordinary descriptor to one FIFO, a run of at most 32 words. Code 0 strobes nothing and only spends the bus
+      time. ENGINE fits at 120/128 LC with all 64 I/O pins used.
     </p>
-    <pre>word  15      11 10   8 7            0
-      +---------+------+--------------+
-      |  unused | dest |     byte     |     dest 0..3 = sample FIFO n, 4 = control FIFO
-      +---------+------+--------------+</pre>
+    <pre>descriptor word 0   15  14  13     9 8        3 2    0
+                   +---+---+--------+----------+------+
+                   | W | S | count  | reserved | dest |    W = wait_hblank, S = stop_after
+                   +---+---+--------+----------+------+
+
+dest  0 none   1 PIXELS   2 VIDCMD   3 AUDCTL (control FIFO)   4..7 SAMPLES0..3 (channel 0..3)</pre>
 
     <h3><span class="mnum">3.2</span> Channel clock and pop <span class="st prelim">PRELIMINARY</span></h3>
     <p>
       Each channel has an 8-bit PERIOD and an 8-bit down counter COUNT. At every step, if COUNT is 0 the channel pops and COUNT
       reloads from PERIOD; otherwise COUNT decrements. A pop is a one-clock high pulse on the FIFO&rsquo;s /R, one clock after the
       step&rsquo;s counter edge. /R is otherwise held low, so the FIFO&rsquo;s Q bus always shows the current sample and drives the
-      ladder directly. Steps are exactly 50 per line, so the pop pattern is locked to the raster in rate.
+      ladder directly. The step divider is locked to the raster: PIXEL&rsquo;s HBLANK rising edge (seen at h_cnt 642) loads its low
+      nibble with 2 every line, so steps fall at h_cnt 0 mod 16, 50 per line. Once in phase the load is a no-op, so the volume
+      frame is undisturbed; only the first line after reset moves anything. PIXEL&rsquo;s AUDIO_TICK is unchanged, a square wave to a
+      test pad, and is not the step.
     </p>
     <div class="twrap"><table>
       <tr><th class="num">PERIOD</th><th class="num">Rate, Hz</th><th class="num">Pops per line</th><th class="num">Per 8-line burst</th><th class="num">256 bytes last</th><th>Use</th></tr>
@@ -346,8 +352,8 @@
     </table></div>
     <p>
       The gate is forced off while the channel&rsquo;s FIFO is empty, so an empty channel contributes nothing rather than holding a
-      DC level, and during the pop clock, when Q is high-impedance. The summing node sits at the 2.5 V midscale, so a ladder at
-      0x80 injects no current whether its switch is open or closed, and a volume change causes no DC step (&sect;3.6).
+      DC level, and during the pop clock, when Q is high-impedance. The summing node sits at the 2.5 V midscale, so a silent sample
+      (0x00, 0x80 on the ladder after the inverter) injects no current whether its switch is open or closed, and a volume change causes no DC step (&sect;3.6).
     </p>
 
     <h3><span class="mnum">3.4</span> Control records <span class="st prelim">PRELIMINARY</span></h3>
@@ -374,7 +380,9 @@
     <p>
       Per side, two ladders feed the virtual-ground node of an LM358 inverting summer through their 74HC4066 switches (control =
       GATE[n]). The summer&rsquo;s non-inverting input is biased at 2.5 V by a 10k/10k divider with a 10 &micro;F capacitor, shared by
-      both sides. A ladder at midscale (0x80 = 2.5 V) injects zero current whether its switch is closed or open, so volume changes
+      both sides. Each channel&rsquo;s Q7 passes through one section of a 74HC04 (CMOS output) and the other seven bits drive the
+      ladder directly, so a two&rsquo;s complement sample reaches the ladder as offset binary: a silent sample, 0x00, puts the ladder
+      at 0x80 = 2.5 V, where it injects zero current whether its switch is closed or open, so volume changes
       cause no DC step, and each channel&rsquo;s contribution is independent of the other switch&rsquo;s state, which a passive sum would
       not give. Feedback is 2k in parallel with 8.2 nF (the 9.7 kHz corner, which averages the switching), then 4.7k to GND,
       100 &micro;F coupling to LINE. Full scale is &plusmn;0.625 V per channel at the summer, &plusmn;1.25 V for two,
@@ -401,7 +409,7 @@
       <div class="recipe-head"><b>PCM stream at the tick rate, mono or stereo</b><span class="cost">&asymp;263 words per frame per channel</span><span class="st adv">ADVANCE</span></div>
       <div class="recipe-body">
         <p><b>Recipe:</b> PERIOD 99 makes a channel a 15,734 Hz stream, one sample every second line. Deposit it in bursts like any other channel (four samples per 8-line burst plus the margin). Stereo is one channel per side, for example 0 and 2, with the same PERIOD.</p>
-        <p><b>Notes:</b> samples are offset binary. A FIFO holds 16.3 ms at this rate.</p>
+        <p><b>Notes:</b> samples are two&rsquo;s complement, 0x00 silent. A FIFO holds 16.3 ms at this rate.</p>
       </div>
     </div>
 
@@ -479,24 +487,25 @@
       <tr><td class="mono">AR1</td><td>Each FIFO is 256 deep. A write when full is dropped (samples lost); a pop when empty is silent. The author keeps every FIFO between the two by construction.</td></tr>
       <tr><td class="mono">AR2</td><td>A PERIOD change applies to the samples popped after it. Place its record at the first line by which every sample already queued has been popped, so the new rate applies to the new table and not the old tail (resolution: one line).</td></tr>
       <tr><td class="mono">AR3</td><td>VOLUME records are placed at the next line and apply from the step they complete in.</td></tr>
-      <tr><td class="mono">AR4</td><td>At most two records land per step; a third waits one step. Records are two deposits each to destination 4.</td></tr>
+      <tr><td class="mono">AR4</td><td>At most two records land per step; a third waits one step. A record is two words in a descriptor to destination 3 (AUDCTL).</td></tr>
       <tr><td class="mono">AR5</td><td>Latency from a table change to the speaker is the burst wait (up to 8 lines, 0.25 ms) plus the queued fill (pops per burst + 2 samples): under 1 ms by the README&rsquo;s derivation; the log estimates about 8 ticks (0.5 ms) for Smurf.</td></tr>
       <tr><td class="mono">AR6</td><td>PERIOD is 8 bits: 6.15 kHz is the slowest rate. Below it, repeat samples in the table.</td></tr>
-      <tr><td class="mono">AR7</td><td>Samples are offset binary, 0x80 silent. An empty FIFO is silent too, so a channel can simply be allowed to run dry to stop.</td></tr>
+      <tr><td class="mono">AR7</td><td>Samples are two&rsquo;s complement, 0x00 silent. An empty FIFO is silent too, so a channel can simply be allowed to run dry to stop.</td></tr>
       <tr><td class="mono">AR8</td><td>Nothing on the 68000 side can observe the chip. Development uses the model (and, when built, the emulator); the scheduler&rsquo;s mirror is the only fill gauge.</td></tr>
     </table></div>
-    <p class="note">The model and testbench align each line start with a step boundary. On hardware the phase between the raster and the AUDIO timebase is whatever reset leaves; I believe the margin of 2 absorbs the difference, but no source checks it.</p>
+    <p class="note">Steps are raster-locked: HBLANK re-phases the divider every line, so the model&rsquo;s line alignment holds on the chip from the first line after reset. The testbench checks this with the chip&rsquo;s reset released 5 clocks early: pops are out of phase until the first re-sync, then identical to the model.</p>
   </section>
 
   <section>
     <div class="secbar"><span>Qualification Status</span><span class="no">7</span></div>
     <div class="twrap"><table>
       <tr><th>Item</th><th>Gate</th><th>Status</th></tr>
-      <tr><td>AUDIO chip RTL (cpld/audio/audio.v)</td><td>fit ladder: behavioural counters with pinned FSM encoding kept at 120/128 LC, 112 FF, 376 PT, pass 1; 9-bit PERIOD does not fit; 8 LC headroom</td><td class="mono">FIT 2026-09-27</td></tr>
+      <tr><td>AUDIO chip RTL (cpld/audio/audio.v)</td><td>fit ladder: behavioural counters with pinned FSM encoding, plus the HBLANK re-phase: 121/128 LC, 113 FF, 384 PT, 28 pins, pass 1 under -preassign keep; 9-bit PERIOD does not fit; a per-step pulse on a pin cost more (griffin.log); 7 LC headroom</td><td class="mono">FIT 2026-09-27</td></tr>
+      <tr><td>ENGINE destination code (cpld/engine/engine.v)</td><td>3-bit code decoded to seven strobes: 120/128 LC, 393 PT, pass 2, 64/64 I/O (pin-full); super-engine <code>make check</code> passes; emulator, firmware and apps build</td><td class="mono">FIT 2026-09-27</td></tr>
       <tr><td>Host model and tests (audio/audio_chip.h, T1..T6)</td><td>rate-multiplier on-count = VOLUME, disjoint windows; closed form = chip over 200k random lines; gate off when empty; mirror-fed exact; PERIOD alignment within a line; every audible PSG period mapped</td><td class="mono">PASS 2026-09-27</td></tr>
-      <tr><td>RTL testbench against the model (cpld/audio/audio_tb.v, <code>make -C cpld audio-sim</code>)</td><td>1,200 random lines: 5,190 pops at the right step and none elsewhere, registers after every line, gate law on 960,000 clocks, FIFO protocol; negative controls 1..5 all fail</td><td class="mono">PASS 2026-09-27</td></tr>
-      <tr><td>Scheduler and PSG driver, Smurf A/B</td><td>&sect;5 numbers; by ear judged much better than the reference path by the owner</td><td class="mono">PASS 2026-09-27</td></tr>
-      <tr><td>griffin.yml for the AUDIO chip (deposit tag, registers, parts)</td><td>written; matches this sheet</td><td class="mono">DONE 2026-09-27</td></tr>
+      <tr><td>RTL testbench against the model (cpld/audio/audio_tb.v, <code>make -C cpld audio-sim</code>)</td><td>1,200 random lines: 5,190 pops at the right step and none elsewhere, registers after every line, gate law on 960,000 clocks, FIFO protocol; run aligned and again with the chip&rsquo;s reset skewed 5 clocks (out of phase until the first HBLANK re-sync, then identical to the model); negative controls 1..6 all fail</td><td class="mono">PASS 2026-09-27</td></tr>
+      <tr><td>Scheduler and PSG driver, Smurf A/B</td><td>&sect;5 numbers, reproduced exactly with two&rsquo;s complement samples; by ear judged much better than the reference path by the owner</td><td class="mono">PASS 2026-09-27</td></tr>
+      <tr><td>griffin.yml for the AUDIO chip (destination codes, registers, parts, HBLANK input)</td><td>written; matches this sheet</td><td class="mono">DONE 2026-09-27</td></tr>
       <tr><td>Emulator AUDIO model</td><td>links audio_chip.cpp, with FIFO overflow and underflow assertions</td><td class="mono">TO DO</td></tr>
       <tr><td>Analog PWM stage on a breadboard</td><td>74HC4066 on-resistance and switching time at low VOLUME; bias and DC behaviour across volume changes</td><td class="mono">OPEN</td></tr>
       <tr><td>Rev-2 schematic and //PIN block</td><td>not started</td><td class="mono">TO DO</td></tr>

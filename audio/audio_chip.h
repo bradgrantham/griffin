@@ -29,7 +29,7 @@
 // Reset: COUNT 0 and PERIOD 0, so an unconfigured channel pops every step;
 // set PERIOD before depositing samples.
 //
-// Volume.  Each channel has a 6-bit VOLUME.  GATE[n] closes the CD4066 switch
+// Volume.  Each channel has a 6-bit VOLUME.  GATE[n] closes the 74HC4066 switch
 // between ladder n and its side's summing node (channels 0,1 left; 2,3
 // right).  On frame tick t (0..63) the gate is on when any VOLUME bit b is set
 // and t is in window b:
