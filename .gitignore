@@ -84,8 +84,6 @@ cpld/**/*.fitter.log
 # Host-side audio model and Z80 sound processor build trees
 mixer/build/
 mixer/.cache/
-sound/**/build/
-sound/build/
 
 # Editor swap files
 *.swp

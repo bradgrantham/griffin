@@ -1914,3 +1914,8 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   and AUDIO_DEST_CONTROL removed, AUDIO parts 74HC04 not 74HC138, the
   AUDIO chip entry takes HBLANK, Stream FIFO parts /W from ENGINE's own
   strobes, the ENGINE spare header gone.
+
+2026-09-28 -- sound/ removed from indexed-pixel
+  The Z80 sound-processor experiment (ROMs, z80emu harnesses, record
+  encodings, measurements) lives on branch z80-audio; the entries above
+  that cite sound/ refer to it there.
