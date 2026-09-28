@@ -348,7 +348,7 @@ peripherals:
   #   H_TOTAL - PIXEL_PRELOAD_LEAD before a visible line.
   # - Sync compares shift late by DAC_LEAD (4); timing.v localparams must
   #   equal the lead constants below.
-  # - HBLANK -> ENGINE: registered h_cnt >= 640, high for 640..799 on
+  # - HBLANK -> ENGINE and AUDIO: registered h_cnt >= 640, high for 640..799 on
   #   EVERY line, visible or blank, rising on the clock PIX_CONSUME falls.
   #   ENGINE 2-FF synchronizes it and wait_hblank descriptors wait for the
   #   rising edge, the start of the 160-clock blank budgeted in
