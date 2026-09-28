@@ -26,6 +26,10 @@ make ab AB_FLAGS="--burst 4 --margin 3 --seconds 20"
   noise, the reference's band limit and 2 dB ladder.
 * `audio_tests.cpp` — exact checks (T1..T6 below).
 * `audio_ab.cpp` — the replay, statistics and WAVs.
+* `tb_vectors.cpp` — a seeded random stimulus through the model, written as
+  the vectors `cpld/audio/audio_tb.v` checks the RTL against (`make -C
+  ../cpld audio-sim` runs both; step 4, passed 2026-09-27 with all five
+  negative controls failing as required).
 
 ## Expectations, derived before running
 

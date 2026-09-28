@@ -4,6 +4,7 @@
 #   make        build build/audio_tests and build/audio_ab
 #   make test   run the exact tests, then the A/B: build/wav/{reference,audio,audio_stereo}.wav
 #   make ab     the A/B only; AB_FLAGS="--burst 4 --margin 3" etc.
+#   make vectors   write the RTL testbench's vectors into ../cpld/audio/tb/
 #
 # The reference SN76489 and the recorded trace are read from the griffin-ports
 # checkout and never written.
@@ -21,7 +22,7 @@ MODEL_HDR = audio_chip.h scheduler.h psg_channels.h
 MODEL_OBJ = $(MODEL_SRC:%.cpp=$(BUILD)/%.o)
 REF_HDR   = $(PSG_DIR)/sn76489.h $(PSG_DIR)/frame_audio.h $(PSG_DIR)/tests/trace_io.h
 
-all: $(BUILD)/audio_tests $(BUILD)/audio_ab
+all: $(BUILD)/audio_tests $(BUILD)/audio_ab $(BUILD)/tb_vectors
 
 $(BUILD)/%.o: %.cpp $(MODEL_HDR)
 	@mkdir -p $(BUILD)
@@ -38,6 +39,16 @@ $(BUILD)/audio_ab.o: audio_ab.cpp $(MODEL_HDR) $(REF_HDR)
 $(BUILD)/audio_tests: $(BUILD)/audio_tests.o $(MODEL_OBJ)
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
+$(BUILD)/tb_vectors: $(BUILD)/tb_vectors.o $(BUILD)/audio_chip.o
+	$(CXX) $(CXXFLAGS) $^ -o $@
+
+# The RTL testbench's vectors (cpld/audio/audio_tb.v reads them; `make -C
+# ../cpld audio-sim` runs this first).
+TB_DIR ?= ../cpld/audio/tb
+vectors: $(BUILD)/tb_vectors
+	@mkdir -p $(TB_DIR)
+	./$(BUILD)/tb_vectors $(TB_DIR) 1200
+
 $(BUILD)/audio_ab: $(BUILD)/audio_ab.o $(MODEL_OBJ) $(BUILD)/ref/sn76489.o
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
@@ -51,4 +62,4 @@ ab: $(BUILD)/audio_ab
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test ab clean
+.PHONY: all test ab vectors clean

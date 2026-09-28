@@ -7,3 +7,6 @@ build_id.vh
 *.pin
 *.svf
 *.tt3
+tb/
+*.vvp
+*.log

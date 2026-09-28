@@ -1793,3 +1793,27 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   audio/build/wav/{reference,audio,audio_stereo}.wav.
   Open: multi-cycle tables (edges rounded per cycle) would take the high
   tones under a cent at the cost of edge jitter; the 21 fields.
+
+2026-09-27 -- Audio step 4: audio_tb.v, the RTL against the model
+  cpld/audio/audio_tb.v (`make -C cpld audio-sim`): audio/tb_vectors.cpp
+  runs a seeded random stimulus (1200 lines: up to three control records a
+  line, records split across lines, sample bursts, channels run dry, FIFOs
+  overfilled) through the host model and writes tb/{stim,pops,regs}.hex;
+  the bench deposits the same bytes into behavioural 7200s right after each
+  line's first edge and checks (1) nSAMPLE_R pulses exactly one clock after
+  the counter edge of every step the model popped and never otherwise
+  (5,190 pops, 60,000 step edges, 900,000 off-edge clocks), (2) PERIOD and
+  VOLUME equal the model's after every line's last edge (1,200 lines), (3)
+  the gate law on every clock in closed form from the bench's own timebase,
+  the FIFO empty flags and the pop pin (960,000 clocks), (4) /R high through
+  reset, the control reader's /R low for exactly two clocks, no read of an
+  empty control FIFO.  PASS first time: RTL and model agree, including the
+  third record of a line landing one step late in both.  Negative controls
+  1..5 (pops a step late, window 4 misplaced, empty flag ignored, registers
+  a line late, a two-clock pulse) all fail as required.  Two bench bugs on
+  the way: `byte` is a keyword under -g2012; and this oss-cad-suite's vvp
+  exits 0 on $finish(1), so the recipe greps the printed verdict (the
+  timing-sim recipe tests the exit status and may be blind the same way;
+  not touched).  Time alignment used: m edges since the last reset edge,
+  timebase = m mod 512, line k at edge 800 k, step s's update at edge
+  16 (s + 1).

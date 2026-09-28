@@ -34,7 +34,7 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "adapter speed 2000" \
     -c init
 
-.PHONY: all glue video engine audio ports compositor compositor-sim \
+.PHONY: all glue video engine audio audio-sim ports compositor compositor-sim \
         pixel pixel-sim pixel-mutants timing-sim clut-pair-sim clean
 
 # The default set is the Rev 2 super-engine video path: display-list ENGINE,
@@ -132,6 +132,22 @@ audio/audio.jed: audio/audio.edif
 
 audio/audio.svf: audio/audio.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/audio/audio.jed $(CURDIR)/audio/audio.svf
+
+# `make audio-sim`: the model (audio/, the executable spec) writes the vectors,
+# the iverilog bench checks the RTL's pop schedule and registers against them
+# and the gate law in closed form on every clock, then each -DMUTATE=n
+# negative control must fail.
+audio-sim: audio/audio_tb.v audio/audio.v
+	$(MAKE) --no-print-directory -C ../audio vectors
+	cd audio && iverilog -g2012 -o audio_tb.vvp audio_tb.v audio.v && vvp audio_tb.vvp | grep -v WARNING | tee audio_tb.log
+	@grep -q "TESTBENCH RESULT: PASS" audio/audio_tb.log || { echo "AUDIO TESTBENCH FAILED"; exit 1; }
+	@# vvp exits 0 even on $$finish(1) in this oss-cad-suite, so the verdict is the printed line.
+	@for n in 1 2 3 4 5; do \
+	    (cd audio && iverilog -g2012 -DMUTATE=$$n -o audio_tb_mut.vvp audio_tb.v audio.v \
+	        && vvp audio_tb_mut.vvp 2>&1 | grep -q "TESTBENCH RESULT: PASS"); \
+	    if [ $$? -eq 0 ]; then echo "NEGATIVE CONTROL MUTATE=$$n DID NOT FAIL"; exit 1; \
+	    else echo "negative control MUTATE=$$n fails as required"; fi; \
+	done
 
 # ------------------------------------------------------------
 # PORTS (ATF1508AS) — Rev 2, built by `all` alongside GLUE/VIDEO/ENGINE
