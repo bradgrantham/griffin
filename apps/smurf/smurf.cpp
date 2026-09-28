@@ -3,7 +3,8 @@
 // This is the first application that puts a REAL PICTURE through the direct
 // video surface: three 4bpp half-rate backdrops off the CF card, sprite overlays
 // composed as VIDCMD span lists on top of them, and a square/noise soundtrack
-// deposited into the audio FIFO by the same display list that draws the frame.
+// deposited into the AUDIO chip's FIFOs by the same display list that draws
+// the frame.
 // apps/dtest proved the surface; this proves it carries a game.
 //
 // THE BACKDROPS ARE 320x480 4BPP HALF RATE out of a SIXTEEN-ENTRY PALETTE, one
@@ -34,10 +35,10 @@
 //   2 preamble descriptors          the frame's palette, mode and base, in vblank
 //   34 pacers                       walk from the vsync line (490) to line 0
 //   480 x (1 VIDCMD + 3 PIXELS)     80 words of pixels per line = 32+32+16
-//   9 audio bursts                  262 or 263 stereo pairs per frame
+//   9 x 2 audio bursts              262 or 263 samples per frame, to channels 0 and 2
 //   1 trailing stop_after pacer
 //   -------------------------------------------------------------------
-//   1964 descriptors = 15712 bytes, and two of those fit the 32 KB carve.
+//   1973 descriptors = 15784 bytes, and two of those fit the 32 KB carve.
 //
 // which is FAR too much to author from scratch every frame.  So the list is a
 // STATIC SKELETON, built once when a screen is entered (that build takes about
@@ -114,21 +115,30 @@
 // AUDIO
 // ===========================================================================
 //
-// PORTS pops one stereo pair every second scanline: 15734.375 Hz, exactly
-// 262.5 pairs per 525-line frame.  A frame's list cannot deposit half a pair,
-// so table 0 carries 262 and table 1 carries 263 and the loop alternates them
-// -- the average is exact and the FIFO neither dries nor overflows.  The FIFO
-// is primed by a one-shot descriptor list (there is no CPU write path) to half
-// full plus a margin, so the level stays inside the FIFO all frame.  Priming
-// is repeated after every screen rebuild, since a rebuild is 300 ms with no
-// list armed and the FIFO empties long before the end of it.  (Feeding the
-// FIFO from the CPU across a rebuild was tried and is a false economy: a
-// CPU-written pair costs enough that the rebuild has to service more pops than
-// it saves, and 300 ms of rebuild became 1.8 s.  The flip is silent.)
+// The soundtrack is mono PCM rendered by the CPU (two squares and an LFSR,
+// below) and played by the AUDIO chip on channel 0 (left) and channel 2
+// (right) at PERIOD 99: one sample every second scanline, 15734.375 Hz,
+// exactly 262.5 per 525-line frame.  Both channels read the SAME buffer: each
+// word carries the sample in both bytes and the byte-wide FIFOs take D[7:0],
+// so every burst is two descriptors, one per channel, at the same words.  A
+// frame's list cannot deposit half a sample, so table 0 carries 262 and table
+// 1 carries 263 and the loop alternates them -- the average is exact and the
+// FIFOs neither dry nor overflow.  Every frame's vblank preamble also carries
+// the control records (PERIOD 99, VOLUME 63 for both channels: harmless to
+// repeat, and the first frame needs them before any sample) and PRIME slots:
+// descriptors that deposit half a FIFO plus a margin on the first frame after
+// startup or a screen rebuild and are one-word no-ops otherwise.  The prime
+// has to ride in the frame's own list: the AUDIO chip cannot pause its pops,
+// so a prime run as a separate list drains away before the next vsync arms
+// the frame (the FIFO holds less than a frame).  A rebuild is 300 ms with no
+// list armed, the FIFOs run dry long before the end of it (an empty channel is
+// silent), so the level after the prime is exactly what it deposited.  (Feeding the FIFOs from the CPU across a
+// rebuild was tried and is a false economy: a CPU-written sample costs enough
+// that the rebuild has to service more pops than it saves, and 300 ms of
+// rebuild became 1.8 s.  The flip is silent.)
 //
-// Silence is 0x00: samples are two's complement.  The board's CD4049
-// inverters flip each channel's MSB between FIFO and ladder, so signed
-// samples land on the unsigned R2R correctly and zero-filled RAM is mute.
+// Silence is 0x00: samples are two's complement (a 74HC04 flips each
+// channel's MSB into its ladder), so zero-filled RAM is mute.
 
 #include <cstdint>
 #include <cstdio>
@@ -160,6 +170,7 @@ constexpr unsigned PIX_WORDS_PER_LINE  = se::PIXELS_WORDS_4BPP_HALF;  // 80
 constexpr unsigned PIX_BYTES_PER_LINE  = PIX_WORDS_PER_LINE * 2;      // 160
 constexpr unsigned PIXEL_DESCS_PER_LINE = 3;                          // 32 + 32 + 16
 constexpr unsigned AUDIO_BURSTS        = 9;
+constexpr unsigned AUDIO_CHANNELS_USED = 2;                           // 0 left, 2 right
 
 // The frame preamble: sixteen three-word palette entries plus SET pix_base and
 // SET pix_mode, deposited in vertical blanking with no wait_hblank.  Fifty words
@@ -170,8 +181,17 @@ constexpr unsigned PREAMBLE_DESCS =
     (PREAMBLE_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;   // 2
 
 constexpr unsigned DESCS_PER_LINE = 1 + PIXEL_DESCS_PER_LINE;
+
+// The audio slots in the vblank preamble: the control records, then the prime
+// deposits for each channel (see AUDIO above and audio_prime()).
+constexpr unsigned PRIME_SAMPLES = 128 + 40;   // half a 256-sample FIFO plus a margin
+constexpr unsigned PRIME_DESCS_PER_CHANNEL =
+    (PRIME_SAMPLES + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;   // 6
+constexpr unsigned AUDIO_PREAMBLE_DESCS = 1 + 2 * PRIME_DESCS_PER_CHANNEL;   // 13
+
 constexpr unsigned FRAME_DESCRIPTORS =
-    PREAMBLE_DESCS + VBLANK_WALK_LINES + LINES * DESCS_PER_LINE + AUDIO_BURSTS + 1;
+    PREAMBLE_DESCS + AUDIO_PREAMBLE_DESCS + VBLANK_WALK_LINES + LINES * DESCS_PER_LINE +
+    AUDIO_BURSTS * AUDIO_CHANNELS_USED + 1;
 
 // Two tables in the 32 KB app carve, so frame N+1 is authored while frame N is
 // still being walked.
@@ -197,22 +217,31 @@ constexpr unsigned LAST_SLOT = se::H_ACTIVE - 1;            // 639
 // Audio pacing
 // ===========================================================================
 
-constexpr unsigned AUDIO_PAIRS[2] = { 262, 263 };   // per table; averages 262.5
+constexpr unsigned AUDIO_PAIRS[2] = { 262, 263 };   // samples per table; averages 262.5
 constexpr unsigned AUDIO_PAIRS_MAX = 263;
 
-// Pairs deposited past the half-full mark when priming, so the running level
-// never reaches empty between bursts.
-constexpr unsigned AUDIO_PRIME_MARGIN = 40;
-constexpr unsigned PRIME_PAIRS = Griffin::AUDIO_FIFO_DEPTH / 2 + AUDIO_PRIME_MARGIN;
+static_assert(PRIME_SAMPLES == Griffin::AUDIO_FIFO_DEPTH / 2 + 40,
+              "the prime is half the FIFO plus a 40-sample margin");
 
-// The prime list: ceil(PRIME_PAIRS / DESC_MAX_COUNT) deposit descriptors plus
-// the stop_after pacer, placed in the unused tail of table 0 (the two tables
-// fill the carve exactly; a frame's descriptors stop at g_stop_desc_word).
-constexpr unsigned PRIME_DESCS =
-    (PRIME_PAIRS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT + 1;
-constexpr uint32_t PRIME_TABLE_OFFSET = FRAME_DESCRIPTORS * se::DESC_BYTES;
-static_assert(PRIME_TABLE_OFFSET + PRIME_DESCS * se::DESC_BYTES <= TABLE_STRIDE,
-              "the audio prime list must fit table 0 after a frame's descriptors");
+// The AUDIO control records the prime list starts with: PERIOD 99 (the tick
+// rate) and VOLUME 63 for channels 0 and 2, one byte per word.
+constexpr uint16_t AUDIO_CONTROL_WORDS[8] = {
+    Griffin::AUDIO_REG_PERIOD + 0, Griffin::AUDIO_PERIOD_TICK,
+    Griffin::AUDIO_REG_PERIOD + 2, Griffin::AUDIO_PERIOD_TICK,
+    Griffin::AUDIO_REG_VOLUME + 0, Griffin::AUDIO_VOLUME_MAX,
+    Griffin::AUDIO_REG_VOLUME + 2, Griffin::AUDIO_VOLUME_MAX,
+};
+constexpr uint16_t AUDIO_MUTE_WORDS[4] = {
+    Griffin::AUDIO_REG_VOLUME + 0, 0,
+    Griffin::AUDIO_REG_VOLUME + 2, 0,
+};
+
+// The one-shot mute list at exit (a control descriptor and the stop), in the
+// unused tail of table 0 (a frame's descriptors stop at g_stop_desc_word).
+constexpr unsigned MUTE_DESCS = 2;
+constexpr uint32_t MUTE_TABLE_OFFSET = FRAME_DESCRIPTORS * se::DESC_BYTES;
+static_assert(MUTE_TABLE_OFFSET + MUTE_DESCS * se::DESC_BYTES <= TABLE_STRIDE,
+              "the audio mute list must fit table 0 after a frame's descriptors");
 
 // ===========================================================================
 // Game geometry
@@ -807,7 +836,8 @@ uint32_t g_frame_sig[2] = { 0, 0 };
 uint32_t g_line_stamp[LINES];
 uint32_t g_stamp = 0;
 
-// Audio sample buffers, one per table for the same reason.
+// Audio sample buffers, one per table for the same reason; each word holds the
+// sample in both bytes, and channels 0 and 2 both read it.
 uint16_t g_audio_buf[2][AUDIO_PAIRS_MAX];
 
 // Word offsets into a table, computed once.
@@ -819,6 +849,14 @@ uint8_t  g_audio_burst[2][AUDIO_BURSTS];
 uint32_t g_table_base = 0;
 
 se::DescriptorWords g_pacer;
+se::DescriptorWords g_audio_idle;        // a one-word no-op, no HBLANK wait
+
+// The control words every frame deposits, and whether each table's prime
+// slots are live (they are cleared the next time that table is authored).
+uint16_t g_audio_setup[8];
+uint16_t g_audio_mute_words[4];
+bool     g_prime_live[2] = { false, false };
+uint16_t g_prime_buf[PRIME_SAMPLES];
 
 void put_desc(uint16_t *p, const se::DescriptorWords &w)
 {
@@ -880,8 +918,18 @@ void init_list_layout()
     d.destination = se::DEST_NONE;
     d.wait_hblank = true;
     g_pacer = se::encode_descriptor(d);
+    d.wait_hblank = false;
+    g_audio_idle = se::encode_descriptor(d);
+    for (unsigned i = 0; i < 8; i++)
+    {
+        g_audio_setup[i] = AUDIO_CONTROL_WORDS[i];
+    }
+    for (unsigned i = 0; i < 4; i++)
+    {
+        g_audio_mute_words[i] = AUDIO_MUTE_WORDS[i];
+    }
 
-    unsigned idx = PREAMBLE_DESCS + VBLANK_WALK_LINES;
+    unsigned idx = PREAMBLE_DESCS + AUDIO_PREAMBLE_DESCS + VBLANK_WALK_LINES;
     unsigned g   = 0;
     for (unsigned line = 0; line < LINES; line++)
     {
@@ -890,7 +938,7 @@ void init_list_layout()
         if (g < AUDIO_BURSTS && line + 1 == group_end(g))
         {
             g_audio_desc_word[g] = static_cast<uint16_t>(idx * se::DESC_WORDS);
-            idx++;
+            idx += AUDIO_CHANNELS_USED;
             g++;
         }
     }
@@ -1069,6 +1117,21 @@ bool build_scene(const SceneSpec &spec)
             p += se::DESC_WORDS;
             done += count;
         }
+        // Audio: the control records every frame, the prime slots idle.
+        {
+            se::Descriptor cd;
+            cd.src         = reinterpret_cast<uint32_t>(&g_audio_setup[0]);
+            cd.count       = 8;
+            cd.destination = se::DEST_AUDCTL_FIFO_W;
+            put_desc(p, se::encode_descriptor(cd));
+            p += se::DESC_WORDS;
+            for (unsigned i = 0; i < 2 * PRIME_DESCS_PER_CHANNEL; i++)
+            {
+                put_desc(p, g_audio_idle);
+                p += se::DESC_WORDS;
+            }
+            g_prime_live[which] = false;
+        }
         for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
         {
             put_desc(p, g_pacer);
@@ -1108,9 +1171,11 @@ bool build_scene(const SceneSpec &spec)
             se::Descriptor ad;
             ad.src         = reinterpret_cast<uint32_t>(&g_audio_buf[which][before]);
             ad.count       = g_audio_burst[which][b];
-            ad.destination = se::DEST_AUDIO_PAIR_REV1;
             ad.wait_hblank = false;
+            ad.destination = se::DEST_SAMPLES0_FIFO_W;
             put_desc(table_at(which, g_audio_desc_word[b]), se::encode_descriptor(ad));
+            ad.destination = se::DEST_SAMPLES2_FIFO_W;
+            put_desc(table_at(which, g_audio_desc_word[b] + se::DESC_WORDS), se::encode_descriptor(ad));
         }
 
         se::Descriptor sd;
@@ -1186,9 +1251,15 @@ uint32_t frame_signature(const SceneSpec &spec, const Instance *inst, unsigned n
     return sig;
 }
 
+void audio_prime_slots_idle(unsigned which);
+
 void build_frame(unsigned which, const SceneSpec &spec,
                  const Instance *inst, unsigned ninst)
 {
+    if (g_prime_live[which])
+    {
+        audio_prime_slots_idle(which);
+    }
     const uint32_t sig = frame_signature(spec, inst, ninst);
     if (sig == g_frame_sig[which])
     {
@@ -1554,74 +1625,71 @@ void audio_render(uint16_t *dst, unsigned pairs)
     }
 }
 
-// Fill the FIFO to half full plus a margin.  The audio FIFOs have no
-// CPU-mapped write path, so priming is a one-shot descriptor list of
-// AUDIO_FIFO_W deposits, run after a RESET pulse so the level afterwards is
-// exactly what was deposited (there is no level readback; the pop rate is
-// pixel-clock-locked, so from here on the level is dead-reckoned).  The
-// sample buffer is static and the list lives in table 0's tail: both are
-// frame-owned RAM until ENGINE has walked the list, which the two vsync
-// waits guarantee before anything else is armed.  Callers guarantee no
-// audio-depositing list is armed (the 7200's /RS rule).
-uint16_t g_prime_buf[PRIME_PAIRS];
-
-void audio_enable(bool on);
-
-void audio_prime()
+// Fill both channels' FIFOs to half full plus a margin, from table `which`'s
+// prime slots: call it just before `which` is next armed, after a stretch with
+// no list armed (startup, a 300 ms screen rebuild), when both FIFOs have run
+// dry, so the level afterwards is exactly what was deposited; from there it is
+// dead-reckoned (the pop rate is pixel-clock-locked).  The slots sit in the
+// vblank preamble right after the control records, so PERIOD is set before
+// the first sample lands.  The table's next authoring puts them back to idle.
+uint16_t *prime_slot(unsigned which, unsigned i)
 {
-    const bool was_enabled =
-        (PORTS_AUDIO_STATUS & Griffin::PORTS_AUDIO_STATUS_ENABLE_MASK) != 0;
-    PORTS_AUDIO_CONTROL = static_cast<uint8_t>(Griffin::PORTS_AUDIO_CONTROL_RESET_MASK);
-    PORTS_AUDIO_CONTROL = 0;
+    return table_at(which, (PREAMBLE_DESCS + 1 + i) * se::DESC_WORDS);
+}
 
-    audio_render(g_prime_buf, PRIME_PAIRS);
-
-    uint16_t *p = reinterpret_cast<uint16_t *>(g_table_base + PRIME_TABLE_OFFSET);
-    unsigned done = 0;
-    unsigned n    = 0;
-    while (done < PRIME_PAIRS)
+void audio_prime(unsigned which)
+{
+    audio_render(g_prime_buf, PRIME_SAMPLES);
+    static constexpr uint8_t CHANNEL_DEST[AUDIO_CHANNELS_USED] =
+        { se::DEST_SAMPLES0_FIFO_W, se::DEST_SAMPLES2_FIFO_W };
+    unsigned slot = 0;
+    for (unsigned c = 0; c < AUDIO_CHANNELS_USED; c++)
     {
-        const unsigned left  = PRIME_PAIRS - done;
-        const unsigned burst = left < se::DESC_MAX_COUNT ? left : se::DESC_MAX_COUNT;
-        se::Descriptor d;
-        d.src         = reinterpret_cast<uint32_t>(&g_prime_buf[done]);
-        d.count       = burst;
-        d.destination = se::DEST_AUDIO_PAIR_REV1;
-        d.wait_hblank = false;
-        put_desc(p + n * se::DESC_WORDS, se::encode_descriptor(d));
-        done += burst;
-        n++;
+        unsigned done = 0;
+        while (done < PRIME_SAMPLES)
+        {
+            const unsigned left  = PRIME_SAMPLES - done;
+            const unsigned burst = left < se::DESC_MAX_COUNT ? left : se::DESC_MAX_COUNT;
+            se::Descriptor d;
+            d.src         = reinterpret_cast<uint32_t>(&g_prime_buf[done]);
+            d.count       = static_cast<uint16_t>(burst);
+            d.destination = CHANNEL_DEST[c];
+            put_desc(prime_slot(which, slot++), se::encode_descriptor(d));
+            done += burst;
+        }
     }
+    g_prime_live[which] = true;
+}
+
+void audio_prime_slots_idle(unsigned which)
+{
+    for (unsigned i = 0; i < 2 * PRIME_DESCS_PER_CHANNEL; i++)
+    {
+        put_desc(prime_slot(which, i), g_audio_idle);
+    }
+    g_prime_live[which] = false;
+}
+
+// VOLUME 0 on both channels once the last armed list has finished: the FIFOs
+// would run dry and fall silent within a frame anyway, this makes the stop
+// clean.  A one-shot list in table 0's tail.
+void audio_mute()
+{
+    uint16_t *p = reinterpret_cast<uint16_t *>(g_table_base + MUTE_TABLE_OFFSET);
+    se::Descriptor cd;
+    cd.src         = reinterpret_cast<uint32_t>(&g_audio_mute_words[0]);
+    cd.count       = 4;
+    cd.destination = se::DEST_AUDCTL_FIFO_W;
+    put_desc(p, se::encode_descriptor(cd));
     se::Descriptor sd;
     sd.src         = reinterpret_cast<uint32_t>(&g_static_pool[0]);
     sd.count       = 1;
     sd.destination = se::DEST_NONE;
     sd.stop_after  = true;
-    put_desc(p + n * se::DESC_WORDS, se::encode_descriptor(sd));
-
+    put_desc(p + se::DESC_WORDS, se::encode_descriptor(sd));
     ENGINE_DESC = static_cast<uint16_t>(
-        ((g_table_base + PRIME_TABLE_OFFSET) - se::DESC_TABLE_BASE) >> 1);
+        ((g_table_base + MUTE_TABLE_OFFSET) - se::DESC_TABLE_BASE) >> 1);
     griffin_vsync_wait();
-    griffin_vsync_wait();
-
-    if (was_enabled)
-    {
-        audio_enable(true);
-    }
-}
-
-// ENABLE only; RESET stays released (audio_prime() pulsed and released it).
-void audio_enable(bool on)
-{
-    PORTS_AUDIO_CONTROL = static_cast<uint8_t>(
-        on ? Griffin::PORTS_AUDIO_CONTROL_ENABLE_MASK : 0u);
-}
-
-// Put the FIFO pair back in reset, discarding whatever is queued, once the
-// last armed list has finished (one vsync after the final arm).
-void audio_park_fifo()
-{
-    PORTS_AUDIO_CONTROL = static_cast<uint8_t>(Griffin::PORTS_AUDIO_CONTROL_RESET_MASK);
 }
 
 // ===========================================================================
@@ -1850,19 +1918,18 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    // The tables' sample buffers are DMA'd from the very first armed frame, and
-    // 0x0000 is the DAC's negative rail, not silence.
+    // The tables' sample buffers are DMA'd from the very first armed frame;
+    // 0x0000 is silence (two's complement).
     for (unsigned t = 0; t < 2; t++)
     {
         for (unsigned i = 0; i < AUDIO_PAIRS_MAX; i++)
         {
-            g_audio_buf[t][i] = se::audio_pair_word(0x80, 0x80);
+            g_audio_buf[t][i] = 0x0000;
         }
     }
 
     g_music.start(MELODY, sizeof MELODY / sizeof MELODY[0], MUSIC_AMPLITUDE, true);
-    audio_prime();
-    audio_enable(true);
+    audio_prime(0);     // the loop arms table 0 first
 
     unsigned which       = 0;
     unsigned iterations  = 0;
@@ -2137,7 +2204,7 @@ int main(int argc, char **argv)
             {
                 break;
             }
-            audio_prime();
+            audio_prime(which);     // `continue` re-arms this table next
             const uint32_t dt = griffin_getticks() - t0;
             if (dt > rebuild_ms_max)
             {
@@ -2156,9 +2223,8 @@ int main(int argc, char **argv)
 
     const uint32_t ticks_end = griffin_getticks();
 
-    audio_enable(false);
     griffin_vsync_wait();       // the last armed list has finished by now
-    audio_park_fifo();
+    audio_mute();
     (void)griffin_video_direct_end();
 
     const uint32_t ms = ticks_end - ticks_start;

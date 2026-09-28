@@ -1971,3 +1971,23 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   12 KB tables + 32 KB bss, scheduler 1.7 KB text; objects 220 bytes
   (PsgChannels), 312 (Scheduler), 2,096 (LineDeposits).
   Datasheet artifact version 10.
+
+2026-09-28 -- apps/smurf (the demo) on the AUDIO chip
+  Its CPU-rendered mono soundtrack now plays on channels 0 and 2 at PERIOD
+  99 from the same buffers (each word already carried the sample in both
+  bytes; the FIFOs take D[7:0]), so each of the 9 bursts is two
+  descriptors.  Every frame's vblank preamble carries the control records
+  (PERIOD 99, VOLUME 63 for both channels) and 12 prime slots that deposit
+  168 samples per channel on the first frame after startup or a rebuild
+  and are one-word no-ops otherwise.  The first version primed with a
+  separate one-shot list and two vsync waits, as the rev-1 code did, and
+  ran dry every frame: the rev-1 path disabled pops during those waits,
+  the AUDIO chip cannot pause, and the FIFO holds less than a frame, so
+  the prime drained before the loop began.  Mute at exit is a one-shot
+  VOLUME 0 list.  1988 descriptors per frame (15,904 bytes per table).
+  Emulator, 20 s idle at the title: 0 drops, 0 dry events, 3,856 control
+  records (4 per frame), music at 523/656 Hz, L == R.  1500 frames of play
+  walking right: 3 rebuilds, 0 drops, 393 dry events, which is the demo's
+  own 328 late frames (56 frames/s under the emulator; a late frame arms no
+  list, so its 262 samples never arrive) plus the rebuilds; the rev-1 path
+  lost the same samples with its DACs holding the last value.

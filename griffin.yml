@@ -1017,7 +1017,6 @@ issues:
   - "VIDCMD SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  Swapping the target NUMBERS to match the colour numbers is a wire-contract change, not yet decided."
   - "Only one raster mode (640x480 in 800x525 @ 60) is specified.  Alternate rasters (the DUART OP4..OP7 selector into PIXEL) have no video_timing entry and no consumer contract."
   - "The PIXELS and VIDCMD stream FIFOs (ENGINE -> PIXEL / COMPOSITOR) are described in comments and constants, not as first-class entries."
-  - "apps/smurf still streams the retired rev-1 stereo pair (PORTS AUDIO_CONTROL/AUDIO_STATUS, one ENGINE destination) and does not build until it moves to the AUDIO channels (audio/psg_channels.h + audio/scheduler.h)."
   - "D[7:0] carries nine 7200 data-pin loads in rev 2 (four video, five audio) against the six the 2026-08 electrical review accepted; re-check the loading or put the five audio FIFOs behind a transceiver."
   - "The AUDIO analog stage (ladders straight off the 7200 Q pins, 74HC4066 duty-cycle gates into a 2.5 V-biased inverting summer) has not been breadboarded; switch on-resistance and switching time at low volumes are the open risk."
   - "BERR in 0x400000-0x7FFFFF, 0xC00000-0xCFFFFF and 0xE00000-0xEFFFFF is by DTACK timeout (no decode); state whether that is the intended contract."
