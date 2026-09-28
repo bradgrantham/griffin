@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <random>
+#include <vector>
 
 #include "audio_chip.h"
 #include "psg_channels.h"
@@ -344,6 +345,51 @@ void test_tables()
     printf("T6: %s\n", failures == failures_before ? "ok" : "see FAIL lines");
 }
 
+// T7: lines lost to a missed list.  Feed normally, skip 40 lines with
+// idle_line() while the chip runs without deposits, then feed again: the
+// mirror equals the chip's fill on every line afterwards.
+void test_idle_lines()
+{
+    const int failures_before = failures;
+    AudioChip chip;
+    Scheduler sched;
+    std::vector<uint8_t> table(20, 0x40);
+    sched.set_period(0, 49);
+    sched.set_volume(0, 63);
+    sched.set_stream(0, table.data(), 20, 0);
+    LineDeposits dep;
+    int mismatches = 0;
+    for (int line = 0; line < 3000; ++line)
+    {
+        if (line >= 1000 && line < 1040)
+        {
+            sched.idle_line();
+        }
+        else
+        {
+            sched.line(dep);
+            for (int i = 0; i < dep.count; ++i)
+            {
+                if (dep.items[i].destination == DEST_CONTROL)
+                {
+                    chip.deposit_control(dep.items[i].byte);
+                }
+                else
+                {
+                    chip.deposit_sample(dep.items[i].destination, dep.items[i].byte);
+                }
+            }
+        }
+        run_line(chip);
+        if (chip.fill(0) != sched.channel(0).fill)
+        {
+            ++mismatches;
+        }
+    }
+    CHECK(mismatches == 0, "mirror differs from the chip on %d lines around a 40-line gap", mismatches);
+    printf("T7 idle lines: %s\n", failures == failures_before ? "mirror exact across a 40-line gap" : "see FAIL lines");
+}
+
 }   // namespace
 
 int main()
@@ -354,6 +400,7 @@ int main()
     test_scheduler_feed();
     test_period_alignment();
     test_tables();
+    test_idle_lines();
     printf("%s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }

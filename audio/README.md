@@ -21,10 +21,13 @@ make ab AB_FLAGS="--burst 4 --margin 3 --seconds 20"
   fed from a looped table, a mirror of the chip's pop law (`line_pops`, the
   closed form of the counter over one line), PERIOD records landed when the
   old samples have drained, VOLUME records at the next line.
-* `psg_channels.h/.cpp` — SN76489 bytes to channel tables, periods and
-  volumes: square tables chosen per tone period, LFSR sequence tables for
-  noise, the reference's band limit and 2 dB ladder.
-* `audio_tests.cpp` — exact checks (T1..T6 below).
+* `psg_channels.h/.cpp` — SN76489 bytes to channel streams, periods and
+  volumes, bare metal (2026-09-28): lookups in psg_tables.h, squares as
+  windows of one 512-byte buffer, noise from one 32,767-byte table with a
+  per-stream repeat; renders the Smurf trace bit-identically to the earlier
+  host version.
+* `audio_tests.cpp` — exact checks (T1..T7).
+* `psg_tables_gen.cpp` → `psg_tables.h` — the driver's lookups (tone PERIOD/LENGTH per SN76489 period, noise PERIOD/REPEAT per reload, the volume ladder, the white-noise bits), generated on the host and checked in; `make tables-check` proves they match.  `make m68k` compile-checks the 68000 side.
 * `audio_ab.cpp` — the replay, statistics and WAVs.
 * `tb_vectors.cpp` — a seeded random stimulus through the model, written as
   the vectors `cpld/audio/audio_tb.v` checks the RTL against (`make -C

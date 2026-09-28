@@ -161,6 +161,12 @@ public:
     // One scanline of the display list.
     void line(LineDeposits& out);
 
+    // A scanline that passed with none of this scheduler's deposits (a list
+    // that missed its frame): the mirror still pops, nothing is queued, the
+    // streams do not advance.  Call it once for each line lost, in order, so
+    // the mirror stays in step with the chip; the channels will have run dry.
+    void idle_line();
+
     const ChannelState& channel(int channel) const { return channels_[channel]; }
     const SchedulerConfig& config() const { return config_; }
     uint64_t lines() const { return line_; }
@@ -168,6 +174,7 @@ public:
 
 private:
     int predicted_pops(const ChannelState& s, int lines) const;
+    void mirror_line();
 
     SchedulerConfig config_;
     ChannelState channels_[CHANNELS];

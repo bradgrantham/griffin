@@ -150,7 +150,17 @@ void Scheduler::line(LineDeposits& out)
         }
     }
 
-    // The chip's pops during this line, on the mirror.
+    mirror_line();
+}
+
+void Scheduler::idle_line()
+{
+    mirror_line();
+}
+
+// The chip's pops during one line, on the mirror.
+void Scheduler::mirror_line()
+{
     for (int c = 0; c < CHANNELS; ++c)
     {
         ChannelState& s = channels_[c];
