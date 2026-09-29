@@ -74,13 +74,18 @@ public:
     uint8_t  periods_used[1024 / 8]{};   // bit N%1024: tone period N sounded
 
 private:
+    // What has been sent to the Scheduler for a channel, so emit() only
+    // sends a PERIOD or VOLUME record when the value changes.  PERIOD is
+    // 8 bits, so NO_PERIOD (0x100) can never equal a chosen one.  VOLUME is
+    // 6 bits, so 0xFF is a safe "none yet" there.
+    static constexpr uint16_t NO_PERIOD = 0x100;
     struct Shadow
     {
         bool     active = false;
         uint16_t psg_period = 0;         // tones: effective period; noise: reload
-        uint8_t  period = 0xFF;
+        uint16_t period = NO_PERIOD;     // last PERIOD record sent
         uint32_t length = 0;             // table length in samples (length x repeat)
-        uint8_t  volume = 0xFF;
+        uint8_t  volume = 0xFF;          // last VOLUME record sent
         bool     white = false;
         uint8_t  repeat = 0;
     };

@@ -2141,3 +2141,14 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   make -C apps clean.  The chip, its bench and ENGINE's logic never touch
   sample data and are unchanged.  The Smurf game port (griffin-ports) is
   told by handoff, not edited.
+
+2026-09-29 -- psg_channels: PERIOD-255 sentinel collision fixed
+  Shadow::period held 0xFF for "no PERIOD record sent yet", which is also a
+  legal PERIOD (255 = 6,146 Hz), so a stream whose chosen PERIOD was 255
+  never got its record and played at the reset PERIOD 0 (T8 found it on
+  2026-09-28: 128 of 4,092 swept cases, 12 tone periods and 52 noise
+  reloads; the Smurf trace never reached one).  Shadow::period is now
+  uint16_t with NO_PERIOD = 0x100, outside the 8-bit range; VOLUME's 0xFF
+  sentinel is safe (6-bit values).  T8 no longer excludes underrunning
+  cases: it fails on any.  make -C audio test: 0 excluded in all four
+  sweeps, PASS; A/B WAV md5 unchanged; m68k build clean.

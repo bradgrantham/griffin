@@ -1017,12 +1017,12 @@ void test_frame_scheduler(const char *trace_path, double sweep_seconds, int regi
             cfg.margin = 2;
             t8::Result r;
             t8::run(bytes, first, count, cfg, r);
-            // A case the SHIPPED Scheduler cannot keep fed is a defect of the
-            // driver, not of this class: psg_channels.h's Shadow::period uses
-            // 0xFF as "no PERIOD yet", so a stream whose chosen PERIOD really
-            // is 255 never gets its control record and the chip stays at the
-            // reset PERIOD 0, popping 1.57 M times a second.  Those cases are
-            // counted and left out of the comparison.
+            // The shipped Scheduler must keep every swept case fed.  (Until
+            // 2026-09-29 psg_channels.h's Shadow::period used 0xFF as "no
+            // PERIOD yet", so a stream whose chosen PERIOD really was 255
+            // never got its control record and the chip stayed at the reset
+            // PERIOD 0; 128 cases underran on both schedulers.  The sentinel
+            // is now out of PERIOD's range and this counts the regression.)
             if (r.line_underruns != 0)
             {
                 ++driver_defect_cases;
@@ -1031,6 +1031,8 @@ void test_frame_scheduler(const char *trace_path, double sweep_seconds, int regi
                 {
                     first_defect_period = n;
                 }
+                CHECK(false, "sweep %s N %d: the shipped Scheduler underran %llu times",
+                      kase.what, n, static_cast<unsigned long long>(r.line_underruns));
                 continue;
             }
             if (r.frame_underruns != 0)
@@ -1106,10 +1108,8 @@ void test_frame_scheduler(const char *trace_path, double sweep_seconds, int regi
               kase.what, static_cast<unsigned long long>(sweep_out));
     }
 
-    printf("  PRE-EXISTING DRIVER DEFECT: %u of the 4092 swept (channel type, period) cases "
-           "underrun on BOTH schedulers (first: tone period %d).  psg_channels.h's\n"
-           "  Shadow::period sentinel is 0xFF, which collides with a real PERIOD of 255, so "
-           "those streams never get a PERIOD record and play at the reset PERIOD 0.\n",
+    printf("  Scheduler underrun cases: %u of the 4092 swept (channel type, period) cases "
+           "(first: tone period %d; 0 expected since the PERIOD-255 sentinel fix)\n",
            driver_defect_cases, first_defect_period);
     printf("  FrameScheduler-only underrun cases: %u\n", frame_defect_cases);
     printf("  rings: %u of %u pool words used (%u bytes)\n", frame_ring_pool_words(),

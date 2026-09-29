@@ -321,15 +321,15 @@ reports against the software SN76489 ("mean lag 7.8 ticks: the voices' relative
 phases differ, as expected").  Bit identity against the per-line scheduler is
 not a goal once a stream changes; it is a gate where nothing changes.
 
-**The pre-existing driver defect T8 found.**  `psg_channels.h`'s
-`Shadow::period` uses `0xFF` as "no PERIOD yet", which collides with a real
-PERIOD of **255**: `emit()`'s `if (tone.period != sh.period)` is then false, no
-PERIOD record is ever sent, and the channel plays at the reset PERIOD 0 —
-popping 1,573,437 times a second on an empty FIFO.  It hits 12 of the 1,023 tone
+**The driver defect T8 found (fixed 2026-09-29).**  `psg_channels.h`'s
+`Shadow::period` used `0xFF` as "no PERIOD yet", which collided with a real
+PERIOD of **255**: `emit()`'s `if (tone.period != sh.period)` was then false, no
+PERIOD record was ever sent, and the channel played at the reset PERIOD 0 —
+popping 1,573,437 times a second on an empty FIFO.  It hit 12 of the 1,023 tone
 periods and 52 of the noise reloads, 128 of the 4,092 swept cases, on BOTH
-schedulers.  The Smurf trace never reaches one.  The minimal fix is in
-`psg_channels.h`, which this package does not edit: widen `Shadow::period` to
-`uint16_t` with a sentinel of `0x1FF`, or add a `period_valid` flag.
+schedulers; the Smurf trace never reached one.  `Shadow::period` is now
+`uint16_t` with the sentinel `NO_PERIOD = 0x100`, outside the 8-bit range, and
+T8 fails on any swept case the shipped Scheduler underruns (0 excluded).
 
 ### Cost on the 68000 (the reason this exists)
 
