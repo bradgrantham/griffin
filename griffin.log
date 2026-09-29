@@ -1991,3 +1991,74 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   own 328 late frames (56 frames/s under the emulator; a late frame arms no
   list, so its 262 samples never arrive) plus the rebuilds; the rev-1 path
   lost the same samples with its DACs holding the last value.
+
+2026-09-28 -- PORTS I2C master: fit ladder (question, nothing adopted)
+  Baseline PORTS 106/128 LC, 74 FF, 324 PT, 38/64 I/O.  Byte engine
+  tried: 9-bit shift loaded {byte, 9th-slot bit} by a write whose A[1] is
+  the 9th bit (the PS/2 TX-parity trick), so write and read are the same
+  transfer (a read writes 0xFF; received byte = shift[8:1], NACK =
+  shift[0]); 4-bit bit counter 7..15, 2-bit quarter phase, 6-bit
+  free-running prescaler (64 SYSCLK a quarter: tLOW = tHIGH = 9.1 us at
+  14 MHz, 6.4 us at 20 MHz), busy, registered SCL/SDA drives that the CPU
+  also writes for START/STOP, no IRQ, no clock stretching.  All with
+  -preassign keep + production strategy flags; the sources were deleted
+  after the decision below.
+    engine, pin readback, SCL/SDA on 45/46, 54/55, 63/64, 73/74:
+      fitter estimate 90%, INTERNAL ERROR (grouping fail)
+    same on 34/41, 48/52, fitter-chosen pins: grouping fail
+    engine without pin readback: grouping fail
+    same, timebase = PADDLE_TICK falling edge (no prescaler): grouping fail
+    bit-bang only (two drive FFs + SCL/SDA readback, pins 45/46):
+      117/128 LC, 76 FF, 358 PT, 40/64 I/O -- fits
+    same with readback on D1:0 instead of D3:2: 117/128, identical
+  The bit-bang register alone costs 11 LC (only 2 are FFs), so a byte
+  engine needs roughly 20 more on top; PORTS has no room for it.
+  Decision: the RTC I2C stays on the DUART (OP2 SCL push-pull, OP3 ->
+  2N7000 SDA, IP2 readback).  The PORTS bit-bang register's only
+  functional gains are open-drain SCL with readback (clock stretching,
+  other masters) and a released bus at reset; the MCP7940N does not
+  stretch and is the only planned device, so they do not buy half of
+  PORTS's remaining 22 LC.  Revisit only if Rev 2 grows a general I2C
+  header.
+
+2026-09-28 -- AUDIO loop mode (7200 retransmit): fit ladder, does not fit
+  Brad's proposal: a per-channel LOOP mode that pulses /RT when /EF asserts
+  (the 7200 replays what was written since /RS, at most 256 words), plus a
+  RESET record that pulses that channel's /RS, so a looped table costs the
+  CPU nothing after one deposit.  Shape tried (cpld/tmp/audio_loop2/):
+  VOLUME byte bit 6 = loop, bit 7 = reset pulse (no new registers); /RT
+  issued by the pop that finds a looping FIFO empty, /R held high through
+  the clock after /RT rises, so word 0 lands exactly where the popped
+  sample was due; /RS through a 74HC139 from a strobe plus the reader's
+  two register bits, /R of that channel high from the clock before to the
+  clock after the pulse.  Cost on paper 9 to 12 cells over 121.
+  Rungs (ATF1508AS, production flags; keep = empty pin file):
+    per-channel loop, 6-bit vol, 3-FF reset      keep: crash; ignore: crash; xor: crash
+    5-bit volume, else as above                  ignore: 128/128 (119 FF)
+    refined 1-FF reset, per-channel, 6-bit       keep/ignore: crash
+    refined, global loop bit, 6-bit              keep: no fit; ignore: crash
+    refined, per-channel, 5-bit                  keep: no fit; ignore: crash
+    refined, global, 5-bit                       crash
+    7-bit PERIOD, 6-bit vol, 1-FF reset          crash
+    7-bit PERIOD, 6-bit vol, 3-FF reset          keep/ignore: no fit
+    7-bit PERIOD, 5-bit vol, 3-FF reset          keep: crash; ignore: 122/128 (111 FF)
+      ... pins harvested and frozen, keep:       crash; with xor_synthesis: no fit
+    8-bit PERIOD, 5-bit vol, global, 3-FF reset  crash
+  Conclusion: loop mode does not fit this chip.  The only free-placement
+  fits (128/128; 122/128 after giving up a period bit and a volume bit) die
+  once the pins are frozen, and "INTERNAL ERROR" near the limit is the
+  fitter's way of saying no.  Not adopted; the RTL stays in cpld/tmp.
+  What it exposed: the scheduler's per-line mirror divides by PERIOD+1
+  (line_pops), about 140 cycles a DIVU on the 68000, x4 channels x 525
+  lines = more than a frame.  On the target it must become an accumulator
+  (one division per PERIOD change) and per-burst bookkeeping; estimated
+  8-10 % of a frame for four streamed channels, to be measured with the
+  emulator's profiler.  Data movement is ENGINE's: descriptors point into
+  the table, the CPU only keeps the books.
+  If loop mode is wanted anyway: an ATF1504 beside AUDIO that snoops the
+  control FIFO's Q and /R (only AUDIO drives /R) and owns the four /RT and
+  four /RS lines, or 74HC123 one-shots on /EF with AUDIO holding /R high
+  while a looping channel is empty (loop bits still cost 4 cells there).
+  7200 parameters to check before either: /RT setup to /R, pulse width,
+  recovery; the <= 256-writes-since-/RS rule; /W idle during /RS (an
+  ENGINE scheduling rule).
