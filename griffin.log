@@ -2071,3 +2071,24 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   inside, COMPOSITOR, AUDIO); its place in the JTAG chain is a schematic
   decision.  Next: the analog stage on a solderless breadboard (Brad),
   then the schematic.
+
+2026-09-29 -- Video: sprite lines from static pieces, delivered a line ahead (finding, super-engine m11)
+  Lesson carried over from the audio work (deposits by reference into the
+  FIFO, ahead of their line): a sprite line's VIDCMD program can be FIVE
+  descriptors pointing at read-only data -- a 2-word cap (SET pix_base +
+  left border), a gap word from a 640-entry RUN(pass,n) table, the pose row's
+  words, a tail word from the same table, the right border -- instead of 21
+  words the CPU copies into an arena.  The extra descriptor turn-around
+  (+40 SYSCLK a line) breaks the one-hblank deadline, so the pieces are
+  deposited k lines EARLY into the VIDCMD FIFO; the model (m11, hand-derived
+  to the SYSCLK) is pixel-identical at k = 1..8, k = 0 fails as derived.
+  COMPOSITOR semantics are positional, not temporal (vidcmd-spec §4.2), the
+  one exception being /RS, which empties the FIFO: the bootstrap lines go in
+  the vblank preamble after the pulse.  Lookahead is a uniform pipeline
+  offset for the whole frame, not per sprite.  Pads never framed anything;
+  the fixed 21-word shape is unnecessary once descriptor count is per line.
+  Side finding: the Smurf packet derivation 20+2W+15 <= 78 is conservative
+  by seven words (edma3 pre-pays the parked descriptor's fetch): W <= 28.
+  For the Smurf port this removes the word arena, its tear, and most of the
+  composer (3 pointer stores a sprite line); overlap lines keep a small
+  scratch program.  Write-up: super-engine/STATIC-PIECES.md.

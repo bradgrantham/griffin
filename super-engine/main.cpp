@@ -93,6 +93,12 @@ constexpr uint32_t FB_ATTR_STRIDE     = 176;
 // the top 64K; the VIDCMD regions are ordinary RAM, which makes it easy to
 // forget that the CPU is authoring frame N+1's records while the engine is
 // still reading frame N's.
+// m11-static-pieces: the read-only fragments a sprite line is assembled from,
+// and the scratch area the monolithic form copies them into.  Both are written
+// once, before any frame, which is the whole claim of the pieces form.
+constexpr uint32_t SP_DATA_BASE         = 0x200000;
+constexpr uint32_t SP_PROGRAM_BASE      = 0x210000;
+
 constexpr uint32_t VIDCMD_BASE          = 0x100000;
 constexpr uint32_t VIDCMD_REGION_BYTES  = 0x028000;   // 480 lines x 320 bytes, rounded up
 constexpr uint32_t AUDIO_BASE           = 0x060000;
@@ -2819,6 +2825,351 @@ void check_mask_traces()
     printf("  ------------------------------------------------------------------\n");
 }
 
+// ---------------------------------------------------------------------------
+// m11-static-pieces — can ENGINE assemble a sprite line from read-only pieces?
+// ---------------------------------------------------------------------------
+//
+// Derivations, ALL of them done by hand before anything was simulated, and all
+// written up in super-engine/STATIC-PIECES.md:
+//
+//   D1 FRAMING.  A sprite line's program is
+//        SET(pix_base) | RUN_COLOR(black,64) | RUN(pt,g) | 8 x 8-slot span
+//                      | RUN(pt,t) | RUN_COLOR(black,64)
+//      with g + t = SP_MIDDLE_PIXELS, so the authored sum is
+//      64 + g + 64 + t + 64 = 640.  Every playback record is at least
+//      SP_POSE_SPAN = 8 slots, four times the two-slot fetch cadence, so no
+//      record can be late and OCCUPANCY == AUTHORED SUM.  The leading SET is
+//      the FIRST word of the program and the line before it framed at exactly
+//      640, so it is consumed in this line's blanking at zero slots.
+//
+//   D2 HBLANK COST, from descriptor.h's cost model and edma3's split of a
+//      wait_hblank descriptor (the 4-word fetch is charged to the PREVIOUS
+//      group; only arbitration + assert + payload + release happen at the
+//      edge).  Counting SYSCLK from the synchronized HBLANK edge:
+//        MONOLITHIC, VIDCMD first  first PIXELS word at 2+5+42+1+13+2 = 65
+//        PIECES,     VIDCMD first  first PIXELS word at
+//                                  2+5+4+1 +16+2+1 +16+16+1 +16+2+1 +16+2+1
+//                                  +13+2 = 105
+//        PIECES,     PIXELS first  first PIXELS word at 2+5+2 = 9
+//      PIX_PRELOAD is H_BLANK - PIXEL_FETCH_LEAD = 144 pixel clocks after the
+//      group start, i.e. floor(144*560/1007) = 80 SYSCLK.  So MONOLITHIC has
+//      15 SYSCLK of margin, PIECES-with-lookahead has 71, and PIECES at k == 0
+//      MISSES BY 25 — which is the whole reason lookahead is needed.
+//
+//   D3 PER-LINE BUS COST.  One sprite line's group, arbitration 4:
+//        MONOLITHIC  VIDCMD 1 desc x 21 words + PIXELS 2 x 20 = 62 + 108 = 170
+//        PIECES      PIXELS 2 x 20 + 5 piece descs = 114 + 96   = 210
+//      A plain line is 130 either way.  Both are under the 294-SYSCLK /
+//      147-word per-line delivery budget and under the 445-SYSCLK line.
+//
+//   D4 FIFO.  With lookahead k the FIFO carries the programs of lines
+//      y .. y+k, so the peak is about (k+1) x SP_SEMANTIC_WORDS words when the
+//      whole window is sprite lines: 117 words at k = 8, against a 256-word
+//      FIFO.  Lookahead is bounded by the FIFO long before it is bounded by
+//      anything else.
+//
+//   D5 NEGATIVE CONTROLS.  k == 0 must fail, and it must fail differently
+//      depending on the order: VIDCMD-first starves PIXEL (D2: preload missed
+//      by 25 SYSCLK), PIXELS-first delivers the line's own VIDCMD words after
+//      its pixel 0 and starves COMPOSITOR.
+
+inline constexpr std::array<Rgb444, SP_PALETTE_ENTRIES> SP_PALETTE = {
+    rgb444(0, 0, 5),  rgb444(10, 10, 2),    // pair selected by pix_base 0
+    rgb444(0, 6, 1),  rgb444(13, 4, 4),     // pair selected by pix_base 2
+};
+
+// /RS empties both video FIFOs at line V_SYNC_START, so the list's palette and
+// its lookahead bootstrap must be deposited AFTER it.  Pacer j is released at
+// the HBLANK edge of line 479+j, so eleven pacers land the preamble in line
+// 490's blanking — after that line's h=0 /RS pulse.
+constexpr uint32_t SP_PACERS_BEFORE_PREAMBLE = V_SYNC_START - FIRST_ARM_LINE + 1;   // 11
+static_assert(SP_PACERS_BEFORE_PREAMBLE < VBLANK_PACING_LINES);
+
+struct SpVariant
+{
+    std::string      name;
+    std::string      title;
+    StaticPiecesForm form         = StaticPiecesForm::PIECES;
+    uint32_t         lookahead    = 0;
+    bool             pixels_first = false;
+    bool             expect_clean = true;
+
+    // False puts the palette and the lookahead bootstrap in the vblank BEFORE
+    // /RS, which is the third negative control: the pulse empties both video
+    // FIFOs, so those words never reach the compositor.
+    bool preamble_after_rs = true;
+};
+
+struct SpResult
+{
+    AuthorResult    author[RENDER_FRAMES];
+    InterpretResult interp;
+    RenderResult    rendered;
+    GroupBudget     budget;
+
+    uint32_t vidcmd_words_per_frame = 0;
+    uint32_t pixels_words_per_frame = 0;
+
+    // Per-line delivery, measured clean-room off the event stream rather than
+    // read out of RenderStats: vidcmd_late_words counts every word that arrives
+    // in active video, which under lookahead is BY DESIGN and says nothing about
+    // whether a word made its own line's deadline.
+    int64_t  vidcmd_min_margin = 0;   // line pixel 0 - last word of that line's program
+    uint32_t vidcmd_late_lines = 0;
+    int64_t  pixels_min_margin = 0;   // PIX_PRELOAD - first PIXELS word of that line
+    uint32_t pixels_late_lines = 0;
+    uint32_t stream_mismatch   = 0;   // deposits did not match the authored stream length
+
+    uint32_t sprite_group_sysclk = 0;   // a group that carries a sprite program
+    uint32_t plain_group_sysclk  = 0;   // a group that carries none
+};
+
+// Walk the deposit stream and price every line's two deadlines.  VIDCMD words
+// arrive in stream order, so the prefix sums of the per-line word counts turn a
+// stream index back into a line without the checker having to know anything
+// about the descriptor layout.
+void measure_sp_delivery(const SpVariant &v, SpResult &out)
+{
+    std::vector<uint32_t> prefix(V_ACTIVE + 1, 0);
+    prefix[0] = SP_PALETTE_WORDS;
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        prefix[y + 1] = prefix[y] + sp_line_stream_words(y, v.form);
+    }
+
+    out.vidcmd_min_margin = INT64_MAX;
+    out.pixels_min_margin = INT64_MAX;
+
+    for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+    {
+        // One list instance's deposits: it is armed inside line FIRST_ARM_LINE of
+        // the frame before the one it feeds and stops just after that frame's
+        // line 479, so this window holds exactly one list however its preamble
+        // is scheduled.  Deliberately NOT keyed off /RS: a list that deposits
+        // before the pulse still puts every word on the bus, and the loss is on
+        // the FIFO side — which is why a deposit-time margin cannot see a PN5
+        // violation and the k4-pre-rs control has to be caught by hold slots.
+        const uint64_t shown  = RENDER_FIRST_FRAME + f;   // raster frame this list feeds
+        const uint64_t win_lo =
+            sysclk_of_pixel(((shown - 1) * V_TOTAL + FIRST_ARM_LINE) * H_TOTAL);
+        const uint64_t win_hi =
+            sysclk_of_pixel((shown * V_TOTAL + FIRST_ARM_LINE) * H_TOTAL);
+
+        std::vector<uint64_t> vc;
+        std::vector<uint64_t> px;
+        for (const DepositEvent &e : out.interp.events)
+        {
+            if (e.cycle < win_lo || e.cycle >= win_hi)
+            {
+                continue;
+            }
+            if (e.destination == DEST_VIDCMD_FIFO_W)
+            {
+                vc.push_back(e.cycle);
+            }
+            else if (e.destination == DEST_PIXELS_FIFO_W)
+            {
+                px.push_back(e.cycle);
+            }
+        }
+
+        if (vc.size() != prefix[V_ACTIVE] ||
+            px.size() != static_cast<size_t>(V_ACTIVE) * PIXELS_WORDS_1BPP)
+        {
+            out.stream_mismatch++;
+            continue;
+        }
+        out.vidcmd_words_per_frame = static_cast<uint32_t>(vc.size());
+        out.pixels_words_per_frame = static_cast<uint32_t>(px.size());
+
+        for (uint32_t y = 0; y < V_ACTIVE; y++)
+        {
+            const uint64_t pixel0  = sysclk_of_pixel((shown * V_TOTAL + y) * H_TOTAL);
+            const uint64_t preload =
+                sysclk_of_pixel((shown * V_TOTAL + y) * H_TOTAL - PIXEL_FETCH_LEAD);
+
+            const int64_t vm = static_cast<int64_t>(pixel0) -
+                               static_cast<int64_t>(vc[prefix[y + 1] - 1]);
+            if (vm < out.vidcmd_min_margin)
+            {
+                out.vidcmd_min_margin = vm;
+            }
+            if (vm < 0)
+            {
+                out.vidcmd_late_lines++;
+            }
+
+            const int64_t pm = static_cast<int64_t>(preload) -
+                               static_cast<int64_t>(px[y * PIXELS_WORDS_1BPP]);
+            if (pm < out.pixels_min_margin)
+            {
+                out.pixels_min_margin = pm;
+            }
+            if (pm < 0)
+            {
+                out.pixels_late_lines++;
+            }
+        }
+    }
+
+    // Which group carries what depends on the lookahead, so read the cost of a
+    // group that DOES carry a sprite program and one that does not.
+    const uint32_t sprite_group = SP_FIRST_LINE + SP_SPRITE_LINES / 2 - v.lookahead;
+    const uint32_t plain_group  = SP_FIRST_LINE / 2;
+    const size_t   base         = static_cast<size_t>(RENDER_FIRST_FRAME) * V_TOTAL;
+    if (base + sprite_group < out.interp.groups.size())
+    {
+        out.sprite_group_sysclk = out.interp.groups[base + sprite_group].busy_cycles;
+    }
+    if (base + plain_group < out.interp.groups.size())
+    {
+        out.plain_group_sysclk = out.interp.groups[base + plain_group].busy_cycles;
+    }
+}
+
+SpResult run_static_pieces(const SpVariant &v, Memory ram)
+{
+    StaticPiecesParams base;
+    base.fb_base                = FB_BASE;
+    base.fb_stride_bytes        = FB_STRIDE_BYTES;
+    base.data_base              = SP_DATA_BASE;
+    base.program_base           = SP_PROGRAM_BASE;
+    base.form                   = v.form;
+    base.lookahead              = v.lookahead;
+    base.pixels_first           = v.pixels_first;
+    base.vblank_pacing_lines    = VBLANK_PACING_LINES;
+    base.pacers_before_preamble = v.preamble_after_rs ? SP_PACERS_BEFORE_PREAMBLE : 0u;
+
+    write_static_pieces_data(base, ram, SP_PALETTE);
+
+    SpResult out;
+    const uint32_t  tables[RENDER_FRAMES] = {TABLE_A, TABLE_B};
+    InterpretParams ip;
+    ip.arbitration_cycles   = base.arbitration_cycles;
+    ip.start_cycle          = first_arm_cycle();
+    ip.end_cycle            = run_end_cycle();
+    ip.rearm_latency_cycles = REARM_LATENCY_CYCLES;
+
+    for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+    {
+        StaticPiecesParams fp = base;
+        fp.table_base  = tables[f];
+        fp.table_bytes = TABLE_HALF_BYTES;
+        out.author[f]  = author_static_pieces(fp, ram);
+        ip.arm_addresses.push_back(tables[f]);
+    }
+
+    out.interp = interpret(ram, ip);
+
+    RenderParams rp;
+    rp.first_frame = RENDER_FIRST_FRAME;
+    rp.frame_count = RENDER_FRAMES;
+    out.rendered   = render(out.interp.events, rp);
+    out.budget     = group_budget(out.interp);
+
+    measure_sp_delivery(v, out);
+    return out;
+}
+
+void print_sp_report(const SpVariant &v, const SpResult &r)
+{
+    const RenderStats &s = r.rendered.stats;
+    printf("\n  -- %-10s %s\n", v.name.c_str(), v.title.c_str());
+    printf("     descriptors/frame %5u   table bytes %5u/%u   VIDCMD words/frame %u\n",
+           r.author[0].descriptor_count, r.author[0].table_bytes, TABLE_HALF_BYTES,
+           r.vidcmd_words_per_frame);
+    printf("     group SYSCLK      sprite-carrying %3u   plain %3u   worst %3u of %llu "
+           "(budget %u)\n",
+           r.sprite_group_sysclk, r.plain_group_sysclk, r.budget.max_busy,
+           static_cast<unsigned long long>(LINE_SYSCLK), VIDCMD_LINE_SYSCLK_BUDGET);
+    printf("     delivery margin   VIDCMD %+6lld SYSCLK (late lines %u)   "
+           "PIXELS/PIX_PRELOAD %+6lld SYSCLK (late lines %u)\n",
+           static_cast<long long>(r.vidcmd_min_margin), r.vidcmd_late_lines,
+           static_cast<long long>(r.pixels_min_margin), r.pixels_late_lines);
+    printf("     VIDCMD FIFO       high %3u  low %3u  overflows %u  (depth %u)\n",
+           s.vidcmd_fifo_high, s.vidcmd_fifo_low, s.vidcmd_overflows, VIDCMD_FIFO_WORDS);
+    printf("     holds/framing     starved %u  cadence %u  overruns %u  "
+           "raw late-word counter %u\n",
+           s.vidcmd_hold_slots, s.vidcmd_cadence_slots, s.vidcmd_overruns,
+           s.vidcmd_late_words);
+    printf("     PIXELS            tiled %u  overflows %u  fifo high %3u low %3u\n",
+           s.pixels_tiled_words, s.pixels_overflows, s.pixels_fifo_high, s.pixels_fifo_low);
+    printf("     palette           writes %u  bad filler %u  disturbed %u  unloaded reads %u\n",
+           s.palette_writes, s.palette_bad_filler, s.palette_disturbed_visible,
+           s.palette_unwritten_reads);
+    for (const std::string &x : r.interp.violations)
+    {
+        printf("     VIOLATION  %s\n", x.c_str());
+    }
+}
+
+// Every pixel of every sprite line, against the geometry and nothing else.  The
+// borders, the pose spans and the passthrough regions are all placed by hand
+// from D1, and the pix_base pair a passthrough pixel must come out of is the
+// probe that the line's eager SET executed in ITS OWN blanking.
+uint32_t check_sp_geometry(const SpVariant &v, const SpResult &r, uint32_t frame)
+{
+    const FrameImage &img  = r.rendered.frames[frame];
+    uint32_t          bad  = 0;
+    const Rgb444      black = run_colour_to_rgb444(RUN_COLOR_BLACK);
+
+    for (uint32_t i = 0; i < SP_SPRITE_LINES; i++)
+    {
+        const uint32_t y   = SP_FIRST_LINE + i;
+        const uint32_t g   = sp_gap_for(i);
+        const uint32_t x0  = sp_sprite_x(i);
+        const uint32_t sel = sp_pix_base_sel(i);
+        const Rgb444   p0  = SP_PALETTE[sel * 2 + 0];
+        const Rgb444   p1  = SP_PALETTE[sel * 2 + 1];
+
+        for (uint32_t x = 0; x < H_ACTIVE; x++)
+        {
+            const Rgb444 c = at(img, x, y);
+            if (x < SP_BORDER_PIXELS || x >= H_ACTIVE - SP_BORDER_PIXELS)
+            {
+                bad += (c != black) ? 1u : 0u;
+                continue;
+            }
+            if (x >= x0 && x < x0 + SP_SPRITE_PIXELS)
+            {
+                const uint32_t j = (x - x0) / SP_POSE_SPAN;
+                if (!sp_pose_hole(i, j))
+                {
+                    bad += (c != run_colour_to_rgb444(sp_pose_color(i, j))) ? 1u : 0u;
+                    continue;
+                }
+            }
+            // Gap, tail or a hole in the pose: the playfield shows through, out
+            // of the PAIR this line's pix_base SET selected.
+            bad += (c != p0 && c != p1) ? 1u : 0u;
+        }
+        (void)g;
+    }
+
+    printf("     geometry          %u of %u sprite-line pixels do not match the hand-placed "
+           "borders / pose spans / pix_base pair\n",
+           bad, SP_SPRITE_LINES * H_ACTIVE);
+    if (v.expect_clean)
+    {
+        CHECK(bad == 0, "m11-static-pieces/%s: %u sprite-line pixels are wrong",
+              v.name.c_str(), bad);
+    }
+    return bad;
+}
+
+uint32_t sp_frame_diff(const FrameImage &a, const FrameImage &b)
+{
+    uint32_t n = 0;
+    for (size_t i = 0; i < a.pixels.size(); i++)
+    {
+        if (a.pixels[i] != b.pixels[i])
+        {
+            n++;
+        }
+    }
+    return n;
+}
+
 }  // namespace
 
 int main()
@@ -4148,6 +4499,264 @@ int main()
 
         // Re-author with the case's own parameters so the artifacts match.
         run_case(s, ram, REARM_LATENCY_CYCLES);
+    }
+
+    // --- M11: a sprite line assembled from static pieces, delivered ahead -----
+    {
+        printf("\n=== m11-static-pieces — a sprite line as %u read-only fragments, "
+               "delivered k lines ahead ===\n", 5u);
+        printf("  program %u semantic words (monolithic pads to %u), sprite lines %u..%u, "
+               "x %u..%u step %u\n",
+               SP_SEMANTIC_WORDS, SP_PROGRAM_WORDS, SP_FIRST_LINE,
+               SP_FIRST_LINE + SP_SPRITE_LINES - 1, sp_sprite_x(0),
+               sp_sprite_x(SP_SPRITE_LINES - 1), SP_GAP_STEP);
+
+        // D1, checked before any list is built or any pixel rendered: the
+        // authored sum and the fetch simulation must agree at exactly H_ACTIVE
+        // on every one of the 480 lines.
+        {
+            uint32_t bad_slots   = 0;
+            uint32_t bad_stretch = 0;
+            uint32_t pad_slots   = 0;
+            for (uint32_t y = 0; y < V_ACTIVE; y++)
+            {
+                std::array<uint16_t, SP_SEMANTIC_WORDS> prog{};
+                uint32_t n = 1;
+                if (sp_is_sprite_line(y))
+                {
+                    n = sp_program_words(sp_sprite_index(y), prog);
+                }
+                else
+                {
+                    prog[0] = vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE);
+                }
+                const VidcmdSlotPlan plan =
+                    vidcmd_plan_line(std::span<const uint16_t>(prog.data(), n), H_BLANK);
+                bad_slots += (plan.slots != H_ACTIVE) ? 1u : 0u;
+                bad_stretch += (plan.stretch != 0) ? 1u : 0u;
+            }
+            // And the monolithic shape, planned as one list, deliberately reads
+            // LONG: vidcmd_plan_line() has no H_ACTIVE fall, so it plays the
+            // pads as active records.  On the chip the line ends at slot 640 and
+            // a staged SET in blanking is eager and free — which is why the pad
+            // question is answered by the pixel-exact comparison below and not
+            // by the planner.
+            {
+                std::array<uint16_t, SP_PROGRAM_WORDS> padded{};
+                const uint32_t n = sp_program_words(0, padded);
+                for (uint32_t k = n; k < SP_PROGRAM_WORDS; k++)
+                {
+                    padded[k] = vidcmd_set(SET_FILLER, 0);
+                }
+                pad_slots = vidcmd_plan_line(padded, H_BLANK).slots;
+            }
+            printf("  D1 framing          %u of %u lines miss %u slots, %u stretch; the padded "
+                   "%u-word shape plans %u slots as one list (%u of pads, all in the NEXT "
+                   "blanking)\n",
+                   bad_slots, V_ACTIVE, H_ACTIVE, bad_stretch, SP_PROGRAM_WORDS, pad_slots,
+                   pad_slots - H_ACTIVE);
+            CHECK(bad_slots == 0,
+                  "m11-static-pieces: %u lines do not occupy exactly %u slots", bad_slots,
+                  H_ACTIVE);
+            CHECK(bad_stretch == 0,
+                  "m11-static-pieces: %u lines stretch under the 2-slot fetch cadence — every "
+                  "record is at least %u slots and none should", bad_stretch, SP_POSE_SPAN);
+        }
+
+        const SpVariant variants[] = {
+            {"ref", "MONOLITHIC 21-word program in its own hblank — what apps/smurf does today",
+             StaticPiecesForm::MONOLITHIC, 0, false, true},
+            {"k0-vc", "PIECES, k=0, VIDCMD first — NEGATIVE CONTROL, must miss PIX_PRELOAD",
+             StaticPiecesForm::PIECES, 0, false, false},
+            {"k0-px", "PIECES, k=0, PIXELS first — NEGATIVE CONTROL, must starve COMPOSITOR",
+             StaticPiecesForm::PIECES, 0, true, false},
+            {"k1", "PIECES, k=1, PIXELS first", StaticPiecesForm::PIECES, 1, true, true},
+            {"k2", "PIECES, k=2, PIXELS first", StaticPiecesForm::PIECES, 2, true, true},
+            {"k4", "PIECES, k=4, PIXELS first", StaticPiecesForm::PIECES, 4, true, true},
+            {"k8", "PIECES, k=8, PIXELS first", StaticPiecesForm::PIECES, 8, true, true},
+            {"k4-pre-rs",
+             "PIECES, k=4, bootstrap BEFORE /RS — NEGATIVE CONTROL, the pulse eats it",
+             StaticPiecesForm::PIECES, 4, true, false, false},
+        };
+
+        FrameImage reference;
+        uint32_t   clean_k_min = 0;
+
+        for (const SpVariant &v : variants)
+        {
+            const SpResult r = run_static_pieces(v, ram);
+            print_sp_report(v, r);
+            const uint32_t bad = check_sp_geometry(v, r, 0);
+
+            CHECK(!r.author[0].table_overflow && !r.author[1].table_overflow,
+                  "m11-static-pieces/%s: the list overflowed its %u-byte table half",
+                  v.name.c_str(), TABLE_HALF_BYTES);
+            CHECK(r.interp.violations.empty(),
+                  "m11-static-pieces/%s: interpreter reported %zu structural violations",
+                  v.name.c_str(), r.interp.violations.size());
+            CHECK(r.interp.irq_count == RENDER_FRAMES,
+                  "m11-static-pieces/%s: expected %u IRQs, got %u", v.name.c_str(),
+                  RENDER_FRAMES, r.interp.irq_count);
+            CHECK(r.stream_mismatch == 0,
+                  "m11-static-pieces/%s: %u frames deposited a different number of words than "
+                  "the authored stream", v.name.c_str(), r.stream_mismatch);
+            CHECK(r.budget.max_busy < LINE_SYSCLK,
+                  "m11-static-pieces/%s: worst group costs %u SYSCLK of a %llu-SYSCLK line",
+                  v.name.c_str(), r.budget.max_busy,
+                  static_cast<unsigned long long>(LINE_SYSCLK));
+            CHECK(r.budget.max_busy <= VIDCMD_LINE_SYSCLK_BUDGET,
+                  "m11-static-pieces/%s: worst group costs %u SYSCLK, over the %u-SYSCLK "
+                  "(%u-word) per-line delivery budget", v.name.c_str(), r.budget.max_busy,
+                  VIDCMD_LINE_SYSCLK_BUDGET, VIDCMD_WORDS_PER_LINE_CAP);
+            CHECK(r.rendered.stats.vidcmd_fifo_high <= VIDCMD_FIFO_WORDS,
+                  "m11-static-pieces/%s: VIDCMD FIFO reached %u of %u words", v.name.c_str(),
+                  r.rendered.stats.vidcmd_fifo_high, VIDCMD_FIFO_WORDS);
+            CHECK(r.rendered.stats.vidcmd_overflows == 0,
+                  "m11-static-pieces/%s: VIDCMD FIFO overflowed %u times", v.name.c_str(),
+                  r.rendered.stats.vidcmd_overflows);
+
+            if (v.expect_clean)
+            {
+                CHECK(r.vidcmd_late_lines == 0,
+                      "m11-static-pieces/%s: %u lines had VIDCMD words arrive after their own "
+                      "pixel 0 (worst margin %+lld SYSCLK)", v.name.c_str(),
+                      r.vidcmd_late_lines, static_cast<long long>(r.vidcmd_min_margin));
+                CHECK(r.pixels_late_lines == 0,
+                      "m11-static-pieces/%s: %u lines had their first PIXELS word arrive after "
+                      "PIX_PRELOAD (worst margin %+lld SYSCLK)", v.name.c_str(),
+                      r.pixels_late_lines, static_cast<long long>(r.pixels_min_margin));
+                CHECK(r.rendered.stats.vidcmd_hold_slots == 0,
+                      "m11-static-pieces/%s: COMPOSITOR held on a dry FIFO for %u slots",
+                      v.name.c_str(), r.rendered.stats.vidcmd_hold_slots);
+                CHECK(r.rendered.stats.vidcmd_cadence_slots == 0,
+                      "m11-static-pieces/%s: %u cadence hold slots — every record is at least "
+                      "%u slots and the fetch should never bind", v.name.c_str(),
+                      r.rendered.stats.vidcmd_cadence_slots, SP_POSE_SPAN);
+                CHECK(r.rendered.stats.vidcmd_overruns == 0,
+                      "m11-static-pieces/%s: %u records were still running at the h=%u fall",
+                      v.name.c_str(), r.rendered.stats.vidcmd_overruns, H_ACTIVE);
+                CHECK(r.rendered.stats.pixels_tiled_words == 0,
+                      "m11-static-pieces/%s: PIXEL tiled its last word %u times",
+                      v.name.c_str(), r.rendered.stats.pixels_tiled_words);
+                CHECK(r.rendered.stats.pixels_overflows == 0,
+                      "m11-static-pieces/%s: PIXELS FIFO overflowed %u times", v.name.c_str(),
+                      r.rendered.stats.pixels_overflows);
+                CHECK(r.rendered.stats.palette_unwritten_reads == 0,
+                      "m11-static-pieces/%s: %u pixels came out of palette entries the list "
+                      "never loaded", v.name.c_str(), r.rendered.stats.palette_unwritten_reads);
+                CHECK(r.rendered.stats.palette_bad_filler == 0,
+                      "m11-static-pieces/%s: %u palette writes stored the wrong colour",
+                      v.name.c_str(), r.rendered.stats.palette_bad_filler);
+                CHECK(r.rendered.stats.palette_disturbed_visible == 0,
+                      "m11-static-pieces/%s: %u palette-write slots reached the DAC",
+                      v.name.c_str(), r.rendered.stats.palette_disturbed_visible);
+
+                const uint32_t f1f2 = sp_frame_diff(r.rendered.frames[0], r.rendered.frames[1]);
+                CHECK(f1f2 == 0,
+                      "m11-static-pieces/%s: frames 1 and 2 differ in %u pixels from an "
+                      "unchanging list", v.name.c_str(), f1f2);
+
+                if (v.form == StaticPiecesForm::MONOLITHIC)
+                {
+                    reference = r.rendered.frames[0];
+                    const std::string path = "m11-static-pieces-ref.ppm";
+                    write_ppm(path, reference);
+                    printf("     artifact          %s\n", path.c_str());
+                }
+                else
+                {
+                    const uint32_t diff = sp_frame_diff(reference, r.rendered.frames[0]);
+                    printf("     pixel-exact       %u pixels differ from the monolithic "
+                           "reference\n", diff);
+                    CHECK(diff == 0,
+                          "m11-static-pieces/%s: %u pixels differ from the monolithic "
+                          "reference — delivering a line's words %u line(s) early changed "
+                          "the picture", v.name.c_str(), diff, v.lookahead);
+                    if (diff == 0 && (clean_k_min == 0 || v.lookahead < clean_k_min))
+                    {
+                        clean_k_min = v.lookahead;
+                    }
+                    if (v.lookahead == 4)
+                    {
+                        const std::string path = "m11-static-pieces-k4.ppm";
+                        write_ppm(path, r.rendered.frames[0]);
+                        printf("     artifact          %s\n", path.c_str());
+                    }
+                }
+            }
+            else
+            {
+                // D5: each control must fail, and fail in its own way.  A
+                // control that came out clean would mean the deadline this case
+                // exists to measure is not being measured.
+                const bool missed_pixels = r.pixels_late_lines > 0 ||
+                                           r.rendered.stats.pixels_tiled_words > 0;
+                const bool missed_vidcmd = r.vidcmd_late_lines > 0 ||
+                                           r.rendered.stats.vidcmd_hold_slots > 0;
+                const uint32_t diff = sp_frame_diff(reference, r.rendered.frames[0]);
+                printf("     NEGATIVE CONTROL  PIXELS deadline missed: %s   VIDCMD deadline "
+                       "missed: %s   geometry violations %u   pixels differing from the "
+                       "reference %u\n",
+                       missed_pixels ? "yes" : "NO", missed_vidcmd ? "yes" : "NO", bad, diff);
+                if (v.pixels_first)
+                {
+                    CHECK(missed_vidcmd,
+                          "m11-static-pieces/%s: five piece descriptors behind the pixel "
+                          "stream were expected to deliver a line's VIDCMD words late, and "
+                          "did not — the control cannot fail, so it proves nothing",
+                          v.name.c_str());
+                }
+                else
+                {
+                    CHECK(missed_pixels,
+                          "m11-static-pieces/%s: five piece descriptors ahead of the pixel "
+                          "stream were expected to push the first PIXELS word past "
+                          "PIX_PRELOAD, and did not", v.name.c_str());
+                }
+                // The control has to show on screen, or the deadline it misses
+                // is not one the picture depends on.  The geometry check alone
+                // cannot see PIXELS corruption — a passthrough pixel is tested
+                // against a PAIR of palette entries, and either member of the
+                // pair passes whatever the bitmap says — so the reference diff
+                // is what catches a starved pixel stream.
+                CHECK(diff > 0,
+                      "m11-static-pieces/%s: the control missed a delivery deadline but the "
+                      "frame is pixel-identical to the reference, so the deadline is not one "
+                      "this case can measure", v.name.c_str());
+            }
+        }
+
+        // What bounds the descriptor count per line once the hblank no longer
+        // does (question 2).  A 40-word 1bpp PIXELS run costs
+        // engine_wait_descriptor_cycles(4,20) + engine_descriptor_cycles(4,20);
+        // whatever is left of the per-line delivery budget pays for
+        // 14 SYSCLK + 2 per word of piece descriptors.
+        const uint32_t pixels_cost =
+            engine_wait_descriptor_cycles(ENGINE_ARBITRATION_CYCLES, SP_PIXELS_CHUNK) +
+            engine_descriptor_cycles(ENGINE_ARBITRATION_CYCLES, SP_PIXELS_CHUNK);
+        const uint32_t piece_overhead = ENGINE_ARBITRATION_CYCLES + ENGINE_ASSERT_CYCLES +
+                                        ENGINE_FETCH_CYCLES + ENGINE_RELEASE_CYCLES;   // 14
+        const uint32_t budget_left = VIDCMD_LINE_SYSCLK_BUDGET - pixels_cost -
+                                     ENGINE_CYCLES_PER_WORD * SP_SEMANTIC_WORDS;
+        const uint32_t line_left = static_cast<uint32_t>(LINE_SYSCLK) - pixels_cost -
+                                   ENGINE_CYCLES_PER_WORD * SP_SEMANTIC_WORDS;
+        printf("\n  minimum clean lookahead: k = %u.  Per sprite line the pieces form spends\n"
+               "  5 descriptors and %u payload words where the monolithic form spends 1 and\n"
+               "  %u; the CPU writes no VIDCMD words at all, only the descriptors' source\n"
+               "  pointers.\n", clean_k_min, SP_SEMANTIC_WORDS, SP_PROGRAM_WORDS);
+        printf("  what bounds the descriptor count per line, with the hblank out of the way:\n"
+               "    per-line delivery budget  %u SYSCLK - %u (PIXELS) - %u (13 words) = %u,\n"
+               "                              at %u SYSCLK of turn-around each: %u descriptors\n"
+               "    the whole line            %llu SYSCLK the same way: %u descriptors\n"
+               "    the %u-word VIDCMD FIFO    %u lines of %u-word programs in flight\n",
+               VIDCMD_LINE_SYSCLK_BUDGET, pixels_cost,
+               ENGINE_CYCLES_PER_WORD * SP_SEMANTIC_WORDS, budget_left, piece_overhead,
+               budget_left / piece_overhead,
+               static_cast<unsigned long long>(LINE_SYSCLK), line_left / piece_overhead,
+               VIDCMD_FIFO_WORDS, VIDCMD_FIFO_WORDS / SP_SEMANTIC_WORDS, SP_SEMANTIC_WORDS);
+        CHECK(clean_k_min == 1,
+              "m11-static-pieces: the minimum clean lookahead came out as %u, not 1",
+              clean_k_min);
     }
 
     // --- Findings --------------------------------------------------------------

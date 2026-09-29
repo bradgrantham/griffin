@@ -1580,4 +1580,231 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
     return r;
 }
 
+// ===========================================================================
+// STATIC PIECES
+// ===========================================================================
+
+uint32_t sp_program_words(uint32_t i, std::span<uint16_t> out)
+{
+    uint32_t n = 0;
+    auto     put = [&](uint16_t v)
+    {
+        if (n < out.size())
+        {
+            out[n] = v;
+        }
+        n++;
+    };
+
+    // The left cap: the line's pix_base SET and the left border, one static
+    // two-word fragment per pix_base value.
+    put(vidcmd_set(SET_PIX_BASE, sp_pix_base_for(i)));
+    put(vidcmd_run_color(RUN_COLOR_BLACK, SP_BORDER_PIXELS));
+    put(vidcmd_run(RUN_SRC_PASSTHROUGH, sp_gap_for(i)));
+    for (uint32_t j = 0; j < SP_POSE_WORDS; j++)
+    {
+        put(sp_pose_word(i, j));
+    }
+    put(vidcmd_run(RUN_SRC_PASSTHROUGH, sp_tail_for(i)));
+    put(vidcmd_run_color(RUN_COLOR_BLACK, SP_BORDER_PIXELS));
+    return n;
+}
+
+void write_static_pieces_data(const StaticPiecesParams &p, Memory ram,
+                              std::span<const Rgb444> palette)
+{
+    // The gap/tail table: RUN(passthrough, n) for every n a 640-pixel line can
+    // want.  Entry H_ACTIVE doubles as the whole program of a plain line, which
+    // is why a non-sprite line costs one descriptor and no data of its own.
+    for (uint32_t n = 1; n <= SP_GAP_TABLE_ENTRIES; n++)
+    {
+        ram[sp_gap_word_addr(p.data_base, n)] = vidcmd_run(RUN_SRC_PASSTHROUGH, n);
+    }
+
+    for (uint32_t sel = 0; sel < 2; sel++)
+    {
+        const uint32_t addr = sp_left_cap_addr(p.data_base, sel);
+        ram[addr + 0] = vidcmd_set(SET_PIX_BASE, sel * 2u);
+        ram[addr + 2] = vidcmd_run_color(RUN_COLOR_BLACK, SP_BORDER_PIXELS);
+    }
+
+    ram[sp_right_border_addr(p.data_base)] = vidcmd_run_color(RUN_COLOR_BLACK, SP_BORDER_PIXELS);
+
+    for (uint32_t i = 0; i < SP_SPRITE_LINES; i++)
+    {
+        const uint32_t addr = sp_pose_row_addr(p.data_base, i);
+        for (uint32_t j = 0; j < SP_POSE_WORDS; j++)
+        {
+            ram[addr + j * 2] = sp_pose_word(i, j);
+        }
+    }
+
+    // The frame's palette, as three-word entries, deposited in vertical
+    // blanking where a write disturbs no pixel slot.
+    {
+        uint32_t       n    = 0;
+        const uint32_t addr = sp_palette_addr(p.data_base);
+        for (uint32_t e = 0; e < SP_PALETTE_ENTRIES; e++)
+        {
+            const Rgb444 c = (e < palette.size()) ? palette[e] : RGB444_BLACK;
+            for (uint16_t v : vidcmd_palette_entry(e, c))
+            {
+                ram[addr + n * 2] = v;
+                n++;
+            }
+        }
+    }
+
+    // MONOLITHIC's programs: the same thirteen words gathered into one place,
+    // padded to the frozen SP_PROGRAM_WORDS shape with filler SETs.  Target 7
+    // is decoded nowhere, and a pad is consumed eagerly in the NEXT line's
+    // blanking, so it costs neither a slot nor a pixel — see STATIC-PIECES.md.
+    for (uint32_t i = 0; i < SP_SPRITE_LINES; i++)
+    {
+        std::array<uint16_t, SP_SEMANTIC_WORDS> prog{};
+        const uint32_t n = sp_program_words(i, prog);
+        const uint32_t addr = sp_program_addr(p.program_base, i);
+        for (uint32_t w = 0; w < n; w++)
+        {
+            ram[addr + w * 2] = prog[w];
+        }
+        for (uint32_t w = n; w < SP_PROGRAM_WORDS; w++)
+        {
+            ram[addr + w * 2] = vidcmd_set(SET_FILLER, 0);
+        }
+    }
+}
+
+AuthorResult author_static_pieces(const StaticPiecesParams &p, Memory ram)
+{
+    ListWriter w;
+    w.ram    = ram;
+    w.base   = p.table_base;
+    w.limit  = p.table_base + p.table_bytes;
+    w.cursor = p.table_base;
+
+    auto pacer = [&](bool stop)
+    {
+        Descriptor d;
+        d.src         = p.data_base;
+        d.count       = 1;
+        d.destination = DEST_NONE;
+        d.wait_hblank = true;
+        d.stop_after  = stop;
+        w.emit(d);
+    };
+
+    // One line's VIDCMD program.  `wait` puts the group's wait_hblank on the
+    // first descriptor of the program; at k > 0 the PIXELS run owns it instead.
+    auto emit_program = [&](uint32_t line, bool wait)
+    {
+        if (!sp_is_sprite_line(line))
+        {
+            Descriptor d;
+            d.src         = sp_gap_word_addr(p.data_base, H_ACTIVE);
+            d.count       = SP_PLAIN_LINE_WORDS;
+            d.destination = DEST_VIDCMD_FIFO_W;
+            d.wait_hblank = wait;
+            w.emit(d);
+            return;
+        }
+
+        const uint32_t i = sp_sprite_index(line);
+
+        if (p.form == StaticPiecesForm::MONOLITHIC)
+        {
+            Descriptor d;
+            d.src         = sp_program_addr(p.program_base, i);
+            d.count       = static_cast<uint16_t>(SP_PROGRAM_WORDS);
+            d.destination = DEST_VIDCMD_FIFO_W;
+            d.wait_hblank = wait;
+            w.emit(d);
+            return;
+        }
+
+        const uint32_t srcs[5] = {
+            sp_left_cap_addr(p.data_base, sp_pix_base_sel(i)),
+            sp_gap_word_addr(p.data_base, sp_gap_for(i)),
+            sp_pose_row_addr(p.data_base, i),
+            sp_gap_word_addr(p.data_base, sp_tail_for(i)),
+            sp_right_border_addr(p.data_base),
+        };
+        const uint16_t counts[5] = {2, 1, static_cast<uint16_t>(SP_POSE_WORDS), 1, 1};
+
+        for (uint32_t piece = 0; piece < 5; piece++)
+        {
+            Descriptor d;
+            d.src         = srcs[piece];
+            d.count       = counts[piece];
+            d.destination = DEST_VIDCMD_FIFO_W;
+            d.wait_hblank = wait && (piece == 0);
+            w.emit(d);
+        }
+    };
+
+    // --- the vblank walk, split around /RS -----------------------------------
+    uint32_t pacers = 0;
+    for (; pacers < p.pacers_before_preamble && pacers < p.vblank_pacing_lines; pacers++)
+    {
+        pacer(false);
+    }
+
+    {
+        Descriptor d;
+        d.src         = sp_palette_addr(p.data_base);
+        d.count       = static_cast<uint16_t>(SP_PALETTE_WORDS);
+        d.destination = DEST_VIDCMD_FIFO_W;
+        w.emit(d);
+    }
+
+    // The lookahead's own bootstrap: with line y's program deposited in group
+    // y-k, the first k lines have no group to be deposited in.  Vertical
+    // blanking after /RS is where they go, and the FIFO holds them because
+    // playback is gated by H_ACTIVE and there is none until line 0.
+    for (uint32_t y = 0; y < p.lookahead && y < V_ACTIVE; y++)
+    {
+        emit_program(y, false);
+    }
+
+    for (; pacers < p.vblank_pacing_lines; pacers++)
+    {
+        pacer(false);
+    }
+
+    // --- one group per visible line ------------------------------------------
+    for (uint32_t g = 0; g < V_ACTIVE; g++)
+    {
+        const uint32_t target      = g + p.lookahead;
+        const bool     has_program = target < V_ACTIVE;
+        bool           wait        = true;
+
+        if (!p.pixels_first && has_program)
+        {
+            emit_program(target, wait);
+            wait = false;
+        }
+
+        const uint32_t src = p.fb_base + g * p.fb_stride_bytes;
+        emit_stream(w, DEST_PIXELS_FIFO_W, src, PIXELS_WORDS_1BPP, wait, SP_PIXELS_CHUNK);
+        wait = false;
+
+        if (p.pixels_first && has_program)
+        {
+            emit_program(target, false);
+        }
+    }
+
+    pacer(true);
+
+    AuthorResult r;
+    r.first_descriptor = p.table_base;
+    r.descriptor_count = w.count;
+    r.table_bytes      = w.cursor - w.base;
+    r.payload_words    = w.payload_words;
+    r.pacing_words     = w.pacing_words;
+    r.audio_pairs      = 0;
+    r.table_overflow   = w.overflow;
+    return r;
+}
+
 }  // namespace SuperEngine

@@ -724,4 +724,209 @@ constexpr Rgb444 line_palette_bg(uint32_t)
 
 uint32_t pixel_words_for(PixelMode mode, uint32_t pixel_skip);
 
+// ===========================================================================
+// STATIC PIECES — a sprite line assembled by ENGINE out of read-only fragments
+// ===========================================================================
+//
+// The question this answers is in STATIC-PIECES.md.  Two ways to put the same
+// thirteen VIDCMD words in front of the compositor:
+//
+//   MONOLITHIC   what apps/smurf does today.  The CPU copies the fragments into
+//                one contiguous program in scratch RAM, pads it to a fixed
+//                SP_PROGRAM_WORDS shape, and one wait_hblank descriptor delivers
+//                the whole thing in that line's own horizontal blanking.
+//   PIECES       five descriptors, each pointing at data that is never written
+//                after start-up: a two-word left cap, a gap word out of a
+//                640-entry RUN(passthrough,n) table, the pose row, a tail word
+//                out of that same table, and the right border word.  Nothing is
+//                copied, so nothing can tear and no arena is needed — but five
+//                descriptors cost four extra ENGINE turn-arounds, which is why
+//                they have to be deposited AHEAD of the line they feed.
+//
+// The program, identical in both forms and framed at exactly H_ACTIVE slots:
+//
+//   SET(pix_base, b)          eager, executes in blanking, zero slots
+//   RUN_COLOR(black, 64)      left border
+//   RUN(passthrough, g)       gap                     } g + t == SP_MIDDLE_PIXELS
+//   8 x (RUN_COLOR | RUN) of SP_POSE_SPAN slots       } so the sum is H_ACTIVE
+//   RUN(passthrough, t)       tail
+//   RUN_COLOR(black, 64)      right border
+//
+// Every record plays at least SP_POSE_SPAN slots, well above the two-slot fetch
+// cadence, so the authored sum IS the occupancy and no line can stretch.
+
+inline constexpr uint32_t SP_FIRST_LINE     = 200;   // first of the consecutive sprite lines
+inline constexpr uint32_t SP_SPRITE_LINES   = 32;
+inline constexpr uint32_t SP_BORDER_PIXELS  = 64;    // left and right, RUN_COLOR black
+inline constexpr uint32_t SP_POSE_WORDS     = 8;     // words in one pose row
+inline constexpr uint32_t SP_POSE_SPAN      = 8;     // slots each pose word paints
+inline constexpr uint32_t SP_SPRITE_PIXELS  = SP_POSE_WORDS * SP_POSE_SPAN;
+inline constexpr uint32_t SP_MIDDLE_PIXELS  =
+    H_ACTIVE - 2u * SP_BORDER_PIXELS - SP_SPRITE_PIXELS;                    // 448
+inline constexpr uint32_t SP_GAP_MIN        = 100;   // sprite x varies by moving the gap
+inline constexpr uint32_t SP_GAP_STEP       = 8;
+inline constexpr uint32_t SP_SEMANTIC_WORDS = 2 + 1 + SP_POSE_WORDS + 1 + 1;   // 13
+inline constexpr uint32_t SP_PROGRAM_WORDS  = 21;   // the monolithic form's frozen shape
+inline constexpr uint32_t SP_PAD_WORDS      = SP_PROGRAM_WORDS - SP_SEMANTIC_WORDS;
+inline constexpr uint32_t SP_PROGRAM_STRIDE_BYTES = 64;
+inline constexpr uint32_t SP_GAP_TABLE_ENTRIES    = H_ACTIVE;   // RUN(passthrough, 1..640)
+inline constexpr uint32_t SP_PALETTE_ENTRIES      = 4;          // two 1bpp pairs
+inline constexpr uint32_t SP_PALETTE_WORDS        =
+    SP_PALETTE_ENTRIES * PALETTE_WORDS_PER_ENTRY;               // 12
+inline constexpr uint32_t SP_PLAIN_LINE_WORDS     = 1;          // RUN(passthrough, 640)
+inline constexpr uint32_t SP_PIXELS_CHUNK         = 20;         // two descriptors a line
+
+// Offsets inside the read-only data region.  Spaced so a descriptor that walks
+// off one table lands in zeroes rather than in the next one.
+inline constexpr uint32_t SP_OFF_GAP_TABLE    = 0x000;
+inline constexpr uint32_t SP_OFF_LEFT_CAPS    = 0x600;
+inline constexpr uint32_t SP_OFF_RIGHT_BORDER = 0x610;
+inline constexpr uint32_t SP_OFF_POSE_TABLE   = 0x700;
+inline constexpr uint32_t SP_OFF_PALETTE      = 0xA00;
+
+constexpr uint32_t sp_gap_word_addr(uint32_t data_base, uint32_t n)
+{
+    return data_base + SP_OFF_GAP_TABLE + (n - 1u) * 2u;
+}
+
+constexpr uint32_t sp_left_cap_addr(uint32_t data_base, uint32_t sel)
+{
+    return data_base + SP_OFF_LEFT_CAPS + sel * 4u;
+}
+
+constexpr uint32_t sp_right_border_addr(uint32_t data_base)
+{
+    return data_base + SP_OFF_RIGHT_BORDER;
+}
+
+constexpr uint32_t sp_pose_row_addr(uint32_t data_base, uint32_t i)
+{
+    return data_base + SP_OFF_POSE_TABLE + i * SP_POSE_WORDS * 2u;
+}
+
+constexpr uint32_t sp_palette_addr(uint32_t data_base)
+{
+    return data_base + SP_OFF_PALETTE;
+}
+
+constexpr uint32_t sp_program_addr(uint32_t program_base, uint32_t i)
+{
+    return program_base + i * SP_PROGRAM_STRIDE_BYTES;
+}
+
+constexpr bool sp_is_sprite_line(uint32_t line)
+{
+    return line >= SP_FIRST_LINE && line < SP_FIRST_LINE + SP_SPRITE_LINES;
+}
+
+constexpr uint32_t sp_sprite_index(uint32_t line)
+{
+    return line - SP_FIRST_LINE;
+}
+
+constexpr uint32_t sp_gap_for(uint32_t i)
+{
+    return SP_GAP_MIN + SP_GAP_STEP * i;
+}
+
+constexpr uint32_t sp_tail_for(uint32_t i)
+{
+    return SP_MIDDLE_PIXELS - sp_gap_for(i);
+}
+
+// Where the sprite's leftmost pixel lands: the whole point of "varying x".
+constexpr uint32_t sp_sprite_x(uint32_t i)
+{
+    return SP_BORDER_PIXELS + sp_gap_for(i);
+}
+
+// Which 1bpp PAIR the playfield selects under sprite line i.  Alternating it is
+// the probe for question 1 — a SET whose word is deposited four lines early
+// still has to execute in ITS line's blanking, and if it did not the banding
+// would shift by four lines and the pixel-exact comparison would break.
+constexpr uint32_t sp_pix_base_sel(uint32_t i)
+{
+    return i & 1u;
+}
+
+constexpr uint32_t sp_pix_base_for(uint32_t i)
+{
+    return sp_pix_base_sel(i) * 2u;   // 0 -> entries {0,1}, 2 -> entries {2,3}
+}
+
+// A hole in the pose shows the playfield through, which is what makes the
+// pix_base probe visible inside the sprite as well as beside it.
+constexpr bool sp_pose_hole(uint32_t i, uint32_t j)
+{
+    return ((i + j) % 4u) == 3u;
+}
+
+constexpr uint32_t sp_pose_color(uint32_t i, uint32_t j)
+{
+    return 1u + ((i * 3u + j) % 7u);   // never RUN_COLOR_BLACK, so never the border
+}
+
+constexpr uint16_t sp_pose_word(uint32_t i, uint32_t j)
+{
+    return sp_pose_hole(i, j) ? vidcmd_run(RUN_SRC_PASSTHROUGH, SP_POSE_SPAN)
+                              : vidcmd_run_color(sp_pose_color(i, j), SP_POSE_SPAN);
+}
+
+// The words of sprite line i's program, in stream order, semantic part only.
+// Both forms deliver exactly these; MONOLITHIC appends SP_PAD_WORDS filler SETs.
+uint32_t sp_program_words(uint32_t i, std::span<uint16_t> out);
+
+enum class StaticPiecesForm : uint8_t
+{
+    MONOLITHIC = 0,
+    PIECES     = 1,
+};
+
+struct StaticPiecesParams
+{
+    uint32_t table_base       = DESC_TABLE_BASE;
+    uint32_t table_bytes      = DESC_TABLE_BYTES;
+    uint32_t fb_base          = 0;
+    uint32_t fb_stride_bytes  = 0;
+    uint32_t data_base        = 0;   // the read-only fragments
+    uint32_t program_base     = 0;   // MONOLITHIC's assembled programs
+
+    StaticPiecesForm form      = StaticPiecesForm::MONOLITHIC;
+    uint32_t         lookahead = 0;   // k: line y's program is deposited in group y-k
+
+    // Where the line's VIDCMD descriptors sit relative to its PIXELS
+    // descriptors.  At k == 0 the VIDCMD words belong to the imminent line and
+    // must go first; at k > 0 they belong to a line k away and PIXELS — whose
+    // PIX_PRELOAD deadline is 16 pixel clocks before the line — goes first.
+    bool pixels_first = false;
+
+    // The vblank walk, split so the preamble lands AFTER TIMING's /RS: the
+    // FIFOs are emptied by that pulse, so a program deposited before it is
+    // gone.  pacers_before_preamble pacers are consumed first, then the palette
+    // and the first `lookahead` lines' programs, then the rest of the walk.
+    uint32_t vblank_pacing_lines    = 0;
+    uint32_t pacers_before_preamble = 0;
+
+    uint32_t arbitration_cycles = ENGINE_ARBITRATION_CYCLES;
+};
+
+// Fill the read-only region (gap table, left caps, right border, pose table,
+// palette entries) and MONOLITHIC's assembled programs.  Runs once, not per
+// frame: that is the claim the PIECES form makes and this models it.
+void write_static_pieces_data(const StaticPiecesParams &p, Memory ram,
+                              std::span<const Rgb444> palette);
+
+AuthorResult author_static_pieces(const StaticPiecesParams &p, Memory ram);
+
+// VIDCMD words line `line` contributes to the stream, so a checker can turn a
+// stream index into a line and test that line's delivery deadline.
+constexpr uint32_t sp_line_stream_words(uint32_t line, StaticPiecesForm form)
+{
+    if (!sp_is_sprite_line(line))
+    {
+        return SP_PLAIN_LINE_WORDS;
+    }
+    return (form == StaticPiecesForm::MONOLITHIC) ? SP_PROGRAM_WORDS : SP_SEMANTIC_WORDS;
+}
+
 }  // namespace SuperEngine
