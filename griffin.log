@@ -2062,3 +2062,12 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   7200 parameters to check before either: /RT setup to /R, pulse width,
   recovery; the <= 256-writes-since-/RS rule; /W idle during /RS (an
   ENGINE scheduling rule).
+
+2026-09-28 -- AUDIO pinout frozen; the chip joins `make all`
+  Harvested from the free-placement fit of the final logic and re-verified
+  under -preassign keep: 121/128 LC, 113 FF, 384 PT, 28 I/O, identical.
+  //PIN block in cpld/audio/audio.v (the one home for pin numbers).  AUDIO
+  is the SIXTH CPLD of rev 2 (GLUE, PORTS, ENGINE, PIXEL with TIMING
+  inside, COMPOSITOR, AUDIO); its place in the JTAG chain is a schematic
+  decision.  Next: the analog stage on a solderless breadboard (Brad),
+  then the schematic.

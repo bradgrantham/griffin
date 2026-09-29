@@ -1,6 +1,6 @@
 // audio.v — Griffin AUDIO (ATF1508AS): four DMA-fed sample channels with
-// hardware volume — the "Paula form" (griffin.log 2026-09-27).  FIT RUNG 1:
-// no //PIN: block yet, the fitter places pins freely.
+// hardware volume (griffin.log 2026-09-27).  Pinout frozen 2026-09-28, see
+// the //PIN: block at the end.
 //
 // What the chip does:
 //
@@ -239,3 +239,39 @@ module Audio
     end
 
 endmodule
+
+// ---------------------------------------------------------------------------
+// Pin assignments for atf15xx_yosys / fit1508.exe, PLCC-84 package
+//
+// FROZEN 2026-09-28, harvested from the free-placement fit of the final logic
+// (121/128 LC, the HBLANK re-phase in) and re-verified with -preassign keep.
+// The Rev 2 PCB is to be routed from these numbers; a change is a board
+// respin, not a re-fit.  Inputs: CLK (GCLK1), nRESET, HBLANK, the control
+// FIFO's Q[7:0] and /EF, the four sample FIFOs' /EF.  Outputs: the five /R
+// lines and GATE[3:0].  JTAG on the usual TDI 14 / TMS 23 / TCK 62 / TDO 71.
+// ---------------------------------------------------------------------------
+//PIN: GATE_3          : 4
+//PIN: nSAMPLE_R_3     : 5
+//PIN: nSAMPLE_EF_2    : 6
+//PIN: nSAMPLE_EF_1    : 8
+//PIN: nSAMPLE_EF_0    : 9
+//PIN: nSAMPLE_EF_3    : 10
+//PIN: nCONTROL_EF     : 11
+//PIN: HBLANK          : 12
+//PIN: GATE_0          : 15
+//PIN: nSAMPLE_R_0     : 16
+//PIN: nRESET          : 22
+//PIN: GATE_1          : 24
+//PIN: CONTROL_Q_2     : 25
+//PIN: nSAMPLE_R_1     : 27
+//PIN: CONTROL_Q_1     : 30
+//PIN: CONTROL_Q_0     : 31
+//PIN: GATE_2          : 33
+//PIN: nSAMPLE_R_2     : 34
+//PIN: CONTROL_Q_7     : 35
+//PIN: CONTROL_Q_6     : 37
+//PIN: CONTROL_Q_5     : 39
+//PIN: CONTROL_Q_4     : 40
+//PIN: CONTROL_Q_3     : 41
+//PIN: nCONTROL_R      : 81
+//PIN: CLK             : 83

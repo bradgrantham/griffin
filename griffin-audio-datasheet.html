@@ -285,7 +285,7 @@
       <tr><td>Mix</td><td class="num">analog sum, no clamp</td><td>two channels per side into an LM358 inverting summer; &plusmn;0.625 V full scale per channel, &plusmn;1.25 V for two, about 2.5 V; the author keeps the sum of levels sane</td></tr>
       <tr><td>Output corner</td><td class="num">&asymp;9.7 kHz</td><td>2k &parallel; 8.2 nF in the summer&rsquo;s feedback; the model&rsquo;s listening render uses the same single pole</td></tr>
       <tr><td>ENGINE load, Smurf</td><td class="num">0.97 % of a frame</td><td>2,260 of 233,625 SYSCLK per frame, model measurement (&sect;5)</td></tr>
-      <tr><td>CPLD fit</td><td class="num">121 / 128 LC</td><td>ATF1508AS PLCC84: 113 flip-flops, 384 product terms, 28 pins (HBLANK is the 28th); no //PIN block yet (free placement)</td></tr>
+      <tr><td>CPLD fit</td><td class="num">121 / 128 LC</td><td>ATF1508AS PLCC84: 113 flip-flops, 384 product terms, 28 pins (HBLANK is the 28th); pinout frozen 2026-09-28 in audio.v&rsquo;s //PIN block and re-verified under -preassign keep</td></tr>
       <tr><td>ENGINE fit</td><td class="num">120 / 128 LC</td><td>with the destination code: 393 product terms, 64/64 I/O; ENGINE is pin-full</td></tr>
     </table></div>
   </section>
@@ -510,7 +510,8 @@ dest  0 none   1 PIXELS   2 VIDCMD   3 AUDCTL (control FIFO)   4..7 SAMPLES0..3 
       <tr><td>68000 driver (scheduler.h, psg_channels.h)</td><td>bare metal, no float or heap, tables generated on the host (psg_tables.h); Smurf A/B bit-identical to the host version; about 4 KB code, 12 KB tables, 32 KB noise buffer</td><td class="mono">DONE 2026-09-28</td></tr>
       <tr><td>Rev-1 audio path</td><td>PORTS pop, AUDIO_CONTROL/AUDIO_STATUS removed; PORTS 106/128 with four pins released</td><td class="mono">RETIRED 2026-09-28</td></tr>
       <tr><td>Analog PWM stage on a breadboard</td><td>74HC4066 on-resistance and switching time at low VOLUME; bias and DC behaviour across volume changes</td><td class="mono">OPEN</td></tr>
-      <tr><td>Rev-2 schematic and //PIN block</td><td>not started</td><td class="mono">TO DO</td></tr>
+      <tr><td>AUDIO //PIN block</td><td>frozen from the free-placement fit, re-verified under keep at the same 121/128 and 384 PT; the chip is in <code>make -C cpld all</code></td><td class="mono">DONE 2026-09-28</td></tr>
+      <tr><td>Rev-2 schematic (sixth CPLD; TIMING lives inside PIXEL)</td><td>not started: JTAG chain position, pixel-clock and HBLANK fan-out, five FIFOs, ladders, 74HC04, 74HC4066, summers; PORTS&rsquo;s four released pins; the D[7:0] loading question</td><td class="mono">TO DO</td></tr>
       <tr><td>Multi-cycle tables for high tones; the 21 low-similarity fields</td><td>not yet tried / not characterised</td><td class="mono">OPEN</td></tr>
     </table></div>
   </section>

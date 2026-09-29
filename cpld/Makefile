@@ -42,7 +42,7 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
 # retired from `all` when ENGINE was promoted to the display-list model the
 # two can't interoperate with; `make video` still builds it for the Rev 1
 # board.
-all: glue engine ports compositor pixel
+all: glue engine ports compositor pixel audio
 
 # Single source of truth: regenerate ../griffin.generated.vh (a prereq of the
 # .edif targets below) by delegating to the root, keyed to griffin.yml/codegen.py.
@@ -114,12 +114,12 @@ engine/engine.svf: engine/engine.jed
 # No flash-engine target yet — ENGINE is not in the JTAG chain on Rev 1
 
 # ------------------------------------------------------------
-# AUDIO (ATF1508AS) — Paula-form sound chip, FIT RUNGS, not in `all`
+# AUDIO (ATF1508AS) — the sound chip, in `all` since 2026-09-28
 #
-# Four byte-wide sample FIFOs popped by period counters, PWM volume gates to
-# CD4066 switches, a control FIFO for the registers (cpld/audio/audio.v).
-# No //PIN: block yet: with none, `-preassign keep` places freely.  The rung
-# ladder is in griffin.log; read audio/audio.fit for utilization.
+# Four byte-wide sample FIFOs popped by period counters, duty-cycle volume
+# gates to 74HC4066 switches, a control FIFO for the registers
+# (cpld/audio/audio.v).  Pinout frozen in its //PIN: block; the fit ladder is
+# in griffin.log (2026-09-27, 2026-09-28).
 # ------------------------------------------------------------
 
 audio: audio/audio.jed
