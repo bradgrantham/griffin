@@ -22,7 +22,7 @@
 //                    reseeds); a rate-3 tone-2 change re-rates it in place.
 //   attenuation a -> VOLUME[a], 2 dB steps, 15 -> 0.
 //
-// Samples are two's complement, +/-127.  On a frequency change the new table
+// Samples are offset binary, 0x80 +/- 127.  On a frequency change the new table
 // starts at the old one's phase fraction, and the Scheduler lands the PERIOD
 // record when the old samples have drained.
 //

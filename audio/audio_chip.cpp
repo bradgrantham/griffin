@@ -176,7 +176,7 @@ void AnalogRender::step(const AudioChip& chip)
     double r = 0.0;
     for (int c = 0; c < CHANNELS; ++c)
     {
-        const double v = static_cast<int8_t>(chip.sample(c)) *
+        const double v = (static_cast<int>(chip.sample(c)) - 128) *
                          (static_cast<double>(chip.gate_ticks_on(c)) / TICKS_PER_STEP);
         if (c < 2)
         {

@@ -2835,7 +2835,8 @@ struct ClockGovernor
 // in unchanged the way the super-engine models are, so the emulator cannot
 // drift from the RTL's bench.  ENGINE deposits reach it by destination code:
 // AUDCTL (3) is the control FIFO, SAMPLES0..3 (4..7) the channels, one byte
-// per word in D[7:0].  It is clocked from the raster alone: 50 steps per
+// per word in the lane the FIFO's data pins sit on (channels 0,1 D[15:8];
+// 2,3 and control D[7:0]).  It is clocked from the raster alone: 50 steps per
 // scanline (the chip's divider is HBLANK-locked), handed over by the same
 // scanline counter that drives PORTS.
 //
@@ -2865,10 +2866,9 @@ struct AudioChipState
 
     void deposit(uint8_t destination, uint16_t word)
     {
-        const uint8_t byte = static_cast<uint8_t>(word & 0xFF);
         if (destination == SuperEngine::DEST_AUDCTL_FIFO_W)
         {
-            if (!chip.deposit_control(byte))
+            if (!chip.deposit_control(static_cast<uint8_t>(word & 0xFF)))
             {
                 report_drop(griffin::audio::CHANNELS, "AUDCTL");
             }
@@ -2877,7 +2877,7 @@ struct AudioChipState
         const int channel = destination - SuperEngine::DEST_SAMPLES0_FIFO_W;
         if (channel >= 0 && channel < griffin::audio::CHANNELS)
         {
-            if (!chip.deposit_sample(channel, byte))
+            if (!chip.deposit_sample(channel, SuperEngine::audio_channel_byte(channel, word)))
             {
                 static const char *const NAMES[griffin::audio::CHANNELS] =
                     { "SAMPLES0", "SAMPLES1", "SAMPLES2", "SAMPLES3" };
@@ -4026,21 +4026,21 @@ public:
     {
         for (size_t i = 0; i < audio_test_square_a.size(); i++)
         {
-            audio_test_square_a[i] = (i < audio_test_square_a.size() / 2) ? 0x60 : 0xA0;
+            audio_test_square_a[i] = (i < audio_test_square_a.size() / 2) ? 0xE0 : 0x20;
         }
         for (size_t i = 0; i < audio_test_square_b.size(); i++)
         {
-            audio_test_square_b[i] = (i < audio_test_square_b.size() / 2) ? 0x60 : 0xA0;
+            audio_test_square_b[i] = (i < audio_test_square_b.size() / 2) ? 0xE0 : 0x20;
         }
         for (size_t i = 0; i < audio_test_sine.size(); i++)
         {
             const double v = 100.0 * std::sin(6.283185307179586 * static_cast<double>(i) / 64.0);
-            audio_test_sine[i] = static_cast<uint8_t>(static_cast<int8_t>(std::lround(v)));
+            audio_test_sine[i] = SuperEngine::audio_sample_from_signed(static_cast<int>(std::lround(v)));
         }
         uint8_t reg = 0x1F;
         for (size_t i = 0; i < audio_test_noise.size(); i++)    // 5-bit maximal LFSR, taps 5,3
         {
-            audio_test_noise[i] = (reg & 1) ? 0x50 : 0xB0;
+            audio_test_noise[i] = (reg & 1) ? 0xD0 : 0x30;
             const uint8_t fb = static_cast<uint8_t>(((reg >> 0) ^ (reg >> 2)) & 1);
             reg = static_cast<uint8_t>((reg >> 1) | (fb << 4));
         }
@@ -4113,7 +4113,9 @@ public:
                 while (i < audio_test_dep.count && audio_test_dep.items[i].destination == dest_index
                        && n < DESC_MAX_COUNT)
                 {
-                    RAM[payload >> 1] = audio_test_dep.items[i].byte;   // high byte ignored
+                    RAM[payload >> 1] = (dest_index == griffin::audio::DEST_CONTROL)
+                                      ? audio_control_word(audio_test_dep.items[i].byte)
+                                      : audio_sample_word(audio_test_dep.items[i].byte);
                     payload += 2;
                     n++;
                     i++;

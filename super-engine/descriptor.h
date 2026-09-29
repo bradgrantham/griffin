@@ -1401,18 +1401,56 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
 //
 // Five byte-wide FIFOs: DEST_SAMPLES0..3_FIFO_W feed the channels (0,1 left,
 // 2,3 right) and DEST_AUDCTL_FIFO_W takes control records, two bytes each,
-// {register, value}.  Every deposited word carries one byte in D[7:0]; the
-// high byte is ignored.  Samples are two's complement.  A channel at PERIOD
+// {register, value}.  Every deposited word carries one byte, and the byte
+// lane is fixed by where the FIFO's data pins sit on the bus: channels 0 and
+// 1 read D[15:8], channels 2 and 3 and the control FIFO read D[7:0]; the
+// other byte is ignored.  So an interleaved stereo buffer, L,R byte pairs as
+// an 8-bit WAV data chunk lies in memory, streams to channel 0 and channel 2
+// as two descriptors over the same words, and a mono table is authored with
+// its sample in both bytes so it can go to any channel.  Samples are offset
+// binary, 0x80 = silence (AUDIO_SILENCE), as 8-bit WAV.  A channel at PERIOD
 // 99 pops once per 100 steps, i.e. once per two lines: 15,734.375 Hz,
 // AUDIO_SAMPLES_PER_SECOND, the rate the suite's stereo stream uses (left on
 // channel 0, right on channel 2).
 inline constexpr uint32_t AUDIO_FIFO_SAMPLES     = Griffin::AUDIO_FIFO_DEPTH;          // 256 per FIFO
 inline constexpr uint32_t AUDIO_SAMPLE_RATE      = Griffin::AUDIO_SAMPLES_PER_SECOND;  // 15734
 inline constexpr uint32_t AUDIO_LINES_PER_SAMPLE = 2;                                  // at PERIOD 99
+inline constexpr uint8_t  AUDIO_SILENCE          = Griffin::AUDIO_SILENCE;             // 0x80
 
-constexpr uint16_t audio_byte_word(uint8_t byte)
+// Which byte of a deposited word channel `channel`'s FIFO takes.
+constexpr bool audio_channel_high_byte(int channel)
+{
+    return channel < 2;
+}
+
+constexpr uint8_t audio_channel_byte(int channel, uint16_t word)
+{
+    return audio_channel_high_byte(channel) ? static_cast<uint8_t>(word >> 8)
+                                            : static_cast<uint8_t>(word & 0xFF);
+}
+
+// A mono sample as a word any channel can take: the byte in both lanes.
+constexpr uint16_t audio_sample_word(uint8_t sample)
+{
+    return static_cast<uint16_t>((sample << 8) | sample);
+}
+
+// One interleaved stereo pair: left for channels 0/1, right for 2/3.
+constexpr uint16_t audio_stereo_word(uint8_t left, uint8_t right)
+{
+    return static_cast<uint16_t>((left << 8) | right);
+}
+
+// A control byte as a word (the control FIFO reads D[7:0]).
+constexpr uint16_t audio_control_word(uint8_t byte)
 {
     return byte;
+}
+
+// A signed sample (-128..127) as the chip takes it.
+constexpr uint8_t audio_sample_from_signed(int value)
+{
+    return static_cast<uint8_t>(value + 128);
 }
 
 }  // namespace SuperEngine

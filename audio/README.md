@@ -84,6 +84,14 @@ make ab AB_FLAGS="--burst 4 --margin 3 --seconds 20"
 
 ## Changes after the first run
 
+* 2026-09-29: samples are offset binary (0x80 = silence, the ladder's own code
+  and 8-bit WAV's; no MSB inverter, no pulls on Q), and the byte lane is fixed
+  by wiring: channels 0 and 1 read D[15:8], channels 2 and 3 and the control
+  FIFO D[7:0].  A mono table is authored with the sample in both bytes
+  (super-engine/descriptor.h audio_sample_word); an interleaved stereo buffer
+  goes to a left and a right channel as two descriptors over the same words.
+  The A/B WAV checksum is unchanged (the analog model subtracts the bias).
+
 * 2026-09-27, later: samples are two's complement again (0x00 = silence; a
   74HC04 inverts bit 7 into the ladder), and the chip re-phases its by-16
   divider from PIXEL's HBLANK every line, so steps are raster-locked (a

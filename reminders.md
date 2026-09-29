@@ -12,15 +12,22 @@ datasheet before soldering.
 
 Why the values in the griffin.yml "Audio output stage" entry are what they are.
 
-- **Two's complement onto an unsigned DAC.**  A ladder DAC maps 0x00 to 0 V
-  and 0xFF to full scale, so an unsigned midscale (silence) is 0x80.  Inverting
-  only the MSB turns two's complement (0x00 = silence, 0x7F = max, 0x80 = min)
-  into that unsigned code.  Hence the CD4049 on Q7 only.
-- **The MSB inverter must be CMOS-output.**  The ladder weights the MSB at half
-  of full scale, so its high level must be the same rail-level VOH as the other
-  seven bits (which come straight from the 7200's CMOS outputs).  A TTL-output
-  inverter's high is only about 3.5 V, which would shrink the MSB's weight by
-  roughly a quarter, exactly at the zero crossing of every waveform.
+- **Offset binary is the ladder's native code.**  A ladder DAC maps 0x00 to
+  0 V and 0xFF to full scale, so midscale (silence) is 0x80; 8-bit WAV uses the
+  same code.  Two's complement (0x00 = silence) would need only the MSB
+  inverted (rev 1's CD4049 on Q7), and that inverter had to be CMOS-output:
+  the MSB is half of full scale, so a TTL-level high (about 3.5 V) would shrink
+  it by a quarter exactly at every zero crossing.  Rev 2 stores offset binary
+  and drops the inverter; a signed value v is stored as v + 128.
+- **Empty FIFO.**  With /R low and the FIFO empty a 7200's Q pins are
+  high-impedance (IDT7200 datasheet, Read Enable), so the ladder floats; that
+  is harmless because the channel's 74HC4066 is open whenever /EF is asserted.
+  Pull resistors were only ever needed to keep the CMOS inverter's input from
+  floating, so with the inverter gone there are none.
+- **Rate error for common file rates** (step clock 1,573,437.5 Hz, nearest
+  PERIOD): 11,025 Hz at PERIOD 142 plays 11,003 Hz (−3.5 cents); 8,000 Hz at
+  196 plays 7,987 Hz (−2.8 cents); 22,050 Hz at 70 plays 22,160 Hz (+8.7
+  cents, audible against a reference), so resample 22 kHz material offline.
 - **R2R ladder source impedance.**  A 10k R2R network looks like a 10k
   Thevenin source.  A 10k resistor from its output to ground therefore forms a
   2:1 divider (0 to 5 V becomes 0 to 2.5 V) with a 5k source impedance.  No

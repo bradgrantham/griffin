@@ -31,7 +31,8 @@
 //
 // Deposits are what the display list carries: a run of bytes to one
 // destination is one ENGINE descriptor of at most MAX_DESCRIPTOR_WORDS words
-// (SuperEngine::DESC_MAX_COUNT), the byte in each word's low half.
+// (SuperEngine::DESC_MAX_COUNT), each byte in the lane its FIFO reads or in
+// both (super-engine/descriptor.h, audio_sample_word).
 
 #pragma once
 
@@ -148,7 +149,7 @@ public:
 
     void reset();
 
-    // The channel plays `table` (two's complement bytes) as a loop of `length`,
+    // The channel plays `table` (offset-binary bytes) as a loop of `length`,
     // each byte deposited `repeat` times (a slow sequence at a rate the period
     // counter cannot reach, without a stretched copy of the table), starting
     // at `position` with `repeat_count` of that byte's copies already made.

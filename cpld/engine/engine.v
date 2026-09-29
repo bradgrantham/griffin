@@ -79,7 +79,8 @@ module Edma3
     // Deposit strobes — one active-low /W per consumer FIFO, decoded on chip
     // from the descriptor's destination code, so no off-chip decoder.  The
     // video consumers' data pins sit on D[15:0]; the five audio FIFOs are
-    // byte wide on D[7:0] (the high byte of an audio word is ignored).
+    // byte wide, channels 0 and 1 on D[15:8], channels 2 and 3 and the
+    // control FIFO on D[7:0] (the other byte of an audio word is ignored).
     output wire        nPIXELS_FIFO_W,    // code 1
     output wire        nVIDCMD_FIFO_W,    // code 2
     output wire        nAUDCTL_FIFO_W,    // code 3: AUDIO control records

@@ -2092,3 +2092,52 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   For the Smurf port this removes the word arena, its tear, and most of the
   composer (3 pointer stores a sprite line); overlap lines keep a small
   scratch program.  Write-up: super-engine/STATIC-PIECES.md.
+
+2026-09-29 -- AUDIO: offset-binary samples, left channels on D[15:8] (decision)
+  Question: DMA to the sample FIFOs carried the low byte only, so a stereo
+  interleaved buffer had to be de-interleaved into two mono buffers, and
+  D[7:0] carried nine 7200 loads.  Brad asked whether the right channels
+  could sit on D[15:8] and whether the byte could be chosen at push time.
+  Chosen: channels 0 and 1 (left) have their 7200 data pins on D[15:8];
+  channels 2 and 3 (right) and the control FIFO stay on D[7:0].  Left goes
+  high because an 8-bit stereo WAV data chunk is L,R,L,R with L at even
+  offsets, i.e. in the 68000 word's high byte, so a WAV chunk streams to a
+  left and a right channel as two descriptors over the same words with no
+  reshuffle.  A mono table is authored with the sample in both bytes; that
+  is free because every sample already occupied a word with one byte
+  discarded.  Loading: D[7:0] seven 7200 loads (was nine), D[15:8] six
+  (was four); the issue entry stays open (the review accepted six).
+  Push-time lane selection rejected: ENGINE has no spare code (0..7 used,
+  64/64 pins), and a per-channel select bit in AUDIO plus two 74HC157 per
+  steered channel buys nothing over the doubled byte.  AUDCTL could move
+  up too (six and seven) if the loading review wants it; not done.
+  Samples are OFFSET BINARY again, 0x80 = silence (AUDIO_SILENCE), reversing
+  the 2026-09-27 return to two's complement.  Reason: the 74HC04 on Q7
+  disappears (one chip and, with it, the pull resistor its CMOS input
+  needed against a floating Q; a bare R-2R ladder on high-Z Q is harmless
+  because the 74HC4066 is open whenever /EF is asserted).  Cognitive cost
+  judged small: every direct-ladder machine of the era was unsigned
+  (Covox, Mac, Genesis DAC, IIgs Ensoniq), 8-bit WAV is unsigned, and the
+  68000 never mixes or scales in this design, so the bias appears only
+  where tables are built (v + 128).
+  Rate error for common file rates (step 1,573,437.5 Hz): 11,025 -> PERIOD
+  142 = 11,003 Hz (-3.5 cents); 8,000 -> 196 = 7,987 Hz (-2.8 cents);
+  22,050 -> 70 = 22,160 Hz (+8.7 cents, audible against a reference;
+  resample offline).  Duration drifts by the same fraction.
+  Done: griffin.yml (AUDIO comment, part list, AUDIO_SILENCE 0x80, Stream
+  FIFO parts, Audio output stage, loading issue); super-engine/descriptor.h
+  lane helpers (audio_channel_byte, audio_sample_word, audio_stereo_word,
+  audio_control_word, audio_sample_from_signed; audio_byte_word removed);
+  audio_chip.h SILENCE 0x80, AnalogRender subtracts the bias; suite author
+  writes one interleaved stereo buffer (audio RAM halves) and both channel
+  descriptors read the same words; emulator picks the lane by channel,
+  self-test tables biased; psg_channels HIGH/LOW 0xFF/0x01; apps/smurf demo
+  stores v + 128 in both bytes and fills silence with 0x8080; engine.v
+  comment; griffin.md, reminders.md, audio/README.md, datasheet v12.
+  Verified: make -C audio test PASS, A/B WAV md5 96a72789b24abe7eb9752d7b386931dd
+  unchanged from 2026-09-27 (the model subtracts the bias, so the analog
+  output is bit-identical); super-engine check all cases PASS (m4-audio
+  through the interleaved buffer); emulator --selftest-audio (below);
+  make -C apps clean.  The chip, its bench and ENGINE's logic never touch
+  sample data and are unchanged.  The Smurf game port (griffin-ports) is
+  told by handoff, not edited.

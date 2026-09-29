@@ -119,8 +119,9 @@
 // below) and played by the AUDIO chip on channel 0 (left) and channel 2
 // (right) at PERIOD 99: one sample every second scanline, 15734.375 Hz,
 // exactly 262.5 per 525-line frame.  Both channels read the SAME buffer: each
-// word carries the sample in both bytes and the byte-wide FIFOs take D[7:0],
-// so every burst is two descriptors, one per channel, at the same words.  A
+// word carries the sample in both bytes (channel 0's FIFO reads D[15:8],
+// channel 2's D[7:0]), so every burst is two descriptors, one per channel,
+// at the same words.  A
 // frame's list cannot deposit half a sample, so table 0 carries 262 and table
 // 1 carries 263 and the loop alternates them -- the average is exact and the
 // FIFOs neither dry nor overflow.  Every frame's vblank preamble also carries
@@ -137,8 +138,8 @@
 // that the rebuild has to service more pops than it saves, and 300 ms of
 // rebuild became 1.8 s.  The flip is silent.)
 //
-// Silence is 0x00: samples are two's complement (a 74HC04 flips each
-// channel's MSB into its ladder), so zero-filled RAM is mute.
+// Samples are offset binary, silence 0x80 (AUDIO_SILENCE): the mix below is
+// two's complement and is biased as it is stored.
 
 #include <cstdint>
 #include <cstdio>
@@ -1586,8 +1587,7 @@ void audio_render(uint16_t *dst, unsigned pairs)
             {
                 v = 120;
             }
-            const uint8_t b = static_cast<uint8_t>(v);
-            const uint16_t word = static_cast<uint16_t>((b << 8) | b);
+            const uint16_t word = se::audio_sample_word(se::audio_sample_from_signed(v));
             for (unsigned i = 0; i < n; i++)
             {
                 *dst++ = word;
@@ -1918,13 +1918,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    // The tables' sample buffers are DMA'd from the very first armed frame;
-    // 0x0000 is silence (two's complement).
+    // The tables' sample buffers are DMA'd from the very first armed frame:
+    // fill them with silence (0x80 in both lanes).
     for (unsigned t = 0; t < 2; t++)
     {
         for (unsigned i = 0; i < AUDIO_PAIRS_MAX; i++)
         {
-            g_audio_buf[t][i] = 0x0000;
+            g_audio_buf[t][i] = se::audio_sample_word(se::AUDIO_SILENCE);
         }
     }
 

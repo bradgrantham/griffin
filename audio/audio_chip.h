@@ -24,8 +24,8 @@
 // channel's sample rate is 1,573,437.5 / (PERIOD + 1) Hz; PERIOD 99 is the
 // 15,734.375 Hz tick exactly, PERIOD 49 is 31.47 kHz, PERIOD 255 is 6.15 kHz.
 // The FIFO's Q bus, held valid with /R low, IS the channel's current sample
-// (two's complement, 0x00 = silence), driving that channel's ladder through
-// a 74HC04 on bit 7, since the ladder wants offset binary.
+// (offset binary, 0x80 = silence, the ladder's own code), driving that
+// channel's R-2R ladder directly.
 // Reset: COUNT 0 and PERIOD 0, so an unconfigured channel pops every step;
 // set PERIOD before depositing samples.
 //
@@ -49,8 +49,10 @@
 // deposited at clock 0 of a step is written by clock 8 and is in force at
 // that step's counter update.  A record split by an empty FIFO waits.
 //
-// Deposits.  ENGINE writes a word per FIFO byte (the low byte; the high byte
-// is ignored) to the FIFO its descriptor's destination code names.  A write to a full 7200 is
+// Deposits.  ENGINE writes a word per FIFO byte to the FIFO its descriptor's
+// destination code names; which byte is fixed by the FIFO's data pins
+// (channels 0 and 1 D[15:8], channels 2 and 3 and control D[7:0];
+// super-engine/descriptor.h has the lane helpers).  A write to a full 7200 is
 // ignored (samples lost); a pop of an empty one is ignored (the channel
 // holds its Q while /R is low, but the gate is off).  Nothing is read back.
 // ---------------------------------------------------------------------------
@@ -78,7 +80,7 @@ inline constexpr int      LINES_PER_TICK    = 2;                                
 inline constexpr int      PERIOD_MAX        = 255;
 inline constexpr int      PERIOD_TICK       = 99;      // 15,734.375 Hz
 inline constexpr int      VOLUME_MAX        = 63;
-inline constexpr uint8_t  SILENCE           = 0x00;    // two's complement
+inline constexpr uint8_t  SILENCE           = 0x80;    // offset binary
 inline constexpr uint8_t  REG_PERIOD        = 0;       // + channel
 inline constexpr uint8_t  REG_VOLUME        = 4;       // + channel
 inline constexpr int      CONTROL_CLOCKS_PER_BYTE = 4;

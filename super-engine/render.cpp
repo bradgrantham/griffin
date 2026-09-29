@@ -980,10 +980,9 @@ struct AudioModel
 
     void deposit(uint8_t destination, uint16_t word, RenderResult &r, bool keep)
     {
-        const uint8_t byte = static_cast<uint8_t>(word & 0xFF);
         if (destination == DEST_AUDCTL_FIFO_W)
         {
-            chip.deposit_control(byte);
+            chip.deposit_control(static_cast<uint8_t>(word & 0xFF));
             return;
         }
         const int channel = destination - DEST_SAMPLES0_FIFO_W;
@@ -991,7 +990,7 @@ struct AudioModel
         {
             return;
         }
-        const bool ok = chip.deposit_sample(channel, byte);
+        const bool ok = chip.deposit_sample(channel, audio_channel_byte(channel, word));
         if (keep)
         {
             if (!ok)
@@ -1021,11 +1020,11 @@ struct AudioModel
         }
     }
 
-    // What the two ladders present, once per tick, as unsigned bytes.
+    // What the two ladders present, once per tick (offset binary, as WAV).
     void sample(RenderResult &r)
     {
-        r.audio.push_back(static_cast<uint8_t>(chip.sample(0) ^ 0x80));
-        r.audio.push_back(static_cast<uint8_t>(chip.sample(2) ^ 0x80));
+        r.audio.push_back(chip.sample(0));
+        r.audio.push_back(chip.sample(2));
         const uint32_t count = static_cast<uint32_t>(chip.fill(0));
         if (count > r.audio_fifo_high)
         {

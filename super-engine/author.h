@@ -692,13 +692,12 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
 
 // An integer sawtooth on left and triangle on right — no <cmath>, so this
 // compiles for the target and produces identical bytes on every host.
-// The suite's stereo test signal, as the AUDIO chip takes it: `pairs` left
-// samples (words, byte in D[7:0]) at base, the right samples after them, then
-// AUDIO_CONTROL_WORDS control bytes setting channels 0 and 2 to PERIOD 99
-// (the tick rate) and VOLUME 63.
+// The suite's stereo test signal, as the AUDIO chip takes it: `pairs`
+// interleaved words at base, left in the high byte (channel 0's lane) and
+// right in the low byte (channel 2's), then AUDIO_CONTROL_WORDS control bytes
+// setting channels 0 and 2 to PERIOD 99 (the tick rate) and VOLUME 63.
 inline constexpr uint32_t AUDIO_CONTROL_WORDS = 8;
-constexpr uint32_t audio_right_base(uint32_t base, uint32_t pairs)   { return base + pairs * 2; }
-constexpr uint32_t audio_control_base(uint32_t base, uint32_t pairs) { return base + pairs * 4; }
+constexpr uint32_t audio_control_base(uint32_t base, uint32_t pairs) { return base + pairs * 2; }
 void write_audio_source(Memory ram, uint32_t base, uint32_t pairs);
 
 // --- the list itself --------------------------------------------------------

@@ -13,8 +13,8 @@ namespace
 {
 
 constexpr uint16_t NOISE_RELOAD[3] = { 0x10, 0x20, 0x40 };
-constexpr uint8_t  HIGH = 0x7F;
-constexpr uint8_t  LOW  = 0x81;      // -127
+constexpr uint8_t  HIGH = 0xFF;      // offset binary +127
+constexpr uint8_t  LOW  = 0x01;      // -127
 
 struct SquareBuffer
 {
