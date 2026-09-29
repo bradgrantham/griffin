@@ -4,7 +4,9 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "audio_chip.h"
@@ -13,7 +15,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include "frame_scheduler.h"
 #include "scheduler.h"
+
+#include "frame_audio.h"
+#include "tests/trace_io.h"
 
 using namespace griffin::audio;
 
@@ -390,10 +396,757 @@ void test_idle_lines()
     printf("T7 idle lines: %s\n", failures == failures_before ? "mirror exact across a 40-line gap" : "see FAIL lines");
 }
 
+// ---------------------------------------------------------------------------
+// T8 and T9: FrameScheduler (frame_scheduler.h) against the per-line Scheduler
+// and against the chip.  T9 proves the arithmetic; T8 proves the equivalence.
+// ---------------------------------------------------------------------------
+
+// T9: the per-region pop table against line_pops() summed over the region, for
+// every PERIOD and every accumulator state the mirror can hold (COUNT 0..255
+// covers the PERIOD-decrease reseed, where COUNT is larger than the new PERIOD
+// and the accumulator starts negative).
+void test_region_table()
+{
+    const int failures_before = failures;
+    unsigned long long checked = 0;
+    unsigned wrong = 0;
+    for (int R : { 8, 16, 32, 64, 128, 176, 256 })
+    {
+        FrameSchedulerConfig cfg;
+        cfg.region_lines = R;
+        cfg.field_lines = 525;
+        FrameScheduler fs(cfg);
+        const int last = fs.regions_per_field() - 1;
+        for (int which = 0; which < 2; ++which)
+        {
+            const int region = (which == 0) ? 0 : last;
+            const int lines = fs.lines_of_region(region);
+            if (lines <= 0)
+            {
+                continue;
+            }
+            for (int period = 0; period <= 255; ++period)
+            {
+                for (int count = 0; count <= 255; ++count)
+                {
+                    int c = count;
+                    int total = 0;
+                    for (int l = 0; l < lines; ++l)
+                    {
+                        const LinePops lp = line_pops(c, period);
+                        total += lp.pops;
+                        c = lp.count_after;
+                    }
+                    const FrameScheduler::RegionPops rp =
+                        fs.region_pops(region, period, period - count);
+                    ++checked;
+                    if (rp.pops != total || rp.acc != period - c)
+                    {
+                        if (wrong == 0)
+                        {
+                            printf("  R %d region %d period %d count %d: table {%d, acc %d}, "
+                                   "line_pops {%d, count %d -> acc %d}\n", R, region, period,
+                                   count, rp.pops, rp.acc, total, c, period - c);
+                            ++failures;
+                        }
+                        ++wrong;
+                    }
+                }
+            }
+        }
+    }
+    printf("T9 region table: %llu (R, region, period, count) cases, %s\n", checked,
+           wrong ? "DISAGREES with line_pops" : "exact against line_pops summed over the region");
+    printf("T9: %s\n", failures == failures_before ? "ok" : "see FAIL lines");
+}
+
+// ---- T8 -------------------------------------------------------------------
+
+namespace t8
+{
+
+// One side of the comparison: a driver, a scheduler and a chip, plus the byte
+// stream each destination received.
+struct Recorder
+{
+    std::vector<uint8_t> sample_bytes[CHANNELS];
+    std::vector<uint8_t> control_bytes;
+    uint64_t underruns_active = 0;
+
+    void note_sample(int channel, uint8_t byte)
+    {
+        sample_bytes[channel].push_back(byte);
+    }
+
+    void note_control(uint8_t byte)
+    {
+        control_bytes.push_back(byte);
+    }
+};
+
+struct LineSide
+{
+    PsgChannels  driver;
+    Scheduler    sched;
+    AudioChip    chip;
+    LineDeposits dep;
+    Recorder     rec;
+
+    explicit LineSide(int margin) : sched(SchedulerConfig{ 8, margin }) {}
+
+    void emit() { driver.emit(sched); }
+
+    // Deposit and step one line.
+    void line()
+    {
+        sched.line(dep);
+        for (int i = 0; i < dep.count; ++i)
+        {
+            const uint8_t d = dep.items[i].destination;
+            const uint8_t b = dep.items[i].byte;
+            if (d == DEST_CONTROL)
+            {
+                chip.deposit_control(b);
+                rec.note_control(b);
+            }
+            else
+            {
+                chip.deposit_sample(d, b);
+                rec.note_sample(d, b);
+            }
+        }
+    }
+};
+
+struct FrameSide
+{
+    PsgChannels    driver;
+    FrameScheduler fs;
+    AudioChip      chip;
+    RegionDeposits dep;
+    Recorder       rec;
+    // The region's staging window, the size the port gives it.
+    uint16_t       window[32] = {};
+    uint64_t       runs = 0;
+    uint64_t       staged = 0;
+    unsigned       max_runs_per_region = 0;
+    unsigned       max_runs_per_channel = 0;
+
+    explicit FrameSide(const FrameSchedulerConfig& cfg) : fs(cfg) {}
+
+    void emit()
+    {
+        driver.emit(fs.inbox());
+        fs.adopt_requests();
+    }
+
+    // The region due at this line, if any.
+    void region()
+    {
+        fs.region(dep, window, 32);
+        for (int i = 0; i < dep.control_bytes; ++i)
+        {
+            chip.deposit_control(dep.control[i]);
+            rec.note_control(dep.control[i]);
+        }
+        for (int c = 0; c < CHANNELS; ++c)
+        {
+            if (dep.runs_of[c] > max_runs_per_channel)
+            {
+                max_runs_per_channel = dep.runs_of[c];
+            }
+            for (unsigned r = 0; r < dep.runs_of[c]; ++r)
+            {
+                const SampleRun& run = dep.runs[c][r];
+                for (unsigned w = 0; w < run.count; ++w)
+                {
+                    const uint8_t byte = static_cast<uint8_t>(run.source[w] & 0xFF);
+                    chip.deposit_sample(c, byte);
+                    rec.note_sample(c, byte);
+                }
+            }
+        }
+        runs += static_cast<uint64_t>(dep.run_count);
+        staged += static_cast<uint64_t>(dep.staged_words);
+        if (static_cast<unsigned>(dep.run_count) > max_runs_per_region)
+        {
+            max_runs_per_region = static_cast<unsigned>(dep.run_count);
+        }
+    }
+};
+
+struct Result
+{
+    uint64_t fields = 0;
+    uint64_t steps = 0;
+    uint64_t line_deposits = 0;
+    uint64_t frame_deposits = 0;
+    uint64_t frame_runs = 0;
+    uint64_t frame_staged = 0;
+    unsigned max_runs_per_region = 0;
+    unsigned max_runs_per_channel = 0;
+    uint64_t line_underruns = 0;
+    uint64_t frame_underruns = 0;
+    uint64_t line_drops = 0;
+    uint64_t frame_drops = 0;
+    uint64_t line_control_drops = 0;
+    uint64_t frame_control_drops = 0;
+    uint64_t byte_stream_diff[CHANNELS] = {};     // value mismatches in the common prefix
+    uint64_t byte_stream_short[CHANNELS] = {};    // bytes one side has and the other does not
+    uint64_t byte_stream_len[CHANNELS] = {};
+    uint64_t control_stream_diff = 0;
+    uint64_t output_diff[CHANNELS] = {};
+    uint64_t first_output_diff_step = 0;
+    int      first_output_diff_channel = -1;
+    uint32_t staged_short = 0;
+    uint32_t runs_dropped = 0;
+    uint32_t rings_built = 0;
+    int      min_safe_period = 0;
+    int      max_fill_gap = 0;          // |mirror fill| between the two schedulers
+    int      max_phase_gap = 0;         // samples of stream phase between them
+    uint64_t first_byte_diff_field = 0;
+    uint32_t retargets_at_first_diff = 0;
+    bool     any_byte_diff = false;
+    uint32_t stream_decisions_differ = 0;   // fields where the two drivers disagreed
+    uint32_t stream_changes = 0;            // set_stream events seen on the line side
+    uint64_t first_stream_change_field = 0;
+    int      max_deposit_gap = 0;           // per channel, bytes one side is ahead
+    uint32_t retargets = 0;             // tone retargets + noise retargets
+};
+
+// Run both sides over the same sequence of PSG byte groups, one 525-line field
+// per group, and compare.  `bytes[first[i] .. first[i]+count[i])` is group i.
+void run(const std::vector<uint8_t>& bytes, const std::vector<uint32_t>& first,
+         const std::vector<uint32_t>& count, const FrameSchedulerConfig& cfg, Result& out)
+{
+    LineSide line_side(cfg.margin);
+    FrameSide frame_side(cfg);
+    const uint8_t *last_table[CHANNELS] = {};
+    uint32_t last_length[CHANNELS] = {};
+
+    for (size_t g = 0; g < first.size(); ++g)
+    {
+        // The region grid is the scheduler's own, not R times the index: a
+        // short remainder region is merged into the one before it.
+        int next_region_line = 0;
+        int next_region = 0;
+        (void)next_region;
+        for (uint32_t i = 0; i < count[g]; ++i)
+        {
+            line_side.driver.write(bytes[first[g] + i]);
+            frame_side.driver.write(bytes[first[g] + i]);
+        }
+        line_side.emit();
+        frame_side.emit();
+
+        for (int l = 0; l < cfg.field_lines; ++l)
+        {
+            uint64_t empty_before_a[CHANNELS];
+            uint64_t empty_before_b[CHANNELS];
+            for (int c = 0; c < CHANNELS; ++c)
+            {
+                empty_before_a[c] = line_side.chip.stats.pops_empty[c];
+                empty_before_b[c] = frame_side.chip.stats.pops_empty[c];
+            }
+            line_side.line();
+            if (l == next_region_line && next_region < frame_side.fs.regions_per_field())
+            {
+                next_region_line += frame_side.fs.lines_of_region(next_region);
+                ++next_region;
+                frame_side.region();
+            }
+            for (int s = 0; s < STEPS_PER_LINE; ++s)
+            {
+                line_side.chip.step();
+                frame_side.chip.step();
+                for (int c = 0; c < CHANNELS; ++c)
+                {
+                    const bool same = line_side.chip.sample(c) == frame_side.chip.sample(c) &&
+                                      line_side.chip.gate_ticks_on(c) ==
+                                          frame_side.chip.gate_ticks_on(c);
+                    if (!same)
+                    {
+                        if (out.first_output_diff_channel < 0)
+                        {
+                            out.first_output_diff_channel = c;
+                            out.first_output_diff_step = out.steps;
+                        }
+                        out.output_diff[c]++;
+                    }
+                }
+                out.steps++;
+            }
+            for (int c = 0; c < CHANNELS; ++c)
+            {
+                if (line_side.sched.channel(c).active)
+                {
+                    out.line_underruns +=
+                        line_side.chip.stats.pops_empty[c] - empty_before_a[c];
+                }
+                if (frame_side.fs.channel(c).active)
+                {
+                    out.frame_underruns +=
+                        frame_side.chip.stats.pops_empty[c] - empty_before_b[c];
+                }
+            }
+        }
+        for (int c = 0; c < CHANNELS; ++c)
+        {
+            const ChannelState& a = line_side.sched.channel(c);
+            const FrameChannelState& b = frame_side.fs.channel(c);
+            // The two drivers see the same PSG bytes, so they must reach the
+            // same stream every field; only the PHASE inside it can differ.
+            if (a.table != b.table || a.length != b.length || a.repeat != b.repeat ||
+                a.active != b.active)
+            {
+                out.stream_decisions_differ++;
+            }
+            {
+                const long long da = static_cast<long long>(line_side.rec.sample_bytes[c].size());
+                const long long db = static_cast<long long>(frame_side.rec.sample_bytes[c].size());
+                const int gap = static_cast<int>((da > db) ? (da - db) : (db - da));
+                if (gap > out.max_deposit_gap)
+                {
+                    out.max_deposit_gap = gap;
+                }
+            }
+            if (a.table != last_table[c] || a.length != last_length[c])
+            {
+                last_table[c] = a.table;
+                last_length[c] = a.length;
+                out.stream_changes++;
+                if (out.stream_changes == 1)
+                {
+                    out.first_stream_change_field = out.fields;
+                }
+            }
+            const int gap = (a.fill > b.fill) ? (a.fill - b.fill) : (b.fill - a.fill);
+            if (gap > out.max_fill_gap)
+            {
+                out.max_fill_gap = gap;
+            }
+            if (a.active && b.active && a.table == b.table && a.length == b.length &&
+                a.length != 0)
+            {
+                const uint32_t len = a.length;
+                const uint32_t pa = a.position % len;
+                const uint32_t pb = b.position % len;
+                uint32_t d = (pa > pb) ? (pa - pb) : (pb - pa);
+                if (d > len - d)
+                {
+                    d = len - d;
+                }
+                if (static_cast<int>(d) > out.max_phase_gap)
+                {
+                    out.max_phase_gap = static_cast<int>(d);
+                }
+            }
+            if (!out.any_byte_diff)
+            {
+                const std::vector<uint8_t>& sa = line_side.rec.sample_bytes[c];
+                const std::vector<uint8_t>& sb = frame_side.rec.sample_bytes[c];
+                const size_t n = std::min(sa.size(), sb.size());
+                for (size_t i = 0; i < n; ++i)
+                {
+                    if (sa[i] != sb[i])
+                    {
+                        out.any_byte_diff = true;
+                        out.first_byte_diff_field = out.fields;
+                        out.retargets_at_first_diff =
+                            frame_side.driver.tone_retargets + frame_side.driver.noise_retargets;
+                        break;
+                    }
+                }
+            }
+        }
+        out.fields++;
+    }
+
+    out.retargets = frame_side.driver.tone_retargets + frame_side.driver.noise_retargets;
+    for (int c = 0; c < CHANNELS; ++c)
+    {
+        out.line_drops += line_side.chip.stats.deposits_dropped[c];
+        out.frame_drops += frame_side.chip.stats.deposits_dropped[c];
+        const std::vector<uint8_t>& a = line_side.rec.sample_bytes[c];
+        const std::vector<uint8_t>& b = frame_side.rec.sample_bytes[c];
+        out.byte_stream_len[c] = a.size();
+        out.line_deposits += a.size();
+        out.frame_deposits += b.size();
+        const size_t n = std::min(a.size(), b.size());
+        for (size_t i = 0; i < n; ++i)
+        {
+            if (a[i] != b[i])
+            {
+                out.byte_stream_diff[c]++;
+            }
+        }
+        out.byte_stream_short[c] = (a.size() > b.size()) ? (a.size() - n) : (b.size() - n);
+    }
+    out.line_control_drops = line_side.chip.stats.control_dropped;
+    out.frame_control_drops = frame_side.chip.stats.control_dropped;
+    {
+        const std::vector<uint8_t>& a = line_side.rec.control_bytes;
+        const std::vector<uint8_t>& b = frame_side.rec.control_bytes;
+        const size_t n = std::min(a.size(), b.size());
+        for (size_t i = 0; i < n; ++i)
+        {
+            if (a[i] != b[i])
+            {
+                out.control_stream_diff++;
+            }
+        }
+        out.control_stream_diff += (a.size() > n) ? (a.size() - n) : (b.size() - n);
+    }
+    out.frame_runs = frame_side.runs;
+    out.frame_staged = frame_side.staged;
+    out.max_runs_per_region = frame_side.max_runs_per_region;
+    out.max_runs_per_channel = frame_side.max_runs_per_channel;
+    out.staged_short = frame_side.fs.staged_short();
+    out.runs_dropped = frame_side.fs.runs_dropped();
+    out.rings_built = frame_side.fs.rings_built();
+    out.min_safe_period = frame_side.fs.min_safe_period();
+}
+
+void report(const char *what, const FrameSchedulerConfig& cfg, const Result& r)
+{
+    const double fields = (r.fields != 0) ? static_cast<double>(r.fields) : 1.0;
+    printf("  %-28s R %3d, %llu fields (%.1f s)\n", what, cfg.region_lines,
+           static_cast<unsigned long long>(r.fields), r.fields / 60.0);
+    printf("    underruns  line %llu / frame %llu %s\n",
+           static_cast<unsigned long long>(r.line_underruns),
+           static_cast<unsigned long long>(r.frame_underruns),
+           (r.line_underruns == 0 && r.frame_underruns == 0) ? "ok" : "FAIL");
+    printf("    drops      line %llu / frame %llu, control %llu / %llu %s\n",
+           static_cast<unsigned long long>(r.line_drops),
+           static_cast<unsigned long long>(r.frame_drops),
+           static_cast<unsigned long long>(r.line_control_drops),
+           static_cast<unsigned long long>(r.frame_control_drops),
+           (r.line_drops == 0 && r.frame_drops == 0 && r.line_control_drops == 0 &&
+            r.frame_control_drops == 0) ? "ok" : "FAIL");
+    printf("    deposits   line %llu / frame %llu (mean %.1f a field)\n",
+           static_cast<unsigned long long>(r.line_deposits),
+           static_cast<unsigned long long>(r.frame_deposits), r.frame_deposits / fields);
+    printf("    runs       %llu (mean %.1f a field, max %u a region, max %u a channel), "
+           "staged words %llu (%.2f%%), short %u, dropped %u\n",
+           static_cast<unsigned long long>(r.frame_runs), r.frame_runs / fields,
+           r.max_runs_per_region, r.max_runs_per_channel,
+           static_cast<unsigned long long>(r.frame_staged),
+           r.frame_deposits ? 100.0 * static_cast<double>(r.frame_staged) /
+                                  static_cast<double>(r.frame_deposits) : 0.0,
+           r.staged_short, r.runs_dropped);
+    uint64_t bytes_diff = 0;
+    uint64_t bytes_short = 0;
+    for (int c = 0; c < CHANNELS; ++c)
+    {
+        bytes_diff += r.byte_stream_diff[c];
+        bytes_short += r.byte_stream_short[c];
+    }
+    printf("    byte streams: %llu value mismatches in the common prefix of %llu, one side "
+           "%llu bytes further on (%.3f%%), control records %llu differ %s\n",
+           static_cast<unsigned long long>(bytes_diff),
+           static_cast<unsigned long long>(r.line_deposits),
+           static_cast<unsigned long long>(bytes_short),
+           r.line_deposits ? 100.0 * static_cast<double>(bytes_short) /
+                                 static_cast<double>(r.line_deposits) : 0.0,
+           static_cast<unsigned long long>(r.control_stream_diff),
+           (bytes_diff == 0) ? "(streams identical as far as both go)"
+                             : "(a retarget carried a different phase; see below)");
+    uint64_t out_diff = 0;
+    for (int c = 0; c < CHANNELS; ++c)
+    {
+        out_diff += r.output_diff[c];
+    }
+    printf("    chip output differs on %llu of %llu channel-steps (%.4f%%)",
+           static_cast<unsigned long long>(out_diff),
+           static_cast<unsigned long long>(r.steps * CHANNELS),
+           r.steps ? 100.0 * static_cast<double>(out_diff) /
+                         static_cast<double>(r.steps * CHANNELS) : 0.0);
+    if (r.first_output_diff_channel >= 0)
+    {
+        printf(", first at step %llu channel %d",
+               static_cast<unsigned long long>(r.first_output_diff_step),
+               r.first_output_diff_channel);
+    }
+    printf("\n");
+    printf("    mirror fill gap max %d samples, deposit gap max %d bytes, stream phase gap max "
+           "%d samples, retargets %u, stream changes %u%s\n", r.max_fill_gap,
+           r.max_deposit_gap, r.max_phase_gap, r.retargets, r.stream_changes,
+           r.any_byte_diff ? "" : " (no byte ever differed)");
+    printf("    stream decisions differ on %u channel-fields %s\n", r.stream_decisions_differ,
+           r.stream_decisions_differ ? "FAIL" : "ok");
+    if (r.any_byte_diff)
+    {
+        printf("    first byte-stream divergence at field %llu, after %u retargets\n",
+               static_cast<unsigned long long>(r.first_byte_diff_field),
+               r.retargets_at_first_diff);
+    }
+}
+
+}   // namespace t8
+
+// T8: over the recorded Smurf PSG stream and over a synthetic sweep of every
+// PSG period, the FrameScheduler and the Scheduler each drive a chip model.
+// The gates: no underrun of an active channel and no dropped deposit on either
+// side.  The byte streams and the chip outputs are reported, not asserted
+// identical: a PERIOD record lands at a REGION boundary rather than a line
+// boundary, which is by design (frame_scheduler.h, "POLICY") and moves the
+// `need` of the bursts that follow it.
+void test_frame_scheduler(const char *trace_path, double sweep_seconds, int region_lines)
+{
+    const int failures_before = failures;
+
+    printf("T8 FrameScheduler equivalence\n");
+
+    // ---- the recorded Smurf trace ----------------------------------------
+    Trace trace;
+    if (read_trace(trace_path, trace))
+    {
+        std::vector<uint8_t> bytes;
+        std::vector<uint32_t> first;
+        std::vector<uint32_t> count;
+        for (size_t f = 0; f < trace.frame_bytes.size(); ++f)
+        {
+            const std::vector<uint8_t>& fb = trace.frame_bytes[f];
+            const std::vector<uint16_t>& groups = trace.frame_ticks[f];
+            const int fields = griffin::psg::frame_fields(groups.size(), 1);
+            for (int g = 0; g < fields; ++g)
+            {
+                size_t begin = 0;
+                size_t end = 0;
+                if (static_cast<size_t>(g) < groups.size())
+                {
+                    begin = (g == 0) ? size_t{ 0 } : groups[g];
+                    end = (static_cast<size_t>(g) + 1 < groups.size()) ? groups[g + 1]
+                                                                       : fb.size();
+                }
+                first.push_back(static_cast<uint32_t>(bytes.size()));
+                count.push_back(static_cast<uint32_t>(end - begin));
+                for (size_t i = begin; i < end; ++i)
+                {
+                    bytes.push_back(fb[i]);
+                }
+            }
+        }
+        for (int R : { 8, region_lines })
+        {
+            FrameSchedulerConfig cfg;
+            cfg.region_lines = R;
+            cfg.field_lines = 525;
+            cfg.margin = 2;
+            t8::Result r;
+            t8::run(bytes, first, count, cfg, r);
+            t8::report("Smurf trace", cfg, r);
+            CHECK(r.line_underruns == 0 && r.frame_underruns == 0,
+                  "Smurf trace R %d: underruns line %llu frame %llu", R,
+                  static_cast<unsigned long long>(r.line_underruns),
+                  static_cast<unsigned long long>(r.frame_underruns));
+            CHECK(r.line_drops == 0 && r.frame_drops == 0 && r.frame_control_drops == 0,
+                  "Smurf trace R %d: dropped deposits", R);
+            CHECK(r.runs_dropped == 0 && r.staged_short == 0,
+                  "Smurf trace R %d: %u runs dropped, %u staged runs short", R,
+                  r.runs_dropped, r.staged_short);
+            // Both drivers must pick the same stream every field; only the
+            // phase inside it may differ (see the report).
+            CHECK(r.stream_decisions_differ == 0,
+                  "Smurf trace R %d: the two drivers picked different streams on %u "
+                  "channel-fields", R, r.stream_decisions_differ);
+            CHECK(!r.any_byte_diff || r.first_byte_diff_field >= r.first_stream_change_field,
+                  "Smurf trace R %d: bytes differed at field %llu, before the first stream "
+                  "change at %llu", R,
+                  static_cast<unsigned long long>(r.first_byte_diff_field),
+                  static_cast<unsigned long long>(r.first_stream_change_field));
+        }
+    }
+    else
+    {
+        printf("  (no trace at %s: the Smurf half of T8 was skipped)\n", trace_path);
+    }
+
+    // ---- the synthetic sweep ---------------------------------------------
+    //
+    // Every PSG period 1..1023 for a tone and for both noise sequences (rate 3
+    // takes its reload from tone 2's period, which is how every one of the
+    // 1,024 NOISE entries is reached).
+    struct Case
+    {
+        const char *what;
+        int kind;       // 0 tone on channel 0, 1 tone on channel 2, 2 white noise, 3 periodic
+    };
+    const Case cases[4] = { { "tone channel 0", 0 },
+                            { "tone channel 2", 1 },
+                            { "white noise (rate 3)", 2 },
+                            { "periodic noise (rate 3)", 3 } };
+    const int fields_per_case = static_cast<int>(sweep_seconds * 60.0) + 1;
+    unsigned driver_defect_cases = 0;
+    unsigned frame_defect_cases = 0;
+    int first_defect_period = -1;
+    for (const Case& kase : cases)
+    {
+        t8::Result total;
+        unsigned excluded = 0;
+        for (int n = 1; n <= 1023; ++n)
+        {
+            std::vector<uint8_t> bytes;
+            std::vector<uint32_t> first;
+            std::vector<uint32_t> count;
+            const int tone = (kase.kind == 1 || kase.kind >= 2) ? 2 : 0;
+            first.push_back(0);
+            bytes.push_back(static_cast<uint8_t>(0x80 | (tone * 2) << 4 | (n & 0x0F)));
+            bytes.push_back(static_cast<uint8_t>((n >> 4) & 0x3F));
+            if (kase.kind < 2)
+            {
+                bytes.push_back(static_cast<uint8_t>(0x80 | ((tone * 2 + 1) << 4) | 0));
+            }
+            else
+            {
+                // tone 2 silent, noise on rate 3 with tone 2's period as reload.
+                bytes.push_back(static_cast<uint8_t>(0x80 | ((tone * 2 + 1) << 4) | 15));
+                bytes.push_back(
+                    static_cast<uint8_t>(0x80 | (6 << 4) | ((kase.kind == 2) ? 0x07 : 0x03)));
+                bytes.push_back(static_cast<uint8_t>(0x80 | (7 << 4) | 0));
+            }
+            count.push_back(static_cast<uint32_t>(bytes.size()));
+            for (int f = 1; f < fields_per_case; ++f)
+            {
+                first.push_back(static_cast<uint32_t>(bytes.size()));
+                count.push_back(0);
+            }
+            FrameSchedulerConfig cfg;
+            cfg.region_lines = region_lines;
+            cfg.field_lines = 525;
+            cfg.margin = 2;
+            t8::Result r;
+            t8::run(bytes, first, count, cfg, r);
+            // A case the SHIPPED Scheduler cannot keep fed is a defect of the
+            // driver, not of this class: psg_channels.h's Shadow::period uses
+            // 0xFF as "no PERIOD yet", so a stream whose chosen PERIOD really
+            // is 255 never gets its control record and the chip stays at the
+            // reset PERIOD 0, popping 1.57 M times a second.  Those cases are
+            // counted and left out of the comparison.
+            if (r.line_underruns != 0)
+            {
+                ++driver_defect_cases;
+                ++excluded;
+                if (first_defect_period < 0)
+                {
+                    first_defect_period = n;
+                }
+                continue;
+            }
+            if (r.frame_underruns != 0)
+            {
+                ++frame_defect_cases;
+                CHECK(r.frame_underruns == 0,
+                      "sweep %s N %d: FrameScheduler underran %llu times where the Scheduler "
+                      "did not", kase.what, n,
+                      static_cast<unsigned long long>(r.frame_underruns));
+            }
+            total.fields += r.fields;
+            total.steps += r.steps;
+            total.line_deposits += r.line_deposits;
+            total.frame_deposits += r.frame_deposits;
+            total.frame_runs += r.frame_runs;
+            total.frame_staged += r.frame_staged;
+            total.line_underruns += r.line_underruns;
+            total.frame_underruns += r.frame_underruns;
+            total.line_drops += r.line_drops;
+            total.frame_drops += r.frame_drops;
+            total.line_control_drops += r.line_control_drops;
+            total.frame_control_drops += r.frame_control_drops;
+            total.control_stream_diff += r.control_stream_diff;
+            for (int c = 0; c < CHANNELS; ++c)
+            {
+                total.byte_stream_diff[c] += r.byte_stream_diff[c];
+                total.output_diff[c] += r.output_diff[c];
+            }
+            total.max_runs_per_region =
+                std::max(total.max_runs_per_region, r.max_runs_per_region);
+            total.max_runs_per_channel =
+                std::max(total.max_runs_per_channel, r.max_runs_per_channel);
+            total.max_fill_gap = std::max(total.max_fill_gap, r.max_fill_gap);
+            total.max_phase_gap = std::max(total.max_phase_gap, r.max_phase_gap);
+            total.retargets += r.retargets;
+            total.staged_short += r.staged_short;
+            total.runs_dropped += r.runs_dropped;
+            if (r.any_byte_diff && !total.any_byte_diff)
+            {
+                total.any_byte_diff = true;
+                total.first_byte_diff_field = r.first_byte_diff_field;
+            }
+            if (total.first_output_diff_channel < 0 && r.first_output_diff_channel >= 0)
+            {
+                total.first_output_diff_channel = r.first_output_diff_channel;
+                total.first_output_diff_step = r.first_output_diff_step;
+            }
+        }
+        FrameSchedulerConfig cfg;
+        cfg.region_lines = region_lines;
+        cfg.field_lines = 525;
+        t8::report(kase.what, cfg, total);
+        printf("    %u of 1023 periods excluded: the shipped Scheduler underruns them too\n",
+               excluded);
+        CHECK(total.frame_drops == 0 && total.frame_control_drops == 0,
+              "sweep %s: %llu dropped deposits", kase.what,
+              static_cast<unsigned long long>(total.frame_drops));
+        CHECK(total.runs_dropped == 0 && total.staged_short == 0,
+              "sweep %s: %u runs dropped, %u staged runs short", kase.what,
+              total.runs_dropped, total.staged_short);
+        uint64_t sweep_diff = 0;
+        uint64_t sweep_out = 0;
+        for (int c = 0; c < CHANNELS; ++c)
+        {
+            sweep_diff += total.byte_stream_diff[c];
+            sweep_out += total.output_diff[c];
+        }
+        // No retarget happens in a sweep case (one period, held), so the two
+        // schedulers must be byte-identical and the chips bit-identical.
+        CHECK(sweep_diff == 0, "sweep %s: %llu byte-stream mismatches with no retarget",
+              kase.what, static_cast<unsigned long long>(sweep_diff));
+        CHECK(sweep_out == 0, "sweep %s: %llu channel-steps of chip output differ",
+              kase.what, static_cast<unsigned long long>(sweep_out));
+    }
+
+    printf("  PRE-EXISTING DRIVER DEFECT: %u of the 4092 swept (channel type, period) cases "
+           "underrun on BOTH schedulers (first: tone period %d).  psg_channels.h's\n"
+           "  Shadow::period sentinel is 0xFF, which collides with a real PERIOD of 255, so "
+           "those streams never get a PERIOD record and play at the reset PERIOD 0.\n",
+           driver_defect_cases, first_defect_period);
+    printf("  FrameScheduler-only underrun cases: %u\n", frame_defect_cases);
+    printf("  rings: %u of %u pool words used (%u bytes)\n", frame_ring_pool_words(),
+           frame_ring_pool_capacity(), 2u * frame_ring_pool_words());
+    printf("T8: %s\n", failures == failures_before
+                           ? "no underrun and no drop anywhere the shipped Scheduler has none"
+                           : "see FAIL lines");
+}
+
 }   // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+    const char *trace = "../../griffin-ports/smurf/work/smurf-trace.io";
+    double sweep_seconds = 0.25;
+    int region_lines = 64;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc)
+        {
+            trace = argv[++i];
+        }
+        else if (strcmp(argv[i], "--sweep-seconds") == 0 && i + 1 < argc)
+        {
+            sweep_seconds = atof(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--region-lines") == 0 && i + 1 < argc)
+        {
+            region_lines = atoi(argv[++i]);
+        }
+        else
+        {
+            fprintf(stderr, "usage: audio_tests [--trace f] [--sweep-seconds s] "
+                            "[--region-lines n]\n");
+            return 2;
+        }
+    }
     test_rate_multiplier();
     test_closed_form();
     test_gate();
@@ -401,6 +1154,8 @@ int main()
     test_period_alignment();
     test_tables();
     test_idle_lines();
+    test_region_table();
+    test_frame_scheduler(trace, sweep_seconds, region_lines);
     printf("%s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }

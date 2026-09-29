@@ -17,8 +17,8 @@ TRACE    ?= ../../griffin-ports/smurf/work/smurf-trace.io
 BUILD    ?= build
 AB_FLAGS ?=
 
-MODEL_SRC = audio_chip.cpp scheduler.cpp psg_channels.cpp
-MODEL_HDR = audio_chip.h scheduler.h psg_channels.h psg_tables.h
+MODEL_SRC = audio_chip.cpp scheduler.cpp frame_scheduler.cpp psg_channels.cpp
+MODEL_HDR = audio_chip.h scheduler.h frame_scheduler.h psg_channels.h psg_tables.h
 MODEL_OBJ = $(MODEL_SRC:%.cpp=$(BUILD)/%.o)
 REF_HDR   = $(PSG_DIR)/sn76489.h $(PSG_DIR)/frame_audio.h $(PSG_DIR)/tests/trace_io.h
 
@@ -33,6 +33,11 @@ $(BUILD)/ref/sn76489.o: $(PSG_DIR)/sn76489.cpp $(PSG_DIR)/sn76489.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD)/audio_ab.o: audio_ab.cpp $(MODEL_HDR) $(REF_HDR)
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -I$(PSG_DIR) -c $< -o $@
+
+# audio_tests reads the recorded trace too (T8), so it wants the port's headers.
+$(BUILD)/audio_tests.o: audio_tests.cpp $(MODEL_HDR) $(REF_HDR)
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -I$(PSG_DIR) -c $< -o $@
 
@@ -52,8 +57,9 @@ vectors: $(BUILD)/tb_vectors
 $(BUILD)/audio_ab: $(BUILD)/audio_ab.o $(MODEL_OBJ) $(BUILD)/ref/sn76489.o
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
+TEST_FLAGS ?= --trace $(TRACE)
 test: $(BUILD)/audio_tests ab tables-check
-	./$(BUILD)/audio_tests
+	./$(BUILD)/audio_tests $(TEST_FLAGS)
 
 ab: $(BUILD)/audio_ab
 	@mkdir -p $(BUILD)/wav
@@ -85,7 +91,9 @@ m68k:
 	@mkdir -p $(BUILD)/m68k
 	$(M68K_GXX) $(M68K_FLAGS) -c audio_chip.cpp -o $(BUILD)/m68k/audio_chip.o
 	$(M68K_GXX) $(M68K_FLAGS) -c scheduler.cpp -o $(BUILD)/m68k/scheduler.o
+	$(M68K_GXX) $(M68K_FLAGS) -c frame_scheduler.cpp -o $(BUILD)/m68k/frame_scheduler.o
 	$(M68K_GXX) $(M68K_FLAGS) -c psg_channels.cpp -o $(BUILD)/m68k/psg_channels.o
-	@if ../apps/m68k-objdump -t $(BUILD)/m68k/scheduler.o $(BUILD)/m68k/psg_channels.o | grep -E "__(add|mul|div|sub|fix|float)[sd]f|malloc|_Znw"; then \
+	@if ../apps/m68k-objdump -t $(BUILD)/m68k/scheduler.o $(BUILD)/m68k/frame_scheduler.o \
+	    $(BUILD)/m68k/psg_channels.o | grep -E "__(add|mul|div|sub|fix|float)[sd]f|malloc|_Znw"; then \
 	    echo "floating point or allocation in the 68000 audio code"; exit 1; fi
-	@echo "scheduler and psg_channels build bare metal: no float, no heap"
+	@echo "scheduler, frame_scheduler and psg_channels build bare metal: no float, no heap"
