@@ -2543,3 +2543,61 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
       pre-change binary except the build-banner rows 66-75;
     griffin.md, os-design 01/03, and dmabench RESULTS: prose updated;
     griffin-video-datasheet.html: records, seams, rules, recipes, fit.
+
+2026-10-03 -- Design review: where the system is cleverer than a 1984 team would have shipped (review, Brad + Claude)
+  Prompted by the cursor chain (a whole-frame MASK chain that stopped
+  fitting the VIDCMD FIFO when the run count went to 10 bits and now needs
+  a two-part delivery with a proved FIFO bound).  Brad's observation: many
+  parts of the system are clever beyond what one 1984 engineer could have
+  designed, and their rules would not have survived being passed between
+  engineers.  Working rule adopted: PREFER THE MECHANISM WHOSE CORRECTNESS
+  IS LOCAL TO A LINE; meet a limit with a resource or a simpler rule; keep
+  cleverness only where a tool checks it.  The audit, each item tagged
+  resource / rule / tool / wart.  NOTHING HERE IS DECIDED except the
+  cursor recipe; Brad is thinking about the rest.
+  - cursor (rule, AGREED): the per-line form becomes the documented recipe
+    and the griffin_cursor.h default -- one VIDCMD descriptor in each
+    line's hblank; cursor lines carry gap RUN + MASK + tail RUN, two word
+    patches a line on an x move, sixteen descriptor changes on a y move;
+    ~7,700 SYSCLK a frame of bus against ~900 for the chain.  Whether
+    non-cursor lines need any word at all (hold framing) is to be settled
+    by a suite case.  The chain stays as an advanced recipe for a screen
+    with no other VIDCMD content.
+  - descriptor carve (resource): the app's 2,048 descriptors a frame is a
+    firmware ABI choice; ENGINE reads 8,192 from the top 64K.  The Smurf
+    port doubles every backdrop row and packs eight slots a source line to
+    fit it.  Give the app more before inventing packings.
+  - audio fill (resource; Brad: needs thought): the driver PREDICTS each
+    FIFO's level because nothing reads back, which cost a per-note margin,
+    a drain-and-restart after late fields and a write-ahead pass.  The
+    7200's half-full pin would allow "top up when below half" -- but Brad
+    notes this was looked at before: the CPU can only act on it at vblank,
+    and at faster sample rates 256 words is not deep enough for a field,
+    so readback only helps together with deeper FIFOs (7201/7202) or a
+    mid-field check.
+  - fit margins (resource): COMPOSITOR at 118/128 fits only with one
+    declaration order.  With pins fluid, look for an arrangement with
+    real slack before freezing.
+  - pixel pitch (rule): publish "a record is at least two pixels wide; MASK
+    for anything finer"; the banked-pair behaviour stays true and
+    undocumented.  LITERAL already obeys it.
+  - delivery (rule): publish "deliver a line's words one line early" (m11,
+    m14: large margin) in place of the hblank-packet arithmetic, which was
+    derived wrong twice (26, then 21, measured 28).
+  - palette writes (rule): publish "a palette entry is one macro, in
+    blanking"; the mid-line cover rule becomes an expert footnote.
+  - pixel_skip (rule): publish "even values 0..12".
+  - 640-slot framing (tool): one miscounted line shifts the rest of the
+    frame.  Every list goes through vidcmd_plan_line() as an assembler
+    that rejects a line that does not sum; nobody hand-counts.
+  - generated tables (tool): pose rows, note tables, tile words -- already
+    host-generated with checks; the right home for cleverness.
+  - SET target numbering (wart): target 0 writes cmp_color1, target 1
+    cmp_color0.  "Frozen wire contract", but nothing is frozen now.
+  - 4bpp at full rate (wart): undefined and desynchronises the frame; a
+    mode that cannot work should be ignored, not undefined.  Not only a
+    budget matter: 160 words a line is ~88% of the bus (five 32-word
+    descriptors, 390 of 445 SYSCLK), and pixel.v's read strobe is built
+    for a word every 8 clocks where this mode needs one every 4.
+  Left alone as whiteboard-simple: double-buffered lists re-armed at
+  vblank, static tables walked by ENGINE, MASK, RUN, LITERAL.
