@@ -3519,6 +3519,973 @@ void run_cursor_chain_case(Memory ram)
     }
 }
 
+// ---------------------------------------------------------------------------
+// m13-set-stream — a literal-pixel stream out of SET(cmp_color1) words, on
+// TODAY's COMPOSITOR, with no CPLD change (write-up: SET-STREAM.md)
+// ---------------------------------------------------------------------------
+//
+// THE QUESTION.  Played while the source is cmp_color1, does a run of
+// SET(cmp_color1) words paint one arbitrary 12-bit colour per word, two slots
+// wide?  Every expectation below was derived from the fetch laws (vidcmd-spec.md
+// §4.1, compositor.v's header) BEFORE the model was run, and is written as slot
+// ranges; the model is held to it pixel for pixel.
+//
+// The three facts everything follows from:
+//   F1  Sustained, a word costs two slots: a one-slot record paints its own slot
+//       and one HOLD slot that keeps the source, so a SET's colour shows twice.
+//   F2  A record of n slots consumed with NO word parked behind it ("cadence
+//       entry": it was itself captured on the previous edge) is followed at +2
+//       when n <= 2, and builds a BANKED PAIR when n >= 3: the next record lands
+//       on its terminal slot and the one after that a single slot later.
+//       Consumed WITH a word parked ("banked entry": a line's first record, or
+//       the first half of a pair) it builds the pair already at n >= 2.
+//   F3  Therefore exact 2-slot geometry is ONE WORD PER PIXEL, plus one extra
+//       word on the first slot of the pair behind every record of >= 3 slots,
+//       and that word must be INVISIBLE: a SET of the register not on screen, a
+//       SET while passthrough is showing, or the target-7 filler.
+
+constexpr Rgb444 ss_c(uint32_t i)
+{
+    // Sixteen distinct colours (the red nibble is a bijection on 0..15), none of
+    // them the trace's passthrough colour, white or black.
+    return rgb444((i * 3u + 1u) & 15u, (i * 7u + 2u) & 15u, (i * 11u + 5u) & 15u);
+}
+
+constexpr uint16_t ss_set1(Rgb444 c)
+{
+    return vidcmd_set(SET_CMP_COLOR1, c);
+}
+
+constexpr uint16_t ss_set0(Rgb444 c)
+{
+    return vidcmd_set(SET_CMP_COLOR0, c);
+}
+
+constexpr uint16_t ss_pass(uint32_t n)
+{
+    return vidcmd_run(RUN_SRC_PASSTHROUGH, n);
+}
+
+constexpr uint16_t ss_run1(uint32_t n)
+{
+    return vidcmd_run(RUN_SRC_COLOR1, n);
+}
+
+constexpr uint16_t ss_run0(uint32_t n)
+{
+    return vidcmd_run(RUN_SRC_COLOR0, n);
+}
+
+struct SsPush
+{
+    uint32_t slot;
+    uint16_t word;
+};
+
+struct SsTrace
+{
+    std::vector<Rgb444> px;
+    RenderStats         stats;
+};
+
+// trace_slots() with the stats attached, plus words deposited DURING the line:
+// each SsPush enters the FIFO at the start of its slot, before that slot's
+// clock — exactly where render() puts a deposit whose cycle has passed.  After
+// the 640th slot H_ACTIVE falls, so a line that over-ran is counted.
+SsTrace ss_trace(const std::vector<uint16_t> &words, const std::vector<SsPush> &late = {})
+{
+    SsTrace        t;
+    PixelUnit      pix;
+    CompositorUnit cmp;
+    pix.power_on_reset();
+    cmp.reset();
+    palette_load_direct(pix, 1, TRACE_PASSTHROUGH);
+    cmp.attach_stats(&t.stats);
+    cmp.set_counting(true);
+    for (uint32_t i = 0; i < PIXELS_WORDS_1BPP + 1; i++)
+    {
+        pix.push_word(0xFFFF);
+    }
+    for (uint16_t w : words)
+    {
+        cmp.push_word(w);
+    }
+    for (uint32_t i = 0; i < H_BLANK; i++)
+    {
+        if (i == H_BLANK - PIXEL_FETCH_LEAD)
+        {
+            pix.arm_preload();
+        }
+        cmp.blank_clock(pix);
+    }
+    pix.begin_line();
+
+    size_t next = 0;
+    t.px.reserve(H_ACTIVE);
+    for (uint32_t s = 0; s < H_ACTIVE; s++)
+    {
+        while (next < late.size() && late[next].slot <= s)
+        {
+            cmp.push_word(late[next].word);
+            next++;
+        }
+        t.px.push_back(cmp.active_slot(pix));
+    }
+    cmp.end_of_line();
+    return t;
+}
+
+// The hand-derived picture: passthrough everywhere unless painted.
+struct SsExpect
+{
+    std::vector<Rgb444> px = std::vector<Rgb444>(H_ACTIVE, TRACE_PASSTHROUGH);
+
+    SsExpect &paint(uint32_t first, uint32_t last, Rgb444 c)
+    {
+        for (uint32_t s = first; s <= last; s++)
+        {
+            px[s] = c;
+        }
+        return *this;
+    }
+};
+
+uint32_t ss_diff(const std::vector<Rgb444> &got, const std::vector<Rgb444> &want,
+                 uint32_t &first_bad)
+{
+    uint32_t bad = 0;
+    first_bad    = H_ACTIVE;
+    for (uint32_t s = 0; s < H_ACTIVE; s++)
+    {
+        if (got[s] != want[s])
+        {
+            if (bad == 0)
+            {
+                first_bad = s;
+            }
+            bad++;
+        }
+    }
+    return bad;
+}
+
+void ss_check(const char *name, const SsTrace &t, const SsExpect &want, uint32_t cadence,
+              uint32_t starved, uint32_t overruns)
+{
+    uint32_t       first = 0;
+    const uint32_t bad   = ss_diff(t.px, want.px, first);
+    printf("  %-34s %3u slots off   cadence %2u  starvation %2u  overrun %u\n", name, bad,
+           t.stats.vidcmd_cadence_slots, t.stats.vidcmd_hold_slots, t.stats.vidcmd_overruns);
+    CHECK(bad == 0, "m13 trace %s: %u slots differ from the derivation; first at slot %u "
+          "(got 0x%03X, derived 0x%03X)", name, bad, first,
+          first < H_ACTIVE ? t.px[first] : 0u, first < H_ACTIVE ? want.px[first] : 0u);
+    CHECK(t.stats.vidcmd_cadence_slots == cadence,
+          "m13 trace %s: %u cadence holds, derived %u", name, t.stats.vidcmd_cadence_slots,
+          cadence);
+    CHECK(t.stats.vidcmd_hold_slots == starved,
+          "m13 trace %s: %u starvation holds, derived %u", name, t.stats.vidcmd_hold_slots,
+          starved);
+    CHECK(t.stats.vidcmd_overruns == overruns, "m13 trace %s: %u overruns, derived %u", name,
+          t.stats.vidcmd_overruns, overruns);
+}
+
+// The trickle schedule of (g): ENGINE delivering one word per 2 SYSCLK from the
+// slot the sprite's lead-in SET executes on.  Word n (n = 1, 2, ...) of the
+// trickle is deposited 2n SYSCLK later, i.e. ceil(2n * 1007 / 560) pixel clocks.
+uint32_t ss_trickle_offset(uint32_t n)
+{
+    const uint64_t num = 2ull * n * PIXEL_SYSCLK_DEN;
+    return static_cast<uint32_t>((num + PIXEL_SYSCLK_NUM - 1) / PIXEL_SYSCLK_NUM);
+}
+
+void check_set_stream_traces()
+{
+    printf("\n=== m13-set-stream traces — SET(cmp_color1) streams against the hand-derived "
+           "slot maps ===\n");
+    const Rgb444 FG0 = VIDCMD_RESET_COLOR1;   // what cmp_color1 holds after /RS
+
+    // (a) T1 — the naive stream behind a RUN(cmp_color1, 4).  RUN(pass,100) is
+    // banked at slot 0, so RUN(c1,4) and SET c0 are its pair: RUN(c1,4) at 100
+    // (showing the stale 0xFFF for 4 slots) with SET c0 moved into staging and
+    // SET c1 parked by edge 102.  RUN(c1,4) is a banked entry of n >= 2, so its
+    // successors are a PAIR: c0 on slot 104 ALONE, c1 on 105.  Then F1: c2 107,
+    // c3 109, holds 106/108/110, passthrough 111.  K SETs occupy 2K-1 slots.
+    {
+        const SsTrace t = ss_trace({ss_pass(100), ss_run1(4), ss_set1(ss_c(0)), ss_set1(ss_c(1)),
+                                    ss_set1(ss_c(2)), ss_set1(ss_c(3)), ss_pass(529)});
+        SsExpect e;
+        e.paint(100, 103, FG0).paint(104, 104, ss_c(0)).paint(105, 106, ss_c(1));
+        e.paint(107, 108, ss_c(2)).paint(109, 110, ss_c(3));
+        ss_check("a  naive RUN(c1,4) + 4 SETs", t, e, 3, 0, 0);
+    }
+
+    // (a) T2 — RUN(c1,1) instead.  Banked entry with n = 1 builds no pair: SET c0
+    // lands on 101 with SET c1 only popped on that edge, so 2K slots of stream —
+    // but slot 100 shows whatever cmp_color1 held (a STALE slot).
+    {
+        const SsTrace t = ss_trace({ss_pass(100), ss_run1(1), ss_set1(ss_c(0)), ss_set1(ss_c(1)),
+                                    ss_set1(ss_c(2)), ss_set1(ss_c(3)), ss_pass(531)});
+        SsExpect e;
+        e.paint(100, 100, FG0).paint(101, 102, ss_c(0)).paint(103, 104, ss_c(1));
+        e.paint(105, 106, ss_c(2)).paint(107, 108, ss_c(3));
+        ss_check("a  naive RUN(c1,1) + 4 SETs", t, e, 4, 0, 0);
+    }
+
+    // (a) T3 — THE LEAD-IN: spend the pair on [SET c1=first colour, RUN(c1,2)].
+    // SET at 100 is the pair's first half while passthrough still shows, so it is
+    // invisible; RUN(c1,2) is the second half (cadence entry, n = 2: no pair
+    // behind it), painting c0 on 101-102; c1 103, c2 105, c3 107, passthrough
+    // 109 = x0 + 2K.  Every pixel two slots, no stale slot either side.
+    {
+        const SsTrace t = ss_trace({ss_pass(100), ss_set1(ss_c(0)), ss_run1(2), ss_set1(ss_c(1)),
+                                    ss_set1(ss_c(2)), ss_set1(ss_c(3)), ss_pass(531)});
+        SsExpect e;
+        e.paint(101, 102, ss_c(0)).paint(103, 104, ss_c(1));
+        e.paint(105, 106, ss_c(2)).paint(107, 108, ss_c(3));
+        ss_check("a  lead-in SET + RUN(c1,2)", t, e, 3, 0, 0);
+    }
+
+    // (a) T3b — the same with RUN(c1,1): identical picture, one more cadence hold
+    // (slot 102, while SET c1 is still in flight).  RUN(c1,3) would be WRONG: a
+    // cadence-entry RUN of 3 builds a pair and the second pixel goes one slot.
+    {
+        const SsTrace t = ss_trace({ss_pass(100), ss_set1(ss_c(0)), ss_run1(1), ss_set1(ss_c(1)),
+                                    ss_set1(ss_c(2)), ss_set1(ss_c(3)), ss_pass(531)});
+        SsExpect e;
+        e.paint(101, 102, ss_c(0)).paint(103, 104, ss_c(1));
+        e.paint(105, 106, ss_c(2)).paint(107, 108, ss_c(3));
+        ss_check("a  lead-in SET + RUN(c1,1)", t, e, 4, 0, 0);
+    }
+
+    // (g) T4 — the LEFT EDGE.  A line's first record is always banked with the
+    // second parked, so the landing slots from pixel 0 are {0, 1, 3, 5, ...} for
+    // a 1-slot first record and {0, n, n+1, n+3, ...} for an n-slot one.
+    //   x=0, RUN(c1,1): pixel 0 is ONE slot, pixels 1.. at 1, 3, 5.
+    {
+        const SsTrace t = ss_trace({ss_set1(ss_c(0)), ss_run1(1), ss_set1(ss_c(1)),
+                                    ss_set1(ss_c(2)), ss_set1(ss_c(3)), ss_pass(633)});
+        SsExpect e;
+        e.paint(0, 0, ss_c(0)).paint(1, 2, ss_c(1)).paint(3, 4, ss_c(2)).paint(5, 6, ss_c(3));
+        ss_check("g  x=0, eager SET + RUN(c1,1)", t, e, 3, 0, 0);
+    }
+    //   x=0, RUN(c1,2): pixel 0 two slots, but it builds the pair, so pixel 1 is
+    //   ONE slot (2) and pixel 2 starts on 3.  Hence x = 0 cannot have both.
+    {
+        const SsTrace t = ss_trace({ss_set1(ss_c(0)), ss_run1(2), ss_set1(ss_c(1)),
+                                    ss_set1(ss_c(2)), ss_set1(ss_c(3)), ss_pass(633)});
+        SsExpect e;
+        e.paint(0, 1, ss_c(0)).paint(2, 2, ss_c(1)).paint(3, 4, ss_c(2)).paint(5, 6, ss_c(3));
+        ss_check("g  x=0, eager SET + RUN(c1,2)", t, e, 2, 0, 0);
+    }
+    //   x=1: RUN(pass,1) banked at 0, RUN(c1,2) on 1 (no pair: n = 1), then F1.
+    {
+        const SsTrace t = ss_trace({ss_set1(ss_c(0)), ss_pass(1), ss_run1(2), ss_set1(ss_c(1)),
+                                    ss_set1(ss_c(2)), ss_set1(ss_c(3)), ss_pass(631)});
+        SsExpect e;
+        e.paint(1, 2, ss_c(0)).paint(3, 4, ss_c(1)).paint(5, 6, ss_c(2)).paint(7, 8, ss_c(3));
+        ss_check("g  x=1, eager SET + pass1 + RUN(c1,2)", t, e, 3, 0, 0);
+    }
+    //   x=3: RUN(pass,2) banked builds the pair, spent on the lead-in (SET on 2).
+    {
+        const SsTrace t = ss_trace({ss_pass(2), ss_set1(ss_c(0)), ss_run1(2), ss_set1(ss_c(1)),
+                                    ss_set1(ss_c(2)), ss_set1(ss_c(3)), ss_pass(629)});
+        SsExpect e;
+        e.paint(3, 4, ss_c(0)).paint(5, 6, ss_c(1)).paint(7, 8, ss_c(2)).paint(9, 10, ss_c(3));
+        ss_check("g  x=3, pass2 + lead-in", t, e, 3, 0, 0);
+    }
+
+    // (c) T5a — C C T C (A B . D), cmp_color0 = D preloaded eagerly in HBLANK.
+    // RUN(pass,2) on 105 and RUN(c0,2) on 107 are both cadence entries with
+    // n = 2, so each is one two-slot pixel and one word; the stream carries on
+    // in cmp_color0 (SET target 1: E on 109).  4 words for 4 pixels.
+    {
+        const Rgb444  A = ss_c(4);
+        const Rgb444  B = ss_c(5);
+        const Rgb444  D = ss_c(6);
+        const Rgb444  E = ss_c(7);
+        const SsTrace t = ss_trace({ss_set0(D), ss_pass(100), ss_set1(A), ss_run1(2), ss_set1(B),
+                                    ss_pass(2), ss_run0(2), ss_set0(E), ss_pass(529)});
+        SsExpect e;
+        e.paint(101, 102, A).paint(103, 104, B).paint(107, 108, D).paint(109, 110, E);
+        ss_check("c  C C T C, c0 preloaded", t, e, 2, 0, 0);
+    }
+
+    // (c) T5b — C C T C where the colour after the hole equals the one before it:
+    // re-enter cmp_color1 with RUN(c1,2), no preload needed.
+    {
+        const Rgb444  A = ss_c(4);
+        const Rgb444  B = ss_c(5);
+        const Rgb444  E = ss_c(7);
+        const SsTrace t = ss_trace({ss_pass(100), ss_set1(A), ss_run1(2), ss_set1(B), ss_pass(2),
+                                    ss_run1(2), ss_set1(E), ss_pass(529)});
+        SsExpect e;
+        e.paint(101, 102, A).paint(103, 104, B).paint(107, 108, B).paint(109, 110, E);
+        ss_check("c  C C T C, D == B", t, e, 2, 0, 0);
+    }
+
+    // (c) T5c — C T T C (A . . D): RUN(pass,3) on 103 is a cadence entry of 3,
+    // so it builds a pair: SET c1=D on 106 is invisible under passthrough and
+    // RUN(c1,2) paints D on 107.  3 words for the 3 pixels T T D, no preload.
+    {
+        const Rgb444  A = ss_c(4);
+        const Rgb444  D = ss_c(6);
+        const Rgb444  E = ss_c(7);
+        const SsTrace t = ss_trace({ss_pass(100), ss_set1(A), ss_run1(2), ss_pass(3), ss_set1(D),
+                                    ss_run1(2), ss_set1(E), ss_pass(529)});
+        SsExpect e;
+        e.paint(101, 102, A).paint(107, 108, D).paint(109, 110, E);
+        ss_check("c  C T T C", t, e, 1, 0, 0);
+    }
+
+    // (c) T5d — NEGATIVE: C T C with nothing preloaded, loading D inside the
+    // hole.  RUN(pass,2) has no pair behind it, so SET D takes 105-106 and the
+    // hole is TWO pixels wide, D one pixel late.  This is the derived WRONG
+    // picture; the intended one must differ from it.
+    {
+        const Rgb444  A = ss_c(4);
+        const Rgb444  D = ss_c(6);
+        const SsTrace t = ss_trace({ss_pass(100), ss_set1(A), ss_run1(2), ss_pass(2), ss_set1(D),
+                                    ss_run1(2), ss_pass(531)});
+        SsExpect e;
+        e.paint(101, 102, A).paint(107, 108, D);
+        ss_check("c  C T C, D loaded in the hole (BAD)", t, e, 1, 0, 0);
+        SsExpect intended;
+        intended.paint(101, 102, A).paint(105, 106, D);
+        uint32_t first = 0;
+        CHECK(ss_diff(t.px, intended.px, first) != 0,
+              "m13 trace: a single hole re-entered with a SET inside it must NOT land as intended");
+    }
+
+    // (c) T5e — a same-colour run with a FREE word: A A A B . X.  RUN(c1,5) on
+    // 101 (cadence entry, n >= 3) builds a pair on 106/107, so SET c0=X is the
+    // invisible first half (cmp_color1 is on screen) and B lands on 107.  The
+    // preloaded X then re-enters after the single hole.
+    {
+        const Rgb444  A = ss_c(8);
+        const Rgb444  B = ss_c(9);
+        const Rgb444  X = ss_c(10);
+        const SsTrace t = ss_trace({ss_pass(100), ss_set1(A), ss_run1(5), ss_set0(X), ss_set1(B),
+                                    ss_pass(2), ss_run0(2), ss_pass(527)});
+        SsExpect e;
+        e.paint(101, 106, A).paint(107, 108, B).paint(111, 112, X);
+        ss_check("c  A A A B T X, free preload", t, e, 1, 0, 0);
+    }
+
+    // (f) T6 — the other register and the clobber.  cmp_color0 = Q is preset;
+    // after a 3-pixel stream RUN(c0,10) still shows Q (the stream never writes
+    // target 1), but RUN(c1,10) shows the stream's LAST colour C, not anything a
+    // single-colour sprite would have expected.
+    {
+        const Rgb444  Q = ss_c(11);
+        const Rgb444  A = ss_c(12);
+        const Rgb444  B = ss_c(13);
+        const Rgb444  C = ss_c(14);
+        const SsTrace t = ss_trace({ss_set0(Q), ss_pass(100), ss_set1(A), ss_run1(2), ss_set1(B),
+                                    ss_set1(C), ss_pass(20), ss_run0(10), ss_pass(20), ss_run1(10),
+                                    ss_pass(473)});
+        SsExpect e;
+        e.paint(101, 102, A).paint(103, 104, B).paint(105, 106, C);
+        e.paint(127, 136, Q).paint(157, 166, C);
+        ss_check("f  c0 untouched, c1 clobbered", t, e, 2, 0, 0);
+    }
+
+    // (f) T6b — the repair: re-SET cmp_color1 as the invisible first half of the
+    // pair in front of the RUN, paid for by shortening the passthrough RUN by one.
+    {
+        const Rgb444  Q = ss_c(11);
+        const Rgb444  A = ss_c(12);
+        const Rgb444  B = ss_c(13);
+        const Rgb444  C = ss_c(14);
+        const Rgb444  S = ss_c(15);
+        const SsTrace t = ss_trace({ss_set0(Q), ss_pass(100), ss_set1(A), ss_run1(2), ss_set1(B),
+                                    ss_set1(C), ss_pass(20), ss_run0(10), ss_pass(19), ss_set1(S),
+                                    ss_run1(10), ss_pass(473)});
+        SsExpect e;
+        e.paint(101, 102, A).paint(103, 104, B).paint(105, 106, C);
+        e.paint(127, 136, Q).paint(157, 166, S);
+        ss_check("f  c1 re-SET in the pair slot", t, e, 2, 0, 0);
+    }
+
+    // (e) T7 — ONE LATE WORD.  The line is in the FIFO up to SET C; SET D, SET E
+    // and the exit arrive at the start of slot 140.  C executes on 105 with an
+    // empty FIFO, so 106..139 are STARVATION holds keeping cmp_color1 = C.  The
+    // push meets a cold /EF synchronizer: no fall on edges 140 and 141, fall on
+    // 142, capture 143, D executes on 144 = P + 4.  Behind it the stream is
+    // sustained again: E 146, exit 148.  Geometry is NOT kept: every record from
+    // D on is 37 slots late, and the line over-runs.
+    {
+        const SsTrace t = ss_trace({ss_pass(100), ss_set1(ss_c(0)), ss_run1(2), ss_set1(ss_c(1)),
+                                    ss_set1(ss_c(2))},
+                                   {{140, ss_set1(ss_c(3))}, {140, ss_set1(ss_c(4))},
+                                    {140, ss_pass(529)}});
+        SsExpect e;
+        e.paint(101, 102, ss_c(0)).paint(103, 104, ss_c(1)).paint(105, 143, ss_c(2));
+        e.paint(144, 145, ss_c(3)).paint(146, 147, ss_c(4));
+        ss_check("e  one late SET (pushed at 140)", t, e, 7, 34, 1);
+    }
+
+    // (g) T8 — how much must be BUFFERED when a 16-pixel sprite starts.  Sprite
+    // words j = 0..17 (lead-in SET, RUN(c1,2), SET c1..c15, exit) at x0 = 201;
+    // word j >= 1 executes on x0 + 2(j-1).  In a sustained stream word j falls
+    // on edge x0+2(j-1)-2 only if it was in the FIFO by slot x0+2(j-1)-3 (the
+    // /EF synchronizer's meta stage).  With B words buffered and the rest
+    // trickled at ENGINE's 2 SYSCLK each from the lead-in's slot, word B-1+n
+    // arrives at x0-1+ceil(3.596n):  B = 10 meets every deadline (the last word
+    // with one slot to spare); B = 9 misses word 16 (SET c15, x0+28 > x0+27),
+    // which then takes the cold path (lands x0+32) and drags the exit to x0+36.
+    {
+        constexpr uint32_t X0 = 201;
+        std::vector<uint16_t> sprite = {ss_set1(ss_c(0)), ss_run1(2)};
+        for (uint32_t i = 1; i < 16; i++)
+        {
+            sprite.push_back(ss_set1(ss_c(i)));
+        }
+        sprite.push_back(ss_pass(H_ACTIVE - (X0 + 32)));
+
+        for (uint32_t buffered : {10u, 9u})
+        {
+            std::vector<uint16_t> words = {ss_pass(X0 - 1)};
+            std::vector<SsPush>   late;
+            for (uint32_t j = 0; j < sprite.size(); j++)
+            {
+                if (j < buffered)
+                {
+                    words.push_back(sprite[j]);
+                }
+                else
+                {
+                    late.push_back({X0 - 1 + ss_trickle_offset(j - buffered + 1), sprite[j]});
+                }
+            }
+            const SsTrace t = ss_trace(words, late);
+            SsExpect e;
+            if (buffered == 10)
+            {
+                for (uint32_t i = 0; i < 16; i++)
+                {
+                    e.paint(X0 + 2 * i, X0 + 2 * i + 1, ss_c(i));
+                }
+                ss_check("g  16-px sprite, 10 of 18 buffered", t, e, 15, 0, 0);
+            }
+            else
+            {
+                for (uint32_t i = 0; i < 14; i++)
+                {
+                    e.paint(X0 + 2 * i, X0 + 2 * i + 1, ss_c(i));
+                }
+                e.paint(X0 + 28, X0 + 31, ss_c(14)).paint(X0 + 32, X0 + 35, ss_c(15));
+                ss_check("g  16-px sprite, 9 of 18 buffered", t, e, 19, 0, 1);
+            }
+        }
+    }
+}
+
+// --- The whole-frame case -----------------------------------------------------
+//
+// A 4bpp half-rate playfield (80 PIXELS words a line, the m12 / Mandelbrot
+// mode) with a 32-line band of SET-stream sprites:
+//   S1  at the LEFT EDGE, 16 opaque colours that change every line: eager
+//       SET c1 in HBLANK + RUN(c1,1) + 15 SETs.  Pixel 0 is one slot (slot 0);
+//       pixel i >= 1 is slots 2i-1, 2i (T4: x = 0 cannot have both pixels 0 and
+//       1 two slots wide).  31 slots, exit RUN on slot 31.
+//   S2  at x = 200, the transparency row A B . D E E . . G H . J K L M N, its
+//       word list derived slot by slot below.  32 slots, exit on 232.
+//
+//   S2 word            slot   why
+//   SET c1=A           199    pair 1st behind S1's exit RUN(168): invisible
+//   RUN(c1,2)          200    A 200-201; cadence entry n=2, next at +2
+//   SET c1=B           202    B, hold 203
+//   RUN(pass,2)        204    hole 204-205
+//   RUN(c0,2)          206    D, preloaded eagerly in HBLANK
+//   SET c0=E           208    E, hold 209 (the stream now runs in cmp_color0)
+//   SET c1=G           210    the repeated E pixel: an invisible PRELOAD of G
+//   RUN(pass,3)        212    hole 212-214 and a pair behind it (n = 3)
+//   SET c0=J           215    pair 1st, invisible under passthrough: preload
+//   RUN(c1,2)          216    G (pair 2nd)
+//   SET c1=H           218    H, hold 219
+//   RUN(pass,2)        220    hole 220-221
+//   RUN(c0,2)          222    J
+//   SET c0=K,L,M,N     224..  2 slots each, holds 225..231
+//   RUN(pass,408)      232    to slot 639: the line occupies exactly 640
+//
+// Cadence holds per band line: S1 15 (one per SET) + S2 8 = 23; starvation 0.
+
+enum class SsVariant : uint8_t
+{
+    K1_TWO,            // both sprites, programs deposited one line ahead
+    K0_VIDCMD_FIRST,   // S1 only, the line's program first in its own HBLANK group
+    K0_PIXELS_FIRST,   // S1 only, the program behind the line's 80 PIXELS words
+    K0_LATE,           // as K0_VIDCMD_FIRST, but line 200's last two words go last
+};
+
+constexpr uint32_t SS_PREAMBLE_BASE = 0x320000;
+constexpr uint32_t SS_PREAMBLE_STEP = 0x000400;
+constexpr uint32_t SS_PROGRAM_BASE  = 0x330000;
+constexpr uint32_t SS_PROGRAM_STEP  = 0x010000;
+constexpr uint32_t SS_PROGRAM_BYTES = 0x80;
+constexpr uint32_t SS_BAND_FIRST    = 200;
+constexpr uint32_t SS_BAND_LINES    = 32;
+constexpr uint32_t SS_LATE_LINE     = SS_BAND_FIRST;
+constexpr uint32_t SS_LATE_SPLIT    = 16;   // eager SET, RUN(c1,1), SET A1..A14
+constexpr uint32_t SS_ROW           = 16;
+constexpr uint32_t SS_S1_SLOTS      = 2 * SS_ROW - 1;
+constexpr uint32_t SS_S2_X          = 200;
+constexpr uint32_t SS_HOLE          = 0xFFFF;
+
+constexpr Rgb444 SS_A = 0xF80;
+constexpr Rgb444 SS_B = 0x08F;
+constexpr Rgb444 SS_D = 0x8F0;
+constexpr Rgb444 SS_E = 0xF08;
+constexpr Rgb444 SS_G = 0x0F8;
+constexpr Rgb444 SS_H = 0x80F;
+constexpr Rgb444 SS_J = 0xFF8;
+constexpr Rgb444 SS_K = 0x8FF;
+constexpr Rgb444 SS_L = 0xF8F;
+constexpr Rgb444 SS_M = 0x444;
+constexpr Rgb444 SS_N = 0xCCC;
+
+constexpr std::array<uint32_t, SS_ROW> SS_S2_ART = {
+    SS_A, SS_B, SS_HOLE, SS_D, SS_E, SS_E, SS_HOLE, SS_HOLE,
+    SS_G, SS_H, SS_HOLE, SS_J, SS_K, SS_L, SS_M,   SS_N,
+};
+
+constexpr std::array<uint16_t, 17> SS_S2_WORDS = {
+    ss_set1(SS_A), ss_run1(2), ss_set1(SS_B), ss_pass(2), ss_run0(2), ss_set0(SS_E),
+    ss_set1(SS_G), ss_pass(3), ss_set0(SS_J), ss_run1(2), ss_set1(SS_H), ss_pass(2),
+    ss_run0(2), ss_set0(SS_K), ss_set0(SS_L), ss_set0(SS_M), ss_set0(SS_N),
+};
+
+constexpr uint32_t SS_CADENCE_S1 = SS_ROW - 1;
+constexpr uint32_t SS_CADENCE_S2 = 8;
+
+bool ss_band(uint32_t y)
+{
+    return y >= SS_BAND_FIRST && y < SS_BAND_FIRST + SS_BAND_LINES;
+}
+
+Rgb444 ss_s1_colour(uint32_t i, uint32_t y)
+{
+    return ss_c((i + y) % 16u);
+}
+
+// One line's VIDCMD program into `out`; returns its word count.
+uint32_t ss_line_program(SsVariant v, uint32_t y, uint16_t *out)
+{
+    uint32_t n = 0;
+    if (!ss_band(y))
+    {
+        out[n++] = ss_pass(H_ACTIVE);
+        return n;
+    }
+    const bool two = (v == SsVariant::K1_TWO);
+    out[n++] = ss_set1(ss_s1_colour(0, y));   // eager, in this line's HBLANK
+    if (two)
+    {
+        out[n++] = ss_set0(SS_D);              // eager: the hole re-entry colour
+    }
+    out[n++] = ss_run1(1);
+    for (uint32_t i = 1; i < SS_ROW; i++)
+    {
+        out[n++] = ss_set1(ss_s1_colour(i, y));
+    }
+    if (two)
+    {
+        out[n++] = ss_pass(SS_S2_X - 1 - SS_S1_SLOTS);
+        for (uint16_t w : SS_S2_WORDS)
+        {
+            out[n++] = w;
+        }
+        out[n++] = ss_pass(H_ACTIVE - (SS_S2_X + 2 * SS_ROW));
+    }
+    else
+    {
+        out[n++] = ss_pass(H_ACTIVE - SS_S1_SLOTS);
+    }
+    return n;
+}
+
+uint32_t ss_author(Memory ram, SsVariant v, uint32_t table, uint32_t frame)
+{
+    const uint32_t preamble = SS_PREAMBLE_BASE + frame * SS_PREAMBLE_STEP;
+    const uint32_t programs = SS_PROGRAM_BASE + frame * SS_PROGRAM_STEP;
+
+    std::vector<uint32_t> len(V_ACTIVE, 0);
+    uint16_t              buf[SS_PROGRAM_BYTES / 2];
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        len[y] = ss_line_program(v, y, buf);
+        for (uint32_t i = 0; i < len[y]; i++)
+        {
+            ram[programs + y * SS_PROGRAM_BYTES + i * 2] = buf[i];
+        }
+    }
+
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < PALETTE_ENTRIES; i++)
+    {
+        for (uint16_t w : vidcmd_palette_entry(i, cc_palette(i)))
+        {
+            ram[preamble + (n++) * 2] = w;
+        }
+    }
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_PIX_BASE, 0);
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_PIX_MODE, pixel_mode(PIXEL_DEPTH_4BPP, true));
+    if (v == SsVariant::K1_TWO)
+    {
+        // One line of lookahead: line 0's program has no group to ride in.
+        for (uint32_t i = 0; i < len[0]; i++)
+        {
+            ram[preamble + (n++) * 2] = ram[programs + i * 2];
+        }
+    }
+
+    CcEmitter e{ram, table, 0};
+    for (uint32_t i = 0; i < CC_PACERS_BEFORE_PREAMBLE; i++)
+    {
+        e.pacer(false);
+    }
+    e.stream(preamble, n, DEST_VIDCMD_FIFO_W, false);
+    for (uint32_t i = 0; i < CC_PACERS_AFTER_PREAMBLE; i++)
+    {
+        e.pacer(false);
+    }
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        const uint32_t px   = CC_FB_BASE + (y / 2) * CC_FB_STRIDE;
+        const uint32_t prog = programs + y * SS_PROGRAM_BYTES;
+        if (v == SsVariant::K1_TWO)
+        {
+            e.stream(px, PIXELS_WORDS_4BPP_HALF, DEST_PIXELS_FIFO_W, true);
+            if (y + 1 < V_ACTIVE)
+            {
+                e.stream(prog + SS_PROGRAM_BYTES, len[y + 1], DEST_VIDCMD_FIFO_W, false);
+            }
+        }
+        else if (v == SsVariant::K0_PIXELS_FIRST)
+        {
+            e.stream(px, PIXELS_WORDS_4BPP_HALF, DEST_PIXELS_FIFO_W, true);
+            e.stream(prog, len[y], DEST_VIDCMD_FIFO_W, false);
+        }
+        else if (v == SsVariant::K0_LATE && y == SS_LATE_LINE)
+        {
+            e.stream(prog, SS_LATE_SPLIT, DEST_VIDCMD_FIFO_W, true);
+            e.stream(px, PIXELS_WORDS_4BPP_HALF, DEST_PIXELS_FIFO_W, false);
+            e.stream(prog + SS_LATE_SPLIT * 2, len[y] - SS_LATE_SPLIT, DEST_VIDCMD_FIFO_W, false);
+        }
+        else
+        {
+            e.stream(prog, len[y], DEST_VIDCMD_FIFO_W, true);
+            e.stream(px, PIXELS_WORDS_4BPP_HALF, DEST_PIXELS_FIFO_W, false);
+        }
+    }
+    e.pacer(true);
+    return e.count;
+}
+
+struct SsRun
+{
+    RenderResult    r;
+    InterpretResult interp;
+    uint32_t        descriptors = 0;
+};
+
+SsRun ss_run(Memory ram, SsVariant v, bool line_at_a_time)
+{
+    SsRun          out;
+    const uint32_t tables[RENDER_FRAMES] = {TABLE_A, TABLE_B};
+    InterpretParams ip;
+    ip.start_cycle          = first_arm_cycle();
+    ip.end_cycle            = run_end_cycle();
+    ip.rearm_latency_cycles = REARM_LATENCY_CYCLES;
+    for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+    {
+        out.descriptors = ss_author(ram, v, tables[f], f);
+        ip.arm_addresses.push_back(tables[f]);
+    }
+    out.interp = interpret(ram, ip);
+
+    RenderParams rp;
+    rp.first_frame = RENDER_FIRST_FRAME;
+    rp.frame_count = RENDER_FRAMES;
+    out.r = line_at_a_time ? render_line_at_a_time(out.interp.events, rp)
+                           : render(out.interp.events, rp);
+    return out;
+}
+
+// Where line 200's two late words land, derived from their DEPOSIT cycles (the
+// ENGINE model's output, an input to the compositor law, not a compositor
+// result).  P0/P1 are the slots at whose start each word is in the FIFO.
+struct SsLate
+{
+    uint32_t p0   = 0;
+    uint32_t p1   = 0;
+    uint32_t exit = 0;   // the exit RUN's slot
+    uint32_t words = 0;
+};
+
+SsLate ss_late_positions(const InterpretResult &ir, uint32_t frame_out)
+{
+    SsLate         l;
+    const uint64_t abs_line = static_cast<uint64_t>(RENDER_FIRST_FRAME + frame_out) * V_TOTAL +
+                              SS_LATE_LINE;
+    const uint64_t pixel0   = abs_line * H_TOTAL;
+    const uint64_t on_time  = sysclk_of_pixel(pixel0);
+    const uint64_t last     = sysclk_of_pixel(pixel0 + H_ACTIVE - 1);
+    uint32_t       slots[2] = {0, 0};
+    for (const DepositEvent &e : ir.events)
+    {
+        if (e.destination != DEST_VIDCMD_FIFO_W || e.cycle <= on_time || e.cycle > last)
+        {
+            continue;
+        }
+        uint32_t h = 0;
+        while (sysclk_of_pixel(pixel0 + h) < e.cycle)
+        {
+            h++;
+        }
+        if (l.words < 2)
+        {
+            slots[l.words] = h;
+        }
+        l.words++;
+    }
+    l.p0 = slots[0];
+    l.p1 = slots[1];
+    // The derivation: SET A15 meets a cold synchronizer and executes on P0+4;
+    // the exit RUN falls on P0+4 if its push was in by P0+3 (its meta stage was
+    // set on edge P0+3), else it takes the cold path from P1 = P0+4.
+    l.exit = (l.p1 <= l.p0 + 3) ? (l.p0 + 6) : (l.p0 + 8);
+    return l;
+}
+
+Rgb444 ss_expected(SsVariant v, uint32_t x, uint32_t y, const SsLate *late, int32_t s2_slip = 0)
+{
+    const Rgb444 bd = cc_palette(cc_fb_nibble(x / 2, y / 2));
+    if (!ss_band(y))
+    {
+        return bd;
+    }
+    uint32_t shift = 0;
+    if (v == SsVariant::K0_LATE && late != nullptr)
+    {
+        if (y == SS_LATE_LINE)
+        {
+            if (x <= 26)
+            {
+                return ss_s1_colour((x + 1) / 2, y);
+            }
+            if (x < late->p0 + 4)
+            {
+                return ss_s1_colour(14, y);
+            }
+            if (x < late->exit)
+            {
+                return ss_s1_colour(15, y);
+            }
+            return bd;
+        }
+        if (y > SS_LATE_LINE)
+        {
+            shift = late->exit - SS_S1_SLOTS;
+        }
+    }
+    if (x >= shift && x < shift + SS_S1_SLOTS)
+    {
+        return ss_s1_colour((x - shift + 1) / 2, y);
+    }
+    const int32_t s2x = static_cast<int32_t>(SS_S2_X) + s2_slip;
+    const int32_t xi  = static_cast<int32_t>(x);
+    if (v == SsVariant::K1_TWO && xi >= s2x && xi < s2x + static_cast<int32_t>(2 * SS_ROW))
+    {
+        const uint32_t a = SS_S2_ART[static_cast<uint32_t>(xi - s2x) / 2];
+        return (a == SS_HOLE) ? bd : static_cast<Rgb444>(a);
+    }
+    return bd;
+}
+
+uint32_t ss_mismatches(const FrameImage &img, SsVariant v, const SsLate *late, int32_t slip = 0)
+{
+    uint32_t bad = 0;
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        for (uint32_t x = 0; x < H_ACTIVE; x++)
+        {
+            bad += (at(img, x, y) != ss_expected(v, x, y, late, slip)) ? 1u : 0u;
+        }
+    }
+    return bad;
+}
+
+void ss_common_checks(const char *name, const SsRun &run)
+{
+    const RenderStats &s = run.r.stats;
+    CHECK(run.interp.violations.empty(), "m13-set-stream/%s: %zu interpreter violations", name,
+          run.interp.violations.size());
+    CHECK(run.descriptors * DESC_BYTES <= TABLE_HALF_BYTES,
+          "m13-set-stream/%s: %u descriptors overflow the table half", name, run.descriptors);
+    CHECK(s.vidcmd_overflows == 0, "m13-set-stream/%s: VIDCMD FIFO overflowed", name);
+    CHECK(s.pixels_overflows == 0, "m13-set-stream/%s: PIXELS FIFO overflowed", name);
+    CHECK(s.palette_unwritten_reads == 0 && s.palette_bad_filler == 0 &&
+          s.palette_disturbed_visible == 0, "m13-set-stream/%s: palette rule broken", name);
+    CHECK(s.vidcmd_mask_records == 0, "m13-set-stream/%s: stray MASK records", name);
+}
+
+void run_set_stream_case(Memory ram)
+{
+    printf("\n=== m13-set-stream — 16-pixel SET(cmp_color1) sprites over a 4bpp half-rate "
+           "playfield, band lines %u..%u ===\n", SS_BAND_FIRST, SS_BAND_FIRST + SS_BAND_LINES - 1);
+    cc_write_framebuffer(ram);
+
+    // The planner (cushion assumption) has to agree that both band programs
+    // close at exactly 640 slots with no record behind its authored slot.
+    {
+        uint16_t buf[SS_PROGRAM_BYTES / 2];
+        for (SsVariant v : {SsVariant::K1_TWO, SsVariant::K0_VIDCMD_FIRST})
+        {
+            const uint32_t n = ss_line_program(v, SS_BAND_FIRST, buf);
+            const VidcmdSlotPlan plan = vidcmd_plan_line(std::span<const uint16_t>(buf, n));
+            printf("  band program        %2u words: planner %u slots, %u eager SETs, "
+                   "stretch %u\n", n, plan.slots, plan.blank_sets, plan.stretch);
+            CHECK(plan.slots == H_ACTIVE, "m13-set-stream: band program plans %u slots, not %u",
+                  plan.slots, H_ACTIVE);
+        }
+    }
+
+    const struct
+    {
+        SsVariant   v;
+        const char *name;
+        const char *why;
+    } variants[] = {
+        {SsVariant::K1_TWO, "k1-two", "two sprites, programs one line ahead, PIXELS first"},
+        {SsVariant::K0_VIDCMD_FIRST, "k0-vc", "left-edge sprite, program first in its HBLANK"},
+        {SsVariant::K0_PIXELS_FIRST, "k0-px", "left-edge sprite, program behind 80 PIXELS words"},
+        {SsVariant::K0_LATE, "late", "line 200's last two words deposited after its PIXELS"},
+    };
+
+    for (const auto &var : variants)
+    {
+        const SsRun        run = ss_run(ram, var.v, false);
+        const RenderStats &s   = run.r.stats;
+        const GroupBudget  b   = group_budget(run.interp);
+
+        SsLate late[RENDER_FRAMES];
+        const SsLate *lp[RENDER_FRAMES] = {nullptr, nullptr};
+        if (var.v == SsVariant::K0_LATE)
+        {
+            for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+            {
+                late[f] = ss_late_positions(run.interp, f);
+                lp[f]   = &late[f];
+            }
+        }
+        uint32_t bad[RENDER_FRAMES];
+        for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+        {
+            bad[f] = ss_mismatches(run.r.frames[f], var.v, lp[f]);
+        }
+
+        printf("  %-7s %-52s\n", var.name, var.why);
+        printf("          wrong pixels %u + %u of %u   cadence %u  starvation %u  overruns %u  "
+               "late words %u\n", bad[0], bad[1], H_ACTIVE * V_ACTIVE, s.vidcmd_cadence_slots,
+               s.vidcmd_hold_slots, s.vidcmd_overruns, s.vidcmd_late_words);
+        printf("          worst group %u SYSCLK of %llu (66%% budget %u), %u descriptors, "
+               "PIXELS tiled %u, VIDCMD high water %u\n", b.max_busy,
+               static_cast<unsigned long long>(LINE_SYSCLK), VIDCMD_LINE_SYSCLK_BUDGET,
+               run.descriptors, s.pixels_tiled_words, s.vidcmd_fifo_high);
+        ss_common_checks(var.name, run);
+
+        if (var.v == SsVariant::K0_PIXELS_FIRST)
+        {
+            // NEGATIVE: the program lands after pixel 0 on every line.  What it
+            // does there is the starvation law of T7 applied line after line;
+            // what matters here is that the case can fail and does.
+            CHECK(bad[0] != 0 && bad[1] != 0,
+                  "m13-set-stream/k0-px: a program delivered after pixel 0 drew the sprite "
+                  "correctly — the comparison cannot fail");
+            CHECK(s.vidcmd_hold_slots != 0 && s.vidcmd_overruns != 0,
+                  "m13-set-stream/k0-px: expected starvation holds and overruns");
+            continue;
+        }
+
+        for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+        {
+            CHECK(bad[f] == 0, "m13-set-stream/%s: frame %u has %u pixels off the derived image",
+                  var.name, f + 1, bad[f]);
+        }
+        CHECK(s.pixels_tiled_words == 0, "m13-set-stream/%s: PIXEL tiled %u words", var.name,
+              s.pixels_tiled_words);
+
+        if (var.v == SsVariant::K0_LATE)
+        {
+            uint32_t starve = 0;
+            uint32_t cad    = 0;
+            for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+            {
+                const SsLate &l = late[f];
+                printf("          frame %u: late words in at slots %u and %u -> A15 on %u, exit "
+                       "on %u (nominal 29 / 31), shift %u for the rest of the frame\n", f + 1,
+                       l.p0, l.p1, l.p0 + 4, l.exit, l.exit - SS_S1_SLOTS);
+                CHECK(l.words == 2, "m13-set-stream/late: %u words arrived during line %u, "
+                      "expected 2", l.words, SS_LATE_LINE);
+                CHECK(l.p1 >= l.p0 + 3 && l.p1 <= l.p0 + 4 && l.p0 > 40,
+                      "m13-set-stream/late: deposit slots %u/%u outside the derivation's range",
+                      l.p0, l.p1);
+                starve += l.p0 - 28;
+                cad += (SS_BAND_LINES - 1) * SS_CADENCE_S1 + 13 + 4 + (l.exit - l.p0 - 5);
+            }
+            CHECK(s.vidcmd_hold_slots == starve, "m13-set-stream/late: %u starvation holds, "
+                  "derived %u", s.vidcmd_hold_slots, starve);
+            CHECK(s.vidcmd_cadence_slots == cad, "m13-set-stream/late: %u cadence holds, "
+                  "derived %u", s.vidcmd_cadence_slots, cad);
+            CHECK(s.vidcmd_overruns == RENDER_FRAMES * (V_ACTIVE - SS_LATE_LINE),
+                  "m13-set-stream/late: %u overruns, derived %u", s.vidcmd_overruns,
+                  RENDER_FRAMES * (V_ACTIVE - SS_LATE_LINE));
+            CHECK(s.vidcmd_late_words == 2 * RENDER_FRAMES,
+                  "m13-set-stream/late: %u late words, expected %u", s.vidcmd_late_words,
+                  2 * RENDER_FRAMES);
+            continue;
+        }
+
+        // Clean variants: exact 640 framing, no starvation, the cadence holds
+        // are the derived mechanism count, and the emulator's driver agrees.
+        const uint32_t per_line = SS_CADENCE_S1 +
+                                  ((var.v == SsVariant::K1_TWO) ? SS_CADENCE_S2 : 0u);
+        CHECK(s.vidcmd_hold_slots == 0, "m13-set-stream/%s: %u starvation holds", var.name,
+              s.vidcmd_hold_slots);
+        CHECK(s.vidcmd_overruns == 0, "m13-set-stream/%s: %u overruns", var.name,
+              s.vidcmd_overruns);
+        CHECK(s.vidcmd_cadence_slots == RENDER_FRAMES * SS_BAND_LINES * per_line,
+              "m13-set-stream/%s: %u cadence holds, derived %u", var.name,
+              s.vidcmd_cadence_slots, RENDER_FRAMES * SS_BAND_LINES * per_line);
+        CHECK(b.max_busy < LINE_SYSCLK, "m13-set-stream/%s: a group costs %u SYSCLK", var.name,
+              b.max_busy);
+
+        const SsRun emu = ss_run(ram, var.v, true);
+        uint32_t    emu_bad = 0;
+        for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+        {
+            emu_bad += ss_mismatches(emu.r.frames[f], var.v, nullptr);
+        }
+        printf("          emulator driver: %u pixels off\n", emu_bad);
+        CHECK(emu_bad == 0, "m13-set-stream/%s: emulator driver has %u pixels off", var.name,
+              emu_bad);
+
+        if (var.v == SsVariant::K1_TWO)
+        {
+            const std::string path = "m13-set-stream.ppm";
+            write_ppm(path, run.r.frames[1]);
+            printf("          artifact %s\n", path.c_str());
+
+            // NEGATIVE CONTROL: the comparison must see a one-slot slip of S2.
+            const uint32_t slip = ss_mismatches(run.r.frames[0], var.v, nullptr, 1);
+            printf("          NEGATIVE CONTROL  S2 expected one slot right: %u pixels wrong\n",
+                   slip);
+            CHECK(slip != 0, "m13-set-stream: a one-slot slip of S2 went undetected");
+        }
+    }
+}
+
 }  // namespace
 
 int main()
@@ -5391,6 +6358,10 @@ int main()
 
     // --- M12: the whole-frame cursor chain (apps/lib/griffin_cursor.h) --------
     run_cursor_chain_case(ram);
+
+    // --- M13: literal pixels out of SET(cmp_color1) streams (SET-STREAM.md) --
+    check_set_stream_traces();
+    run_set_stream_case(ram);
 
     printf("\n=== summary ===\n");
     if (g_failures == 0)

@@ -2341,3 +2341,20 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   Streaming RUN fits alone (+4 LC) but not with form C.  Choosing between
   form C and streaming RUN is open (Brad).  Adoption is the five-layer list
   in RESULTS.md.
+
+2026-10-03 -- Video: a SET(cmp_color1) stream is a literal-pixel stream on today's COMPOSITOR (finding, super-engine m13)
+  With cmp_color1 on screen, each SET of it shows one 12-bit colour for
+  two slots (its own slot + the hold behind it); hand-derived slot maps
+  matched the model on every trace and on a 16-pixel sprite band over a
+  4bpp playfield.  Rules: lead-in [SET c1, RUN(c1,2)] behind a record of
+  >= 3 slots; one word a pixel, plus one invisible pair word after every
+  record of >= 3 slots; exit RUN(pass) lands with no stale slot; a hole of
+  p >= 2 pixels is RUN(pass,2p-1) + invisible SET + RUN; a ONE-pixel hole
+  needs its following colour already in a register; x = 0 and x = 2 are
+  not exact.  A 16-pixel row is 18 words; delivery needs ~10 of them
+  buffered, so the program goes first in its hblank or a line ahead.  A
+  late word shifts everything after it (the stream supplies the timing).
+  Compared with the fit ladder of the same day: form C LITERAL (fits,
+  120/128) is this stream with the select built in -- no lead-in, true
+  one-pixel holes and patches -- at the cost of RUN_COLOR.  Write-up:
+  super-engine/SET-STREAM.md.
