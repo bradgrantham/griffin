@@ -2291,3 +2291,53 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   squares per pixel and the colour mapping); scripted zoom
   compare-progress 0 differ.  Rejected for now: band widening with zoom
   and adaptive supersampling (listed 2026-10-02 as follow-ons).
+
+2026-10-03 -- COMPOSITOR LITERAL / HOLD: fit ladder (question; nothing adopted)
+  vidcmd-literal-hold-proposal.md tried on the frozen pinout with the
+  production flags (-preassign keep, debug, JTAG, TDI/TMS pullups,
+  power_reset); rungs, benches and write-up in cpld/experiments/literal/
+  (RESULTS.md).  LC / FF / Nodes+FB / PT, fitter pass:
+    R0  compositor.v refit                   122/95/143/389 p2 (= shipped)
+    R1  RUN_COLOR removed                    121/92/121/370 p1
+    R1h R1 + HOLD(N) alone (KEEP feedback)   118/92/117/379 p1
+    R2  form A literal (bank held, KEEP)     no fit, fan-in 45 on block E
+    R2s form A from set_pix_value, no stall  no fit, fan-in 44
+    R3/R4 R2 + HOLD, 12/10-bit counter       no fit, fan-in 45/44
+    R5  form B literal (direct load, KEEP)   no fit, fan-in 41
+    R5n form B without KEEP                  no fit, fan-in 41
+    R6/R6n R5 + HOLD, 12/10-bit counter      no fit, fan-in 41/44
+    R7  streaming RUN on R0, no literal      126/96/133/401 p1
+    R8  form C into cmp_color0               no fit (grouping, routing)
+    R8b form C into cmp_color1               120/92/119/386 p1  FITS
+    R8bh R8b + HOLD (KEEP)                   no fit (grouping)
+    R8bn R8b, 10-bit counter                 124/90/119/396 p1
+    R9  R8b + streaming RUN                  no fit
+    xor_synthesis on R2, R5, R5n, R8, R8bh   no fit; on R9 INTERNAL ERROR
+  The limit is block E's 40-signal fan-in, not product terms.  Block E
+  holds 8 of the 12 RGB_OUT pins and production already uses 39 of its 40
+  signals.  Any literal colour that reaches RGB_OUT by a new per-bit path
+  (staged_word, set_pix_value, or a direct D load) adds 8.  So forms A and
+  B cannot fit this pinout with any lever; KEEP feedback alone costs 1.
+  Form C (new; not in the proposal): the literal {00,11,colour} writes
+  cmp_color1 and selects colour1, one word.  It is an ordinary one-slot
+  record, so L1-L5 are unchanged and the mux gains nothing.  Costs:
+  colour1 is clobbered, and there is no KEEP/HOLD (a span is LIT +
+  RUN(colour1,N), N+1 px).  Margin is fitter luck: the cmp_color0 mirror
+  fails.
+  Seams measured on R8b: literal pitch 2 at the cadence, 1 inside a banked
+  pair; RUN(pt,n) LIT RUN(pt) = a one-pixel 640-res patch at n; literal
+  after MASK gap 0, and mask pixel 15 keeps the old colour1.
+  The full production bench passes on every rung except its 29 RUN_COLOR
+  checks (excluded before running); hand-derived lit_tb.v expectations all
+  matched on the first run.  13 negative controls (cross-form, 3 mutants)
+  all fail as required.
+  Proposal errors found:
+    form B's patch is 2 px (n-1 and n), not 1 -- the literal still occupies
+      its own slot under L1;
+    a form-B literal that opens a line is lost;
+    "no 12-bit latch" -- cmp_color1 and set_pix_value both hold the colour;
+    RUN_COLOR removal frees 3 FF / 1 LC, not ~5 FF;
+    the 10-bit counter buys nothing.
+  Streaming RUN fits alone (+4 LC) but not with form C.  Choosing between
+  form C and streaming RUN is open (Brad).  Adoption is the five-layer list
+  in RESULTS.md.
