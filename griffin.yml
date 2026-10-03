@@ -408,8 +408,8 @@ peripherals:
   #   instead: one entry costs VIDCMD_WORDS_PER_CLUT_ENTRY words.  IDX is
   #   stolen for the three pixel clocks after the commit and one more is a
   #   write-recovery guard, so those four pixel slots must be in blanking or
-  #   covered by a non-passthrough source (a cmp_color / RUN_COLOR RUN or an
-  #   opaque MASK dibit).
+  #   covered by a non-passthrough source (a cmp_color RUN or STREAM RUN, a
+  #   LITERAL/HOLD span, or an opaque MASK dibit).
   # - Reset (nRS at vsync): MODE, BASE, PIXEL_SKIP, CLUT_INDEX all 0, IDX 0,
   #   nCLUT_WE and nPIXELS_RE high — so an untouched chip is 1bpp full rate
   #   out of palette entries 0 and 1.  THE PALETTE RAM IS NEVER RESET: it
@@ -445,9 +445,9 @@ peripherals:
   # It plays the per-line VIDCMD instruction stream out of the VIDCMD FIFO
   # (2x IDT7200 ganged 16-bit, filled by ENGINE) and for every active pixel
   # slot selects one of passthrough (RGB_IN from PIXEL), cmp_color1,
-  # cmp_color0, or a RUN_COLOR's saturated colour.  Records: RUN, RUN_COLOR,
-  # SET (targets VIDCMD_SET_*: 0..1 local, 2..6 forwarded to PIXEL), MASK
-  # (two-word 16-pixel overlay).  Bit-level encodings are in
+  # cmp_color0, or KEEP (RGB_OUT holds the last colour shown).  Records: RUN,
+  # STREAM RUN, HOLD, LITERAL, SET (targets VIDCMD_SET_*: 0..1 local, 2..6
+  # forwarded to PIXEL), MASK (two-word 16-pixel overlay).  Bit-level encodings are in
   # super-engine/descriptor.h and semantics in vidcmd-spec.md.  Everything is
   # in the PIXEL_CLK domain except nVIDCMD_EF (2-FF synchronized); H_ACTIVE,
   # nRS and RGB_IN arrive on the same clock unsynchronized.  Machine reset is
@@ -469,11 +469,11 @@ peripherals:
   #   (see PIXEL) — and PIXEL applies it at the commit pulse with no capture
   #   register.  PIXEL taps [3:0] only; all twelve bits also drive the
   #   palette RAM's data inputs (see interfaces, "Palette RAM").
-  # - COMPOSITOR's own colours (cmp_color1, cmp_color0, RUN_COLOR, MASK) are
+  # - COMPOSITOR's own colours (cmp_color1, cmp_color0, LITERAL, MASK) are
   #   direct 12-bit values and never go through the palette.
   COMPOSITOR:
     part: "ATF1508AS (PLCC84)"
-    description: "VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, SET forwarding to PIXEL, MASK overlays"
+    description: "VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, literal pixels, SET forwarding to PIXEL, MASK overlays"
     clock: 25175000
 
   # GLUE decodes the region, hands over ~PORTS_SELECT and answers DTACK.
@@ -909,6 +909,10 @@ constants:
   # A palette entry is three VIDCMD words: SET CLUT_INDEX, SET CLUT_DATA and
   # the same-value filler.
   VIDCMD_WORDS_PER_CLUT_ENTRY: 3
+
+  # RUN, STREAM RUN and HOLD counts are ten bits (bits 11:10 are the record
+  # kind); a count of 0 plays 1024 slots.
+  VIDCMD_RUN_COUNT_MAX: 1023
 
   # SET PIX_MODE value: mode[1:0] depth enumeration, mode[2] half rate,
   # mode[3] reserved (write 0).

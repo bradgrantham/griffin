@@ -91,3 +91,4 @@ mixer/.cache/
 
 # AUDIO model build tree
 audio/build/
+cpld/compositor/mutants/

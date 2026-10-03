@@ -76,6 +76,24 @@
 //       data.  The data word is captured with have_staged LOW, so no bit
 //       pattern of it can reach the SET/RUN decode or the PIXEL bus.
 //
+// LITERAL, HOLD, KEEP and the STREAM RUN (2026-10-03) add four more:
+//
+//   LL  a LITERAL is a one-slot playback record that HOLDS THE BANK for its
+//       slot: its colour is read out of staged_word during the cycle after its
+//       consume edge, so the fetch may not capture on that edge.  Whatever
+//       follows it — banked or not — is captured one edge late and executes
+//       two slots after it.  Its own slot shows the colour; every slot after
+//       it shows KEEP until the next record executes.
+//   LK  KEEP is RGB_OUT fed back: it repeats the last colour SHOWN (literal,
+//       passthrough pixel, mask pixel).  RGB_OUT is black outside H_ACTIVE, so
+//       KEEP at the start of a line is black.  HOLD(N) = KEEP for N slots.
+//   LS  a STREAM RUN lets a staged SET execute on the next active edge
+//       without waiting for the terminal; the count runs on untouched (the
+//       run's geometry is fixed), every other record waits for the terminal,
+//       and the SETs themselves follow L4/L5 exactly as if each had been the
+//       record after a one-slot record.
+//   LC  counts are ten bits; RUN/STREAM/HOLD kind is bits 11:10 = 11/10/0x.
+//
 // CHAINED MASKS ARE GAPLESS — ZERO slots of seam, derived, not measured.  By
 // LM3 mask B's header is captured on the very edge that paints A's pixel 15, so
 // it is staged, with a terminal count, during A's last slot; the ordinary
@@ -221,19 +239,35 @@ module CompositorTb;
     // VIDCMD encoders — bit-for-bit super-engine/descriptor.h
     // ----------------------------------------------------------------
 
+    // RUN: bits 11:10 = 11, ten-bit count.  For counts 1..1023 this is bit for
+    // bit the old twelve-bit RUN word (law LC's compatibility rule).
     function [15:0] vc_run;
         input [1:0]  src;
         input [11:0] count;
         begin
-            vc_run = {2'b00, src, ~count};
+            vc_run = {2'b00, src, 2'b11, ~count[9:0]};
         end
     endfunction
 
-    function [15:0] vc_run_colour;
-        input [2:0] colour;
-        input [8:0] count;
+    function [15:0] vc_stream;                  // STREAM RUN: bits 11:10 = 10
+        input [1:0]  src;
+        input [11:0] count;
         begin
-            vc_run_colour = {2'b00, 2'b11, colour, ~count};
+            vc_stream = {2'b00, src, 2'b10, ~count[9:0]};
+        end
+    endfunction
+
+    function [15:0] vc_hold;                    // HOLD: bit 11 low, src ignored
+        input [11:0] count;
+        begin
+            vc_hold = {2'b00, 2'b00, 2'b00, ~count[9:0]};
+        end
+    endfunction
+
+    function [15:0] vc_lit;                     // LITERAL: one R4G4B4 pixel
+        input [11:0] colour;
+        begin
+            vc_lit = {2'b00, 2'b11, colour};
         end
     endfunction
 
@@ -381,6 +415,36 @@ module CompositorTb;
     integer commit_slot_b;
     integer commit_slot_c;
 
+    // Palette-data hold monitor: from a CLUT_DATA (target 3) commit, how many
+    // consecutive clocks — the commit's own included — set_pix_value keeps the
+    // committed value.  PIXEL's write needs clocks 0..3 (clut_pair_tb D3/D4).
+    reg [11:0] cdata_value;
+    integer    cdata_hold;
+    integer    cdata_run;
+    reg        cdata_live;
+
+    always @(posedge clk)
+    begin
+        if (set_pix_commit === 1'b1 && set_pix_target === 3'd3)
+        begin
+            cdata_value = set_pix_value;
+            cdata_run   = 1;
+            cdata_live  = 1'b1;
+        end
+        else if (cdata_live)
+        begin
+            if (set_pix_value === cdata_value)
+            begin
+                cdata_run = cdata_run + 1;
+            end
+            else
+            begin
+                cdata_live = 1'b0;
+                cdata_hold = cdata_run;
+            end
+        end
+    end
+
     always @(posedge clk)
     begin
         if (RGB_OUT === watch_value && watch_cycle < 0)
@@ -498,6 +562,42 @@ module CompositorTb;
         end
     endfunction
 
+    // First slot whose colour IS `v`, or -1.
+    function integer first_is;
+        input [11:0] v;
+        integer i;
+        integer r;
+        begin
+            r = -1;
+            for (i = SLOTS - 1; i >= 0; i = i - 1)
+            begin
+                if (pix[i] === v)
+                begin
+                    r = i;
+                end
+            end
+            first_is = r;
+        end
+    endfunction
+
+    // Number of slots whose colour is `v`.
+    function integer count_is;
+        input [11:0] v;
+        integer i;
+        integer r;
+        begin
+            r = 0;
+            for (i = 0; i < SLOTS; i = i + 1)
+            begin
+                if (pix[i] === v)
+                begin
+                    r = r + 1;
+                end
+            end
+            count_is = r;
+        end
+    endfunction
+
     // All slots in [lo,hi] equal v?
     function span_is;
         input integer lo;
@@ -530,6 +630,13 @@ module CompositorTb;
     integer mask_run_gap;               // slots between a RUN's last pixel and a mask's first
     integer mask_chain_gap;             // slots between mask A's last pixel and mask B's first
     integer mask_set_gap;               // the same, with a SET between the two masks
+    integer lit_pitch_slots;            // slots between consecutive literals, sustained
+    integer lit_pair_pitch;             // the same out of a banked pair
+    integer lit_next_gap;               // literal's slot -> the next record's slot
+    integer lit_mask_gap;               // mask's last pixel -> a literal's slot, minus 1
+    integer stream_set_first;           // stream run's slot -> its first SET's slot
+    integer stream_set_pitch;           // slots between streamed SETs
+    integer hold_min_width;             // LITERAL + HOLD(1) width behind a long record
 
     integer i;
     integer k;
@@ -576,6 +683,13 @@ module CompositorTb;
         mask_run_gap          = -1;
         mask_chain_gap        = -1;
         mask_set_gap          = -1;
+        lit_pitch_slots       = -1;
+        lit_pair_pitch        = -1;
+        lit_next_gap          = -1;
+        lit_mask_gap          = -1;
+        stream_set_first      = -1;
+        stream_set_pitch      = -1;
+        hold_min_width        = -1;
 
         $display("================ COMPOSITOR TESTBENCH ================");
 
@@ -602,39 +716,52 @@ module CompositorTb;
         $display("      MEASURED  SET becomes visible at slot %0d", k);
 
         // ---------------------------------------------------------------
-        // RUN_COLOR between passthrough gaps
+        // LIT_SPAN — LITERAL + HOLD(98) between passthrough gaps (the flat span
+        // of any colour that replaces RUN_COLOR)
+        //
+        //   E0    RUN(pt,100) -> slots 0..99; the literal is captured (pair
+        //         head) and HOLD parks behind it.
+        //   E100  the literal executes: slot 100 = F00.  LL: the bank is held,
+        //         HOLD stays parked.
+        //   E101  HOLD captured; slot 101 is KEEP (F00).
+        //   E102  HOLD(98) executes: slots 102..199 KEEP.  RUN(pt) is fetched
+        //         behind it and waits for the terminal.
+        //   E200  RUN(pt,440) -> slots 200..639.  Total 100+2+98+440 = 640.
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h9A3;
-        push(vc_run(2'd0, 12'd100));                // passthrough
-        push(vc_run_colour(3'd4, 9'd100));          // RED -> 0xF00
+        push(vc_run(2'd0, 12'd100));
+        push(vc_lit(12'hF00));
+        push(vc_hold(12'd98));
         push(vc_run(2'd0, 12'd440));
         blank(40);
         line(SLOTS);
-        chk("RUN_COLOR leading passthrough span",  span_is(0, 99, 12'h9A3));
-        chk("RUN_COLOR replicated nibbles 0xF00",  span_is(100, 199, 12'hF00));
-        chk("RUN_COLOR trailing passthrough span", span_is(200, SLOTS - 1, 12'h9A3));
+        chk("LIT_SPAN leading passthrough span",  span_is(0, 99, 12'h9A3));
+        chk("LIT_SPAN literal + HOLD(98) is slots 100..199 (N + 2)", span_is(100, 199, 12'hF00));
+        chk("LIT_SPAN trailing passthrough span", span_is(200, SLOTS - 1, 12'h9A3));
 
-        // all eight corners of the colour cube
+        // LIT_SPANS8 — eight LITERAL + HOLD(78) spans of arbitrary colours,
+        // the whole line.  The first literal is banked in HBLANK and executes
+        // on slot 0; every later literal is staged behind the previous HOLD
+        // and executes at its terminal, its HOLD parked behind it and captured
+        // one edge late (LL), so every span is 1 + 1 + 78 = 80 slots exactly.
         reset_dut;
-        push(vc_run_colour(3'd0, 9'd80));
-        push(vc_run_colour(3'd1, 9'd80));
-        push(vc_run_colour(3'd2, 9'd80));
-        push(vc_run_colour(3'd3, 9'd80));
-        push(vc_run_colour(3'd4, 9'd80));
-        push(vc_run_colour(3'd5, 9'd80));
-        push(vc_run_colour(3'd6, 9'd80));
-        push(vc_run_colour(3'd7, 9'd80));
+        for (i = 0; i < 8; i = i + 1)
+        begin
+            push(vc_lit(12'h123 + i * 12'h1F1));
+            push(vc_hold(12'd78));
+        end
         blank(40);
         line(SLOTS);
-        chk("RUN_COLOR cube 000 -> 0x000", span_is(  0,  79, 12'h000));
-        chk("RUN_COLOR cube 001 -> 0x00F", span_is( 80, 159, 12'h00F));
-        chk("RUN_COLOR cube 010 -> 0x0F0", span_is(160, 239, 12'h0F0));
-        chk("RUN_COLOR cube 011 -> 0x0FF", span_is(240, 319, 12'h0FF));
-        chk("RUN_COLOR cube 100 -> 0xF00", span_is(320, 399, 12'hF00));
-        chk("RUN_COLOR cube 101 -> 0xF0F", span_is(400, 479, 12'hF0F));
-        chk("RUN_COLOR cube 110 -> 0xFF0", span_is(480, 559, 12'hFF0));
-        chk("RUN_COLOR cube 111 -> 0xFFF", span_is(560, 639, 12'hFFF));
+        k = 0;
+        for (i = 0; i < 8; i = i + 1)
+        begin
+            if (!span_is(i * 80, i * 80 + 79, 12'h123 + i * 12'h1F1))
+            begin
+                k = k + 1;
+            end
+        end
+        chk("LIT_SPANS8 eight 80-slot spans in any colour, exact", k === 0);
 
         // ---------------------------------------------------------------
         // Blank-region eager SET, and a staged RUN waiting for H_ACTIVE
@@ -797,58 +924,53 @@ module CompositorTb;
             dut.cmp_color1 === 12'h1B2 && dut.cmp_color0 === 12'h3C4);
 
         // ---------------------------------------------------------------
-        // One-slot records under the 2-slot cadence
+        // LIT_ABC — three literals and a RUN, banked in HBLANK
         //
-        // Derived from L4 + L5: RED is staged and GREEN parked when the line
-        // starts, so RED takes slot 0 and GREEN slot 1 (pair).  Slot 2 is a
-        // HOLD of GREEN.  BLUE is captured on the edge ending slot 2 and
-        // executes on slot 3, with slot 4 its HOLD; the passthrough RUN then
-        // executes on slot 5.  One-slot records are two pixels wide except
-        // across the pair.
+        // LL, not L5: A is staged and B parked when the line starts.  E0 A
+        // executes (slot 0) and holds the bank, so B is captured at E1 (slot 1
+        // is KEEP A) and executes at E2.  B holds the bank; C, fetched at E2,
+        // is captured at E3 and executes at E4; the RUN is captured at E5 and
+        // executes at E6.  So: A 0-1, B 2-3, C 4-5, passthrough from 6.  The
+        // banked pair at the head of the line does NOT make A and B adjacent.
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h9A3;
-        push(vc_run_colour(3'd4, 9'd1));            // RED,   1 slot
-        push(vc_run_colour(3'd2, 9'd1));            // GREEN, 1 slot
-        push(vc_run_colour(3'd1, 9'd1));            // BLUE,  1 slot
-        push(vc_run(2'd0, 12'd637));
+        push(vc_lit(12'hA11));
+        push(vc_lit(12'hB22));
+        push(vc_lit(12'hC33));
+        push(vc_run(2'd0, 12'd634));
         blank(40);
         line(SLOTS);
-        chk("ONE_PX_SPANS red is pixel 0",              pix[0] === 12'hF00);
-        chk("ONE_PX_SPANS green is pixel 1 (pair law)", pix[1] === 12'h0F0);
-        chk("ONE_PX_SPANS pixel 2 HOLDs green",         pix[2] === 12'h0F0);
-        chk("ONE_PX_SPANS blue is pixel 3 (cadence)",   pix[3] === 12'h00F);
-        chk("ONE_PX_SPANS pixel 4 HOLDs blue",          pix[4] === 12'h00F);
-        chk("ONE_PX_SPANS passthrough resumes at pixel 5",
-            span_is(5, SLOTS - 1, 12'h9A3));
+        chk("LIT_ABC A on slots 0-1", span_is(0, 1, 12'hA11));
+        chk("LIT_ABC B on slots 2-3", span_is(2, 3, 12'hB22));
+        chk("LIT_ABC C on slots 4-5", span_is(4, 5, 12'hC33));
+        chk("LIT_ABC passthrough resumes at slot 6", span_is(6, SLOTS - 1, 12'h9A3));
+        chk("LIT_ABC the held colours were not touched",
+            dut.cmp_color1 === 12'hFFF && dut.cmp_color0 === 12'h000);
 
-        // Alternating one-slot RUN_COLORs for a whole line.  By L4/L5 record 1
-        // paints px0, and record k >= 2 paints px(2k-3) and px(2k-2) (its own
-        // slot plus the HOLD behind it), so only ~321 of the 640 records are
-        // consumed before H_ACTIVE falls.  The rest stay in the FIFO; the next
+        // SUSTAINED_LIT — 640 alternating literals for a whole line.  By LL
+        // every literal is two slots wide at any cadence, so record k paints
+        // slots 2k and 2k+1: exactly 320 records are consumed and the pattern
+        // has no irregularity at the head.  The rest stay in the FIFO; the next
         // reset_dut clears them.
         reset_dut;
         for (i = 0; i < SLOTS; i = i + 1)
         begin
-            push(vc_run_colour((i % 2) == 0 ? 3'd4 : 3'd2, 9'd1));
+            push(vc_lit((i % 2) == 0 ? 12'hF00 : 12'h0F0));
         end
         blank(80);
         line(SLOTS);
         k = 0;
         for (i = 0; i < SLOTS; i = i + 1)
         begin
-            // px0 is record 1 (RED).  For i >= 1 the pair index is (i-1)/2 and
-            // the record is that pair index + 2, whose colour alternates from
-            // record 1 = RED.
-            if (pix[i] !== ((i == 0)                    ? 12'hF00 :
-                            ((((i - 1) / 2) % 2) == 0)  ? 12'h0F0 :
-                                                          12'hF00))
+            if (pix[i] !== ((((i / 2) % 2) == 0) ? 12'hF00 : 12'h0F0))
             begin
                 k = k + 1;
             end
         end
-        chk("SUSTAINED_2SLOT 640 one-slot records paint the 2-slot pattern", k === 0);
-        $display("      MEASURED  %0d of 640 pixels off the 2-slot cadence pattern", k);
+        lit_pitch_slots = first_is(12'h0F0) - first_is(12'hF00);
+        chk("SUSTAINED_LIT 640 literals paint the 2-slot pattern from slot 0", k === 0);
+        $display("      MEASURED  %0d of 640 pixels off the 2-slot literal pattern", k);
 
         // ---------------------------------------------------------------
         // Short-line framing
@@ -961,8 +1083,12 @@ module CompositorTb;
         // RLE truncation with PIXEL absent (junk RGB_IN)
         // ---------------------------------------------------------------
         reset_dut;
-        push(vc_run_colour(3'd2, 9'd200));          // green
-        push(vc_run_colour(3'd1, 9'd200));          // blue, then starvation
+        // LIT+HOLD(198) twice: by LL each span is 200 slots (0..199 green,
+        // 200..399 blue), then the FIFO is dry and KEEP holds the blue.
+        push(vc_lit(12'h0F0));
+        push(vc_hold(12'd198));
+        push(vc_lit(12'h00F));
+        push(vc_hold(12'd198));                     // then starvation
         blank(40);
         @(posedge clk);
         #1 pix_idx = 0;
@@ -1296,7 +1422,7 @@ module CompositorTb;
         chk("MASKB_BLANK the SETs were eager", dut.cmp_color1 === 12'h321);
         chk("MASKB_BLANK the header waits, staged", dut.have_staged === 1'b1);
         chk("MASKB_BLANK playback has NOT started", dut.mask_active === 1'b0);
-        chk("MASKB_BLANK the count is still terminal", dut.run_count === 12'hFFF);
+        chk("MASKB_BLANK the count is still terminal", dut.run_count === 10'h3FF);
         line(SLOTS);
         chk("MASKB_BLANK px0 is the implicit color0 at slot 0", pix[0] === 12'h00F);
         chk("MASKB_BLANK the header's seven dibits play in slots 1..7",
@@ -1315,13 +1441,13 @@ module CompositorTb;
         // ---------------------------------------------------------------
         // MASKB_STARVE — the data word is withheld past pixel 7
         //
-        // Stream in HBLANK: SET(color0), SET(color1), RUN_COLOR(GREEN,4),
-        // header.  The data word is pushed 200 slots into the active line.  The
-        // span under the mask is a RUN_COLOR on purpose: it is the strongest
-        // test of the modal law, because giving it back means giving back both
-        // the source select and cur_colour.
+        // Stream in HBLANK: SET(color0), SET(color1), RUN(pt,4), header.  The
+        // data word is pushed 200 slots into the active line.  (Until
+        // 2026-10-03 the span under the mask was a RUN_COLOR; RUN_COLOR is
+        // gone, and a passthrough span is the one source that is neither of
+        // the mask's two colours.)
         //
-        //   E0       RUN_COLOR(GREEN,4) -> slots 0..3 green; header captured.
+        //   E0       RUN(pt,4) -> slots 0..3 passthrough; header captured.
         //   E4       header executes: L = 4, slot 4 is pixel 0 (color0).
         //   5..11    d1..d7; d7 is color1, so the stretch below is visible.
         //   E12      run_count FF7 with NOTHING on Q -> STALL (LM4): no count,
@@ -1332,13 +1458,13 @@ module CompositorTb;
         //            is painted THERE.  (The old form needed one more slot: it
         //            captured at E203 and consumed at E204.)
         //   203..210 d8..d15.
-        //   211..    green again: the mask is modal, the stretch resumes.
+        //   211..    passthrough again: the mask is modal, the span resumes.
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h246;
         push(vc_set(3'd1, 12'h0C0));                // cmp_color0 <- 0x0C0
         push(vc_set(3'd0, 12'hF0F));                // cmp_color1 <- 0xF0F
-        push(vc_run_colour(3'd2, 9'd4));            // GREEN -> 0x0F0, slots 0..3
+        push(vc_run(2'd0, 12'd4));                  // passthrough, slots 0..3
         push(vc_mask_hdr(DIBIT_THRU,   DIBIT_COLOR0, DIBIT_COLOR1, DIBIT_THRU,
                          DIBIT_COLOR0, DIBIT_THRU,   DIBIT_COLOR1));
         blank(60);
@@ -1351,7 +1477,7 @@ module CompositorTb;
         repeat (SLOTS - 200) @(posedge clk);
         #1 H_ACTIVE = 1'b0;
         repeat (4) @(posedge clk);
-        chk("MASKB_STARVE the RUN_COLOR before the record", span_is(0, 3, 12'h0F0));
+        chk("MASKB_STARVE the passthrough span before the record", span_is(0, 3, 12'h246));
         chk("MASKB_STARVE px0 is the implicit color0", pix[4] === 12'h0C0);
         chk("MASKB_STARVE the header's seven dibits play normally",
             pix[5]  === 12'h246 && pix[6]  === 12'h0C0 &&
@@ -1365,10 +1491,10 @@ module CompositorTb;
             pix[205] === 12'hF0F && pix[206] === 12'hF0F &&
             pix[207] === 12'h0C0 && pix[208] === 12'h246 &&
             pix[209] === 12'hF0F && pix[210] === 12'h0C0);
-        chk("MASKB_STARVE the RUN_COLOR resumes after the mask",
-            span_is(211, SLOTS - 1, 12'h0F0));
+        chk("MASKB_STARVE the passthrough span resumes after the mask",
+            span_is(211, SLOTS - 1, 12'h246));
         chk("MASKB_STARVE the interrupted span is given back whole",
-            dut.cur_src === 2'd3 && dut.cur_colour === 3'd2);
+            dut.cur_src === 2'd0);
         // The stretch is color1 and d8 is passthrough, so the lowest slot at or
         // after the stall that is not color1 is the slot d8 landed in.
         k = -1;
@@ -1419,7 +1545,7 @@ module CompositorTb;
             pix[10] === 12'h00F && pix[11] === 12'h321);
         chk("MASKB_RESUME playback is frozen, not abandoned", dut.mask_active === 1'b1);
         chk("MASKB_RESUME the count froze on the reload position",
-            dut.run_count === 12'hFF7);
+            dut.run_count === 10'h3F7);
         chk("MASKB_RESUME the data word was not taken during blanking",
             dut.have_staged === 1'b0);
         blank(40);
@@ -1467,7 +1593,7 @@ module CompositorTb;
         chk("MASKB_NRS staged word cleared",         dut.have_staged === 1'b0);
         chk("MASKB_NRS color1 back to 0xFFF",        dut.cmp_color1 === 12'hFFF);
         chk("MASKB_NRS color0 back to 0x000",        dut.cmp_color0 === 12'h000);
-        chk("MASKB_NRS count already terminal",      dut.run_count === 12'hFFF);
+        chk("MASKB_NRS count already terminal",      dut.run_count === 10'h3FF);
         fifo_wr = 0;
         fifo_rd = 0;
         blank(40);
@@ -1493,7 +1619,7 @@ module CompositorTb;
         chk("NRS_RECOVERY color1 back to 0xFFF", dut.cmp_color1 === 12'hFFF);
         chk("NRS_RECOVERY color0 back to 0x000", dut.cmp_color0 === 12'h000);
         chk("NRS_RECOVERY source back to passthrough", dut.cur_src === 2'd0);
-        chk("NRS_RECOVERY count already terminal", dut.run_count === 12'hFFF);
+        chk("NRS_RECOVERY count already terminal", dut.run_count === 10'h3FF);
         fifo_wr = 0;
         fifo_rd = 0;
         RGB_IN  = 12'h246;
@@ -1501,6 +1627,598 @@ module CompositorTb;
         line(SLOTS);
         chk("NRS_RECOVERY unfilled frame shows the framebuffer for free",
             span_is(0, SLOTS - 1, 12'h246));
+
+        // ===============================================================
+        // LITERAL / HOLD / KEEP / STREAM RUN (adopted 2026-10-03)
+        //
+        // Every expectation below was derived on paper from L1-L5, LM*, LL,
+        // LK and LS before the first simulation.  Common background: RGB_IN
+        // = 9A3, cmp_color1 = 0C1 and cmp_color0 = 0C0 by eager SETs, X = 5E7.
+        // ===============================================================
+
+        // ---------------------------------------------------------------
+        // LIT_PAIR_TAIL — a literal CAN be the second record of a banked pair.
+        // RUN(pt,4) SET(c0) LIT RUN(pt): the SET is staged and the literal
+        // parked while the RUN counts; E4 SET (slot 4, passthrough shows), the
+        // literal moves in on the same edge (L5) and executes at E5; it holds
+        // the bank, the RUN is captured at E6 and executes at E7.
+        //   => pt 0-4, X 5-6, pt 7..
+        // ---------------------------------------------------------------
+        reset_dut;
+        RGB_IN = 12'h9A3;
+        push(vc_run(2'd0, 12'd4));
+        push(vc_set(3'd1, 12'h00C));
+        push(vc_lit(12'h5E7));
+        push(vc_run(2'd0, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("LIT_PAIR_TAIL pt 0-4 (the SET's slot shows the run's source)", span_is(0, 4, 12'h9A3));
+        chk("LIT_PAIR_TAIL the literal is the pair's second record: X 5-6", span_is(5, 6, 12'h5E7));
+        chk("LIT_PAIR_TAIL pt from 7", span_is(7, SLOTS - 1, 12'h9A3));
+        chk("LIT_PAIR_TAIL the SET took effect", dut.cmp_color0 === 12'h00C);
+
+        // ---------------------------------------------------------------
+        // LIT_BEHIND_RUN — literal pitch behind a long record.  RUN(pt,4) A B C
+        // RUN(pt): A is the pair head at E4 (slot 4) and holds the bank; B is
+        // captured E5, executes E6; C captured E7, executes E8; RUN captured
+        // E9, executes E10.  => pt 0-3, A 4-5, B 6-7, C 8-9, pt 10..
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_run(2'd0, 12'd4));
+        push(vc_lit(12'hA11));
+        push(vc_lit(12'hB22));
+        push(vc_lit(12'hC33));
+        push(vc_run(2'd0, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("LIT_BEHIND_RUN pt 0-3", span_is(0, 3, 12'h9A3));
+        chk("LIT_BEHIND_RUN A 4-5 (the pair does not make A and B adjacent)", span_is(4, 5, 12'hA11));
+        chk("LIT_BEHIND_RUN B 6-7", span_is(6, 7, 12'hB22));
+        chk("LIT_BEHIND_RUN C 8-9", span_is(8, 9, 12'hC33));
+        chk("LIT_BEHIND_RUN pt from 10", span_is(10, SLOTS - 1, 12'h9A3));
+        lit_pair_pitch = first_is(12'hB22) - first_is(12'hA11);
+        $display("      MEASURED  literal pitch out of a banked pair: %0d slots", lit_pair_pitch);
+
+        // ---------------------------------------------------------------
+        // LIT_NEXT_* — the slot after a literal, for every following record
+        // kind.  RUN(pt,4) X R ...: X executes at E4 (slot 4) and holds the
+        // bank; R, parked, is captured at E5 and executes at E6 whatever it
+        // is (LL).  So X paints 4-5 and R's effect starts at slot 6, except
+        // that a SET does not change the source: then slot 6 (the SET's own)
+        // and 7 (the cadence HOLD) still show KEEP = X, and the record after
+        // the SET, captured E7, executes at E8.
+        // ---------------------------------------------------------------
+        for (k = 0; k < 15; k = k + 1)
+        begin
+            reset_dut;
+            clear_mirror;
+            commit_count = 0;
+            watch_value  = 12'h5E7;
+            watch_cycle  = -1;
+            RGB_IN       = 12'h9A3;
+            push(vc_set(3'd0, 12'h0C1));
+            push(vc_set(3'd1, 12'h0C0));
+            push(vc_run(2'd0, 12'd4));
+            push(vc_lit(12'h5E7));
+            case (k)
+                0:  push(vc_run(2'd0, 12'd600));                     // RUN pt
+                1:  push(vc_run(2'd1, 12'd600));                     // RUN c1
+                2:  push(vc_run(2'd2, 12'd600));                     // RUN c0
+                3:  push(vc_stream(2'd1, 12'd600));                  // STREAM c1
+                4:  begin push(vc_hold(12'd10)); push(vc_run(2'd0, 12'd600)); end
+                5:  begin
+                        push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
+                                         DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
+                        push(vc_mask_data(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
+                                          DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_THRU));
+                    end
+                6:  begin push(vc_set(3'd0, 12'h777)); push(vc_run(2'd1, 12'd600)); end
+                7:  begin push(vc_set(3'd1, 12'h777)); push(vc_run(2'd2, 12'd600)); end
+                8, 9, 10, 11, 12:
+                    begin push(vc_set(k - 6, 12'h777)); push(vc_run(2'd0, 12'd600)); end
+                13: begin push(vc_set(3'd7, 12'h777)); push(vc_run(2'd0, 12'd600)); end
+                default: begin push(vc_lit(12'h6F8)); push(vc_run(2'd0, 12'd600)); end
+            endcase
+            blank(60);
+            line(SLOTS);
+            case (k)
+                0: chk("LIT_NEXT RUN(pt): X 4-5, pt from 6",
+                       span_is(4, 5, 12'h5E7) && span_is(6, SLOTS - 1, 12'h9A3));
+                1: chk("LIT_NEXT RUN(c1): X 4-5, c1 from 6",
+                       span_is(4, 5, 12'h5E7) && span_is(6, SLOTS - 1, 12'h0C1));
+                2: chk("LIT_NEXT RUN(c0): X 4-5, c0 from 6",
+                       span_is(4, 5, 12'h5E7) && span_is(6, SLOTS - 1, 12'h0C0));
+                3: chk("LIT_NEXT STREAM(c1): X 4-5, c1 from 6",
+                       span_is(4, 5, 12'h5E7) && span_is(6, SLOTS - 1, 12'h0C1));
+                4: chk("LIT_NEXT HOLD(10): X 4-15, pt from 16",
+                       span_is(4, 15, 12'h5E7) && span_is(16, SLOTS - 1, 12'h9A3));
+                5: chk("LIT_NEXT MASK: X 4-5, px0 c0 at 6, c1 7-20, px15 pt at 21, KEEP of it after",
+                       span_is(4, 5, 12'h5E7) && pix[6] === 12'h0C0 &&
+                       span_is(7, 20, 12'h0C1) && span_is(21, SLOTS - 1, 12'h9A3));
+                6: chk("LIT_NEXT SET c1: X 4-7 (SET's slot and HOLD show KEEP), new c1 from 8",
+                       span_is(4, 7, 12'h5E7) && span_is(8, SLOTS - 1, 12'h777));
+                7: chk("LIT_NEXT SET c0: X 4-7, new c0 from 8",
+                       span_is(4, 7, 12'h5E7) && span_is(8, SLOTS - 1, 12'h777));
+                8, 9, 10, 11, 12:
+                   begin
+                       chk("LIT_NEXT SET PIXEL target: X 4-7, pt from 8, one commit",
+                           span_is(4, 7, 12'h5E7) && span_is(8, SLOTS - 1, 12'h9A3) &&
+                           commit_count === 1 && last_commit_target === k - 6);
+                       // The SET is slot 6, two slots after X's slot 4, and its
+                       // commit leads its own slot's pixel by skew_commit_active.
+                       chk("LIT_NEXT SET PIXEL target: commit lands on slot 6's clock",
+                           last_commit_cycle === watch_cycle + 2 - skew_commit_active);
+                   end
+                13: chk("LIT_NEXT SET filler: X 4-7, pt from 8, no commit",
+                        span_is(4, 7, 12'h5E7) && span_is(8, SLOTS - 1, 12'h9A3) && commit_count === 0);
+                default:
+                   begin
+                       chk("LIT_NEXT LIT: X 4-5, Y 6-7, pt from 8",
+                           span_is(4, 5, 12'h5E7) && span_is(6, 7, 12'h6F8) &&
+                           span_is(8, SLOTS - 1, 12'h9A3));
+                       lit_next_gap = first_is(12'h6F8) - first_is(12'h5E7);
+                   end
+            endcase
+        end
+
+        // ---------------------------------------------------------------
+        // LIT_HOLD_n — LITERAL + HOLD(n) behind a long record: RUN(pt,4) X
+        // HOLD(n) RUN(pt).  X 4, KEEP 5, HOLD executes E6 (LL) for n slots;
+        // the RUN is fetched at E6 and captured at E7, so it executes at
+        // max(E6+n, E8).  n=1: X 4-7, pt 8 (slot 7 is implicit HOLD — the RUN
+        // was not staged yet at HOLD's terminal E7).  n=2: X 4-7, pt 8.
+        // n=100: X 4-105, pt 106.  Width = max(n + 2, 4).
+        // ---------------------------------------------------------------
+        for (k = 0; k < 3; k = k + 1)
+        begin
+            reset_dut;
+            push(vc_run(2'd0, 12'd4));
+            push(vc_lit(12'h5E7));
+            push(vc_hold(k == 0 ? 12'd1 : k == 1 ? 12'd2 : 12'd100));
+            push(vc_run(2'd0, 12'd600));
+            blank(40);
+            line(SLOTS);
+            case (k)
+                0: begin
+                       chk("LIT_HOLD_1 X 4-7, pt from 8 (HOLD(1) is as wide as HOLD(2))",
+                           span_is(0, 3, 12'h9A3) && span_is(4, 7, 12'h5E7) &&
+                           span_is(8, SLOTS - 1, 12'h9A3));
+                       hold_min_width = count_is(12'h5E7);
+                   end
+                1: chk("LIT_HOLD_2 X 4-7, pt from 8",
+                       span_is(4, 7, 12'h5E7) && span_is(8, SLOTS - 1, 12'h9A3));
+                default:
+                   chk("LIT_HOLD_100 X 4-105, pt from 106",
+                       span_is(4, 105, 12'h5E7) && span_is(106, SLOTS - 1, 12'h9A3));
+            endcase
+        end
+
+        // ---------------------------------------------------------------
+        // HOLD_AFTER_PT — KEEP repeats the last passthrough PIXEL (a smear).
+        // RUN(pt,4) HOLD(5) RUN(c1): HOLD is the pair's second at E4 -> slots
+        // 4..8 KEEP; the RUN, captured E6, executes at the terminal E9.  RGB_IN
+        // changes every clock, so the four passthrough slots differ and slots
+        // 4..8 must all equal slot 3.
+        // ---------------------------------------------------------------
+        reset_dut;
+        RGB_IN = 12'h9A3;
+        push(vc_run(2'd0, 12'd4));
+        push(vc_hold(12'd5));
+        push(vc_run(2'd1, 12'd600));
+        blank(40);
+        @(posedge clk);
+        #1 pix_idx = 0;
+        H_ACTIVE = 1'b1;
+        for (i = 0; i < SLOTS; i = i + 1)
+        begin
+            RGB_IN = RGB_IN + 12'h137;
+            @(posedge clk);
+        end
+        #1 H_ACTIVE = 1'b0;
+        repeat (4) @(posedge clk);
+        chk("HOLD_AFTER_PT passthrough is live on 0-3",
+            pix[0] !== pix[1] && pix[1] !== pix[2] && pix[2] !== pix[3]);
+        chk("HOLD_AFTER_PT KEEP repeats slot 3 on 4-8", span_is(4, 8, pix[3]));
+        chk("HOLD_AFTER_PT RUN(c1) from 9", span_is(9, SLOTS - 1, 12'hFFF));
+        RGB_IN = 12'h9A3;
+
+        // ---------------------------------------------------------------
+        // HOLD_AFTER_MASK — KEEP repeats the mask's LAST pixel.  Mask L = 4
+        // (behind RUN(pt,4)), d15 = colour0.  HOLD(4) is captured on the
+        // pixel-15 edge E19 and executes at E20 (the restore and the load share
+        // the edge; the load wins): slots 20..23 KEEP = 0C0.  The RUN is
+        // captured E21 and executes at the terminal E24.
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_set(3'd0, 12'h0C1));
+        push(vc_set(3'd1, 12'h0C0));
+        push(vc_run(2'd0, 12'd4));
+        push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
+                         DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
+        push(vc_mask_data(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
+                          DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR0));
+        push(vc_hold(12'd4));
+        push(vc_run(2'd0, 12'd600));
+        blank(60);
+        line(SLOTS);
+        chk("HOLD_AFTER_MASK mask 4-19", pix[4] === 12'h0C0 && span_is(5, 18, 12'h0C1) &&
+                                         pix[19] === 12'h0C0);
+        chk("HOLD_AFTER_MASK KEEP repeats px15 on 20-23", span_is(20, 23, 12'h0C0));
+        chk("HOLD_AFTER_MASK pt from 24", span_is(24, SLOTS - 1, 12'h9A3));
+
+        // ---------------------------------------------------------------
+        // HOLD_LINE_START / KEEP_ACROSS_BLANK — RGB_OUT is black outside
+        // H_ACTIVE, so KEEP at a line's start is BLACK.  HOLD(10) RUN(pt)
+        // banked in HBLANK: 0..9 black, pt from 10 (the RUN is the pair's
+        // second... of nothing: it is captured at E0 and waits for E10).  Then
+        // a line ending in a literal, and an unfilled line after it: KEEP
+        // survives the blank as a SOURCE but shows black, not the literal.
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_hold(12'd10));
+        push(vc_run(2'd0, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("HOLD_LINE_START KEEP at slot 0 is black for the hold", span_is(0, 9, 12'h000));
+        chk("HOLD_LINE_START pt from 10", span_is(10, SLOTS - 1, 12'h9A3));
+        push(vc_run(2'd0, 12'd4));
+        push(vc_lit(12'h5E7));
+        blank(40);
+        line(SLOTS);
+        chk("KEEP_ACROSS_BLANK a trailing literal holds to the line end",
+            span_is(0, 3, 12'h9A3) && span_is(4, SLOTS - 1, 12'h5E7));
+        blank(40);
+        line(SLOTS);
+        chk("KEEP_ACROSS_BLANK the unfilled next line is black, not the literal",
+            span_is(0, SLOTS - 1, 12'h000));
+        chk("KEEP_ACROSS_BLANK the source is still KEEP", dut.cur_src === 2'd3);
+
+        // ---------------------------------------------------------------
+        // STREAM_FEW — three SETs of cmp_color1 inside a 20-slot stream run.
+        // SET(c0,00F) is eager.  STREAM(c1,20) is staged and SET A parked in
+        // HBLANK.  E0 the run executes (slots 0..19) and A moves in (L5); E1
+        // A is a SET behind a stream run: it executes, slot 1 shows A.  B is
+        // captured E2 and executes E3; C captured E4, executes E5.  RUN(c0) is
+        // captured E6 and, not being a SET, waits for the terminal E20.
+        //   => FFF 0, A 1-2, B 3-4, C 5-19, 00F 20..   First SET one slot
+        //   after the run (the pair), then every two: no other irregularity.
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_set(3'd1, 12'h00F));
+        push(vc_stream(2'd1, 12'd20));
+        push(vc_set(3'd0, 12'hA11));
+        push(vc_set(3'd0, 12'hB22));
+        push(vc_set(3'd0, 12'hC33));
+        push(vc_run(2'd2, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("STREAM_FEW slot 0 is the old colour1", pix[0] === 12'hFFF);
+        chk("STREAM_FEW A 1-2", span_is(1, 2, 12'hA11));
+        chk("STREAM_FEW B 3-4", span_is(3, 4, 12'hB22));
+        chk("STREAM_FEW C 5-19, the run keeps counting", span_is(5, 19, 12'hC33));
+        chk("STREAM_FEW the next RUN starts at slot 20 exactly", span_is(20, SLOTS - 1, 12'h00F));
+        stream_set_first = first_is(12'hA11);
+        stream_set_pitch = first_is(12'hB22) - first_is(12'hA11);
+        $display("      MEASURED  streamed SETs: first at run slot + %0d, pitch %0d slots",
+                 stream_set_first, stream_set_pitch);
+
+        // STREAM_ORDINARY — the same stream with an ordinary RUN: the SETs wait
+        // for the terminal (positional law), A 20 and B 21 (pair), HOLD 22, C
+        // 23, HOLD 24, RUN(c0) 25.
+        reset_dut;
+        push(vc_set(3'd1, 12'h00F));
+        push(vc_run(2'd1, 12'd20));
+        push(vc_set(3'd0, 12'hA11));
+        push(vc_set(3'd0, 12'hB22));
+        push(vc_set(3'd0, 12'hC33));
+        push(vc_run(2'd2, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("STREAM_ORDINARY contrast: FFF 0-19, A 20, B 21-22, C 23-24, c0 25..",
+            span_is(0, 19, 12'hFFF) && pix[20] === 12'hA11 && span_is(21, 22, 12'hB22) &&
+            span_is(23, 24, 12'hC33) && span_is(25, SLOTS - 1, 12'h00F));
+
+        // ---------------------------------------------------------------
+        // STREAM_MORE — more SETs than the run has slots.  STREAM(c1,6) with
+        // five SETs A..E then RUN(c0).  A 1, B 3, C 5 stream; the run's
+        // terminal is E6, D (captured E6) executes as an ordinary SET at E7,
+        // E (captured E8) at E9, and the RUN, captured E10, at E11: the
+        // leftovers cost their ordinary cadence and the line is FIVE slots
+        // longer than the authored 6 + 629.
+        //   => FFF 0, A 1-2, B 3-4, C 5-6, D 7-8, E 9-10, c0 11..
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_set(3'd1, 12'h00F));
+        push(vc_stream(2'd1, 12'd6));
+        push(vc_set(3'd0, 12'hA11));
+        push(vc_set(3'd0, 12'hB22));
+        push(vc_set(3'd0, 12'hC33));
+        push(vc_set(3'd0, 12'hD44));
+        push(vc_set(3'd0, 12'hE55));
+        push(vc_run(2'd2, 12'd629));
+        blank(60);
+        line(SLOTS);
+        chk("STREAM_MORE A 1-2, B 3-4, C 5-6 (C straddles the terminal)",
+            pix[0] === 12'hFFF && span_is(1, 2, 12'hA11) && span_is(3, 4, 12'hB22) &&
+            span_is(5, 6, 12'hC33));
+        chk("STREAM_MORE leftovers D 7-8, E 9-10 at the ordinary cadence",
+            span_is(7, 8, 12'hD44) && span_is(9, 10, 12'hE55));
+        chk("STREAM_MORE the RUN behind them is late: c0 from 11", span_is(11, SLOTS - 1, 12'h00F));
+
+        // STREAM_MORE2 — the same leftovers ahead of a SECOND stream run, whose
+        // own SETs F, G (colour0) then stream inside it.  STREAM2 captured E10,
+        // executes E11 (slots 11..20); F captured E12, executes E13; G captured
+        // E14, executes E15; RUN(pt) captured E16, waits for E21.
+        //   => ... E 9-10, c0 00F 11-12, F 13-14, G 15-20, pt 21..
+        reset_dut;
+        push(vc_set(3'd1, 12'h00F));
+        push(vc_stream(2'd1, 12'd6));
+        push(vc_set(3'd0, 12'hA11));
+        push(vc_set(3'd0, 12'hB22));
+        push(vc_set(3'd0, 12'hC33));
+        push(vc_set(3'd0, 12'hD44));
+        push(vc_set(3'd0, 12'hE55));
+        push(vc_stream(2'd2, 12'd10));
+        push(vc_set(3'd1, 12'hF66));
+        push(vc_set(3'd1, 12'h677));
+        push(vc_run(2'd0, 12'd600));
+        blank(60);
+        line(SLOTS);
+        chk("STREAM_MORE2 leftovers as before", span_is(9, 10, 12'hE55));
+        chk("STREAM_MORE2 second stream run at 11 with the old colour0", span_is(11, 12, 12'h00F));
+        chk("STREAM_MORE2 its own SETs stream: F 13-14, G 15-20",
+            span_is(13, 14, 12'hF66) && span_is(15, 20, 12'h677));
+        chk("STREAM_MORE2 pt from 21", span_is(21, SLOTS - 1, 12'h9A3));
+
+        // ---------------------------------------------------------------
+        // STREAM_THEN_ORDINARY — the streaming flag does not outlive its run.
+        // STREAM(c1,6) A RUN(c0,10) SET(c0,V) RUN(pt): A 1; RUN(c0) captured
+        // E2, executes at E6 (slots 6..15); the SET (captured E6 out of the
+        // park) must wait for E16; RUN(pt) moves in at E16 and executes E17.
+        //   => FFF 0, A 1-5, 00F 6-15, V 16, pt 17..
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_set(3'd1, 12'h00F));
+        push(vc_stream(2'd1, 12'd6));
+        push(vc_set(3'd0, 12'hA11));
+        push(vc_run(2'd2, 12'd10));
+        push(vc_set(3'd1, 12'h0D0));
+        push(vc_run(2'd0, 12'd600));
+        blank(60);
+        line(SLOTS);
+        chk("STREAM_THEN_ORDINARY A 1-5, c0 6-15",
+            pix[0] === 12'hFFF && span_is(1, 5, 12'hA11) && span_is(6, 15, 12'h00F));
+        chk("STREAM_THEN_ORDINARY the SET behind the ORDINARY run waits: V at 16 only",
+            pix[16] === 12'h0D0);
+        chk("STREAM_THEN_ORDINARY pt from 17", span_is(17, SLOTS - 1, 12'h9A3));
+
+        // ---------------------------------------------------------------
+        // STREAM_MIXED — SET cmp_color0, pix_base, pix_mode and a palette
+        // entry (CLUT_INDEX, CLUT_DATA, filler) inside STREAM(c1,40).  The six
+        // SETs execute at slots 1, 3, 5, 7, 9, 11; none touches colour1 or the
+        // source, so the screen is colour1 for all 40 slots and pt from 40.
+        // The four PIXEL targets commit in order, two clocks apart (L4).  The
+        // palette data must sit on set_pix_value for the commit clock and the
+        // three after it: CLUT_DATA executes at E9, the filler (same value) is
+        // captured E10 and executes E11, and the RUN behind it is captured at
+        // E12 — so the bus changes at E13, four clocks after the commit's own.
+        // The cover rule holds because the run's source is colour1, not
+        // passthrough: a stream run over passthrough would NOT cover it.
+        // ---------------------------------------------------------------
+        reset_dut;
+        clear_mirror;
+        cdata_hold = -1;
+        cdata_live = 1'b0;
+        push(vc_stream(2'd1, 12'd40));
+        push(vc_set(3'd1, 12'h0AB));                // cmp_color0
+        push(vc_set(3'd4, 12'h123));                // pix_base
+        push(vc_set(3'd5, 12'h001));                // pix_mode
+        push(vc_set(3'd2, 12'h00B));                // clut_index
+        push(vc_set(3'd3, 12'h5A5));                // clut_data
+        push(vc_set(3'd7, 12'h5A5));                // filler, same value
+        push(vc_run(2'd0, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("STREAM_MIXED colour1 for the whole run, pt from 40",
+            span_is(0, 39, 12'hFFF) && span_is(40, SLOTS - 1, 12'h9A3));
+        chk("STREAM_MIXED cmp_color0 written inside the run", dut.cmp_color0 === 12'h0AB);
+        chk("STREAM_MIXED four PIXEL commits in stream order",
+            pix_apply_count === 4 && commit_targets[0] === 4 && commit_targets[1] === 5 &&
+            commit_targets[2] === 2 && commit_targets[3] === 3);
+        chk("STREAM_MIXED commits two clocks apart",
+            commit_cycles[1] - commit_cycles[0] === 2 && commit_cycles[2] - commit_cycles[1] === 2 &&
+            commit_cycles[3] - commit_cycles[2] === 2);
+        chk("STREAM_MIXED palette data held on the bus for the commit clock + 3",
+            cdata_hold >= 4);
+        $display("      MEASURED  streamed CLUT_DATA value held %0d clocks from its commit", cdata_hold);
+
+        // ---------------------------------------------------------------
+        // LATE_IN_STREAM vs LATE_LITERAL — the property STREAM RUN exists for.
+        // A word pushed k = 10 clocks into the line is captured at E13 and
+        // can execute at E14 (the late-fill law: fall at E12, word on Q in
+        // 13; LATE_FILL above measures the same k + 4).
+        //   STREAM(c1,40), SET A banked; SET B + RUN(c0) late: A 1-13, B
+        //   14-39, c0 from 40 EXACTLY — the colour is late, the geometry is not.
+        //   RUN(pt,4), LIT A banked; LIT B + RUN(c0) late: A 4-13 (KEEP), B
+        //   14-15, the RUN captured E15 (LL) executes E16 — everything after
+        //   the late literal moved 8 slots right of its on-time position (6).
+        // ---------------------------------------------------------------
+        for (k = 0; k < 2; k = k + 1)
+        begin
+            reset_dut;
+            if (k == 0)
+            begin
+                push(vc_set(3'd1, 12'h00F));
+                push(vc_stream(2'd1, 12'd40));
+                push(vc_set(3'd0, 12'hA11));
+            end
+            else
+            begin
+                push(vc_set(3'd1, 12'h00F));
+                push(vc_run(2'd0, 12'd4));
+                push(vc_lit(12'hA11));
+            end
+            blank(40);
+            @(posedge clk);
+            #1 pix_idx = 0;
+            H_ACTIVE = 1'b1;
+            repeat (10) @(posedge clk);
+            push(k == 0 ? vc_set(3'd0, 12'hB22) : vc_lit(12'hB22));
+            push(vc_run(2'd2, 12'd600));
+            repeat (SLOTS - 10) @(posedge clk);
+            #1 H_ACTIVE = 1'b0;
+            repeat (4) @(posedge clk);
+            if (k == 0)
+            begin
+                chk("LATE_IN_STREAM A 1-13, late B 14-39",
+                    pix[0] === 12'hFFF && span_is(1, 13, 12'hA11) && span_is(14, 39, 12'hB22));
+                chk("LATE_IN_STREAM the geometry is intact: c0 from 40", span_is(40, SLOTS - 1, 12'h00F));
+            end
+            else
+            begin
+                chk("LATE_LITERAL A 4-13 (KEEP while starved), B 14-15",
+                    span_is(0, 3, 12'h9A3) && span_is(4, 13, 12'hA11) && span_is(14, 15, 12'hB22));
+                chk("LATE_LITERAL everything after it shifts: c0 from 16", span_is(16, SLOTS - 1, 12'h00F));
+            end
+        end
+
+        // ---------------------------------------------------------------
+        // BLANK_LIT / BLANK_STREAM — playback-class records block eagerness.
+        // LIT X, SET(c1,V), RUN(c1) in HBLANK: the literal waits for H_ACTIVE
+        // and the SET behind it is not eager.  X 0-1, the SET at 2 (KEEP X),
+        // HOLD 3 (KEEP X), RUN(c1) at 4 = V.  STREAM(c1,10) SET(c1,V) in
+        // HBLANK: the stream rule is an ACTIVE-video rule, so the SET is not
+        // eager either; slot 0 FFF, V from 1 (then implicit HOLD of colour1).
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_lit(12'h5E7));
+        push(vc_set(3'd0, 12'h0D1));
+        push(vc_run(2'd1, 12'd600));
+        blank(60);
+        chk("BLANK_LIT the SET behind a staged literal was not eager", dut.cmp_color1 === 12'hFFF);
+        line(SLOTS);
+        chk("BLANK_LIT X 0-3, V from 4",
+            span_is(0, 3, 12'h5E7) && span_is(4, SLOTS - 1, 12'h0D1));
+        reset_dut;
+        push(vc_stream(2'd1, 12'd10));
+        push(vc_set(3'd0, 12'h0D1));
+        blank(60);
+        chk("BLANK_STREAM the SET behind a staged stream run was not eager",
+            dut.cmp_color1 === 12'hFFF);
+        line(SLOTS);
+        chk("BLANK_STREAM FFF 0, V from 1", pix[0] === 12'hFFF && span_is(1, SLOTS - 1, 12'h0D1));
+
+        // ---------------------------------------------------------------
+        // EXACT640_NEW — a 640-slot line built from every new record, then a
+        // cushioned next line.  RUN(pt,100) 0-99; LIT 100 + KEEP 101 + HOLD(98)
+        // 102-199; STREAM(c1,300) 200-499 with SET V1 at 201 and V2 at 203;
+        // RUN(c0,140) 500-639 (captured E204, waits for E500).  The next
+        // line's RUN(c1,640) is staged when H_ACTIVE falls and plays from its
+        // slot 0.  Total 100 + 100 + 300 + 140 = 640.
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_run(2'd0, 12'd100));
+        push(vc_lit(12'h5E7));
+        push(vc_hold(12'd98));
+        push(vc_stream(2'd1, 12'd300));
+        push(vc_set(3'd0, 12'hA11));
+        push(vc_set(3'd0, 12'hB22));
+        push(vc_run(2'd2, 12'd140));
+        push(vc_run(2'd1, 12'd640));                // next line, cushioned
+        blank(60);
+        line(SLOTS);
+        chk("EXACT640_NEW pt 0-99, literal span 100-199",
+            span_is(0, 99, 12'h9A3) && span_is(100, 199, 12'h5E7));
+        chk("EXACT640_NEW stream run 200-499: FFF 200, V1 201-202, V2 203-499",
+            pix[200] === 12'hFFF && span_is(201, 202, 12'hA11) && span_is(203, 499, 12'hB22));
+        chk("EXACT640_NEW RUN(c0,140) 500-639", span_is(500, SLOTS - 1, 12'h000));
+        chk("EXACT640_NEW the next line's RUN is staged at the H_ACTIVE fall", dut.have_staged === 1'b1);
+        blank(40);
+        line(SLOTS);
+        chk("EXACT640_NEW the cushioned next line starts at slot 0", span_is(0, SLOTS - 1, 12'hB22));
+
+        // ---------------------------------------------------------------
+        // NRS_KEEP / NRS_STREAM — /RS clears KEEP, the literal's bank hold and
+        // the streaming flag.  A line ending in a literal (source KEEP), /RS,
+        // then an unfilled frame: passthrough, not black.  A stream run, /RS,
+        // then RUN(c1,10) SET(c1,V) RUN(c1): the SET waits for the terminal
+        // (V at slot 10), which it would not if the flag had survived.
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_run(2'd0, 12'd4));
+        push(vc_lit(12'h5E7));
+        blank(40);
+        line(SLOTS);
+        @(negedge clk);
+        nRS = 1'b0;
+        repeat (2) @(negedge clk);
+        nRS = 1'b1;
+        chk("NRS_KEEP source back to passthrough, no bank hold, no stream",
+            dut.cur_src === 2'd0 && dut.lit_active === 1'b0 && dut.streaming === 1'b0);
+        chk("NRS_KEEP RGB_OUT black", dut.RGB_OUT === 12'h000);
+        fifo_wr = 0;
+        fifo_rd = 0;
+        blank(40);
+        line(SLOTS);
+        chk("NRS_KEEP the unfilled frame is passthrough", span_is(0, SLOTS - 1, 12'h9A3));
+        reset_dut;
+        push(vc_stream(2'd1, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("NRS_STREAM the flag is set before the reset", dut.streaming === 1'b1);
+        @(negedge clk);
+        nRS = 1'b0;
+        repeat (2) @(negedge clk);
+        nRS = 1'b1;
+        fifo_wr = 0;
+        fifo_rd = 0;
+        push(vc_run(2'd1, 12'd10));
+        push(vc_set(3'd0, 12'h0D1));
+        push(vc_run(2'd1, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("NRS_STREAM the flag did not survive: V lands at slot 10",
+            span_is(0, 9, 12'hFFF) && span_is(10, SLOTS - 1, 12'h0D1));
+
+        // ---------------------------------------------------------------
+        // COUNT_ZERO — the ten-bit counter: RUN(c1, 0) loads 3FF, +1 wraps to
+        // 000, and 1024 slots follow.  640 of them are line 1; playback freezes
+        // in blanking and the other 384 are line 2's slots 0..383; RUN(c0),
+        // staged behind it all along, executes at line 2's E384.
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_run(2'd1, 12'd0));
+        push(vc_run(2'd2, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("COUNT_ZERO line 1 all colour1", span_is(0, SLOTS - 1, 12'hFFF));
+        blank(40);
+        line(SLOTS);
+        chk("COUNT_ZERO RUN(0) is 1024 slots: line 2 colour1 to 383, colour0 from 384",
+            span_is(0, 383, 12'hFFF) && span_is(384, SLOTS - 1, 12'h000));
+
+        // ---------------------------------------------------------------
+        // LIT_AFTER_MASK — a literal captured on a mask's pixel-15 edge
+        // executes in the very next slot (gap 0) and holds the bank: mask
+        // 4..19, X 20-21, RUN captured E21, pt from 22.
+        // ---------------------------------------------------------------
+        reset_dut;
+        push(vc_set(3'd0, 12'h0C1));
+        push(vc_set(3'd1, 12'h0C0));
+        push(vc_run(2'd0, 12'd4));
+        push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
+                         DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
+        push(vc_mask_data(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
+                          DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
+        push(vc_lit(12'h5E7));
+        push(vc_run(2'd0, 12'd600));
+        blank(60);
+        line(SLOTS);
+        chk("LIT_AFTER_MASK mask 4-19 intact", pix[4] === 12'h0C0 && span_is(5, 19, 12'h0C1));
+        chk("LIT_AFTER_MASK X 20-21: gap 0", span_is(20, 21, 12'h5E7));
+        chk("LIT_AFTER_MASK pt from 22", span_is(22, SLOTS - 1, 12'h9A3));
+        lit_mask_gap = first_is(12'h5E7) - 19 - 1;      // mask px15 is slot 19
+        $display("      MEASURED  mask -> literal gap %0d slot(s)", lit_mask_gap);
 
         // ---------------------------------------------------------------
         // PIXEL VALUE PATH — end to end through the mirror
@@ -1664,6 +2382,18 @@ module CompositorTb;
         $display("  mask -> SET -> mask gap                : %0d slot(s) (one record at the",
                  mask_set_gap);
         $display("                                           ordinary L4 cadence)");
+        $display("  LITERAL pitch, sustained               : %0d slot(s) (LL: 320-density pixel)",
+                 lit_pitch_slots);
+        $display("  LITERAL pitch out of a banked pair     : %0d slot(s) (a literal never pairs",
+                 lit_pair_pitch);
+        $display("                                           as the head; it can be the tail)");
+        $display("  literal -> next record, any kind       : %0d slot(s)", lit_next_gap);
+        $display("  mask -> literal gap                    : %0d slot(s)", lit_mask_gap);
+        $display("  LITERAL + HOLD(n) width behind a run   : max(n + 2, %0d) slots (HOLD(1) measured)",
+                 hold_min_width);
+        $display("  stream run -> first streamed SET       : %0d slot(s), then every %0d",
+                 stream_set_first, stream_set_pitch);
+        $display("  run counter                            : 10 bits (counts 1..1023; RUN(0) = 1024)");
         $display("------------------------------------------------------");
 
         if (errors == 0)

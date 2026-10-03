@@ -100,7 +100,8 @@
 //
 // THE RULE THE LIST AUTHOR FOLLOWS is stated one clock wider than that:
 // pixel clocks 1..4 after the commit must be covered by a non-passthrough
-// source (a cmp_color/RUN_COLOR RUN, or an opaque MASK dibit) or be in
+// source (a cmp_color RUN or STREAM RUN, a LITERAL/HOLD span, or an opaque
+// MASK dibit) or be in
 // blanking.  The fourth clock is the write-recovery guard: this model's
 // one-clock recovery is an ABSTRACTION of a datasheet parameter that is not
 // pinned yet (spec draft section 6), and the guard costs nothing, because
@@ -361,11 +362,22 @@ module ClutPairTb;
         end
     endtask
 
+    // RUN {00, src, 11, ~count[9:0]} (2026-10-03 encoding; bit for bit the old
+    // twelve-bit RUN for every count this bench uses, all < 1024).
     function [15:0] vc_run;
         input [1:0]  src;
         input [11:0] count;
         begin
-            vc_run = {2'b00, src, ~count};
+            vc_run = {2'b00, src, 2'b11, ~count[9:0]};
+        end
+    endfunction
+
+    // STREAM RUN {00, src, 10, ~count[9:0]}: SETs behind it execute while it counts.
+    function [15:0] vc_stream;
+        input [1:0]  src;
+        input [11:0] count;
+        begin
+            vc_stream = {2'b00, src, 2'b10, ~count[9:0]};
         end
     endfunction
 
@@ -1055,6 +1067,54 @@ module ClutPairTb;
         capture_line();
         check(passthru_x > 0,
               "S6-neg: the bench DETECTS an illegal write during a passthrough span");
+        $display("      (%0d passthrough clocks sampled X, %0d reached RGB_OUT)",
+                 passthru_x, rgb_out_x);
+        xarm = 1'b0;
+
+        // ================================================================
+        // S6s  A WRITE INSIDE A STREAM RUN (2026-10-03).  The entry's three
+        // SETs and the guard execute WHILE the colour1 run counts (slots 1, 3,
+        // 5, 7), at the same two-clock cadence as any SET after a one-slot
+        // record, so derivations D3/D4 hold unchanged: CLUT_DATA and its filler
+        // are never a banked pair here either, the bus holds V for clocks 0..3,
+        // and the disturbed clocks are painted from cmp_color1.  The RUN(thru)
+        // behind them waits for the stream run's terminal at slot 200.
+        // S6s-neg: the same entry inside a PASSTHROUGH stream run is illegal
+        // and must be detected — streaming does not relax the cover rule.
+        // ================================================================
+        $display("");
+        $display("CASE S6s — a write inside a cmp_color1 STREAM RUN (legal)");
+        we_reset();
+        x_reset();
+        wait_blank();
+        vpush(vc_set(T_COLOR1, 12'h0F0));
+        vpush(vc_stream(SRC_COLOR1, 12'd200));
+        entry(4'hD, 12'h3C3);
+        vpush(vc_set(T_SPARE, 12'h3C3));            // the write-recovery guard
+        vpush(vc_run(SRC_THRU, 12'd400));
+        xarm = 1'b1;
+        capture_line();
+        check_int("S6s writes", we_writes, 1);
+        check_int("S6s data setup violations", we_data_setup_bad, 0);
+        check_int("S6s wrong payload written", we_data_wrong, 0);
+        check_int("S6s data hold violations", we_data_hold_bad, 0);
+        check_int("S6s X sampled on a passthrough pixel", passthru_x, 0);
+        check_int("S6s X reaching RGB_OUT", rgb_out_x, 0);
+        check_cells("S6s");
+        xarm = 1'b0;
+
+        $display("");
+        $display("CASE S6s-neg — the same write inside a PASSTHROUGH stream run (must be DETECTED)");
+        we_reset();
+        x_reset();
+        wait_blank();
+        vpush(vc_stream(SRC_THRU, 12'd100));
+        entry(4'hE, 12'h0E0);
+        vpush(vc_run(SRC_THRU, 12'd400));
+        xarm = 1'b1;
+        capture_line();
+        check(passthru_x > 0,
+              "S6s-neg: the bench DETECTS an illegal write inside a passthrough stream run");
         $display("      (%0d passthrough clocks sampled X, %0d reached RGB_OUT)",
                  passthru_x, rgb_out_x);
         xarm = 1'b0;

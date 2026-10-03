@@ -127,7 +127,7 @@
 `define PIXEL_HSYNC_ACTIVE_LOW 1  // HSYNC is asserted low during the sync interval
 `define PIXEL_VSYNC_ACTIVE_LOW 1  // VSYNC is asserted low during the sync interval
 
-// COMPOSITOR: VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, SET forwarding to PIXEL, MASK overlays
+// COMPOSITOR: VIDCMD stream player: per-slot source select over the palette RAM's R4G4B4, literal pixels, SET forwarding to PIXEL, MASK overlays
 `define COMPOSITOR_CLOCK 25175000
 
 // PORTS: PS/2 mouse, two joystick ports and two paddle counters
@@ -362,6 +362,7 @@
 `define VIDCMD_SET_PIX_PIXEL_SKIP 8'h06
 `define VIDCMD_SET_FILLER 8'h07
 `define VIDCMD_WORDS_PER_CLUT_ENTRY 8'h03
+`define VIDCMD_RUN_COUNT_MAX 10'h3FF
 `define VIDCMD_PIX_MODE_1BPP 8'h00
 `define VIDCMD_PIX_MODE_2BPP 8'h01
 `define VIDCMD_PIX_MODE_4BPP 8'h02

@@ -1,6 +1,34 @@
 # VIDCMD proposal: LITERAL and counted HOLD replace RUN_COLOR
 
-Status: PROPOSAL 2026-09-20 (Brad's ideas, worked through against
+> **ADOPTED 2026-10-03 as form A + HOLD + STREAM RUN** (fit-ladder rung R4st):
+> the bank-holding literal of section 2, KEEP, HOLD(N) on count bits 11:10 =
+> `0x`, a ten-bit counter, and Brad's streaming RUN (2026-09-21) on bits 11:10
+> = `10`.  Form B was rejected (it fits no pinout tried).  The normative text is
+> now `vidcmd-spec.md` (2026-10-03 addendum, §3, §3.3) and
+> `cpld/compositor/compositor.v`; the ladder is
+> `cpld/experiments/literal/RESULTS.md`.  The text below is the proposal as
+> written and is kept as history.  Six things in it turned out wrong or
+> incomplete:
+>
+> 1. The cost estimate ("+1 PT per RGB_OUT cell") missed the binding limit,
+>    logic-block FAN-IN: eight RGB_OUT pins sat in one block already at 39/40,
+>    so form A fits only with four of them moved (the rev-2 pinout swaps eight
+>    pins).
+> 2. Form B's "one-pixel patch" is two pixels (n-1 and n: the literal still
+>    occupies its own slot), a form-B literal that opens a line is lost, and
+>    form B with KEEP fits no pinout tried, even all pins free.
+> 3. "A 12-bit colour latch is not expected to fit" — two 12-bit registers
+>    already hold a literal (cmp_color0/1, and set_pix_value for one clock).
+>    Not used by the adopted form, but the premise was wrong.
+> 4. RUN_COLOR's removal frees 3 FF and 1 LC, not "about -5 FF".
+> 5. Narrowing the counter to 10 bits is not optional for form A: with HOLD
+>    it fits only on the ten-bit counter (12-bit R3 fails).
+> 6. "Width about 2 + n clocks (4 minimum)": measured as max(n + 2, 4) —
+>    HOLD(1) is as wide as HOLD(2) — and the record after a literal executes
+>    two slots later for EVERY record kind; a literal can be the second record
+>    of a banked pair but never the first.
+
+Status: PROPOSAL 2026-09-20 — ADOPTED 2026-10-03 (see the note above) (Brad's ideas, worked through against
 `cpld/compositor/compositor.v`).  Nothing here is fitted, simulated or
 adopted.  To be run as a COMPOSITOR fit ladder after the indexed-PIXEL change
 (packages 1-3) and the Smurf trial.  Related `griffin.log` entries: 2026-09-20

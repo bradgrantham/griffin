@@ -2382,3 +2382,61 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   first claimed simulation had not been run.
   Answer: form A (+ HOLD + streaming) fits a re-pinned COMPOSITOR with
   10 LC spare.  Form B as proposed fits no pinout tried.
+
+2026-10-03 -- COMPOSITOR: LITERAL + HOLD + STREAM RUN adopted (decision; package 1 of 3)
+  Brad adopted the ladder's R4st: form A literal + HOLD + streaming RUN,
+  10-bit counter.  Package 1 (RTL, bench, fit, spec, griffin.yml) is done;
+  the model/suite/emulator (package 2) and the apps/Smurf port (package 3)
+  are not.
+  Records:
+    LITERAL     {00,11,colour[11:0]}       takes RUN_COLOR's prefix
+    RUN         {00,src,11,~count[9:0]}
+    STREAM RUN  {00,src,10,~count[9:0]}
+    HOLD(N)     {00,src,0x,~count[9:0]}
+  cur_src's fourth value is KEEP (RGB_OUT fed back).  Every old RUN word
+  with count 1..1023 is valid bit for bit.  RUN(0) is now 1024 slots.
+  REMOVED: RUN_COLOR, cur_colour, and the 12-bit counter (2 bits).
+  Fit (make compositor, production flags, -preassign keep): 118/128 LC,
+  92 FF, 117/128 nodes+FB, 355 PT, pass 1, tightest block fan-in 34/40.
+  This is identical to the experiment.  It only fits with the experiment's
+  declaration order: the first production copy declared two regs and two
+  wires in a different order (same logic) and failed grouping on all five
+  passes.  Noted in the pin block; any RTL edit is a re-fit.
+  Pins: PROPOSED rev-2, NOT FROZEN (the 2026-08-26 freeze is lifted).
+  Eight pins moved, four swaps:
+    RGB_OUT_3 49<->63 VIDCMD_Q_10
+    RGB_OUT_0 50<->64 VIDCMD_Q_11
+    RGB_OUT_1 51<->65 VIDCMD_Q_8
+    RGB_OUT_2 52<->67 VIDCMD_Q_13
+  RGB_OUT is now 4/4/4 over blocks E/F/G, where it was 8 in block E.
+  compositor_tb.v:
+    the five RUN_COLOR-built cases are re-expressed in LITERAL/HOLD and
+      passthrough;
+    new cases: literal pitch, the slot after a literal for 14 record
+      kinds, HOLD 1/2/100, HOLD after passthrough/MASK/line start,
+      KEEP across blanking, the streaming cases (few/more/more-into-a-
+      second-stream/then-ordinary/mixed PIXEL + palette/late SET vs late
+      literal), blank eagerness, 640 framing, /RS, and RUN(0);
+    258 checks, all hand-derived first, all passed on the first run;
+    `make compositor-mutants`: 5 mutants, all fail (no bank hold, KEEP
+      fed from RGB_IN, sticky streaming flag, HOLD on bit 10, 9-bit
+      count).
+  clut_pair_tb.v: new case S6s (a palette entry inside a colour1 stream
+  run, legal) and S6s-neg (inside a passthrough stream run, detected);
+  vc_run takes the new encoding.  clut-pair-sim, pixel-sim and timing-sim
+  are green.
+  Measured seams:
+    literal pitch: 2, out of a banked pair as well (a literal can be a
+      pair's tail, never its head);
+    the record after a literal executes at +2 for every kind;
+    MASK -> literal: 0;
+    LITERAL + HOLD(N): max(N+2, 4);
+    streamed SETs: run slot +1, then every 2;
+    streamed CLUT_DATA held on the bus: 4 clocks.
+  Spec: vidcmd-spec.md addendum, §3, new §3.3, §4, §6, §7.  The proposal
+  is marked ADOPTED with six corrections.  griffin.yml: prose updated,
+  VIDCMD_RUN_COUNT_MAX = 1023 added; no generated name removed.  The
+  RUN_COLOR names that packages 2-3 must retire are in
+  super-engine/descriptor.h: RUN_SRC_COLOR, RUN_COLOR_MAX_COUNT,
+  RUN_COLOR_<colour>, run_colour_to_rgb444, and the 12-bit
+  vidcmd_run/vidcmd_run_count.

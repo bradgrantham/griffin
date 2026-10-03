@@ -74,6 +74,37 @@ here).
 >   no clock), the 2-slot VIDCMD cadence, the banked-pair law, RUN / RUN_COLOR /
 >   MASK / SET, and `PIXEL_OUT_LEAD` = 1.
 
+> **Addendum 2026-10-03 — RUN_COLOR is gone; LITERAL, HOLD and STREAM RUN
+> replace it, and the COMPOSITOR pinout moved.**  Implemented in
+> `cpld/compositor/compositor.v` and measured by `compositor_tb.v`
+> (`make compositor-sim`, `make compositor-mutants`) and `clut_pair_tb.v`
+> case S6s; those benches win any disagreement with this document.  §3, §3.3,
+> §4.1–§4.3 and §6 are **rewritten**; older addenda above that say "RUN /
+> RUN_COLOR" are history.
+>
+> * **LITERAL** `{00, 11, colour[11:0]}` takes RUN_COLOR's prefix: one pixel
+>   of any R4G4B4 colour.  It holds the on-chip buffer for its slot, so it
+>   **always paints two slots** (its own plus one KEEP) and whatever follows
+>   it executes two slots later, banked pair or not — one 320-density pixel.
+> * **cur_src's fourth value is KEEP**: RGB_OUT holds the last colour shown.
+>   **HOLD(N)** is a RUN with count bit 11 low: KEEP for N slots.
+> * **STREAM RUN** is a RUN with count bits 11:10 = `10`: SETs staged behind
+>   it execute while it counts, so a run's geometry is fixed while its
+>   colour changes mid-span — and a late SET recolours late without moving
+>   anything.
+> * **The run counter is ten bits**; bits 11:10 are the record kind.  Every
+>   old RUN word with a count of 1..1023 is valid bit for bit.
+> * **Pinout**: RGB_OUT 3/0/1/2 swapped with VIDCMD_Q 10/11/8/13 (eight pins)
+>   so that no logic block carries more than four RGB_OUT bits; the block is
+>   PROPOSED rev-2, NOT FROZEN.  Fit 118/128 LC.
+> * **Unchanged:** every K constant, the 2-slot fetch cadence, the banked-pair
+>   law (except that a literal cannot head a pair), MASK, SET and the palette
+>   rules.  Lost: the one-word span in the eight corner colours (now LITERAL +
+>   HOLD, two words, any colour).
+>
+> Proposal and fit ladder: `vidcmd-literal-hold-proposal.md` (ADOPTED as
+> form A + HOLD + streaming), `cpld/experiments/literal/RESULTS.md`.
+
 ---
 
 ## 1. Architecture
@@ -113,8 +144,8 @@ COMPOSITOR and the FIFOs from there; there is no TIMING chip.
 
 **Every playfield pixel in every mode is a four-bit palette index** (§3.2).
 PIXEL owns no colour, and COMPOSITOR's own sources — `cmp_color1`,
-`cmp_color0`, RUN_COLOR, MASK — are direct 12-bit values that never touch the
-palette.
+`cmp_color0`, LITERAL, KEEP, MASK — are direct 12-bit values that never touch
+the palette.
 
 The two IDT7200s are read as **one ganged 16-bit port with one registered
 `/RE`**, low for exactly one clock per word and never low on two consecutive
@@ -209,25 +240,30 @@ mode/skip matrix at the real 640-clock line width, two consecutive lines each.
 
 ## 3. VIDCMD instruction set
 
-All words 16 bits.  Counts stored complemented (`~count`): playback
-counters load the complement and count up to the all-1s terminal.
+All words 16 bits.  Counts stored complemented (`~count`) in a TEN-bit
+field: the playback counter loads the complement and counts up to the
+all-1s terminal.  Bits 11:10 of a run-class word are its KIND, never count.
 
 ```
-RUN   { 2'b00, src[1:0], ~count[11:0] }                      1 word
+RUN        { 2'b00, src[1:0], 2'b11, ~count[9:0] }           1 word
       For count pixels: src 00 = passthrough (RGB_IN),
-      01 = cmp_color1, 10 = cmp_color0, 11 = RUN_COLOR (below; it
-      displaced the invert-run candidate).
+      01 = cmp_color1, 10 = cmp_color0.  count 1..1023; 0 means 1024.
+
+STREAM RUN { 2'b00, src[1:0], 2'b10, ~count[9:0] }           1 word
+      A RUN during which staged SETs execute without waiting for its
+      terminal.  §3.3.
+
+HOLD       { 2'b00, src[1:0], 1'b0, x, ~count[9:0] }         1 word
+      KEEP for count pixels: RGB_OUT repeats the last colour shown.
+      src is ignored (but must not be 11, which is LITERAL).  §3.3.
+
+LITERAL    { 2'b00, 2'b11, colour[11:0] }                    1 word
+      One pixel of any R4G4B4 colour, then KEEP.  Always two slots wide.
+      Never touches cmp_color1/cmp_color0.  §3.3.
 
 MASK  { 2'b01, d1, d2, d3, d4, d5, d6, d7 }                  2 words
       { d8, d9, d10, d11, d12, d13, d14, d15 }
       Sixteen pixels of per-pixel overlay.  §3.1.
-
-RUN_COLOR { 2'b00, 2'b11, colour[2:0], ~count[8:0] }         1 word
-      RUN src=11 spends its source encoding on a literal: colour is
-      {R,G,B}, each bit replicated across its nibble, giving the eight
-      saturated corners.  Never touches cmp_color1/cmp_color0, so
-      independent objects on one line cannot clobber each other's colour.
-      The count field is 9 bits, so a span is at most 511 pixels.
 
 SET   { 1'b1, target[2:0], value[11:0] }                     1 word
       target 0 = cmp_color1      4 = pix_base[3:0]
@@ -243,7 +279,8 @@ nowhere**, which is exactly what makes it the filler.
 
 Held colors persist until rewritten; `/RS` at vsync resets them to
 `cmp_color1` = 0xFFF, `cmp_color0` = 0x000, abandons any mask playback,
-and clears all machine state.  `/RS` also clears PIXEL's `pix_mode`,
+a literal's buffer hold and the streaming flag, returns the source to
+passthrough (never KEEP) and clears all machine state.  `/RS` also clears PIXEL's `pix_mode`,
 `pix_base`, `pixel_skip` and `clut_index` to zero, so an untouched chip is 1bpp
 full rate out of palette entries 0 and 1.  **The palette RAM is never reset by
 anything** (§3.2).
@@ -283,11 +320,11 @@ picture — sixteen pixels for two words, against the RUN-span lists that
 cost a word per contiguous segment.
 
 **The record is MODAL.**  A dibit overrides the source for its own pixel
-only; whatever RUN was in force resumes, as if untouched, at pixel 16, and
-RUN_COLOR's colour latch is not disturbed either.  The corollary is the
-one that catches authors out: **dibit 00 is PASSTHROUGH — PIXEL's RGB_IN —
-not "the span underneath".**  A mask laid over a RUN_COLOR background must
-paint that background itself, out of `cmp_color0`.
+only; whatever source was in force resumes, as if untouched, at pixel 16.
+Two corollaries catch authors out: **dibit 00 is PASSTHROUGH — PIXEL's
+RGB_IN — not "the span underneath"**, and **a mask laid over a LITERAL /
+HOLD span resumes KEEP, which repeats the mask's LAST pixel, not the
+literal's colour**: re-issue the LITERAL after the mask.
 
 **The data word is never decoded.**  It is captured with `have_staged`
 LOW, so no bit pattern of it can reach the SET/RUN decode or the PIXEL
@@ -352,8 +389,10 @@ Two rules for the list author, and both are measured, not advisory:
    stolen for clocks 1, 2 and 3, so `RGB_IN` is wrong at clock 1 and undefined
    at 2 and 3; clock 4 is a guard for a write-recovery time nobody has read off
    a datasheet yet (§6).  Those four pixel slots must be **in blanking, or
-   covered by a non-passthrough source** — a `cmp_color`/RUN_COLOR RUN or an
-   opaque MASK dibit.  Clocks 1..3 are the entry's own three words; clock 4 is
+   covered by a non-passthrough source** — a `cmp_color` RUN or STREAM RUN, a
+   LITERAL/HOLD span, or an opaque MASK dibit.  A STREAM RUN over a colour
+   register may carry the whole entry inside it (`clut_pair_tb` S6s); a STREAM
+   RUN over passthrough may not (S6s-neg).  Clocks 1..3 are the entry's own three words; clock 4 is
    the first clock of the word after the filler, so **that word must not be the
    RUN that resumes passthrough**: leave one more record between them.  It may
    otherwise be anything at all, including a differently-valued SET — the write
@@ -363,13 +402,100 @@ Two rules for the list author, and both are measured, not advisory:
 entries per line** with room for the mode / base / skip SETs, and a vertical
 blank reloads all sixteen.  Photographic material wants two to five per line.
 
+### 3.3 LITERAL, KEEP, HOLD and STREAM RUN (2026-10-03)
+
+**LITERAL** is a one-slot playback record: it waits for H_ACTIVE like a RUN,
+its slot shows its colour, and the source becomes **KEEP** afterwards.  The
+colour is read out of COMPOSITOR's staged word during the clock after the
+consume edge, so **the literal holds the on-chip buffer for its slot** — the
+fetch parks the next word instead of capturing it.  That costs one clock and
+is the record's defining law:
+
+> **LL — a literal always paints at least two slots, and the record after it
+> executes two slots later, whatever it is and whether or not it was banked.**
+> A literal can be the SECOND record of a banked pair (it then lands on the
+> slot after the first), never the first.
+
+**KEEP** is RGB_OUT fed back: it repeats the last colour SHOWN, not a stored
+colour.  After a literal that is the literal; after a passthrough span it is
+the last playfield pixel (a smear); after a MASK it is the mask's last pixel.
+RGB_OUT is black outside H_ACTIVE, so **KEEP at the start of a line shows
+black** until a real source is loaded — a line must open with a real source,
+and KEEP carried over from the line before shows black, not its colour.
+
+**HOLD(N)** = KEEP for N slots.  **LITERAL + HOLD(N) is a flat span of any
+colour in two words**, `max(N + 2, 4)` slots behind a long record: the
+literal's slot, its KEEP slot, then N — except that the record after a
+HOLD(1) is fetched too late to use HOLD's terminal, so HOLD(1) is as wide as
+HOLD(2).
+
+**STREAM RUN** sets a streaming flag; while it counts, a staged **SET**
+executes on the next active edge without waiting for the terminal.  Laws:
+
+* **Geometry is the run's.**  The run occupies exactly its count; the first
+  non-SET record behind it waits for the terminal like behind any RUN.
+* **Each SET executes at the ordinary cadence**, as if it were the record
+  after a one-slot record: entry-edge commit, visible in its own slot.  With
+  the run banked in HBLANK the first SET lands on run slot + 1 (the pair),
+  then every two slots.  cmp_color1 under a colour1 stream run is a colour
+  change at that slot; cmp_color0 is invisible until selected; PIXEL targets
+  commit exactly as anywhere else (palette entries included, under the cover
+  rule above).
+* **Only SETs stream.**  A RUN, HOLD, LITERAL or MASK header behind a stream
+  run waits for its terminal and blocks every SET behind it.
+* **Leftovers.**  SETs not yet executed at the terminal execute as ordinary
+  SETs, one slot plus the cadence HOLD each, and push everything after them
+  later — the line overruns.  A run needs `2k` slots for `k` SETs.
+* **A late SET recolours late; the geometry does not move.**  A late
+  LITERAL, by contrast, delays everything after it.  That is what STREAM RUN
+  is for.
+* Streaming is an active-video rule: a SET behind a staged stream run in
+  HBLANK is not eager.  The flag is reloaded by every RUN, STREAM RUN, HOLD
+  and LITERAL and cleared by `/RS`.
+
+**Compatibility.**  An old twelve-bit RUN of 1..1023 slots has `~count` bits
+11:10 = `11` and is a valid RUN bit for bit.  An old RUN of 1024..2047 now
+decodes as a STREAM RUN of `count mod 1024`, 2048..4095 as a HOLD, and the old
+RUN(0) (4096) as 1024 slots; no well-formed line contained any of them.  Old
+RUN_COLOR words are now LITERALs of an unrelated colour.
+
+**Seam constants** (all measured by `compositor_tb.v`):
+
+| sequence | value |
+|---|---|
+| literal pitch, sustained or out of a banked pair | 2 slots |
+| literal -> next record (RUN of any source, STREAM, HOLD, MASK, SET of any target, LITERAL) | 2 slots; a SET's own slot and its cadence HOLD still show KEEP, so a SET behind a literal is visible from literal + 4 |
+| MASK -> LITERAL | 0 (captured on the pixel-15 edge) |
+| LITERAL + HOLD(N) behind a run | max(N + 2, 4) slots |
+| three literals A B C banked in HBLANK | A 0-1, B 2-3, C 4-5, next record 6 |
+| stream run banked in HBLANK -> streamed SETs | run slot + 1, then every 2 |
+| streamed CLUT_DATA value held on set_pix_value | 4 clocks from its commit (rule needs 4) |
+| RUN(0) | 1024 slots |
+
+**Authoring rules** (what replaces RUN_COLOR):
+
+1. A flat span of any colour is LITERAL + HOLD(N), two words, no register
+   touched; or SET cmp_color + RUN, one word per span once the register is
+   loaded.
+2. One LITERAL = one 320-density pixel.  640-resolution per-pixel art stays
+   MASK's job.
+3. Open every line with a real source (KEEP after blanking is black).  A
+   literal at the end of a line with nothing after it is a legal right border.
+4. After a MASK over a literal span, re-issue the LITERAL.
+5. A colour that changes mid-span at known x is a STREAM RUN over a colour
+   register with SETs behind it; give it two slots per SET.
+6. Counts are at most 1023.  Whole-frame passthrough is implicit HOLD, not a
+   count.
+
 ## 4. Execution model
 
 ### 4.1 During active video (H_ACTIVE)
 
-**Playback is one slot per clock.**  RUN and RUN_COLOR consume their
-counts; a SET costs one slot; a MASK costs sixteen, its header's own slot
-(pixel 0) included.
+**Playback is one slot per clock.**  RUN, STREAM RUN and HOLD consume their
+counts; a SET costs one slot; a LITERAL costs one slot but holds the buffer
+for it, so it paints two (LL, §3.3); a MASK costs sixteen, its header's own
+slot (pixel 0) included.  Inside a STREAM RUN a SET executes without waiting
+for the terminal and its slot is one of the run's own (§3.3).
 
 * **A SET occupies one slot and commits on the edge that ENDS it** —
   entry-edge commit — so its new value is visible in the pixel of its own
@@ -409,7 +535,9 @@ Two consequences the list builder must plan around:
   parked on Q, the park moves into `staged_word` on that very edge, so
   the two execute on **consecutive slots**.  Every RUN long enough to
   cover a fetch builds such a pair, so this is the common case at a
-  line's first records, not a corner.
+  line's first records, not a corner.  **A LITERAL cannot head a pair**: it
+  holds the buffer, so the parked word is captured one edge late and
+  executes two slots after it.
 
 So *"consecutive SETs land on consecutive pixels"* — the old blanket
 claim — now holds **only for a banked pair**.  Two SETs behind a RUN of
@@ -422,8 +550,8 @@ one.  compositor_tb measures the burst at slots 1, 3, 5.
 
 * Playback idles — no slots, no counting.  Fetch continues at the same
   2-clock cadence (blanking does not exempt it): a staged SET executes
-  immediately at pop, in stream order, and the first RUN, RUN_COLOR **or
-  MASK HEADER** popped parks in staging and waits for H_ACTIVE, releasing
+  immediately at pop, in stream order, and the first RUN, STREAM RUN, HOLD,
+  LITERAL **or MASK HEADER** popped parks in staging and waits for H_ACTIVE, releasing
   at pixel 0 with the next record already banked behind it.  **A mask
   header is playback-class, not setup**: its own slot is the record's
   pixel 0, so it paints and therefore waits.  A mask banked in blanking
@@ -439,7 +567,9 @@ one.  compositor_tb measures the burst at slots 1, 3, 5.
 * Eagerness is **positional, not temporal**: a staged RUN waits for
   H_ACTIVE and, while it waits, blocks everything behind it.  An overrun
   therefore steals the next line's eagerness.
-* No "wait" bits exist or are needed: RUN/RUN_COLOR are the visible
+* A SET behind a staged STREAM RUN is not eager either: streaming is an
+  active-video rule.
+* No "wait" bits exist or are needed: the run-class records are the visible
   timeline and the staged-record release is the only beam
   synchronization.  ENGINE descriptor waits shape bus traffic only; the
   FIFO decouples deposit time from effect time.
@@ -454,7 +584,10 @@ one.  compositor_tb measures the burst at slots 1, 3, 5.
   stretch.  A MASK contributes 16 slots and a RUN-to-mask or mask-to-mask
   boundary contributes none, so a line of chained masks IS a sum again —
   forty records of sixteen is exactly 640 — and only the SET seams (§4.4)
-  have to be priced.
+  have to be priced.  A LITERAL contributes two slots wherever it sits
+  (LL), LITERAL + HOLD(N) contributes `max(N + 2, 4)` behind a run, and a
+  STREAM RUN contributes exactly its count provided it has two slots per
+  SET behind it.
 * On starvation (FIFO empty mid-line) playback holds the current output
   mode.  With a VBLANK priming cushion the FIFO is normally never empty,
   so *starvation* hold is a degradation behavior; *cadence* hold is
@@ -535,8 +668,9 @@ one pixel out.
   `cmp_color0`.
 * **Recolour between groups, not inside a run of them**, and price the
   seam into the geometry.
-* **A mask over a RUN_COLOR must repaint that background out of
-  `cmp_color0`**, because dibit 00 is passthrough, not the span below.
+* **A mask over a LITERAL/HOLD span must be followed by the LITERAL again**
+  (KEEP resumes as the mask's last pixel), and dibit 00 is passthrough, not
+  the span below.
 * A mask caught by the H_ACTIVE fall **freezes**, it is not abandoned: the
   pixels that are left play at the start of the next line — wrong x,
   self-healing — and the parked data word is not taken during blanking.
@@ -645,10 +779,12 @@ them in.  **The 2026-08-19 cadence rework did not move any of them:**
 | SET visible at | its own slot (offset 0) |
 | set_pix_commit -> its own slot's RGB_OUT | 1 clock (commit leads) |
 | PIXEL-target SET cost | same as any record, no fetch stall |
+| LITERAL visible at | its own slot (offset 0), and the slot after (KEEP) |
 
 Semantics stay pixel-exact; K never varies at runtime.  What the rework
 *did* change is the FETCH constants, which are not K: 2 slots per word
-sustained, 1 slot of gap across a banked pair.
+sustained, 1 slot of gap across a banked pair — and, since 2026-10-03, 2
+slots after a LITERAL whatever follows it (§3.3's table).
 
 **Electrical budget.**  The worst-case table is PINNED in `griffin.yml`
 (`interfaces:` "VIDCMD FIFO read port", 2026-08-18) and must not be
@@ -723,6 +859,16 @@ terms on each of the twelve already-wide RGB_OUT macrocells and does NOT
 fit; driving the dibit through `cur_src` and restoring it does, and is
 externally identical.  Handoff-edge loads are PT-dense: keep
 single-literal enables (the PIXEL/HAM lesson).
+**FIT AS BUILT (2026-10-03, LITERAL + HOLD + STREAM RUN)**: 118/128 logic
+cells, 92 flip-flops, 117/128 nodes+FB, 355 product terms, pass 1, tightest
+logic block fan-in 34/40.  `cur_colour` (3) and two counter bits are gone,
+`lit_active` and `streaming` (1 each) are new.  The literal's colour reaches
+RGB_OUT through a new per-bit input, which is a logic-block FAN-IN problem,
+not a product-term one: the old pinout put eight RGB_OUT pins in one block
+already at 39/40, so the rev-2 pinout (PROPOSED, NOT FROZEN, in
+`compositor.v`'s `//PIN` block) moves four of them to another block.  The fit
+is at the mercy of the fitter — the same logic with declarations in another
+order failed — so any RTL edit is a re-fit.
 
 Pins: VIDCMD Q[15:0] in + /RE out + /EF in, RGB_IN[11:0], RGB_OUT[11:0],
 **set_pix_value[11:0]** + set_pix_target/valid/commit out, timing in.
@@ -774,7 +920,8 @@ Kept with their original numbering; status stamped rather than deleted.
 2. ~~PIXEL fit~~ **CLOSED**: two palette entries, and shadow/pending are
    no longer adds — the value bus is applied at the commit (§5).
 3. ~~RUN src=11~~ **CLOSED**: RUN_COLOR took the encoding; invert-run is
-   the natural trade if the fit ever needs the room back.
+   the natural trade if the fit ever needs the room back.  **Superseded
+   2026-10-03**: src 11 is LITERAL; RUN_COLOR is gone (§3.3).
 4. ~~TILE flags~~ **CLOSED — TILE dropped** (§3), and **REOPENED AND
    CLOSED AGAIN 2026-08-24**: the `01` prefix now carries MASK (§3.1,
    §4.4), a two-word sixteen-pixel overlay with no inline colour and no

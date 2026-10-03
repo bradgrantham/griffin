@@ -34,7 +34,7 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "adapter speed 2000" \
     -c init
 
-.PHONY: all glue video engine audio audio-sim ports compositor compositor-sim \
+.PHONY: all glue video engine audio audio-sim ports compositor compositor-sim compositor-mutants \
         pixel pixel-sim pixel-mutants timing-sim clut-pair-sim clean
 
 # The default set is the Rev 2 super-engine video path: display-list ENGINE,
@@ -186,10 +186,10 @@ ports/ports.svf: ports/ports.jed
 # ------------------------------------------------------------
 # COMPOSITOR (ATF1508AS)
 #
-# VIDCMD display-list player for the super-engine video path.  There is no
-# Pinout FROZEN 2026-08-26 in the //PIN: block at the bottom of compositor.v;
-# -preassign keep re-verified identical to the harvest fit.  A netlist change
-# layout.  Self-contained — no griffin.generated.vh — until the VIDCMD
+# VIDCMD display-list player for the super-engine video path.  The //PIN:
+# block at the bottom of compositor.v is a PROPOSED rev-2 pinout, NOT FROZEN
+# (2026-10-03: LITERAL needed four RGB_OUT pins out of block E; see the block's
+# comment).  Self-contained — no griffin.generated.vh — until the VIDCMD
 # encoding migrates into griffin.yml.
 #
 # `make compositor-sim` runs the iverilog testbench, which is the real
@@ -206,6 +206,20 @@ compositor/compositor.jed: compositor/compositor.edif
 
 compositor-sim: compositor/compositor_tb.v compositor/compositor.v
 	cd compositor && iverilog -g2012 -o compositor_tb.vvp compositor_tb.v compositor.v && vvp compositor_tb.vvp
+
+# `make compositor-mutants`: recompile the bench against each single-mistake
+# mutant of compositor.v (mutate.py; generated into compositor/mutants/, not
+# checked in) and require every run to FAIL.
+compositor-mutants: compositor/compositor_tb.v compositor/compositor.v compositor/mutate.py
+	cd compositor && python3 mutate.py > /dev/null
+	@for m in `cd compositor/mutants && ls *.v | sed 's/\.v$$//'`; do \
+	    (cd compositor && iverilog -g2012 -o mutants/$$m.vvp compositor_tb.v mutants/$$m.v) || exit 1; \
+	    if (cd compositor && vvp mutants/$$m.vvp 2>&1 | grep -q "TESTBENCH RESULT: FAIL"); then \
+	        echo "  good  $$m fails the bench, as a negative control must"; \
+	    else \
+	        echo "  BAD   $$m PASSES — the bench cannot see this mistake"; exit 1; \
+	    fi; \
+	done
 
 # ------------------------------------------------------------
 # PIXEL (ATF1508AS PLCC84) — the indexed decoder WITH TIMING FOLDED IN
@@ -368,6 +382,7 @@ clean:
 	rm -f audio/audio.edif audio/audio.fit audio/audio.jed audio/audio.vo
 	rm -f ports/ports.edif ports/ports.fit ports/ports.jed ports/ports.vo ports/ports.svf
 	rm -f compositor/compositor.edif compositor/compositor.fit compositor/compositor.jed compositor/compositor_tb.vvp
+	rm -rf compositor/mutants
 	rm -f pixel/pixel.edif pixel/pixel.fit pixel/pixel.jed pixel/pixel.vo pixel/pixel_tb.vvp
 	rm -f pixel/timing_tb.vvp pixel/clut_pair_tb.vvp
 	rm -rf pixel/mutants
