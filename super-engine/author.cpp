@@ -184,13 +184,14 @@ constexpr uint32_t sprite_row_src(uint32_t row)
 
 // One painted span on a line.  `src` is a RUN source select, so a span is
 // either a held colour (restylable by a later SET without touching the list) or
-// a RUN_COLOR literal (atomic, one word, immune to held-colour changes).  Every
-// sprite, cursor and game object in the suite is now a list of these.
+// RUN_SRC_KEEP, meaning a LITERAL of `color` (atomic, immune to held-colour
+// changes): one word for a two-pixel span, LITERAL + HOLD(w - 2) for w >= 4.
+// Every sprite, cursor and game object in the suite is now a list of these.
 struct ColorSpan
 {
     int32_t  x     = 0;
     int32_t  w     = 0;
-    uint32_t src   = RUN_SRC_COLOR;
+    uint32_t src   = RUN_SRC_KEEP;
     uint32_t color = 0;
 };
 
@@ -277,8 +278,8 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
             static_cast<int32_t>(line) < cy + static_cast<int32_t>(TEMPEST_CLAW_ROWS))
         {
             const int32_t row = static_cast<int32_t>(line) - cy;
-            insert_span(out, n, {cx - 11 + row, TEMPEST_CLAW_WIDTH, RUN_SRC_COLOR, TEMPEST_CLAW_COLOR});
-            insert_span(out, n, {cx + 8 - row, TEMPEST_CLAW_WIDTH, RUN_SRC_COLOR, TEMPEST_CLAW_COLOR});
+            insert_span(out, n, {cx - 11 + row, TEMPEST_CLAW_WIDTH, RUN_SRC_KEEP, TEMPEST_CLAW_COLOR});
+            insert_span(out, n, {cx + 8 - row, TEMPEST_CLAW_WIDTH, RUN_SRC_KEEP, TEMPEST_CLAW_COLOR});
         }
     }
 
@@ -294,7 +295,7 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
             static_cast<int32_t>(line) < oy + static_cast<int32_t>(TEMPEST_FLIPPER_ROWS))
         {
             const int32_t row = static_cast<int32_t>(line) - oy;
-            insert_span(out, n, {ox - 1 + row, TEMPEST_FLIPPER_WIDTH, RUN_SRC_COLOR, TEMPEST_FLIPPER_COLOR});
+            insert_span(out, n, {ox - 1 + row, TEMPEST_FLIPPER_WIDTH, RUN_SRC_KEEP, TEMPEST_FLIPPER_COLOR});
         }
     }
 
@@ -309,7 +310,7 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
         if (static_cast<int32_t>(line) >= oy &&
             static_cast<int32_t>(line) < oy + static_cast<int32_t>(TEMPEST_SHOT_ROWS))
         {
-            insert_span(out, n, {ox, TEMPEST_SHOT_WIDTH, RUN_SRC_COLOR, TEMPEST_SHOT_COLOR});
+            insert_span(out, n, {ox, TEMPEST_SHOT_WIDTH, RUN_SRC_KEEP, TEMPEST_SHOT_COLOR});
         }
     }
 
@@ -328,7 +329,8 @@ uint32_t tempest_spans_for_line(const FrameParams &p, uint32_t line, std::span<C
         const uint32_t pitch = H_ACTIVE / (want + 1);
         for (uint32_t i = 0; i < want; i++)
         {
-            insert_span(out, n, {static_cast<int32_t>(pitch * (i + 1)), 1, RUN_SRC_COLOR,
+            insert_span(out, n, {static_cast<int32_t>(pitch * (i + 1)),
+                                 static_cast<int32_t>(TEMPEST_STRESS_WIDTH), RUN_SRC_KEEP,
                                  TEMPEST_STRESS_COLOR});
         }
     }
@@ -494,16 +496,16 @@ struct RecordWriter
         }
     }
 
-    // A RUN_COLOR spans at most RUN_COLOR_MAX_COUNT pixels.  A chunked span is
-    // still exact: the first chunk is long enough for the fetch to bank the
-    // second, so the pair law lands it on the very next slot.
-    void run_color_span(uint32_t colour, uint32_t n)
+    // A flat span of any colour: LITERAL + HOLD(n - 2), n + 2 slots behind a
+    // long record when n >= 4 (max(n + 2, 4) in general, compositor_tb
+    // LIT_HOLD_n), or the LITERAL alone for n == 2.  n == 1 and n == 3 cannot
+    // be painted this way at all; the callers' geometry never asks for them.
+    void literal_span(Rgb444 colour, uint32_t n)
     {
-        while (n > 0)
+        record(vidcmd_literal(colour));
+        if (n >= VIDCMD_LIT_HOLD_MIN_SLOTS)
         {
-            const uint32_t chunk = (n > RUN_COLOR_MAX_COUNT) ? RUN_COLOR_MAX_COUNT : n;
-            record(vidcmd_run_color(colour, chunk));
-            n -= chunk;
+            record(vidcmd_hold(n - VIDCMD_LITERAL_SLOTS));
         }
     }
 };
@@ -600,9 +602,9 @@ KioskLinePlan kiosk_plan_line(uint32_t line)
 
     const uint32_t hy = KIOSK_ITEM_Y[KIOSK_HIGHLIGHT_ITEM];
     const bool     highlighted = (line >= hy && line < hy + KIOSK_CELL_H);
-    plan.background_color = highlighted ? RUN_COLOR_CYAN : RUN_COLOR_BLUE;
+    plan.background_color = highlighted ? KIOSK_HIGHLIGHT_COLOR : KIOSK_BG_COLOR;
 
-    const Rgb444 bg = run_colour_to_rgb444(plan.background_color);
+    const Rgb444 bg = plan.background_color;
 
     if (line >= KIOSK_TITLE_Y && line < KIOSK_TITLE_Y + KIOSK_CELL_H)
     {
@@ -902,11 +904,12 @@ static void write_console_line(const FrameParams &p, RecordWriter &w, uint32_t l
     }
 }
 
-// KIOSK.  A RUN_COLOR background, one big glyph per record, and a SET pair in
+// KIOSK.  A LITERAL + HOLD background, one big glyph per record, and a SET pair in
 // front of every recoloured segment.  The seam the SET pair costs depends on
 // what is in front of it and is priced from the derived constants:
 //
-//   behind a RUN   the fetch banks BOTH SETs, so the pair law lands them on
+//   behind a HOLD  (the background's second word, a long run-class record)
+//                  the fetch banks BOTH SETs, so the pair law lands them on
 //                  consecutive slots and the header on the next —
 //                  MASK_GAP_AFTER_RUN_SET_SET slots, absorbed by shortening
 //                  the background run.
@@ -947,7 +950,7 @@ static void write_kiosk_line(const FrameParams &p, RecordWriter &w, uint32_t lin
                                  : (gap - MASK_GAP_AFTER_RUN_SET_SET);
         if (run > 0)
         {
-            w.run_color_span(plan.background_color, run);
+            w.literal_span(plan.background_color, run);
         }
         w.record(vidcmd_set(SET_CMP_COLOR1, seg.color1));
         w.record(vidcmd_set(SET_CMP_COLOR0, seg.color0));
@@ -964,7 +967,10 @@ static void write_kiosk_line(const FrameParams &p, RecordWriter &w, uint32_t lin
 
     if (x < H_ACTIVE)
     {
-        w.run_color_span(plan.background_color, H_ACTIVE - x);
+        // The masks' restore is KEEP (the background's source), which would
+        // repeat the last mask pixel: the background is re-issued as a fresh
+        // literal, captured on the last mask's pixel-15 edge (gap 0).
+        w.literal_span(plan.background_color, H_ACTIVE - x);
         slots += H_ACTIVE - x;
     }
 }
@@ -1340,9 +1346,13 @@ uint32_t write_vidcmd_records(const FrameParams &p, Memory ram,
                     put(vidcmd_run(RUN_SRC_PASSTHROUGH, static_cast<uint32_t>(spans[i].x - x)));
                     slots += static_cast<uint32_t>(spans[i].x - x);
                 }
-                if (spans[i].src == RUN_SRC_COLOR)
+                if (spans[i].src == RUN_SRC_KEEP)
                 {
-                    put(vidcmd_run_color(spans[i].color, static_cast<uint32_t>(spans[i].w)));
+                    put(vidcmd_literal(static_cast<Rgb444>(spans[i].color)));
+                    if (spans[i].w >= static_cast<int32_t>(VIDCMD_LIT_HOLD_MIN_SLOTS))
+                    {
+                        put(vidcmd_hold(static_cast<uint32_t>(spans[i].w) - VIDCMD_LITERAL_SLOTS));
+                    }
                 }
                 else
                 {
@@ -1598,14 +1608,14 @@ uint32_t sp_program_words(uint32_t i, std::span<uint16_t> out)
     // The left cap: the line's pix_base SET and the left border, one static
     // two-word fragment per pix_base value.
     put(vidcmd_set(SET_PIX_BASE, sp_pix_base_for(i)));
-    put(vidcmd_run_color(RUN_COLOR_BLACK, SP_BORDER_PIXELS));
+    put(sp_left_border_word());
     put(vidcmd_run(RUN_SRC_PASSTHROUGH, sp_gap_for(i)));
     for (uint32_t j = 0; j < SP_POSE_WORDS; j++)
     {
         put(sp_pose_word(i, j));
     }
     put(vidcmd_run(RUN_SRC_PASSTHROUGH, sp_tail_for(i)));
-    put(vidcmd_run_color(RUN_COLOR_BLACK, SP_BORDER_PIXELS));
+    put(sp_right_border_word());
     return n;
 }
 
@@ -1624,10 +1634,10 @@ void write_static_pieces_data(const StaticPiecesParams &p, Memory ram,
     {
         const uint32_t addr = sp_left_cap_addr(p.data_base, sel);
         ram[addr + 0] = vidcmd_set(SET_PIX_BASE, sel * 2u);
-        ram[addr + 2] = vidcmd_run_color(RUN_COLOR_BLACK, SP_BORDER_PIXELS);
+        ram[addr + 2] = sp_left_border_word();
     }
 
-    ram[sp_right_border_addr(p.data_base)] = vidcmd_run_color(RUN_COLOR_BLACK, SP_BORDER_PIXELS);
+    ram[sp_right_border_addr(p.data_base)] = sp_right_border_word();
 
     for (uint32_t i = 0; i < SP_SPRITE_LINES; i++)
     {

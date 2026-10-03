@@ -18,19 +18,18 @@
 // shrink, listed here so shrinking one is a visible change to this model rather
 // than an archaeological dig through render.cpp:
 //
-//   FIT-RISKY ASSUMPTION 1: 12-bit playback counters.  RUN carries a 12-bit
-//     complemented count and the playback machine upcounts it to an all-ones
-//     terminal.  A 10-bit counter covers every count a 640-pixel line can use;
-//     the encoding would keep 12 bits.  compositor.v currently spends the 12.
+//   FIT-RISKY ASSUMPTION 1 — RESOLVED 2026-10-03: the playback counter is TEN
+//     bits.  RUN, STREAM RUN and HOLD load ~count[9:0]; bits 11:10 of the word
+//     are the record's kind (11 RUN, 10 STREAM RUN, 0x HOLD), never count.
 //   FIT-RISKY ASSUMPTION 2 (RESOLVED TWICE — TILE IS GONE, MASK TOOK ITS
 //     PREFIX): TILE's three words and its two mask shifters were the biggest
 //     single lever and they were spent.  The `01` prefix then came back on
 //     2026-08-24 as MASK, a TWO-word, SIXTEEN-pixel per-pixel overlay with NO
 //     inline colour — it reuses staged_word as its shifter and the shared
 //     playback counter, so it costs two macrocells plus sav_src rather than
-//     two 16-bit shifters.  Sprites and cursors can now be either: RUN/RUN_COLOR
-//     span lists (cheap for contiguous art) or MASK records (cheap for art with
-//     holes).  See "MASK" below.
+//     two 16-bit shifters.  Sprites and cursors can now be either: LITERAL rows
+//     (any colour per pixel, 320 density) or MASK records (two held colours,
+//     640 density).  See "MASK" and "LITERAL" below.
 //   FIT-RISKY ASSUMPTION 3: a 12-bit SET value committed atomically into
 //     whichever register the 3-bit target names.  If the register file has to
 //     be written in halves the slot semantics below change shape.
@@ -46,12 +45,10 @@
 //     SET costs exactly what any other record costs and the suite's "apply at
 //     the commit slot" model IS the measurement.  SKEW_PIX_TARGET stays a named
 //     knob at zero so the compensation path stays exercised.
-//   FIT-RISKY ASSUMPTION 5 — RUN_COLOR, still explicitly at risk.  It needs its
-//     own 3-bit colour latch in the PLAYBACK registers (staging is clobbered by
-//     the next record's prefetch mid-run) and a fourth input on the 12-bit
-//     output mux.  compositor.v implements it and fits, but if the fitter needs
-//     the room back this is the line item; the natural trade is run-invert,
-//     which RUN_COLOR displaced from the src=11 encoding.
+//   FIT-RISKY ASSUMPTION 5 — RETIRED 2026-10-03 with RUN_COLOR itself.  Its
+//     src=11 prefix now carries LITERAL, whose colour is read out of the staged
+//     word (the literal holds the buffer for one clock) rather than a latch.
+//     COMPOSITOR fits at 118/128 LC on a PROPOSED rev-2 pinout (compositor.v).
 //
 // ===========================================================================
 // PIPELINE
@@ -63,11 +60,11 @@
 //
 // Neither PIXEL nor COMPOSITOR has a CPU bus; both live in the 25.175 MHz
 // pixel-clock domain and are configured entirely in band.  COMPOSITOR is the
-// only instruction decoder: it plays RUN/RUN_COLOR records against the pixel
+// only instruction decoder: it plays RUN/LITERAL records against the pixel
 // stream and it also issues register writes out of that same stream into PIXEL.
 //
 // Colour is 12-bit R4G4B4 everywhere — the sixteen palette-RAM entries, the
-// compositor's held colours, RUN_COLOR and the DAC.
+// compositor's held colours, LITERAL and the DAC.
 //
 // ===========================================================================
 // PORTABILITY
@@ -652,26 +649,34 @@ constexpr uint32_t palette_index_2bpp(uint32_t pix_base, uint32_t dibit)
 // EVERY RECORD IS ONE WORD EXCEPT MASK, WHICH IS TWO.  16-bit, prefix coded on
 // the top bits:
 //
-//   00 ss ~count[11:0]              RUN        src 00 passthrough
+//   00 ss 11 ~count[9:0]            RUN        src 00 passthrough
 //                                                  01 cmp_color1 (held_fg)
 //                                                  10 cmp_color0 (held_bg)
-//   00 11 colour[2:0] ~count[8:0]   RUN_COLOR
+//   00 ss 10 ~count[9:0]            STREAM RUN a RUN that lets SETs through
+//   00 ss 0x ~count[9:0]            HOLD       KEEP for count slots (ss != 11)
+//   00 11 colour[11:0]              LITERAL    one R4G4B4 pixel, then KEEP
 //   01 d1 d2 d3 d4 d5 d6 d7         MASK header, + one data word d8..d15
 //   1  ttt value[11:0]              SET
 //
 // Counts are stored complemented exactly as compositor.v wants them: an ATF15xx
 // up-counter with an all-ones terminal is far cheaper than a down-counter's
 // zero detect, so the encoded field loads straight into run_count and one
-// shared incrementer walks it to 12'hFFF.  RUN_COLOR's 9-bit field loads with
-// the top three bits forced to 1 so the same terminal serves both widths.
+// shared incrementer walks it to 10'h3FF.  The counter is TEN bits; bits 11:10
+// are the run-class record's kind and never count.  RUN(0) is 1024 slots.
+//
+// COMPATIBILITY: an old twelve-bit RUN word of count 1..1023 has ~count bits
+// 11:10 = 11, so it is the same RUN bit for bit.  RUN_COLOR (src 11 with a
+// 3-bit corner colour) is GONE: its prefix is LITERAL, and an old RUN_COLOR
+// word now plays as a literal of an unrelated colour.
 //
 // THE `01` PREFIX IS MASK (2026-08-24, "experiment B", implemented and
 // committed in cpld/compositor/compositor.v).  TILE is still gone; what came
 // back on its prefix is a much smaller record — see the MASK section below.
 //
 // FRAMING IS DURATION ARITHMETIC, WITH HOLD — AND WITH THE FETCH CADENCE.
-// Every active pixel clock is one slot.  A RUN contributes its count, a
-// RUN_COLOR its count, a SET one slot, a MASK sixteen.  That is
+// Every active pixel clock is one slot.  A RUN, STREAM RUN or HOLD contributes
+// its count, a LITERAL two (law LL), a SET one slot (none behind a STREAM RUN),
+// a MASK sixteen.  That is
 // what a record costs WHEN IT EXECUTES; what it costs to DELIVER is a separate
 // number, and since 2026-08-19 the two are not the same.  The fetch is one word
 // per TWO pixel clocks (registered /RE, see VIDCMD_SLOTS_PER_WORD below), so a
@@ -719,54 +724,66 @@ enum class VidcmdType : uint8_t
 // ENCODINGS DID NOT MOVE, so these names are kept here (the emulator, apps/ and
 // firmware/ all use them) and the color-numbered aliases below are the ones new
 // code should read.
+//
+// RUN_SRC_KEEP is the playback source's FOURTH value, not an encodable RUN
+// source: src 11 in a run-class word is the LITERAL, which loads KEEP, and a
+// HOLD forces KEEP whatever its src field says.
 inline constexpr uint32_t RUN_SRC_PASSTHROUGH = 0;   // RGB_IN from PIXEL
 inline constexpr uint32_t RUN_SRC_HELD_FG     = 1;   // cmp_color1
 inline constexpr uint32_t RUN_SRC_HELD_BG     = 2;   // cmp_color0
-inline constexpr uint32_t RUN_SRC_COLOR       = 3;   // RUN_COLOR, see below
+inline constexpr uint32_t RUN_SRC_KEEP        = 3;   // RGB_OUT repeats itself
 
 inline constexpr uint32_t RUN_SRC_COLOR1      = RUN_SRC_HELD_FG;
 inline constexpr uint32_t RUN_SRC_COLOR0      = RUN_SRC_HELD_BG;
 
-// --- RUN_COLOR ------------------------------------------------------------
+// --- the run class: RUN, STREAM RUN, HOLD, LITERAL ---------------------------
 //
-//   { 2'b00, 2'b11, colour[2:0], ~count[8:0] }              1 word
+// One prefix (00), four records, told apart by src (13:12) and kind (11:10):
 //
-// A playback record like any other RUN: it emits its colour for `count`
-// pixels, one slot per pixel, and those slots count toward the line's 640.
-// What makes it worth an encoding is what it does NOT do — it never touches
-// held_fg or held_bg.  Painting a span with the held colours costs a SET, and
-// because each SET owns a pixel slot a two-register change lands one pixel
-// apart (see the mid-line-split case).  RUN_COLOR is a single atomic word.
+//   RUN        { 00, src, 11, ~count[9:0] }   src for count slots
+//   STREAM RUN { 00, src, 10, ~count[9:0] }   the same, and SETs staged behind
+//                                             it execute while it counts
+//   HOLD       { 00, 00,  00, ~count[9:0] }   KEEP for count slots (the
+//                                             encoders write src 00, kind 00)
+//   LITERAL    { 00, 11, colour[11:0] }       one pixel, source KEEP after it
 //
-// colour[2:0] is {R, G, B}: bit 11 red, bit 10 green, bit 9 blue.  Each bit is
-// replicated across its whole nibble — {4{r}, 4{g}, 4{b}} — giving the eight
-// saturated corners of the colour cube.
+// LITERAL (law LL, compositor.v).  Its slot shows the colour, read out of the
+// staged word during the clock after the consume edge, so the literal HOLDS
+// THE ON-CHIP BUFFER for that clock: the next word parks instead of being
+// captured, and whatever follows executes TWO slots after the literal, banked
+// pair or not.  A literal can be a banked pair's second record (it lands on
+// the slot after the first), never its first.  Consecutive literals are
+// exactly two slots apart: one 320-density pixel each.
 //
-// The count is 9 bits and stored complemented, matching the convention the
-// 12-bit RUN count already uses: the field is ~count masked to the field
-// width, so decoding is another complement and the maximum span is 511 pixels.
-// Being one word, a RUN_COLOR is as cheap to DELIVER as any other record — but
-// "one word" is no longer free: at the 2-clock fetch cadence a record has to
-// average two slots of playback to keep the stream fed (vidcmd_plan_line()).
-// A one-pixel RUN_COLOR next to a one-pixel gap does not, which is the
-// cadence-aware form of the old prefetch invariant.
-inline constexpr uint32_t RUN_COLOR_MAX_COUNT = 511;
+// KEEP is RGB_OUT fed back: it repeats the last colour SHOWN on this line — a
+// literal, the last passthrough pixel (a smear), a mask's last pixel — and is
+// BLACK at a line's start, because RGB_OUT is forced black outside H_ACTIVE.
+// LITERAL + HOLD(N) is a flat span of any colour in two words, max(N + 2, 4)
+// slots behind a long record (VIDCMD_LIT_HOLD_MIN_SLOTS).
+//
+// STREAM RUN, laws LS1..LS5 (compositor.v): the run's geometry is fixed by its
+// count; only SETs stream, each at the ordinary cadence as if it were the
+// record after a one-slot record (first at run slot + 1 when the run was
+// banked with it, then every two); a late SET recolours late and moves nothing;
+// SETs left at the terminal execute as ordinary SETs and push the line out.
+// Streaming is an active-video rule: in HBLANK a SET behind a staged stream run
+// is not eager.
+inline constexpr uint32_t VIDCMD_RUN_COUNT_MAX        = Griffin::VIDCMD_RUN_COUNT_MAX;   // 1023
+inline constexpr uint32_t VIDCMD_RUN_COUNT_ZERO_SLOTS = VIDCMD_RUN_COUNT_MAX + 1;        // RUN(0)
+static_assert(VIDCMD_RUN_COUNT_MAX == 1023);
 
-inline constexpr uint32_t RUN_COLOR_BLACK   = 0;   // 000
-inline constexpr uint32_t RUN_COLOR_BLUE    = 1;   // 001
-inline constexpr uint32_t RUN_COLOR_GREEN   = 2;   // 010
-inline constexpr uint32_t RUN_COLOR_CYAN    = 3;   // 011
-inline constexpr uint32_t RUN_COLOR_RED     = 4;   // 100
-inline constexpr uint32_t RUN_COLOR_MAGENTA = 5;   // 101
-inline constexpr uint32_t RUN_COLOR_YELLOW  = 6;   // 110
-inline constexpr uint32_t RUN_COLOR_WHITE   = 7;   // 111
+inline constexpr uint16_t VIDCMD_KIND_MASK   = 0x0C00;
+inline constexpr uint16_t VIDCMD_KIND_RUN    = 0x0C00;
+inline constexpr uint16_t VIDCMD_KIND_STREAM = 0x0800;
+inline constexpr uint16_t VIDCMD_KIND_HOLD   = 0x0000;   // bit 11 low; bit 10 is don't-care
 
-constexpr Rgb444 run_colour_to_rgb444(uint32_t code)
-{
-    return rgb444(((code >> 2) & 1u) != 0 ? 0xFu : 0x0u,
-                  ((code >> 1) & 1u) != 0 ? 0xFu : 0x0u,
-                  ((code >> 0) & 1u) != 0 ? 0xFu : 0x0u);
-}
+// A literal paints its own slot and one KEEP slot before anything can follow.
+inline constexpr uint32_t VIDCMD_LITERAL_SLOTS = 2;
+
+// LITERAL + HOLD(n) behind a long record is max(n + 2, this) slots wide: the
+// record after a HOLD(1) is fetched too late to use HOLD's terminal
+// (compositor_tb LIT_HOLD_1, measured 4).
+inline constexpr uint32_t VIDCMD_LIT_HOLD_MIN_SLOTS = 4;
 
 // SET targets.  0..1 are COMPOSITOR's own registers, 2..6 are forwarded to
 // PIXEL, and 7 is decoded NOWHERE — which is what makes it the palette-write
@@ -828,22 +845,87 @@ constexpr VidcmdType vidcmd_type_of(uint16_t w)
     return ((w >> 14) & 1) != 0 ? VidcmdType::MASK : VidcmdType::RUN;
 }
 
+// The ten-bit complemented count field.  1..1023 encode exactly; 0 is the
+// counter's natural RUN(0) = 1024 slots; anything larger is CLAMPED to 1023,
+// so an author who needs more than 1023 slots must split the span (no line has
+// more than 640, so only a frame-spanning run ever does).
+constexpr uint16_t vidcmd_count_field(uint32_t count)
+{
+    const uint32_t n = (count > VIDCMD_RUN_COUNT_MAX) ? VIDCMD_RUN_COUNT_MAX : count;
+    return static_cast<uint16_t>((~n) & 0x3FFu);
+}
+
+// RUN(src, n): src 0..2 for n slots.  Bit for bit the old twelve-bit RUN for
+// n = 1..1023.  src 3 is not a RUN (it would be a LITERAL): it is masked to 2
+// bits and must not be passed.
 constexpr uint16_t vidcmd_run(uint32_t src, uint32_t count)
 {
-    return static_cast<uint16_t>((0u << 14) | ((src & 0x3) << 12) | ((~count) & 0xFFF));
+    return static_cast<uint16_t>(((src & 0x3u) << 12) | VIDCMD_KIND_RUN | vidcmd_count_field(count));
 }
 
-constexpr uint32_t vidcmd_run_src(uint16_t w)   { return (w >> 12) & 0x3; }
-constexpr uint32_t vidcmd_run_count(uint16_t w) { return static_cast<uint32_t>((~w) & 0xFFF); }
-
-constexpr uint16_t vidcmd_run_color(uint32_t colour, uint32_t count)
+constexpr uint16_t vidcmd_stream_run(uint32_t src, uint32_t count)
 {
-    return static_cast<uint16_t>((0u << 14) | (RUN_SRC_COLOR << 12) |
-                                 ((colour & 0x7) << 9) | ((~count) & 0x1FF));
+    return static_cast<uint16_t>(((src & 0x3u) << 12) | VIDCMD_KIND_STREAM |
+                                 vidcmd_count_field(count));
 }
 
-constexpr uint32_t vidcmd_run_color_code(uint16_t w)  { return (w >> 9) & 0x7; }
-constexpr uint32_t vidcmd_run_color_count(uint16_t w) { return static_cast<uint32_t>((~w) & 0x1FF); }
+constexpr uint16_t vidcmd_hold(uint32_t count)
+{
+    return static_cast<uint16_t>(VIDCMD_KIND_HOLD | vidcmd_count_field(count));
+}
+
+constexpr uint16_t vidcmd_literal(Rgb444 colour)
+{
+    return static_cast<uint16_t>((RUN_SRC_KEEP << 12) | (colour & 0xFFFu));
+}
+
+enum class VidcmdRunKind : uint8_t
+{
+    RUN,
+    STREAM,
+    HOLD,
+    LITERAL,
+};
+
+constexpr uint32_t vidcmd_run_src(uint16_t w) { return (w >> 12) & 0x3; }
+
+constexpr bool vidcmd_is_literal(uint16_t w)
+{
+    return (w & 0xC000u) == 0 && vidcmd_run_src(w) == RUN_SRC_KEEP;
+}
+
+// For a run-class word (prefix 00).  The literal decode looks at src alone,
+// exactly as compositor.v's w_is_literal does, so a literal's colour can take
+// any value.
+constexpr VidcmdRunKind vidcmd_run_kind(uint16_t w)
+{
+    if (vidcmd_run_src(w) == RUN_SRC_KEEP)
+    {
+        return VidcmdRunKind::LITERAL;
+    }
+    if ((w & 0x0800u) == 0)
+    {
+        return VidcmdRunKind::HOLD;
+    }
+    return ((w & 0x0400u) != 0) ? VidcmdRunKind::RUN : VidcmdRunKind::STREAM;
+}
+
+// The slots a RUN / STREAM RUN / HOLD counts: (~w)[9:0], with 0 meaning 1024.
+constexpr uint32_t vidcmd_run_count(uint16_t w)
+{
+    const uint32_t n = static_cast<uint32_t>((~w) & 0x3FFu);
+    return (n == 0) ? VIDCMD_RUN_COUNT_ZERO_SLOTS : n;
+}
+
+constexpr Rgb444 vidcmd_literal_colour(uint16_t w) { return static_cast<Rgb444>(w & 0xFFFu); }
+
+// The playback source a run-class word loads: compositor.v's w_run_src, which
+// ORs ~bit 11 into both src bits so a HOLD forces KEEP.
+constexpr uint32_t vidcmd_run_load_src(uint16_t w)
+{
+    const uint32_t hold = ((w & 0x0800u) == 0) ? 3u : 0u;
+    return vidcmd_run_src(w) | hold;
+}
 
 // ---------------------------------------------------------------------------
 // MASK — the two-word `01` record, sixteen pixels of per-pixel overlay
@@ -865,11 +947,12 @@ constexpr uint32_t vidcmd_run_color_count(uint16_t w) { return static_cast<uint3
 // made the record chainable — see the gap constants below.
 //
 // THE RECORD IS MODAL.  A dibit overrides the source for its own pixel only;
-// whatever RUN was in force resumes, as if untouched, at pixel 16.  RUN_COLOR's
-// colour latch is not disturbed either.  Note the corollary that catches
-// authors out: dibit 00 is PASSTHROUGH, i.e. PIXEL's RGB_IN — it is NOT "the
-// span underneath".  A mask over a RUN_COLOR background must paint that
-// background itself, out of cmp_color0.
+// whatever RUN was in force resumes, as if untouched, at pixel 16.  Note the
+// corollaries that catch authors out: dibit 00 is PASSTHROUGH, i.e. PIXEL's
+// RGB_IN — it is NOT "the span underneath", so a mask over a literal span must
+// paint that background itself, out of cmp_color0; and over a KEEP span the
+// restored source is KEEP again, which repeats the mask's LAST pixel — re-issue
+// the LITERAL after a mask laid over a literal span.
 //
 // AUTHORING RULES, all of them consequences rather than conventions:
 //
@@ -1073,11 +1156,13 @@ constexpr uint32_t vidcmd_record_words(uint16_t lead)
     return (vidcmd_type_of(lead) == VidcmdType::MASK) ? MASK_RECORD_WORDS : 1u;
 }
 
-// Active slots this record occupies WHEN IT EXECUTES.  A RUN contributes its
+// Active slots this record occupies WHEN IT EXECUTES.  A LITERAL is two (LL:
+// its own slot plus the KEEP slot the bank hold forces); a SET streamed under a
+// STREAM RUN costs none, which only the planner can know.  A RUN contributes its
 // count exactly (compositor.v loads ~count and adds 1 for the slot the record
 // is consumed in, so the terminal is reached after `count` active slots); a SET
 // is one slot; a MASK is sixteen, its header's own slot (pixel 0) included —
-// the header loads 12'hFF0 with no +1 and the fifteen active-slot increments
+// the header loads 10'h3F0 with no +1 and the fifteen active-slot increments
 // walk it to the terminal.  This is playback cost only — what the record costs
 // to fetch is the cadence's business, and a line's real occupancy comes from
 // vidcmd_plan_line() below.
@@ -1085,11 +1170,9 @@ constexpr uint32_t vidcmd_record_slots(uint16_t lead)
 {
     switch (vidcmd_type_of(lead))
     {
-        // RUN_COLOR steals three of RUN's count bits for its colour, so its
-        // count has to be read out of the narrower field.
-        case VidcmdType::RUN:  return (vidcmd_run_src(lead) == RUN_SRC_COLOR)
-                                          ? vidcmd_run_color_count(lead)
-                                          : vidcmd_run_count(lead);
+        // A literal loads no count; LL makes it two slots wide in effect.
+        case VidcmdType::RUN:  return vidcmd_is_literal(lead) ? VIDCMD_LITERAL_SLOTS
+                                                              : vidcmd_run_count(lead);
         case VidcmdType::MASK: return MASK_SLOTS;
         default:               return 1;
     }
@@ -1151,6 +1234,29 @@ inline constexpr uint32_t VIDCMD_BANK_DEPTH = 2;
 // PIXEL's own consumed-group -> registered IDX stage, from pixel.v's lead
 // discussion.  The palette RAM is combinational, so it adds nothing.
 inline constexpr uint32_t PIXEL_OUT_LEAD = 1;
+
+// --- LITERAL / HOLD / STREAM RUN seam constants (compositor_tb, 2026-10-03) ---
+//
+// Slot distances, all derived from LL/LK/LS and measured by the bench:
+//
+//   literal -> literal            2   sustained, and out of a banked pair
+//                                     (SUSTAINED_LIT, LIT_BEHIND_RUN, LIT_ABC)
+//   literal -> next record        2   whatever it is (LIT_NEXT_*); a SET there
+//                                     shows KEEP in its own slot and the cadence
+//                                     slot, so the record after it is at +4
+//   mask px15 -> literal          0   captured on the pixel-15 edge
+//                                     (LIT_AFTER_MASK)
+//   stream run -> first SET       1   when the run was banked with the SET, then
+//   streamed SET -> streamed SET  2   (STREAM_FEW)
+//   streamed CLUT_DATA on the bus 4   clocks from its commit (STREAM_MIXED), so a
+//                                     palette entry streams legally under a
+//                                     colour-register run
+inline constexpr uint32_t VIDCMD_LITERAL_PITCH        = 2;
+inline constexpr uint32_t VIDCMD_LITERAL_NEXT_GAP     = 2;
+inline constexpr uint32_t VIDCMD_MASK_LITERAL_GAP     = 0;
+inline constexpr uint32_t VIDCMD_STREAM_FIRST_SET     = 1;
+inline constexpr uint32_t VIDCMD_STREAM_SET_PITCH     = 2;
+inline constexpr uint32_t VIDCMD_STREAM_CLUT_HOLD     = 4;
 
 // ---------------------------------------------------------------------------
 // The per-line VIDCMD word cap the suite budgets against
@@ -1239,16 +1345,30 @@ constexpr uint32_t vidcmd_set_skew(uint32_t target, uint32_t skew_pix, uint32_t 
 
 struct VidcmdSlotPlan
 {
-    uint32_t slots       = 0;   // active slots the list occupies, holds included
-    uint32_t last_slot   = 0;   // slot in which the final record executed
-    uint32_t records     = 0;   // records that executed in active video
-    uint32_t blank_sets  = 0;   // records consumed eagerly in HBLANK, zero slots
-    uint32_t stretch     = 0;   // worst slots the cadence pushed any record back by
-    uint32_t starved     = 0;   // records that executed later than their authored slot
-    uint32_t masks       = 0;   // MASK records that executed
-    uint32_t mask_stalls = 0;   // slots a mask spent waiting for its data word
+    uint32_t slots            = 0;   // active slots the list occupies, holds included
+    uint32_t last_slot        = 0;   // slot in which the final record executed
+    uint32_t records          = 0;   // records that executed in active video
+    uint32_t blank_sets       = 0;   // records consumed eagerly in HBLANK, zero slots
+    uint32_t stretch          = 0;   // worst slots the cadence pushed any record back by
+    uint32_t starved          = 0;   // records that executed later than their authored slot
+    uint32_t masks            = 0;   // MASK records that executed
+    uint32_t mask_stalls      = 0;   // slots a mask spent waiting for its data word
+    uint32_t literals         = 0;   // LITERAL records that executed
+    uint32_t stream_sets      = 0;   // SETs that executed inside a STREAM RUN, zero slots
+    uint32_t stream_leftovers = 0;   // SETs a STREAM RUN left at its terminal (LS5)
 };
 
+// The model of one line is compositor.v's consume rule, verbatim:
+//
+//   consume_active = H_ACTIVE & have_staged & (terminal | (streaming & is_set))
+//   consume_blank  = ~H_ACTIVE & have_staged & is_set
+//   buffer_frees   = (~have_staged | consume) & ~mask_holds & ~load_literal
+//
+// AUTHORED SLOTS.  The "authored" position a record is measured against is the
+// slot sum with a LITERAL counted as two and a SET behind a STREAM RUN as zero
+// (its cost is the run's).  A streamed SET left over at the terminal is
+// counted as a fault (stream_leftovers) and, because it really costs its slot,
+// whatever follows it shows up as starved.
 inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
                                        uint32_t hblank_clocks = H_BLANK)
 {
@@ -1263,8 +1383,9 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
 
     uint32_t run_remaining = 0;
     bool     mask_active   = false;
-    uint32_t slot          = 0;     // active slots elapsed
-    uint32_t authored      = 0;     // where the authored sum puts the next record
+    bool     streaming     = false;   // compositor.v's streaming flag
+    uint32_t slot          = 0;       // active slots elapsed
+    uint32_t authored      = 0;       // where the authored sum puts the next record
 
     // Four times the line is far beyond the worst stretch a 640-slot list can
     // suffer (2 slots per word, 640 words maximum), and it keeps a malformed
@@ -1276,9 +1397,10 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
         const bool word_on_q  = re_low && q_full;
         const bool had_staged = staged;
         bool       consumed   = false;
+        bool       load_lit   = false;
 
         // Mask playback, from the pre-edge count.  run_remaining is this
-        // model's form of compositor.v's run_count — remaining == 0xFFF -
+        // model's form of compositor.v's run_count — remaining == 0x3FF -
         // run_count — so the RTL's low-nibble compares become plain counts:
         // pos 7 is the slot that paints pixel MASK_RELOAD_PIXEL and pos 14 the
         // slot that paints the last pixel.  Both are gated by H_ACTIVE in the
@@ -1292,39 +1414,71 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
         const bool mask_stall  = mask_pos_7 && !word_on_q;
         bool       load_mask   = false;
 
-        // Playback: consume_active = H_ACTIVE & have_staged & terminal, or the
-        // eager blank-region SET.  A MASK header PAINTS, so it is playback-class
-        // and is never eager in blanking.
         if (staged)
         {
-            const VidcmdType t = vidcmd_type_of(staged_word);
-            if (active ? terminal : (t == VidcmdType::SET))
+            const VidcmdType t      = vidcmd_type_of(staged_word);
+            const bool       is_set = (t == VidcmdType::SET);
+            if (active ? (terminal || (streaming && is_set)) : is_set)
             {
                 consumed = true;
                 staged   = false;
                 if (active)
                 {
-                    const uint32_t duration = vidcmd_record_slots(staged_word);
-                    // A record that executes past its authored slot has starved
-                    // the beam by that much.  A long RUN later on lets playback
-                    // fall back behind the fetch, so the delay can come back
-                    // down — the worst one is what an author needs to see.
-                    if (slot > authored)
+                    // A SET under a stream run costs no authored slot; one left
+                    // at the terminal is an LS5 leftover and really costs one.
+                    const bool     streamed = is_set && streaming;
+                    const uint32_t duration = streamed ? 0u : vidcmd_record_slots(staged_word);
+                    if (streamed && terminal)
                     {
-                        plan.starved++;
-                        if (slot - authored > plan.stretch)
+                        plan.stream_leftovers++;
+                    }
+                    else if (streamed)
+                    {
+                        plan.stream_sets++;
+                    }
+                    if (!streamed || terminal)
+                    {
+                        // A record that executes past its authored slot has
+                        // starved the beam by that much.  A long RUN later on
+                        // lets playback fall back behind the fetch, so the delay
+                        // can come back down — the worst one is what an author
+                        // needs to see.
+                        if (slot > authored)
                         {
-                            plan.stretch = slot - authored;
+                            plan.starved++;
+                            if (slot - authored > plan.stretch)
+                            {
+                                plan.stretch = slot - authored;
+                            }
                         }
                     }
                     plan.last_slot = slot;
-                    plan.slots     = slot + duration;
-                    plan.records++;
-                    authored      += duration;
-                    run_remaining  = duration;
-                    if (t == VidcmdType::MASK)
+                    const uint32_t occupied = slot + (streamed && terminal ? 1u : duration);
+                    if (occupied > plan.slots)
                     {
-                        load_mask = true;
+                        plan.slots = occupied;
+                    }
+                    plan.records++;
+                    authored += duration;
+                    if (t == VidcmdType::RUN)
+                    {
+                        // Every run-class consume reloads the streaming flag;
+                        // only a STREAM RUN sets it.  A literal loads no count.
+                        streaming = (vidcmd_run_kind(staged_word) == VidcmdRunKind::STREAM);
+                        if (vidcmd_is_literal(staged_word))
+                        {
+                            load_lit = true;
+                            plan.literals++;
+                        }
+                        else
+                        {
+                            run_remaining = vidcmd_run_count(staged_word);
+                        }
+                    }
+                    else if (t == VidcmdType::MASK)
+                    {
+                        load_mask     = true;
+                        run_remaining = MASK_SLOTS;
                         plan.masks++;
                     }
                 }
@@ -1342,8 +1496,9 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
         const bool mask_next  = load_mask || (mask_active && !terminal);
         const bool mask_holds = mask_next && !mask_pos_7 && !mask_pos_14;
 
-        // Fetch, from the registers as they stood when the cycle began.
-        const bool buffer_frees = (!had_staged || consumed) && !mask_holds;
+        // Fetch, from the registers as they stood when the cycle began.  A
+        // literal's consume edge does not free the buffer (LL).
+        const bool buffer_frees = (!had_staged || consumed) && !mask_holds && !load_lit;
         const bool capture_now  = word_on_q && buffer_frees;
         const bool q_parked     = word_on_q && !capture_now;
         const bool re_fall      = !re_low && (next < words.size());
@@ -1385,7 +1540,7 @@ inline VidcmdSlotPlan vidcmd_plan_line(std::span<const uint16_t> words,
             slot++;
         }
 
-        if (next >= words.size() && !staged && !re_low && !mask_active)
+        if (next >= words.size() && !staged && !re_low && !mask_active && !load_lit)
         {
             break;
         }

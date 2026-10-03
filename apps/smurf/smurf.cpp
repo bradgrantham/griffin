@@ -76,9 +76,14 @@
 // screen pixels.
 //
 // COMPOSITOR gives every record one slot per pixel, INCLUDING a SET.  A span
-// in one of the eight saturated colours is a single RUN_COLOR word and costs
-// exactly its own width; any other colour needs SET(cmp_held_fg) then
-// RUN(held_fg,w) and therefore costs one pixel MORE than it covers.  That
+// in one of the eight saturated colours is a LITERAL (+ HOLD) and costs
+// exactly its own width: a LITERAL alone paints two pixels and LITERAL +
+// HOLD(w - 2) paints w from four up, never touching held_fg (RUN_COLOR, the
+// one-word form these spans used until 2026-10-03, is retired; the eight
+// colours keep the literal path so every other span's arithmetic is as it
+// was).  A saturated span of width 1 or 3, which no literal can paint, and
+// any other colour need SET(cmp_held_fg) then
+// RUN(held_fg,w) and therefore cost one pixel MORE than they cover.  That
 // pixel is stolen from the passthrough gap in front of the span, so the sprite
 // still lands where the game put it and the stolen pixel shows the backdrop
 // (the source register still says passthrough while the SET is consumed).
@@ -474,17 +479,38 @@ unsigned g_slow_lines = 0;          // lines that needed the general emitter
 unsigned g_packet_truncations = 0;   // a line wanted more than 32 words
 unsigned g_static_clobbers    = 0;   // a moving sprite landed on a static-span line
 
-bool saturated_code(uint16_t rgb, unsigned &code)
+bool saturated(uint16_t rgb)
 {
     const unsigned r = (rgb >> 8) & 0xF;
     const unsigned g = (rgb >> 4) & 0xF;
     const unsigned b = rgb & 0xF;
-    if ((r == 0 || r == 0xF) && (g == 0 || g == 0xF) && (b == 0 || b == 0xF))
+    return (r == 0 || r == 0xF) && (g == 0 || g == 0xF) && (b == 0 || b == 0xF);
+}
+
+// Can a literal span paint exactly w pixels?  LITERAL alone is two, LITERAL +
+// HOLD(w - 2) is w for w >= 4 (super-engine/descriptor.h, law LL).
+bool literal_width_ok(int w)
+{
+    return w == static_cast<int>(se::VIDCMD_LITERAL_SLOTS) ||
+           w >= static_cast<int>(se::VIDCMD_LIT_HOLD_MIN_SLOTS);
+}
+
+// Words a literal span of width w costs.
+unsigned literal_words(int w)
+{
+    return (w >= static_cast<int>(se::VIDCMD_LIT_HOLD_MIN_SLOTS)) ? 2u : 1u;
+}
+
+// The literal span itself; the record behind it lands exactly w slots in.
+unsigned put_literal_span(uint16_t *out, uint16_t rgb, int w)
+{
+    unsigned k = 0;
+    out[k++] = se::vidcmd_literal(rgb);
+    if (w >= static_cast<int>(se::VIDCMD_LIT_HOLD_MIN_SLOTS))
     {
-        code = (r != 0 ? 4u : 0u) | (g != 0 ? 2u : 0u) | (b != 0 ? 1u : 0u);
-        return true;
+        out[k++] = se::vidcmd_hold(static_cast<unsigned>(w) - se::VIDCMD_LITERAL_SLOTS);
     }
-    return false;
+    return k;
 }
 
 // One scanline's VIDCMD packet.  `spans` must be sorted by x; overlaps are
@@ -524,11 +550,10 @@ unsigned emit_packet(uint16_t *out, const Span *spans, unsigned n)
             continue;
         }
 
-        unsigned   code = 0;
-        const bool sat  = saturated_code(spans[i].rgb, code);
+        const bool sat  = saturated(spans[i].rgb) && literal_width_ok(w);
         const bool need_set = !sat && (held_fg != static_cast<int32_t>(spans[i].rgb));
         int        gap  = x - cursor;
-        const unsigned body = need_set ? 2u : 1u;
+        const unsigned body = sat ? literal_words(w) : (need_set ? 2u : 1u);
 
         if (need_set)
         {
@@ -561,7 +586,7 @@ unsigned emit_packet(uint16_t *out, const Span *spans, unsigned n)
         }
         if (sat)
         {
-            out[k++] = se::vidcmd_run_color(code, static_cast<unsigned>(w));
+            k += put_literal_span(out + k, spans[i].rgb, w);
         }
         else
         {
@@ -694,8 +719,7 @@ bool init_row_packets()
                 {
                     continue;
                 }
-                unsigned   code = 0;
-                const bool sat  = saturated_code(sp.rgb444, code);
+                const bool sat  = saturated(sp.rgb444) && literal_width_ok(w);
                 const bool need_set = !sat && (held_fg != static_cast<int32_t>(sp.rgb444));
 
                 if (first)
@@ -726,7 +750,7 @@ bool init_row_packets()
 
                 if (sat)
                 {
-                    out[k++] = se::vidcmd_run_color(code, static_cast<unsigned>(w));
+                    k += put_literal_span(out + k, sp.rgb444, w);
                 }
                 else
                 {

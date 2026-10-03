@@ -41,7 +41,7 @@ instead of from a 640x480 1bpp PIXEL bitmap?
 | tag | screen | per line |
 |---|---|---|
 | C0  | ENGINE never armed — the no-DMA reference | — |
-| C0B | blank screen from the smallest legal list: one VIDCMD `RUN_COLOR(black,1)` in the vblank preamble plus one `wait_hblank`/`stop_after` pacer, 2 descriptors total | — |
+| C0B | blank screen from the smallest legal list: one VIDCMD `HOLD(1)` in the vblank preamble (KEEP: black at every line start; was `RUN_COLOR(black,1)` until 2026-10-03, same one-slot timing) plus one `wait_hblank`/`stop_after` pacer, 2 descriptors total | — |
 | C1  | 640x480 1bpp PIXEL console, the shape `firmware/rom.cpp:856 dl_build_console_list()` emits | 40 PIXELS words as 2x20-word descriptors, first waiting |
 | C2  | pure-VIDCMD MASK text, §4.5's 82-word line | 40 MASK records (80 words) + 2 colour SETs, 3 descriptors (32/32/18) |
 | C3  | 2bpp full rate, one palette entry reloaded per line | 80 PIXELS words (3 desc) + 6 VIDCMD words (1 desc) |

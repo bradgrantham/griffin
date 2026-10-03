@@ -47,11 +47,19 @@ struct RenderStats
     // it is simply still in flight — and it is structural, not a fault.  A
     // STARVATION hold is a genuinely dry FIFO with no read outstanding, which
     // under the CUSHION discipline means the cushion ran out.
+    // A literal's own KEEP slot (law LL) is part of the literal's width and
+    // is counted as neither.
     uint32_t vidcmd_cadence_slots = 0;
     uint32_t vidcmd_hold_slots   = 0;   // terminal count, nothing staged, nothing coming
     uint32_t vidcmd_overruns     = 0;   // a record still running at the H_ACTIVE fall
     uint32_t vidcmd_late_words   = 0;   // arrived during active video, not in HBLANK
-    uint32_t vidcmd_color_runs   = 0;
+    uint32_t vidcmd_literals     = 0;   // LITERAL records played (replaces the RUN_COLOR count)
+    // A NEW FAULT CLASS with the STREAM RUN (law LS5): a SET still staged when
+    // its stream run reaches the terminal executes as an ordinary SET, costing
+    // its slot plus the cadence slot and pushing the rest of the line out.
+    // The author under-sized the run (it needs 2k slots for k SETs) or the
+    // words arrived late; either way the line's geometry is no longer the run's.
+    uint32_t vidcmd_stream_leftovers = 0;
     uint32_t vidcmd_mask_records = 0;   // `01` records that played their 16 slots
     uint32_t vidcmd_mask_stalls  = 0;   // slots a mask held waiting for its data word
     uint32_t vidcmd_words_popped = 0;
@@ -291,7 +299,9 @@ private:
 // COMPOSITOR
 // ---------------------------------------------------------------------------
 //
-// Four sources, one slot per record, and a two-deep fetch bank behind it.  The
+// Four sources (passthrough, cmp_color1, cmp_color0, KEEP) plus the literal's
+// own colour for its one slot, one slot per record, and a two-deep fetch bank
+// behind it.  The
 // slot rule is compositor.v's: a record's effects land on the edge that ENDS
 // its own slot, so a SET is visible in the pixel of the slot it occupies and a
 // RUN emits its first pixel in the slot in which it is consumed.
@@ -315,6 +325,13 @@ public:
     Rgb444   held_bg() const { return held_bg_; }
     uint32_t fifo_count() const { return count_; }
 
+    // compositor.v's state by its RTL names, for the bench-trace assertions
+    // (cur_src, streaming, lit_active, have_staged).
+    uint32_t cur_src() const { return cur_src_; }
+    bool     streaming() const { return streaming_; }
+    bool     literal_active() const { return lit_active_; }
+    bool     has_staged() const { return staged_valid_; }
+
     void attach_stats(RenderStats *s) { stats_ = s; }
     void set_counting(bool on) { counting_ = on; }
     void set_skew(uint32_t skew_pix, uint32_t skew_cmp)
@@ -328,7 +345,7 @@ private:
     bool pop(uint16_t &w);
     bool fifo_has_data() const;
     void fetch_edge(bool word_on_q, bool had_staged, bool consumed,
-                    bool mask_holds, bool mask_reload);
+                    bool mask_holds, bool mask_reload, bool load_literal);
     void commit(uint32_t target, uint32_t value, PixelUnit &pix);
     void apply_pending(PixelUnit &pix);
 
@@ -364,14 +381,23 @@ private:
     // re-frames until /RS — so an overrunning run simply continues.
     uint32_t run_remaining_ = 0;   // slots left; 0 == terminal
     uint32_t cur_src_       = RUN_SRC_PASSTHROUGH;
-    Rgb444   cur_colour_    = RGB444_BLACK;
+
+    // compositor.v's streaming flag (STREAM RUN, LS1..LS5) and lit_active (the
+    // literal's bank hold: its slot shows staged_word[11:0]).
+    bool streaming_  = false;
+    bool lit_active_ = false;
+
+    // RGB_OUT, which KEEP feeds back.  In this model's SCREEN SPACE it is the
+    // previous slot's colour on the same line, and black at a line's first slot:
+    // compositor.v registers RGB_OUT <= h_active_d ? pixel_mux : 0, so the value
+    // KEEP sees during slot 0 is the black registered in blanking.
+    Rgb444 rgb_out_ = RGB444_BLACK;
 
     // MASK playback.  The record BORROWS cur_src_ for its sixteen slots and
     // gives it back at the end (compositor.v does the same, and for the same
     // reason: an override in front of the colour mux does not fit).  Externally
-    // that is the modal law — the span in force resumes as if untouched — and
-    // cur_colour_ is never disturbed, so a mask over a RUN_COLOR gives the
-    // colour back too.
+    // that is the modal law — the span in force resumes as if untouched; over a
+    // KEEP span the restore is KEEP, which repeats the mask's last pixel.
     bool     mask_active_   = false;
     uint32_t sav_src_       = RUN_SRC_PASSTHROUGH;
 

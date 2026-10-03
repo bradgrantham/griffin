@@ -551,10 +551,11 @@ void print_report(const CaseSpec &spec, const CaseResult &res)
     printf("  VIDCMD holds        cadence %u  starved %u   (cadence = the 2-clock fetch, "
            "starved = a dry FIFO)\n",
            rr.stats.vidcmd_cadence_slots, rr.stats.vidcmd_hold_slots);
-    printf("  VIDCMD framing      overruns %u  late words %u  RUN_COLOR %u  MASK %u "
-           "(mask stalls %u)\n",
-           rr.stats.vidcmd_overruns, rr.stats.vidcmd_late_words, rr.stats.vidcmd_color_runs,
-           rr.stats.vidcmd_mask_records, rr.stats.vidcmd_mask_stalls);
+    printf("  VIDCMD framing      overruns %u  late words %u  LITERAL %u  MASK %u "
+           "(mask stalls %u)  stream leftovers %u\n",
+           rr.stats.vidcmd_overruns, rr.stats.vidcmd_late_words, rr.stats.vidcmd_literals,
+           rr.stats.vidcmd_mask_records, rr.stats.vidcmd_mask_stalls,
+           rr.stats.vidcmd_stream_leftovers);
     if (spec.base.audio)
     {
         printf("  AUDIO FIFO (ch 0)   high %4u low %4u underruns %u  overflows %u  (depth %u)\n",
@@ -975,14 +976,19 @@ void check_cadence_traces()
               "trace burst: slots 2 and 4 must HOLD the value behind them");
     }
 
-    // ONE_PX_SPANS.  RED is staged and GREEN parked at the line start, so RED
-    // takes slot 0 and GREEN slot 1 (L5); slot 2 HOLDs GREEN; BLUE is captured
-    // on the edge ending slot 2 and executes on slot 3 (L4) with slot 4 its
-    // HOLD; the passthrough RUN then executes on slot 5.
+    // ONE_PX_SPANS.  Three one-slot RUNs, c1 (RED), c0 (GREEN), c1 again, the
+    // held colours loaded eagerly in HBLANK (RUN_COLOR, which this trace used
+    // to use, is retired; the record class and so the timing are the same).
+    // RED is staged and GREEN parked at the line
+    // start, so RED takes slot 0 and GREEN slot 1 (L5); slot 2 HOLDs GREEN; the
+    // third record is captured on the edge ending slot 2 and executes on slot 3
+    // (L4) with slot 4 its HOLD; the passthrough RUN then executes on slot 5.
     {
-        const std::vector<uint16_t> w = {vidcmd_run_color(RUN_COLOR_RED, 1),
-                                         vidcmd_run_color(RUN_COLOR_GREEN, 1),
-                                         vidcmd_run_color(RUN_COLOR_BLUE, 1),
+        const std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR1, 0xF00),
+                                         vidcmd_set(SET_CMP_COLOR0, 0x0F0),
+                                         vidcmd_run(RUN_SRC_COLOR1, 1),
+                                         vidcmd_run(RUN_SRC_COLOR0, 1),
+                                         vidcmd_run(RUN_SRC_COLOR1, 1),
                                          vidcmd_run(RUN_SRC_PASSTHROUGH, 637)};
         const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
         uint32_t bad = 0;
@@ -997,12 +1003,13 @@ void check_cadence_traces()
                "exceptions\n", px[0], px[1], px[2], px[3], px[4], px[5], bad);
         CHECK(px[0] == 0xF00 && px[1] == 0x0F0 && px[2] == 0x0F0,
               "trace 1px: R then G on adjacent slots (pair) with slot 2 holding G");
-        CHECK(px[3] == 0x00F && px[4] == 0x00F,
-              "trace 1px: B is one cadence later, slots 3 and 4");
+        CHECK(px[3] == 0xF00 && px[4] == 0xF00,
+              "trace 1px: the third span is one cadence later, slots 3 and 4");
         CHECK(bad == 0, "trace 1px: passthrough must resume at slot 5 (%u exceptions)", bad);
     }
 
-    // SUSTAINED_2SLOT.  A line of one-slot RUN_COLORs: record 1 paints slot 0 as
+    // SUSTAINED_2SLOT.  A line of one-slot RUNs alternating c1 (RED) and c0
+    // (GREEN), loaded eagerly in HBLANK: record 1 paints slot 0 as
     // the staged half of the opening pair, and every record after that paints
     // its own slot plus the HOLD slot behind it, so record k >= 2 covers slots
     // 2k-3 and 2k-2 and N records reach only slot 2N-2.  A full 256-word FIFO
@@ -1011,14 +1018,17 @@ void check_cadence_traces()
     {
         constexpr uint32_t RECORDS = VIDCMD_FIFO_WORDS;
         constexpr uint32_t COVERED = 2 * RECORDS - 1;
-        std::vector<uint16_t> w;
-        for (uint32_t i = 0; i < RECORDS; i++)
+        std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR1, 0xF00),
+                                   vidcmd_set(SET_CMP_COLOR0, 0x0F0)};
+        for (uint32_t i = 0; i < RECORDS - 2; i++)
         {
-            w.push_back(vidcmd_run_color((i % 2) == 0 ? RUN_COLOR_RED : RUN_COLOR_GREEN, 1));
+            w.push_back(vidcmd_run((i % 2) == 0 ? RUN_SRC_COLOR1 : RUN_SRC_COLOR0, 1));
         }
-        const std::vector<Rgb444> px = trace_slots(w, COVERED);
+        // The two eager SETs take two of the FIFO's words, so the line has two
+        // records fewer than the FIFO's depth: 254 records reach slot 506.
+        const std::vector<Rgb444> px = trace_slots(w, COVERED - 4);
         uint32_t off = 0;
-        for (uint32_t i = 0; i < COVERED; i++)
+        for (uint32_t i = 0; i < COVERED - 4; i++)
         {
             const Rgb444 want = (i == 0) ? 0xF00 : ((((i - 1) / 2) % 2) == 0 ? 0x0F0 : 0xF00);
             if (px[i] != want)
@@ -1053,7 +1063,8 @@ void check_cadence_traces()
         printf("  cadence ceiling     pitch  authored px  painted px  verdict\n");
         for (uint32_t pitch : {2u, 3u, 4u, 6u})
         {
-            std::vector<uint16_t> w;
+            const Rgb444 magenta = rgb444(15, 0, 15);
+            std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR1, magenta)};
             uint32_t x = 0;
             for (uint32_t i = 0; i < SPANS; i++)
             {
@@ -1062,13 +1073,12 @@ void check_cadence_traces()
                 {
                     w.push_back(vidcmd_run(RUN_SRC_PASSTHROUGH, sx - x));
                 }
-                w.push_back(vidcmd_run_color(RUN_COLOR_MAGENTA, 1));
+                w.push_back(vidcmd_run(RUN_SRC_COLOR1, 1));
                 x = sx + 1;
             }
             w.push_back(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - x));
 
             const std::vector<Rgb444> px = trace_slots(w, H_ACTIVE);
-            const Rgb444 magenta = run_colour_to_rgb444(RUN_COLOR_MAGENTA);
             uint32_t painted = 0;
             for (Rgb444 c : px)
             {
@@ -1890,7 +1900,7 @@ FrameImage kiosk_reference_frame()
     for (uint32_t y = 0; y < V_ACTIVE; y++)
     {
         const KioskLinePlan plan = kiosk_plan_line(y);
-        const Rgb444        bg   = run_colour_to_rgb444(plan.background_color);
+        const Rgb444        bg   = plan.background_color;
         kiosk_line_classes(plan, y, cls);
 
         for (uint32_t x = 0; x < H_ACTIVE; x++)
@@ -2519,7 +2529,7 @@ void check_mask_traces()
     {
         std::vector<uint16_t> w = {vidcmd_set(SET_CMP_COLOR0, C0),
                                    vidcmd_set(SET_CMP_COLOR1, C1),
-                                   vidcmd_run_color(RUN_COLOR_GREEN, 20),
+                                   vidcmd_run(RUN_SRC_COLOR1, 20),
                                    vidcmd_set(SET_CMP_COLOR1, 0x0F0),
                                    vidcmd_set(SET_CMP_COLOR0, 0x0FF)};
         push_mask(w, trace_mask({F, F, F, F, F, F, F, F, F, F, F, F, F, F, F}));
@@ -2536,9 +2546,11 @@ void check_mask_traces()
               "got 0x%03X", px[20 + run_set_set_gap]);
     }
 
-    // MASKB_STARVE (LM4).  RUN_COLOR(GREEN,4) then a header whose DATA WORD is
-    // withheld.  The span under the mask is a RUN_COLOR on purpose: giving it
-    // back means giving back both the source select and cur_colour.  With
+    // MASKB_STARVE (LM4).  LITERAL(GREEN) + HOLD(2) (slots 0..3: the literal,
+    // its KEEP slot, the HOLD captured one edge late by LL) then a header whose
+    // DATA WORD is withheld.  The span under the mask is a KEEP span on
+    // purpose: the modal restore gives back the SOURCE, and over KEEP that
+    // repeats the mask's LAST pixel, not the green underneath.  With
     // nothing on Q at the pixel-8 edge the record freezes whole — no count, no
     // shift, no source change — so pixel 7's colour stretches until the word
     // arrives, and the reload edge itself is the one that paints pixel 8.
@@ -2555,7 +2567,8 @@ void check_mask_traces()
         const VidcmdMask m = trace_mask({T, B, F, T, B, T, F, T, B, F, F, B, T, F, B});
         cmp.push_word(vidcmd_set(SET_CMP_COLOR0, 0x0C0));
         cmp.push_word(vidcmd_set(SET_CMP_COLOR1, C1));
-        cmp.push_word(vidcmd_run_color(RUN_COLOR_GREEN, 4));
+        cmp.push_word(vidcmd_literal(0x0F0));
+        cmp.push_word(vidcmd_hold(2));
         cmp.push_word(m.header);
         for (uint32_t i = 0; i < H_BLANK; i++)
         {
@@ -2604,18 +2617,21 @@ void check_mask_traces()
         CHECK(starve_reload_slot > 200,
               "mask starve: the record resumed at slot %u, before the word was deposited",
               starve_reload_slot);
-        // Modal, even across a stall, and even for a RUN_COLOR: the span must
-        // come back whole, colour latch included.
+        // Modal, even across a stall: the SOURCE comes back, and over a KEEP
+        // span that is KEEP, which repeats the mask's last pixel (want_data[7],
+        // cmp_color0 0x0C0) — re-issue the literal after a mask laid over one.
         uint32_t tail = 0;
         for (uint32_t i = starve_reload_slot + MASK_DATA_DIBITS; i < H_ACTIVE; i++)
         {
-            if (px[i] != 0x0F0)
+            if (px[i] != 0x0C0)
             {
                 tail++;
             }
         }
-        CHECK(tail == 0, "mask starve: %u tail pixels are not the RUN_COLOR green the record "
-              "interrupted — the modal restore lost cur_colour", tail);
+        CHECK(px[0] == 0x0F0 && px[1] == 0x0F0 && px[2] == 0x0F0 && px[3] == 0x0F0,
+              "mask starve: the literal span under the mask must be slots 0..3");
+        CHECK(tail == 0, "mask starve: %u tail pixels are not KEEP of the mask's last pixel "
+              "(0x0C0) — the modal restore did not give back KEEP", tail);
     }
 
     // A mask that straddles the H_ACTIVE fall freezes rather than being
@@ -2835,12 +2851,16 @@ void check_mask_traces()
 // written up in super-engine/STATIC-PIECES.md:
 //
 //   D1 FRAMING.  A sprite line's program is
-//        SET(pix_base) | RUN_COLOR(black,64) | RUN(pt,g) | 8 x 8-slot span
-//                      | RUN(pt,t) | RUN_COLOR(black,64)
+//        SET(pix_base) | HOLD(64) | RUN(pt,g) | 8 x 2-slot LITERAL or RUN(pt,2)
+//                      | RUN(pt,t) | RUN(cmp_color0,64)
 //      with g + t = SP_MIDDLE_PIXELS, so the authored sum is
-//      64 + g + 64 + t + 64 = 640.  Every playback record is at least
-//      SP_POSE_SPAN = 8 slots, four times the two-slot fetch cadence, so no
-//      record can be late and OCCUPANCY == AUTHORED SUM.  The leading SET is
+//      64 + g + 16 + t + 64 = 640.  Every playback record is at least
+//      SP_POSE_SPAN = 2 slots, the two-slot fetch cadence: a pose LITERAL is
+//      exactly two by LL and a hole RUN(pt,2) two, and each such record is
+//      captured on the edge before the one it executes on, so no record can be
+//      late and OCCUPANCY == AUTHORED SUM.  (The borders and pose words were
+//      RUN_COLOR until 2026-10-03; the word counts, and so D2..D5, are
+//      unchanged.)  The leading SET is
 //      the FIRST word of the program and the line before it framed at exactly
 //      640, so it is consumed in this line's blanking at zero slots.
 //
@@ -3113,7 +3133,7 @@ uint32_t check_sp_geometry(const SpVariant &v, const SpResult &r, uint32_t frame
 {
     const FrameImage &img  = r.rendered.frames[frame];
     uint32_t          bad  = 0;
-    const Rgb444      black = run_colour_to_rgb444(RUN_COLOR_BLACK);
+    const Rgb444      black = RGB444_BLACK;
 
     for (uint32_t i = 0; i < SP_SPRITE_LINES; i++)
     {
@@ -3137,7 +3157,7 @@ uint32_t check_sp_geometry(const SpVariant &v, const SpResult &r, uint32_t frame
                 const uint32_t j = (x - x0) / SP_POSE_SPAN;
                 if (!sp_pose_hole(i, j))
                 {
-                    bad += (c != run_colour_to_rgb444(sp_pose_color(i, j))) ? 1u : 0u;
+                    bad += (c != sp_pose_color(i, j)) ? 1u : 0u;
                     continue;
                 }
             }
@@ -3173,15 +3193,20 @@ uint32_t sp_frame_diff(const FrameImage &a, const FrameImage &b)
 }
 
 // ---------------------------------------------------------------------------
-// m12-cursor-chain — a whole frame's cursor as ONE record chain buffered in
-// vertical blanking, over a static 320x240 16-colour playfield
+// m12-cursor-chain — a whole frame's cursor as ONE record chain, over a static
+// 320x240 16-colour playfield
 // ---------------------------------------------------------------------------
 //
-// THE QUESTION.  apps/lib/griffin_cursor.h draws a mouse cursor without ever
-// touching the per-line display list: the vblank preamble carries passthrough
+// THE QUESTION.  apps/lib/griffin_cursor.h draws a mouse cursor without the
+// per-line display list knowing where it is: the chain carries passthrough
 // RUNs totalling y*640 + x slots, then one MASK per cursor row separated by
-// passthrough RUNs, then a one-slot RUN that holds.  Every word is in the
-// VIDCMD FIFO before line 0 and the list's 480 line groups are pure PIXELS.
+// passthrough RUNs, then a one-slot RUN that holds, then filler SETs.  Since
+// RUN's count became ten bits (2026-10-03) the chain is up to 350 words, more
+// than the 256-word FIFO, so it is delivered in two FIXED parts: part A (192
+// words) in vblank behind the palette and SETs, part B in 32-word chunks
+// appended to the line groups of lines 184..188 — griffin_cursor.h derives
+// (and static_asserts) that no non-filler part-B word can play before line
+// 226 and that the FIFO peaks at <= 233 words.  The list stays static.
 // That only works if duration arithmetic really does close across hundreds of
 // line boundaries — playback frozen in every HBLANK, RUNs resuming mid-count,
 // a MASK landing on its exact slot 300,000 slots after the chain began.
@@ -3212,7 +3237,8 @@ constexpr uint32_t CC_FB_ROWS       = V_ACTIVE / 2;                       // 240
 constexpr uint32_t CC_PREAMBLE_BASE = 0x310000;
 constexpr uint32_t CC_PREAMBLE_STEP = 0x000400;                           // per frame
 constexpr uint32_t CC_FIXED_WORDS   = PALETTE_ENTRIES * PALETTE_WORDS_PER_ENTRY + 4;   // 52
-constexpr uint32_t CC_PREAMBLE_WORDS = CC_FIXED_WORDS + GriffinCursor::CHAIN_WORDS;    // 177
+constexpr uint32_t CC_PREAMBLE_WORDS = CC_FIXED_WORDS + GriffinCursor::CHAIN_WORDS;    // 402
+constexpr uint32_t CC_VBLANK_WORDS   = CC_FIXED_WORDS + GriffinCursor::PART_A_WORDS;   // 244
 constexpr Rgb444   CC_OUTLINE       = rgb444(0x0, 0x0, 0x0);
 constexpr Rgb444   CC_FILL          = rgb444(0xF, 0xF, 0xF);
 
@@ -3295,8 +3321,10 @@ struct CcEmitter
     }
 };
 
-// One frame's list and preamble.  Returns the descriptor count.
-uint32_t cc_author(Memory ram, uint32_t table, uint32_t preamble, uint32_t x, uint32_t y)
+// One frame's list and preamble.  Returns the descriptor count.  part_b_line
+// moves the chain's part B, for the negative control only.
+uint32_t cc_author(Memory ram, uint32_t table, uint32_t preamble, uint32_t x, uint32_t y,
+                   uint32_t part_b_line = GriffinCursor::PART_B_FIRST_LINE)
 {
     uint32_t n = 0;
     for (uint32_t i = 0; i < PALETTE_ENTRIES; i++)
@@ -3313,7 +3341,7 @@ uint32_t cc_author(Memory ram, uint32_t table, uint32_t preamble, uint32_t x, ui
     ram[preamble + (n++) * 2] = vidcmd_set(SET_CMP_COLOR1, CC_FILL);
 
     uint16_t chain[GriffinCursor::CHAIN_WORDS];
-    GriffinCursor::build_chain(chain, GriffinCursor::ARROW, x, y, mode);
+    GriffinCursor::build_chain(chain, GriffinCursor::ARROW, x, y);
     for (uint16_t w : chain)
     {
         ram[preamble + (n++) * 2] = w;
@@ -3324,7 +3352,7 @@ uint32_t cc_author(Memory ram, uint32_t table, uint32_t preamble, uint32_t x, ui
     {
         e.pacer(false);
     }
-    e.stream(preamble, n, DEST_VIDCMD_FIFO_W, false);
+    e.stream(preamble, CC_VBLANK_WORDS, DEST_VIDCMD_FIFO_W, false);
     for (uint32_t i = 0; i < CC_PACERS_AFTER_PREAMBLE; i++)
     {
         e.pacer(false);
@@ -3333,6 +3361,12 @@ uint32_t cc_author(Memory ram, uint32_t table, uint32_t preamble, uint32_t x, ui
     {
         e.stream(CC_FB_BASE + (line / 2) * CC_FB_STRIDE, PIXELS_WORDS_4BPP_HALF,
                  DEST_PIXELS_FIFO_W, true);
+        if (line >= part_b_line && line - part_b_line < GriffinCursor::PART_B_LINES)
+        {
+            const uint32_t j = line - part_b_line;
+            e.stream(preamble + (CC_VBLANK_WORDS + j * GriffinCursor::PART_B_CHUNK) * 2,
+                     GriffinCursor::part_b_chunk_words(j), DEST_VIDCMD_FIFO_W, false);
+        }
     }
     e.pacer(true);
     return e.count;
@@ -3365,7 +3399,8 @@ struct CcPosition
 // Frame 1 shows positions[0], frame 2 positions[1] — the two list halves carry
 // different chains, which is also what a moving cursor is.
 RenderResult cc_run(Memory ram, const CcPosition &a, const CcPosition &b, uint32_t &descriptors,
-                    InterpretResult &interp, bool line_at_a_time = false)
+                    InterpretResult &interp, bool line_at_a_time = false,
+                    uint32_t part_b_line = GriffinCursor::PART_B_FIRST_LINE)
 {
     const uint32_t  tables[RENDER_FRAMES] = {TABLE_A, TABLE_B};
     const CcPosition *pos[RENDER_FRAMES]  = {&a, &b};
@@ -3376,7 +3411,7 @@ RenderResult cc_run(Memory ram, const CcPosition &a, const CcPosition &b, uint32
     for (uint32_t f = 0; f < RENDER_FRAMES; f++)
     {
         descriptors = cc_author(ram, tables[f], CC_PREAMBLE_BASE + f * CC_PREAMBLE_STEP,
-                                pos[f]->x, pos[f]->y);
+                                pos[f]->x, pos[f]->y, part_b_line);
         ip.arm_addresses.push_back(tables[f]);
     }
     interp = interpret(ram, ip);
@@ -3403,14 +3438,21 @@ uint32_t cc_mismatches(const FrameImage &img, uint32_t x, uint32_t y)
 void run_cursor_chain_case(Memory ram)
 {
     static_assert(CC_PREAMBLE_WORDS * 2 <= CC_PREAMBLE_STEP);
-    static_assert(CC_PREAMBLE_WORDS < VIDCMD_FIFO_WORDS);
+    static_assert(CC_VBLANK_WORDS < VIDCMD_FIFO_WORDS);
 
-    printf("\n=== m12-cursor-chain — a 640x480 MASK cursor as one vblank-buffered record "
-           "chain over a static 4bpp half-rate playfield ===\n");
-    printf("  preamble %u words (palette %u, SETs 4, chain %u padded at the front), "
-           "%u pacers, then /RS, then the preamble, then %u pacers\n",
+    printf("\n=== m12-cursor-chain — a 640x480 MASK cursor as one record chain (part A in "
+           "vblank, part B from line %u) over a static 4bpp half-rate playfield ===\n",
+           GriffinCursor::PART_B_FIRST_LINE);
+    printf("  preamble %u words (palette %u, SETs 4, chain %u padded at the end); %u in "
+           "vblank after %u pacers and /RS, then %u pacers; part B %u words on lines "
+           "%u..%u (FIFO bound %u, earliest part-B use line %u)\n",
            CC_PREAMBLE_WORDS, PALETTE_ENTRIES * PALETTE_WORDS_PER_ENTRY,
-           GriffinCursor::CHAIN_WORDS, CC_PACERS_BEFORE_PREAMBLE, CC_PACERS_AFTER_PREAMBLE);
+           GriffinCursor::CHAIN_WORDS, CC_VBLANK_WORDS, CC_PACERS_BEFORE_PREAMBLE,
+           CC_PACERS_AFTER_PREAMBLE, GriffinCursor::PART_B_WORDS,
+           GriffinCursor::PART_B_FIRST_LINE,
+           GriffinCursor::PART_B_FIRST_LINE + GriffinCursor::PART_B_LINES - 1,
+           GriffinCursor::PART_B_FIFO_PEAK,
+           GriffinCursor::earliest_line_of_word(GriffinCursor::PART_A_WORDS));
 
     cc_write_framebuffer(ram);
 
@@ -3419,11 +3461,13 @@ void run_cursor_chain_case(Memory ram)
         {0, 0, "no leading RUN at all: the first MASK is the first record of the frame"},
         {1, 0, "a ONE-slot leading RUN in front of a MASK"},
         {317, 243, "mid-screen, odd x and odd y: 640-res placement over the 320 playfield"},
-        {4095 % 640, 4095 / 640, "leading passthrough is exactly one maximum RUN"},
+        {1023 % 640, 1023 / 640, "leading passthrough is exactly one maximum (10-bit) RUN"},
         {639, 100, "right edge: one visible column, fifteen dibits run onto the next line"},
         {630, 470, "right edge and bottom edge together: rows past 479 not emitted"},
         {5, 479, "last line: a single one-pixel row"},
         {633, 465, "row 15's offset record starts at column 638"},
+        {490, 239, "150 full lead RUNs: rows 14, 15 and the closing RUN come in part B"},
+        {576, 306, "192 full lead RUNs: row 0's MASK header is part B's first word"},
     };
     const uint32_t count = sizeof(positions) / sizeof(positions[0]);
     static_assert(sizeof(positions) / sizeof(positions[0]) % 2 == 0);
@@ -3517,12 +3561,39 @@ void run_cursor_chain_case(Memory ram)
         CHECK(bad_x != 0, "m12-cursor-chain: a one-slot slip went undetected");
         CHECK(bad_y != 0, "m12-cursor-chain: a one-line slip went undetected");
     }
+
+    // The part-B deadline can fail: deliver part B from line 320 instead of
+    // 184.  Both cursors' part-B rows (lines 253.. and 306..) are then played
+    // before their words exist, so both frames must differ.
+    {
+        const CcPosition straddle{490, 239, ""};
+        const CcPosition first_b{576, 306, ""};
+        uint32_t        descriptors = 0;
+        InterpretResult interp;
+        const RenderResult r = cc_run(ram, straddle, first_b, descriptors, interp, false, 320);
+        const uint32_t bad_a = cc_mismatches(r.frames[0], straddle.x, straddle.y);
+        const uint32_t bad_b = cc_mismatches(r.frames[1], first_b.x, first_b.y);
+        printf("  NEGATIVE CONTROL  part B from line 320: (490,239) %u pixels wrong   "
+               "(576,306) %u pixels wrong\n", bad_a, bad_b);
+        CHECK(bad_a != 0 && bad_b != 0,
+              "m12-cursor-chain: part B delivered past its deadline went undetected");
+    }
 }
 
 // ---------------------------------------------------------------------------
 // m13-set-stream — a literal-pixel stream out of SET(cmp_color1) words, on
 // TODAY's COMPOSITOR, with no CPLD change (write-up: SET-STREAM.md)
 // ---------------------------------------------------------------------------
+//
+// WHAT THE 2026-10-03 CHIP CHANGES FOR THIS CASE: nothing it asserts.  Every
+// stream here plays under an ORDINARY RUN, whose SETs still wait for the
+// terminal and cost their slot plus the cadence slot, so every slot map below
+// is unchanged (and all its RUN words, counts <= 640, are bit-for-bit the new
+// ten-bit RUN).  What is new is the alternative: under a STREAM RUN the SETs
+// cost NO slots — the run's count fixes the geometry and each SET recolours at
+// the ordinary cadence inside it (compositor_tb STREAM_FEW; m14 (d)) — and a
+// LITERAL row (m14) paints any colour per pixel with no lead-in, exact at every
+// x, at one word per pixel.
 //
 // THE QUESTION.  Played while the source is cmp_color1, does a run of
 // SET(cmp_color1) words paint one arbitrary 12-bit colour per word, two slots
@@ -3978,6 +4049,738 @@ void check_set_stream_traces()
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// LITERAL / HOLD / KEEP / STREAM RUN — the model against compositor_tb.v
+// ---------------------------------------------------------------------------
+//
+// Every case below is a compositor_tb.v case of the same name (2026-10-03),
+// and every expectation is the bench's own hand derivation copied from its
+// comment block — NOT read out of the model.  The bench drives RGB_IN as a
+// constant 0x9A3, which is TRACE_PASSTHROUGH here, so its spans compare 1:1.
+//
+// Two places where the model cannot be the bench verbatim, and what is done:
+//
+//   * A PIXEL-target SET acts on the model's REAL playfield (the bench's
+//     RGB_IN is a constant register), so values are chosen that leave
+//     passthrough unchanged: pix_base 0, pix_mode 0, pixel_skip 0.  A
+//     clut_data SET has no such value, so for it only the KEEP slots are
+//     asserted.  STREAM_MIXED likewise writes pix_base 0 / pix_mode 0 where the
+//     bench writes 0x123 / 0x001; the timing is the record's, not the value's.
+//   * The model's VIDCMD FIFO is the real 256 words (the bench's stub is 4096),
+//     so SUSTAINED_LIT's 320 literals go in as 256 before the line plus 64
+//     pushed at slot 128, when the FIFO has room; the bench pushes all 640 and
+//     consumes 320.
+//
+// /RS in these traces resets COMPOSITOR only (its FIFO included, as the bench
+// zeroes its stub's pointers); PIXEL is left alone so passthrough stays known.
+
+constexpr Rgb444   LT_PF0          = rgb444(3, 12, 5);   // palette entry 0
+constexpr uint32_t LT_BEFORE_BLANK = 0xFFFFFFFFu;        // an LtPush slot
+
+struct LtPush
+{
+    uint32_t line;
+    uint32_t slot;   // pushed at the start of this slot, or LT_BEFORE_BLANK
+    uint16_t word;
+};
+
+struct LtSnap
+{
+    bool     staged    = false;
+    uint32_t src       = 0;
+    bool     streaming = false;
+    bool     lit       = false;
+    Rgb444   c1        = 0;
+    Rgb444   c0        = 0;
+    Rgb444   clut_b    = 0;   // palette entry 0xB, for STREAM_MIXED
+};
+
+struct LtSpec
+{
+    std::vector<uint16_t> words;           // in the FIFO before line 0's blanking
+    std::vector<LtPush>   late;            // in nondecreasing (line, slot) order
+    uint32_t              lines     = 1;
+    uint16_t              playfield = 0xFFFF;
+    int32_t               rs_before = -1;  // /RS just before this line's blanking
+    std::vector<uint16_t> after_rs;        // pushed right after that /RS
+
+    // A deeper playfield for the m14 rows: PIXEL's mode, the sixteen-entry
+    // TEST_PALETTE instead of entries 0/1, and the PIXELS words of one line.
+    uint32_t              pix_mode     = 0;
+    bool                  full_palette = false;
+    std::vector<uint16_t> pixel_words;
+};
+
+struct LtTrace
+{
+    std::vector<std::vector<Rgb444>> px;
+    std::vector<LtSnap>              pre;    // after each line's blanking
+    std::vector<LtSnap>              post;   // after each line's H_ACTIVE fall
+    LtSnap                           at_rs;  // right after the /RS
+    RenderStats                      stats;
+};
+
+LtSnap lt_snap(const CompositorUnit &cmp, PixelUnit &pix)
+{
+    LtSnap s;
+    s.staged    = cmp.has_staged();
+    s.src       = cmp.cur_src();
+    s.streaming = cmp.streaming();
+    s.lit       = cmp.literal_active();
+    s.c1        = cmp.held_fg();
+    s.c0        = cmp.held_bg();
+    s.clut_b    = pix.palette().entry(0xB);
+    return s;
+}
+
+LtTrace lt_trace(const LtSpec &spec)
+{
+    LtTrace        t;
+    PixelUnit      pix;
+    CompositorUnit cmp;
+    pix.power_on_reset();
+    cmp.reset();
+    if (spec.full_palette)
+    {
+        for (uint32_t i = 0; i < PALETTE_ENTRIES; i++)
+        {
+            palette_load_direct(pix, i, TEST_PALETTE[i]);
+        }
+    }
+    else
+    {
+        palette_load_direct(pix, 0, LT_PF0);
+        palette_load_direct(pix, 1, TRACE_PASSTHROUGH);
+    }
+    pix.set_register(SET_PIX_MODE, spec.pix_mode);
+    cmp.attach_stats(&t.stats);
+    pix.attach_stats(&t.stats);
+    cmp.set_counting(true);
+    pix.set_counting(true);
+    for (uint16_t w : spec.words)
+    {
+        cmp.push_word(w);
+    }
+
+    size_t next = 0;
+    for (uint32_t line = 0; line < spec.lines; line++)
+    {
+        if (static_cast<int32_t>(line) == spec.rs_before)
+        {
+            cmp.reset();
+            t.at_rs = lt_snap(cmp, pix);
+            for (uint16_t w : spec.after_rs)
+            {
+                cmp.push_word(w);
+            }
+        }
+        while (next < spec.late.size() && spec.late[next].line == line &&
+               spec.late[next].slot == LT_BEFORE_BLANK)
+        {
+            cmp.push_word(spec.late[next].word);
+            next++;
+        }
+        if (spec.pixel_words.empty())
+        {
+            for (uint32_t i = 0; i < PIXELS_WORDS_1BPP + 1; i++)
+            {
+                pix.push_word(spec.playfield);
+            }
+        }
+        else
+        {
+            for (uint16_t w : spec.pixel_words)
+            {
+                pix.push_word(w);
+            }
+        }
+        for (uint32_t i = 0; i < H_BLANK; i++)
+        {
+            if (i == H_BLANK - PIXEL_FETCH_LEAD)
+            {
+                pix.arm_preload();
+            }
+            cmp.blank_clock(pix);
+        }
+        t.pre.push_back(lt_snap(cmp, pix));
+        pix.begin_line();
+        std::vector<Rgb444> px;
+        px.reserve(H_ACTIVE);
+        for (uint32_t s = 0; s < H_ACTIVE; s++)
+        {
+            while (next < spec.late.size() && spec.late[next].line == line &&
+                   spec.late[next].slot <= s)
+            {
+                cmp.push_word(spec.late[next].word);
+                next++;
+            }
+            px.push_back(cmp.active_slot(pix));
+        }
+        cmp.end_of_line();
+        t.post.push_back(lt_snap(cmp, pix));
+        t.px.push_back(std::move(px));
+    }
+    return t;
+}
+
+LtTrace lt_trace(const std::vector<uint16_t> &words)
+{
+    LtSpec spec;
+    spec.words = words;
+    return lt_trace(spec);
+}
+
+// All of [lo, hi] on `line` equal c?  Reports the first offender.
+bool lt_span(const LtTrace &t, uint32_t line, uint32_t lo, uint32_t hi, Rgb444 c,
+             const char *name)
+{
+    for (uint32_t s = lo; s <= hi; s++)
+    {
+        if (t.px[line][s] != c)
+        {
+            fprintf(stderr, "  %s: line %u slot %u is 0x%03X, derived 0x%03X (span %u..%u)\n",
+                    name, line, s, t.px[line][s], c, lo, hi);
+            return false;
+        }
+    }
+    return true;
+}
+
+uint32_t lt_first_is(const std::vector<Rgb444> &px, Rgb444 c)
+{
+    for (uint32_t s = 0; s < px.size(); s++)
+    {
+        if (px[s] == c)
+        {
+            return s;
+        }
+    }
+    return H_ACTIVE;
+}
+
+uint32_t g_lt_cases = 0;
+
+void lt_check(const char *name, bool ok)
+{
+    g_lt_cases++;
+    printf("  %-58s %s\n", name, ok ? "as derived" : "DIFFERS");
+    CHECK(ok, "literal trace %s: the model does not play the bench's derivation", name);
+}
+
+constexpr uint16_t lt_set1(Rgb444 c) { return vidcmd_set(SET_CMP_COLOR1, c); }
+constexpr uint16_t lt_set0(Rgb444 c) { return vidcmd_set(SET_CMP_COLOR0, c); }
+constexpr uint16_t lt_pt(uint32_t n) { return vidcmd_run(RUN_SRC_PASSTHROUGH, n); }
+
+// The bench's mask: d1..d14 all one class, d15 another.
+VidcmdMask lt_mask(uint32_t body, uint32_t last)
+{
+    std::array<uint32_t, MASK_SLOTS> d{};
+    d[0] = MASK_PIXEL0_DIBIT;
+    for (uint32_t i = 1; i < MASK_SLOTS - 1; i++)
+    {
+        d[i] = body;
+    }
+    d[MASK_SLOTS - 1] = last;
+    return vidcmd_mask(d);
+}
+
+void check_literal_traces()
+{
+    printf("\n=== compositor-literal — LITERAL / HOLD / KEEP / STREAM RUN against "
+           "compositor_tb.v's derivations ===\n");
+    const Rgb444 PT  = TRACE_PASSTHROUGH;    // the bench's RGB_IN 0x9A3
+    const Rgb444 FFF = VIDCMD_RESET_COLOR1;
+    const Rgb444 X   = 0x5E7;
+    static_assert(TRACE_PASSTHROUGH == 0x9A3);
+
+    // LIT_SPAN: RUN(pt,100) LIT HOLD(98) RUN(pt,440) -> pt 0-99, F00 100-199
+    // (N + 2), pt 200-639.
+    {
+        const LtTrace t = lt_trace({lt_pt(100), vidcmd_literal(0xF00), vidcmd_hold(98), lt_pt(440)});
+        lt_check("LIT_SPAN literal + HOLD(98) = slots 100..199",
+                 lt_span(t, 0, 0, 99, PT, "LIT_SPAN") && lt_span(t, 0, 100, 199, 0xF00, "LIT_SPAN") &&
+                 lt_span(t, 0, 200, H_ACTIVE - 1, PT, "LIT_SPAN"));
+    }
+
+    // LIT_SPANS8: eight LITERAL + HOLD(78), every span exactly 80 slots.
+    {
+        std::vector<uint16_t> w;
+        for (uint32_t i = 0; i < 8; i++)
+        {
+            w.push_back(vidcmd_literal(static_cast<Rgb444>((0x123 + i * 0x1F1) & 0xFFF)));
+            w.push_back(vidcmd_hold(78));
+        }
+        const LtTrace t = lt_trace(w);
+        bool ok = true;
+        for (uint32_t i = 0; i < 8; i++)
+        {
+            ok = ok && lt_span(t, 0, i * 80, i * 80 + 79,
+                               static_cast<Rgb444>((0x123 + i * 0x1F1) & 0xFFF), "LIT_SPANS8");
+        }
+        lt_check("LIT_SPANS8 eight 80-slot spans in any colour", ok);
+    }
+
+    // LIT_ABC: three literals banked in HBLANK -> A 0-1, B 2-3, C 4-5, pt 6.
+    // The banked pair at the head does NOT make A and B adjacent (LL).
+    {
+        const LtTrace t = lt_trace({vidcmd_literal(0xA11), vidcmd_literal(0xB22),
+                                    vidcmd_literal(0xC33), lt_pt(634)});
+        lt_check("LIT_ABC A 0-1, B 2-3, C 4-5, pt from 6",
+                 lt_span(t, 0, 0, 1, 0xA11, "LIT_ABC") && lt_span(t, 0, 2, 3, 0xB22, "LIT_ABC") &&
+                 lt_span(t, 0, 4, 5, 0xC33, "LIT_ABC") &&
+                 lt_span(t, 0, 6, H_ACTIVE - 1, PT, "LIT_ABC") &&
+                 t.post[0].c1 == FFF && t.post[0].c0 == VIDCMD_RESET_COLOR0);
+    }
+
+    // SUSTAINED_LIT: alternating literals for a whole line; record k paints
+    // 2k and 2k+1, 320 records, no irregularity at the head.
+    {
+        LtSpec spec;
+        for (uint32_t i = 0; i < VIDCMD_FIFO_WORDS; i++)
+        {
+            spec.words.push_back(vidcmd_literal((i % 2) == 0 ? 0xF00 : 0x0F0));
+        }
+        for (uint32_t i = VIDCMD_FIFO_WORDS; i < H_ACTIVE / 2; i++)
+        {
+            spec.late.push_back({0, 128, vidcmd_literal((i % 2) == 0 ? 0xF00 : 0x0F0)});
+        }
+        const LtTrace t = lt_trace(spec);
+        uint32_t off = 0;
+        for (uint32_t s = 0; s < H_ACTIVE; s++)
+        {
+            off += (t.px[0][s] != (((s / 2) % 2) == 0 ? 0xF00 : 0x0F0)) ? 1u : 0u;
+        }
+        lt_check("SUSTAINED_LIT literal pitch 2 for all 640 slots", off == 0);
+    }
+
+    // LIT_PAIR_TAIL: RUN(pt,4) SET(c0) LIT RUN(pt) -> pt 0-4, X 5-6, pt 7.
+    {
+        const LtTrace t = lt_trace({lt_pt(4), lt_set0(0x00C), vidcmd_literal(X), lt_pt(600)});
+        lt_check("LIT_PAIR_TAIL a literal as a pair's 2nd: pt 0-4, X 5-6, pt 7",
+                 lt_span(t, 0, 0, 4, PT, "LIT_PAIR_TAIL") && lt_span(t, 0, 5, 6, X, "LIT_PAIR_TAIL") &&
+                 lt_span(t, 0, 7, H_ACTIVE - 1, PT, "LIT_PAIR_TAIL") && t.post[0].c0 == 0x00C);
+    }
+
+    // LIT_BEHIND_RUN: RUN(pt,4) A B C RUN(pt) -> A 4-5, B 6-7, C 8-9, pt 10.
+    {
+        const LtTrace t = lt_trace({lt_pt(4), vidcmd_literal(0xA11), vidcmd_literal(0xB22),
+                                    vidcmd_literal(0xC33), lt_pt(600)});
+        const uint32_t pitch = lt_first_is(t.px[0], 0xB22) - lt_first_is(t.px[0], 0xA11);
+        lt_check("LIT_BEHIND_RUN pt 0-3, A 4-5, B 6-7, C 8-9, pt 10 (pair pitch 2)",
+                 lt_span(t, 0, 0, 3, PT, "LIT_BEHIND_RUN") &&
+                 lt_span(t, 0, 4, 5, 0xA11, "LIT_BEHIND_RUN") &&
+                 lt_span(t, 0, 6, 7, 0xB22, "LIT_BEHIND_RUN") &&
+                 lt_span(t, 0, 8, 9, 0xC33, "LIT_BEHIND_RUN") &&
+                 lt_span(t, 0, 10, H_ACTIVE - 1, PT, "LIT_BEHIND_RUN") &&
+                 pitch == VIDCMD_LITERAL_PITCH);
+    }
+
+    // LIT_NEXT_*: RUN(pt,4) X R — R executes at slot 6 whatever it is (LL); a
+    // SET there shows KEEP in its own slot and the cadence slot, so the record
+    // behind it is at 8.
+    for (uint32_t k = 0; k < 15; k++)
+    {
+        std::vector<uint16_t> w = {lt_set1(0x0C1), lt_set0(0x0C0), lt_pt(4), vidcmd_literal(X)};
+        const VidcmdMask m = lt_mask(MASK_DIBIT_COLOR1, MASK_DIBIT_PASSTHROUGH);
+        switch (k)
+        {
+            case 0:  w.push_back(lt_pt(600)); break;
+            case 1:  w.push_back(vidcmd_run(RUN_SRC_COLOR1, 600)); break;
+            case 2:  w.push_back(vidcmd_run(RUN_SRC_COLOR0, 600)); break;
+            case 3:  w.push_back(vidcmd_stream_run(RUN_SRC_COLOR1, 600)); break;
+            case 4:  w.push_back(vidcmd_hold(10)); w.push_back(lt_pt(600)); break;
+            case 5:  w.push_back(m.header); w.push_back(m.data); break;
+            case 6:  w.push_back(lt_set1(0x777)); w.push_back(vidcmd_run(RUN_SRC_COLOR1, 600)); break;
+            case 7:  w.push_back(lt_set0(0x777)); w.push_back(vidcmd_run(RUN_SRC_COLOR0, 600)); break;
+            case 8:  w.push_back(vidcmd_set(SET_PIX_CLUT_INDEX, 0x001)); w.push_back(lt_pt(600)); break;
+            case 9:  w.push_back(vidcmd_set(SET_PIX_CLUT_DATA, 0x777)); w.push_back(lt_pt(600)); break;
+            case 10: w.push_back(vidcmd_set(SET_PIX_BASE, 0)); w.push_back(lt_pt(600)); break;
+            case 11: w.push_back(vidcmd_set(SET_PIX_MODE, 0)); w.push_back(lt_pt(600)); break;
+            case 12: w.push_back(vidcmd_set(SET_PIX_PIXEL_SKIP, 0)); w.push_back(lt_pt(600)); break;
+            case 13: w.push_back(vidcmd_set(SET_FILLER, 0x777)); w.push_back(lt_pt(600)); break;
+            default: w.push_back(vidcmd_literal(0x6F8)); w.push_back(lt_pt(600)); break;
+        }
+        const LtTrace t = lt_trace(w);
+        const char   *n = "LIT_NEXT";
+        bool          ok = lt_span(t, 0, 0, 3, PT, n);
+        char          name[80];
+        switch (k)
+        {
+            case 0:
+                ok = ok && lt_span(t, 0, 4, 5, X, n) && lt_span(t, 0, 6, H_ACTIVE - 1, PT, n);
+                snprintf(name, sizeof(name), "LIT_NEXT RUN(pt): X 4-5, pt from 6");
+                break;
+            case 1:
+                ok = ok && lt_span(t, 0, 4, 5, X, n) && lt_span(t, 0, 6, H_ACTIVE - 1, 0x0C1, n);
+                snprintf(name, sizeof(name), "LIT_NEXT RUN(c1): X 4-5, c1 from 6");
+                break;
+            case 2:
+                ok = ok && lt_span(t, 0, 4, 5, X, n) && lt_span(t, 0, 6, H_ACTIVE - 1, 0x0C0, n);
+                snprintf(name, sizeof(name), "LIT_NEXT RUN(c0): X 4-5, c0 from 6");
+                break;
+            case 3:
+                ok = ok && lt_span(t, 0, 4, 5, X, n) && lt_span(t, 0, 6, H_ACTIVE - 1, 0x0C1, n);
+                snprintf(name, sizeof(name), "LIT_NEXT STREAM(c1): X 4-5, c1 from 6");
+                break;
+            case 4:
+                ok = ok && lt_span(t, 0, 4, 15, X, n) && lt_span(t, 0, 16, H_ACTIVE - 1, PT, n);
+                snprintf(name, sizeof(name), "LIT_NEXT HOLD(10): X 4-15, pt from 16");
+                break;
+            case 5:
+                ok = ok && lt_span(t, 0, 4, 5, X, n) && lt_span(t, 0, 6, 6, 0x0C0, n) &&
+                     lt_span(t, 0, 7, 20, 0x0C1, n) && lt_span(t, 0, 21, H_ACTIVE - 1, PT, n);
+                snprintf(name, sizeof(name), "LIT_NEXT MASK: X 4-5, c0 6, c1 7-20, pt/KEEP from 21");
+                break;
+            case 6:
+            case 7:
+                ok = ok && lt_span(t, 0, 4, 7, X, n) && lt_span(t, 0, 8, H_ACTIVE - 1, 0x777, n);
+                snprintf(name, sizeof(name), "LIT_NEXT SET %s: X 4-7, new colour from 8",
+                         k == 6 ? "c1" : "c0");
+                break;
+            case 9:
+                // No value of clut_data leaves the playfield alone: KEEP only.
+                ok = ok && lt_span(t, 0, 4, 7, X, n);
+                snprintf(name, sizeof(name), "LIT_NEXT SET clut_data: X 4-7 (SET slot + cadence KEEP)");
+                break;
+            case 8:
+            case 10:
+            case 11:
+            case 12:
+            case 13:
+                ok = ok && lt_span(t, 0, 4, 7, X, n) && lt_span(t, 0, 8, H_ACTIVE - 1, PT, n);
+                snprintf(name, sizeof(name), "LIT_NEXT SET target %u: X 4-7, pt from 8", k - 6);
+                break;
+            default:
+                ok = ok && lt_span(t, 0, 4, 5, X, n) && lt_span(t, 0, 6, 7, 0x6F8, n) &&
+                     lt_span(t, 0, 8, H_ACTIVE - 1, PT, n) &&
+                     lt_first_is(t.px[0], 0x6F8) - lt_first_is(t.px[0], X) == VIDCMD_LITERAL_NEXT_GAP;
+                snprintf(name, sizeof(name), "LIT_NEXT LIT: X 4-5, Y 6-7, pt from 8");
+                break;
+        }
+        lt_check(name, ok);
+    }
+
+    // LIT_HOLD_n: RUN(pt,4) X HOLD(n) RUN(pt) — width max(n + 2, 4).
+    for (uint32_t n : {1u, 2u, 100u})
+    {
+        const LtTrace t = lt_trace({lt_pt(4), vidcmd_literal(X), vidcmd_hold(n), lt_pt(600)});
+        const uint32_t width = (n + 2 > VIDCMD_LIT_HOLD_MIN_SLOTS) ? n + 2 : VIDCMD_LIT_HOLD_MIN_SLOTS;
+        char name[80];
+        snprintf(name, sizeof(name), "LIT_HOLD_%u X 4-%u, pt from %u", n, 4 + width - 1, 4 + width);
+        lt_check(name, lt_span(t, 0, 0, 3, PT, "LIT_HOLD") &&
+                       lt_span(t, 0, 4, 4 + width - 1, X, "LIT_HOLD") &&
+                       lt_span(t, 0, 4 + width, H_ACTIVE - 1, PT, "LIT_HOLD"));
+    }
+
+    // HOLD_AFTER_PT: KEEP repeats the last passthrough PIXEL.  The playfield
+    // alternates entries 0/1 (0x5555, pixel 0 = bit 15 = 0), so slots 0..3
+    // differ pairwise and 4..8 must all equal slot 3; RUN(c1) from 9.
+    {
+        LtSpec spec;
+        spec.words     = {lt_pt(4), vidcmd_hold(5), vidcmd_run(RUN_SRC_COLOR1, 600)};
+        spec.playfield = 0x5555;
+        const LtTrace t = lt_trace(spec);
+        lt_check("HOLD_AFTER_PT KEEP repeats slot 3 on 4-8, c1 from 9",
+                 t.px[0][0] == LT_PF0 && t.px[0][1] == PT && t.px[0][2] == LT_PF0 &&
+                 t.px[0][3] == PT && lt_span(t, 0, 4, 8, t.px[0][3], "HOLD_AFTER_PT") &&
+                 lt_span(t, 0, 9, H_ACTIVE - 1, FFF, "HOLD_AFTER_PT"));
+    }
+
+    // HOLD_AFTER_MASK: KEEP repeats the mask's LAST pixel: mask 4-19 (d15 c0),
+    // KEEP 0C0 on 20-23, pt from 24.
+    {
+        const VidcmdMask m = lt_mask(MASK_DIBIT_COLOR1, MASK_DIBIT_COLOR0);
+        const LtTrace t = lt_trace({lt_set1(0x0C1), lt_set0(0x0C0), lt_pt(4), m.header, m.data,
+                                    vidcmd_hold(4), lt_pt(600)});
+        lt_check("HOLD_AFTER_MASK mask 4-19, KEEP of px15 on 20-23, pt from 24",
+                 lt_span(t, 0, 4, 4, 0x0C0, "HOLD_AFTER_MASK") &&
+                 lt_span(t, 0, 5, 18, 0x0C1, "HOLD_AFTER_MASK") &&
+                 lt_span(t, 0, 19, 23, 0x0C0, "HOLD_AFTER_MASK") &&
+                 lt_span(t, 0, 24, H_ACTIVE - 1, PT, "HOLD_AFTER_MASK"));
+    }
+
+    // HOLD_LINE_START / KEEP_ACROSS_BLANK: KEEP at a line's start is black; a
+    // trailing literal holds to the line end; the unfilled line after it is
+    // black, and the source is still KEEP.
+    {
+        LtSpec spec;
+        spec.words = {vidcmd_hold(10), lt_pt(600)};
+        spec.lines = 3;
+        spec.late  = {{1, LT_BEFORE_BLANK, lt_pt(4)}, {1, LT_BEFORE_BLANK, vidcmd_literal(X)}};
+        const LtTrace t = lt_trace(spec);
+        lt_check("HOLD_LINE_START KEEP at slot 0 is black for 10 slots, pt from 10",
+                 lt_span(t, 0, 0, 9, RGB444_BLACK, "HOLD_LINE_START") &&
+                 lt_span(t, 0, 10, H_ACTIVE - 1, PT, "HOLD_LINE_START"));
+        lt_check("KEEP_ACROSS_BLANK trailing literal to line end; next line black, src KEEP",
+                 lt_span(t, 1, 0, 3, PT, "KEEP_ACROSS_BLANK") &&
+                 lt_span(t, 1, 4, H_ACTIVE - 1, X, "KEEP_ACROSS_BLANK") &&
+                 lt_span(t, 2, 0, H_ACTIVE - 1, RGB444_BLACK, "KEEP_ACROSS_BLANK") &&
+                 t.post[2].src == RUN_SRC_KEEP);
+    }
+
+    // STREAM_FEW: three SETs of cmp_color1 inside STREAM(c1,20) -> FFF 0,
+    // A 1-2, B 3-4, C 5-19, 00F from 20 exactly.
+    {
+        const LtTrace t = lt_trace({lt_set0(0x00F), vidcmd_stream_run(RUN_SRC_COLOR1, 20),
+                                    lt_set1(0xA11), lt_set1(0xB22), lt_set1(0xC33),
+                                    vidcmd_run(RUN_SRC_COLOR0, 600)});
+        const uint32_t first = lt_first_is(t.px[0], 0xA11);
+        const uint32_t pitch = lt_first_is(t.px[0], 0xB22) - first;
+        lt_check("STREAM_FEW FFF 0, A 1-2, B 3-4, C 5-19, c0 from 20 (first +1, pitch 2)",
+                 lt_span(t, 0, 0, 0, FFF, "STREAM_FEW") && lt_span(t, 0, 1, 2, 0xA11, "STREAM_FEW") &&
+                 lt_span(t, 0, 3, 4, 0xB22, "STREAM_FEW") && lt_span(t, 0, 5, 19, 0xC33, "STREAM_FEW") &&
+                 lt_span(t, 0, 20, H_ACTIVE - 1, 0x00F, "STREAM_FEW") &&
+                 first == VIDCMD_STREAM_FIRST_SET && pitch == VIDCMD_STREAM_SET_PITCH &&
+                 t.stats.vidcmd_stream_leftovers == 0);
+    }
+
+    // STREAM_ORDINARY: the same under an ordinary RUN: A 20, B 21-22, C 23-24,
+    // c0 25.
+    {
+        const LtTrace t = lt_trace({lt_set0(0x00F), vidcmd_run(RUN_SRC_COLOR1, 20), lt_set1(0xA11),
+                                    lt_set1(0xB22), lt_set1(0xC33), vidcmd_run(RUN_SRC_COLOR0, 600)});
+        lt_check("STREAM_ORDINARY FFF 0-19, A 20, B 21-22, C 23-24, c0 from 25",
+                 lt_span(t, 0, 0, 19, FFF, "STREAM_ORDINARY") &&
+                 lt_span(t, 0, 20, 20, 0xA11, "STREAM_ORDINARY") &&
+                 lt_span(t, 0, 21, 22, 0xB22, "STREAM_ORDINARY") &&
+                 lt_span(t, 0, 23, 24, 0xC33, "STREAM_ORDINARY") &&
+                 lt_span(t, 0, 25, H_ACTIVE - 1, 0x00F, "STREAM_ORDINARY"));
+    }
+
+    // STREAM_MORE: five SETs in STREAM(c1,6): A 1-2, B 3-4, C 5-6, leftovers
+    // D 7-8, E 9-10, c0 from 11 — the line is five slots long.
+    {
+        const LtTrace t = lt_trace({lt_set0(0x00F), vidcmd_stream_run(RUN_SRC_COLOR1, 6),
+                                    lt_set1(0xA11), lt_set1(0xB22), lt_set1(0xC33), lt_set1(0xD44),
+                                    lt_set1(0xE55), vidcmd_run(RUN_SRC_COLOR0, 629)});
+        lt_check("STREAM_MORE A 1-2 B 3-4 C 5-6, leftovers D 7-8 E 9-10, c0 from 11",
+                 lt_span(t, 0, 0, 0, FFF, "STREAM_MORE") && lt_span(t, 0, 1, 2, 0xA11, "STREAM_MORE") &&
+                 lt_span(t, 0, 3, 4, 0xB22, "STREAM_MORE") && lt_span(t, 0, 5, 6, 0xC33, "STREAM_MORE") &&
+                 lt_span(t, 0, 7, 8, 0xD44, "STREAM_MORE") && lt_span(t, 0, 9, 10, 0xE55, "STREAM_MORE") &&
+                 lt_span(t, 0, 11, H_ACTIVE - 1, 0x00F, "STREAM_MORE"));
+        lt_check("STREAM_MORE the model counts the two LS5 leftovers as a fault",
+                 t.stats.vidcmd_stream_leftovers == 2);
+    }
+
+    // STREAM_MORE2: the leftovers ahead of a second stream run whose own SETs
+    // stream: E 9-10, 00F 11-12, F 13-14, G 15-20, pt from 21.
+    {
+        const LtTrace t = lt_trace({lt_set0(0x00F), vidcmd_stream_run(RUN_SRC_COLOR1, 6),
+                                    lt_set1(0xA11), lt_set1(0xB22), lt_set1(0xC33), lt_set1(0xD44),
+                                    lt_set1(0xE55), vidcmd_stream_run(RUN_SRC_COLOR0, 10),
+                                    lt_set0(0xF66), lt_set0(0x677), lt_pt(600)});
+        lt_check("STREAM_MORE2 E 9-10, c0 11-12, F 13-14, G 15-20, pt from 21",
+                 lt_span(t, 0, 9, 10, 0xE55, "STREAM_MORE2") &&
+                 lt_span(t, 0, 11, 12, 0x00F, "STREAM_MORE2") &&
+                 lt_span(t, 0, 13, 14, 0xF66, "STREAM_MORE2") &&
+                 lt_span(t, 0, 15, 20, 0x677, "STREAM_MORE2") &&
+                 lt_span(t, 0, 21, H_ACTIVE - 1, PT, "STREAM_MORE2"));
+    }
+
+    // STREAM_THEN_ORDINARY: the flag does not outlive its run: FFF 0, A 1-5,
+    // 00F 6-15, V 16, pt from 17.
+    {
+        const LtTrace t = lt_trace({lt_set0(0x00F), vidcmd_stream_run(RUN_SRC_COLOR1, 6),
+                                    lt_set1(0xA11), vidcmd_run(RUN_SRC_COLOR0, 10), lt_set0(0x0D0),
+                                    lt_pt(600)});
+        lt_check("STREAM_THEN_ORDINARY A 1-5, c0 6-15, V at 16 only, pt from 17",
+                 lt_span(t, 0, 0, 0, FFF, "STREAM_THEN_ORDINARY") &&
+                 lt_span(t, 0, 1, 5, 0xA11, "STREAM_THEN_ORDINARY") &&
+                 lt_span(t, 0, 6, 15, 0x00F, "STREAM_THEN_ORDINARY") &&
+                 lt_span(t, 0, 16, 16, 0x0D0, "STREAM_THEN_ORDINARY") &&
+                 lt_span(t, 0, 17, H_ACTIVE - 1, PT, "STREAM_THEN_ORDINARY"));
+    }
+
+    // STREAM_MIXED: cmp_color0, pix_base, pix_mode and a palette entry inside
+    // STREAM(c1,40): colour1 for all 40 slots, pt from 40; the entry is stored
+    // with the right value and its disturbed window is covered by colour1.
+    {
+        const PaletteEntryWords e = vidcmd_palette_entry(0xB, 0x5A5);
+        const LtTrace t = lt_trace({vidcmd_stream_run(RUN_SRC_COLOR1, 40), lt_set0(0x0AB),
+                                    vidcmd_set(SET_PIX_BASE, 0), vidcmd_set(SET_PIX_MODE, 0),
+                                    e.w[0], e.w[1], e.w[2], lt_pt(600)});
+        lt_check("STREAM_MIXED c1 0-39, pt from 40, c0 and a palette entry written, covered",
+                 lt_span(t, 0, 0, 39, FFF, "STREAM_MIXED") &&
+                 lt_span(t, 0, 40, H_ACTIVE - 1, PT, "STREAM_MIXED") && t.post[0].c0 == 0x0AB &&
+                 t.post[0].clut_b == 0x5A5 && t.stats.palette_bad_filler == 0 &&
+                 t.stats.palette_disturbed_visible == 0);
+    }
+
+    // LATE_IN_STREAM vs LATE_LITERAL: a word pushed 10 slots into the line
+    // executes at slot 14.  In the stream run the colour is late and the
+    // geometry is not (c0 from 40); after a late literal everything shifts
+    // (c0 from 16 instead of 6).
+    {
+        LtSpec s1;
+        s1.words = {lt_set0(0x00F), vidcmd_stream_run(RUN_SRC_COLOR1, 40), lt_set1(0xA11)};
+        s1.late  = {{0, 10, lt_set1(0xB22)}, {0, 10, vidcmd_run(RUN_SRC_COLOR0, 600)}};
+        const LtTrace t1 = lt_trace(s1);
+        lt_check("LATE_IN_STREAM A 1-13, late B 14-39, geometry intact: c0 from 40",
+                 lt_span(t1, 0, 0, 0, FFF, "LATE_IN_STREAM") &&
+                 lt_span(t1, 0, 1, 13, 0xA11, "LATE_IN_STREAM") &&
+                 lt_span(t1, 0, 14, 39, 0xB22, "LATE_IN_STREAM") &&
+                 lt_span(t1, 0, 40, H_ACTIVE - 1, 0x00F, "LATE_IN_STREAM"));
+        LtSpec s2;
+        s2.words = {lt_set0(0x00F), lt_pt(4), vidcmd_literal(0xA11)};
+        s2.late  = {{0, 10, vidcmd_literal(0xB22)}, {0, 10, vidcmd_run(RUN_SRC_COLOR0, 600)}};
+        const LtTrace t2 = lt_trace(s2);
+        lt_check("LATE_LITERAL A 4-13 (KEEP while starved), B 14-15, c0 from 16",
+                 lt_span(t2, 0, 0, 3, PT, "LATE_LITERAL") &&
+                 lt_span(t2, 0, 4, 13, 0xA11, "LATE_LITERAL") &&
+                 lt_span(t2, 0, 14, 15, 0xB22, "LATE_LITERAL") &&
+                 lt_span(t2, 0, 16, H_ACTIVE - 1, 0x00F, "LATE_LITERAL"));
+    }
+
+    // BLANK_LIT / BLANK_STREAM: playback-class records block eagerness.
+    {
+        const LtTrace t1 = lt_trace({vidcmd_literal(X), lt_set1(0x0D1), vidcmd_run(RUN_SRC_COLOR1, 600)});
+        lt_check("BLANK_LIT SET behind a staged literal not eager; X 0-3, V from 4",
+                 t1.pre[0].c1 == FFF && lt_span(t1, 0, 0, 3, X, "BLANK_LIT") &&
+                 lt_span(t1, 0, 4, H_ACTIVE - 1, 0x0D1, "BLANK_LIT"));
+        const LtTrace t2 = lt_trace({vidcmd_stream_run(RUN_SRC_COLOR1, 10), lt_set1(0x0D1)});
+        lt_check("BLANK_STREAM SET behind a staged stream run not eager; FFF 0, V from 1",
+                 t2.pre[0].c1 == FFF && lt_span(t2, 0, 0, 0, FFF, "BLANK_STREAM") &&
+                 lt_span(t2, 0, 1, H_ACTIVE - 1, 0x0D1, "BLANK_STREAM"));
+    }
+
+    // EXACT640_NEW: every new record in one exact-640 line, then a cushioned
+    // next line staged at the H_ACTIVE fall.
+    {
+        LtSpec spec;
+        spec.words = {lt_pt(100), vidcmd_literal(X), vidcmd_hold(98),
+                      vidcmd_stream_run(RUN_SRC_COLOR1, 300), lt_set1(0xA11), lt_set1(0xB22),
+                      vidcmd_run(RUN_SRC_COLOR0, 140), vidcmd_run(RUN_SRC_COLOR1, 640)};
+        spec.lines = 2;
+        const LtTrace t = lt_trace(spec);
+        lt_check("EXACT640_NEW pt 0-99, X 100-199, stream 200-499 (V1 201, V2 203), c0 500-639",
+                 lt_span(t, 0, 0, 99, PT, "EXACT640_NEW") && lt_span(t, 0, 100, 199, X, "EXACT640_NEW") &&
+                 lt_span(t, 0, 200, 200, FFF, "EXACT640_NEW") &&
+                 lt_span(t, 0, 201, 202, 0xA11, "EXACT640_NEW") &&
+                 lt_span(t, 0, 203, 499, 0xB22, "EXACT640_NEW") &&
+                 lt_span(t, 0, 500, H_ACTIVE - 1, RGB444_BLACK, "EXACT640_NEW"));
+        lt_check("EXACT640_NEW the next line's RUN is staged at the fall and starts at slot 0",
+                 t.post[0].staged && lt_span(t, 1, 0, H_ACTIVE - 1, 0xB22, "EXACT640_NEW"));
+    }
+
+    // NRS_KEEP / NRS_STREAM: /RS clears KEEP, the literal's bank hold and the
+    // streaming flag.
+    {
+        LtSpec spec;
+        spec.words     = {lt_pt(4), vidcmd_literal(X)};
+        spec.lines     = 2;
+        spec.rs_before = 1;
+        const LtTrace t = lt_trace(spec);
+        lt_check("NRS_KEEP src passthrough, no bank hold, no stream; unfilled frame passthrough",
+                 t.at_rs.src == RUN_SRC_PASSTHROUGH && !t.at_rs.lit && !t.at_rs.streaming &&
+                 lt_span(t, 1, 0, H_ACTIVE - 1, PT, "NRS_KEEP"));
+        LtSpec s2;
+        s2.words     = {vidcmd_stream_run(RUN_SRC_COLOR1, 600)};
+        s2.lines     = 2;
+        s2.rs_before = 1;
+        s2.after_rs  = {vidcmd_run(RUN_SRC_COLOR1, 10), lt_set1(0x0D1), vidcmd_run(RUN_SRC_COLOR1, 600)};
+        const LtTrace t2 = lt_trace(s2);
+        lt_check("NRS_STREAM flag set before /RS, gone after: V lands at slot 10",
+                 t2.post[0].streaming && lt_span(t2, 1, 0, 9, FFF, "NRS_STREAM") &&
+                 lt_span(t2, 1, 10, H_ACTIVE - 1, 0x0D1, "NRS_STREAM"));
+    }
+
+    // COUNT_ZERO: RUN(c1, 0) is 1024 slots: line 1 all c1, line 2 c1 to 383.
+    {
+        LtSpec spec;
+        spec.words = {vidcmd_run(RUN_SRC_COLOR1, 0), vidcmd_run(RUN_SRC_COLOR0, 600)};
+        spec.lines = 2;
+        const LtTrace t = lt_trace(spec);
+        lt_check("COUNT_ZERO RUN(0) = 1024 slots: line 2 c1 to 383, c0 from 384",
+                 lt_span(t, 0, 0, H_ACTIVE - 1, FFF, "COUNT_ZERO") &&
+                 lt_span(t, 1, 0, 383, FFF, "COUNT_ZERO") &&
+                 lt_span(t, 1, 384, H_ACTIVE - 1, RGB444_BLACK, "COUNT_ZERO"));
+    }
+
+    // LIT_AFTER_MASK: a literal captured on the pixel-15 edge: gap 0.
+    {
+        const VidcmdMask m = lt_mask(MASK_DIBIT_COLOR1, MASK_DIBIT_COLOR1);
+        const LtTrace t = lt_trace({lt_set1(0x0C1), lt_set0(0x0C0), lt_pt(4), m.header, m.data,
+                                    vidcmd_literal(X), lt_pt(600)});
+        lt_check("LIT_AFTER_MASK mask 4-19, X 20-21 (gap 0), pt from 22",
+                 lt_span(t, 0, 4, 4, 0x0C0, "LIT_AFTER_MASK") &&
+                 lt_span(t, 0, 5, 19, 0x0C1, "LIT_AFTER_MASK") &&
+                 lt_span(t, 0, 20, 21, X, "LIT_AFTER_MASK") &&
+                 lt_span(t, 0, 22, H_ACTIVE - 1, PT, "LIT_AFTER_MASK") &&
+                 lt_first_is(t.px[0], X) - 19 - 1 == VIDCMD_MASK_LITERAL_GAP);
+    }
+
+    // THE PLANNER against the same derivations: vidcmd_plan_line() must put the
+    // last record where the bench does (occupied slots), and count literals,
+    // streamed SETs and LS5 leftovers.  Hand-derived rows.
+    {
+        struct PlanRow
+        {
+            const char           *name;
+            std::vector<uint16_t> words;
+            uint32_t              slots;
+            uint32_t              literals;
+            uint32_t              stream_sets;
+            uint32_t              leftovers;
+            uint32_t              stretch;
+        };
+        const std::vector<PlanRow> rows = {
+            {"LIT_ABC", {vidcmd_literal(1), vidcmd_literal(2), vidcmd_literal(3), lt_pt(634)},
+             640, 3, 0, 0, 0},
+            {"LIT_BEHIND_RUN", {lt_pt(4), vidcmd_literal(1), vidcmd_literal(2), vidcmd_literal(3),
+                                lt_pt(600)}, 610, 3, 0, 0, 0},
+            {"LIT_PAIR_TAIL", {lt_pt(4), lt_set0(1), vidcmd_literal(X), lt_pt(600)}, 607, 1, 0, 0, 0},
+            {"LIT_HOLD_1", {lt_pt(4), vidcmd_literal(X), vidcmd_hold(1), lt_pt(600)}, 608, 1, 0, 0, 1},
+            {"LIT_HOLD_2", {lt_pt(4), vidcmd_literal(X), vidcmd_hold(2), lt_pt(600)}, 608, 1, 0, 0, 0},
+            {"LIT_HOLD_100", {lt_pt(4), vidcmd_literal(X), vidcmd_hold(100), lt_pt(600)}, 706, 1, 0, 0, 0},
+            {"LIT_SPAN", {lt_pt(100), vidcmd_literal(X), vidcmd_hold(98), lt_pt(440)}, 640, 1, 0, 0, 0},
+            {"STREAM_FEW", {lt_set0(1), vidcmd_stream_run(RUN_SRC_COLOR1, 20), lt_set1(1), lt_set1(2),
+                            lt_set1(3), vidcmd_run(RUN_SRC_COLOR0, 600)}, 620, 0, 3, 0, 0},
+            {"STREAM_ORDINARY", {lt_set0(1), vidcmd_run(RUN_SRC_COLOR1, 20), lt_set1(1), lt_set1(2),
+                                 lt_set1(3), vidcmd_run(RUN_SRC_COLOR0, 600)}, 625, 0, 0, 0, 2},
+            {"STREAM_MORE", {lt_set0(1), vidcmd_stream_run(RUN_SRC_COLOR1, 6), lt_set1(1), lt_set1(2),
+                             lt_set1(3), lt_set1(4), lt_set1(5), vidcmd_run(RUN_SRC_COLOR0, 629)},
+             640, 0, 3, 2, 5},
+            {"EXACT640_NEW", {lt_pt(100), vidcmd_literal(X), vidcmd_hold(98),
+                              vidcmd_stream_run(RUN_SRC_COLOR1, 300), lt_set1(1), lt_set1(2),
+                              vidcmd_run(RUN_SRC_COLOR0, 140)}, 640, 1, 2, 0, 0},
+        };
+        for (const PlanRow &r : rows)
+        {
+            const VidcmdSlotPlan p = vidcmd_plan_line(r.words);
+            char name[96];
+            snprintf(name, sizeof(name), "PLAN %s: %u slots, %u lit, %u streamed, %u leftover, "
+                     "stretch %u", r.name, r.slots, r.literals, r.stream_sets, r.leftovers, r.stretch);
+            const bool ok = p.slots == r.slots && p.literals == r.literals &&
+                            p.stream_sets == r.stream_sets && p.stream_leftovers == r.leftovers &&
+                            p.stretch == r.stretch;
+            if (!ok)
+            {
+                fprintf(stderr, "  PLAN %s: got %u slots, %u lit, %u streamed, %u leftover, "
+                        "stretch %u\n", r.name, p.slots, p.literals, p.stream_sets,
+                        p.stream_leftovers, p.stretch);
+            }
+            lt_check(name, ok);
+        }
+    }
+
+    printf("  ------------------------------------------------------------------\n");
+    printf("  %u bench-derived literal/stream traces checked\n", g_lt_cases);
+    printf("  MEASURED CONSTANTS FOR THE SUITE (LITERAL / HOLD / STREAM RUN)\n");
+    printf("    LITERAL pitch, sustained and out of a pair : %u slots   [tb SUSTAINED_LIT, "
+           "LIT_BEHIND_RUN]\n", VIDCMD_LITERAL_PITCH);
+    printf("    literal -> next record, any kind           : %u slots   [tb LIT_NEXT_*]\n",
+           VIDCMD_LITERAL_NEXT_GAP);
+    printf("    mask -> literal gap                        : %u slots   [tb LIT_AFTER_MASK]\n",
+           VIDCMD_MASK_LITERAL_GAP);
+    printf("    LITERAL + HOLD(n) behind a run             : max(n + 2, %u) [tb LIT_HOLD_n]\n",
+           VIDCMD_LIT_HOLD_MIN_SLOTS);
+    printf("    stream run -> first SET, then every        : %u, %u slots [tb STREAM_FEW]\n",
+           VIDCMD_STREAM_FIRST_SET, VIDCMD_STREAM_SET_PITCH);
+    printf("    run counter                                : 10 bits, RUN(0) = %u slots "
+           "[tb COUNT_ZERO]\n", VIDCMD_RUN_COUNT_ZERO_SLOTS);
+    printf("  ------------------------------------------------------------------\n");
 }
 
 // --- The whole-frame case -----------------------------------------------------
@@ -4486,6 +5289,750 @@ void run_set_stream_case(Memory ram)
     }
 }
 
+// ---------------------------------------------------------------------------
+// m14-literal-sprites — sprite rows as LITERALs (package 2, 2026-10-03)
+// ---------------------------------------------------------------------------
+//
+// THE RECORD.  A sprite row of 16 SOURCE pixels is one word per pixel: a
+// LITERAL for an opaque pixel and RUN(passthrough, 2) for a transparent one.
+// Every element is exactly two slots — a literal by law LL, the hole by its
+// count — so a row is 32 slots at 320 density, which is the 4bpp half-rate
+// playfield's own density.
+//
+// DERIVATION, by hand from L4/L5/LL before anything was simulated:
+//
+//   R1  ANY CONCATENATION OF TWO-SLOT ELEMENTS IS EXACT.  An element E
+//       executing on edge s was captured no later than edge s-1.  If E is a
+//       literal it holds the bank, so its successor (parked or fetched) is
+//       captured on s+1 and executes on s+2.  If E is RUN(pt,2) its successor
+//       is captured by s+1 (/RE rose on E's capture edge s-1 at the latest, fell
+//       on s, captured on s+1) and executes at E's terminal s+2.  Either way
+//       the next element lands two slots later and no cadence slot appears.
+//   R2  THE ENTRY.  A row behind a lead RUN(pt, x) of any x >= 1: element 0 is
+//       the parked half of the pair and executes on x; element 1 is captured
+//       on x+1 (behind a literal) or by x+2 (behind a hole) and executes on
+//       x+2.  At x = 0 element 0 is banked in HBLANK with element 1 parked and
+//       the same holds from slot 0.  So EVERY x is exact, 0, 1 and 2 included
+//       — the SET-stream form (m13) could not do x = 0 (pixel 0 one slot or
+//       pixel 1 one slot) nor x = 2 without a free word.
+//   R3  THE RIGHT EDGE.  A row at x paints x .. x+31; at x = 608 it ends on
+//       slot 639 with no exit RUN.  Past that a row is CLIPPED to the elements
+//       that fit (an element at 639 would put its second slot on the next line).
+//   R4  PAINTER'S-ORDER SLICING NEEDS NO FIX-UP WORD.  A seam between two
+//       slices is a seam between two two-slot elements, which R1 already
+//       covers, so back[0..a) + front[all] + back[b..16) — three sub-ranges of
+//       static rows — plays as one row.  The price is the notch: where the
+//       front is transparent the BACKDROP shows, not the back sprite, because
+//       the back's covered elements were simply not sent.
+//   R5  DELIVERY.  A literal row consumes one word per two slots; ENGINE
+//       deposits one per 2 SYSCLK = 3.6 pixel clocks.  So a row cannot be
+//       trickled: word j of a row at x must be in the FIFO by slot x + 2j - 4
+//       (the cold /EF path, LATE_LITERAL: pushed at P, executes at P + 4).  A
+//       17-word left-edge program deposited FIRST in its own HBLANK has its last
+//       word in 2 + 5 + 32 + 1 + 13 + 2 = 55 SYSCLK after the edge (about 99 of
+//       the 160 blank clocks), and the line's first PIXELS word lands at
+//       55 + 1 + 13 + 2 = 71 SYSCLK, inside PIX_PRELOAD's 80: both deadlines met.
+//       With one line of lookahead (k = 1) the deadline is a whole line away.
+
+constexpr uint32_t LS_HOLE   = 0xFFFF;
+constexpr uint32_t LS_ROW    = 16;
+constexpr uint32_t LS_FRONT  = 8;
+
+constexpr std::array<uint32_t, LS_ROW> LS_BACK_ART = {
+    0xF80, 0x08F, LS_HOLE, 0x8F0, 0xF08, 0xF08, LS_HOLE, LS_HOLE,
+    0x0F8, 0x80F, LS_HOLE, 0xFF8, 0x8FF, 0xF8F, 0x444,   0xCCC,
+};
+
+constexpr std::array<uint32_t, LS_FRONT> LS_FRONT_ART = {
+    0xE11, LS_HOLE, 0x1E1, 0x11E, LS_HOLE, LS_HOLE, 0xEE1, 0x1EE,
+};
+
+constexpr uint16_t ls_element(uint32_t art)
+{
+    return (art == LS_HOLE) ? vidcmd_run(RUN_SRC_PASSTHROUGH, VIDCMD_LITERAL_SLOTS)
+                            : vidcmd_literal(static_cast<Rgb444>(art));
+}
+
+// A row at x: lead RUN, the elements that fit, and the exit RUN.
+std::vector<uint16_t> ls_row_line(uint32_t x, uint32_t elements = LS_ROW)
+{
+    std::vector<uint16_t> w;
+    if (x > 0)
+    {
+        w.push_back(vidcmd_run(RUN_SRC_PASSTHROUGH, x));
+    }
+    uint32_t e = 0;
+    for (; e < elements && x + 2 * e + 1 < H_ACTIVE; e++)
+    {
+        w.push_back(ls_element(LS_BACK_ART[e]));
+    }
+    if (x + 2 * e < H_ACTIVE)
+    {
+        w.push_back(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - (x + 2 * e)));
+    }
+    return w;
+}
+
+// The backdrop the passthrough shows, from the same line rendered with no
+// sprite at all: that is what the transparent pixels must show.
+std::vector<Rgb444> ls_backdrop(const LtSpec &like)
+{
+    LtSpec spec    = like;
+    spec.words     = {vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE)};
+    spec.late      = {};
+    return lt_trace(spec).px[0];
+}
+
+void ls_line_check(const char *name, const std::vector<Rgb444> &got,
+                   const std::vector<Rgb444> &want, const RenderStats &stats)
+{
+    uint32_t bad   = 0;
+    uint32_t first = H_ACTIVE;
+    for (uint32_t s = 0; s < H_ACTIVE; s++)
+    {
+        if (got[s] != want[s])
+        {
+            first = (bad == 0) ? s : first;
+            bad++;
+        }
+    }
+    printf("  %-50s %3u slots off  cadence %u  starved %u\n", name, bad,
+           stats.vidcmd_cadence_slots, stats.vidcmd_hold_slots);
+    CHECK(bad == 0, "m14 %s: %u slots differ from the derivation, first at %u (got 0x%03X, "
+          "derived 0x%03X)", name, bad, first, first < H_ACTIVE ? got[first] : 0u,
+          first < H_ACTIVE ? want[first] : 0u);
+    CHECK(stats.vidcmd_cadence_slots == 0 && stats.vidcmd_hold_slots == 0,
+          "m14 %s: %u cadence / %u starvation holds, derived 0 / 0 (R1)", name,
+          stats.vidcmd_cadence_slots, stats.vidcmd_hold_slots);
+}
+
+void check_literal_sprite_traces()
+{
+    printf("\n=== m14 literal-sprite traces — rows, flat spans, stream runs, palette cover ===\n");
+
+    // (a) LITERAL ROWS at x = 0, 1, 2, mid, the right edge and clipped, over
+    // the 4bpp half-rate and the attribute playfields (TEST_PALETTE).
+    struct Backdrop
+    {
+        const char *name;
+        uint32_t    mode;
+        uint32_t    words;
+    };
+    const Backdrop backdrops[] = {
+        {"4bpp-half", pixel_mode(PIXEL_DEPTH_4BPP, true), PIXELS_WORDS_4BPP_HALF},
+        {"attribute", pixel_mode(PIXEL_DEPTH_ATTR, false), PIXELS_WORDS_ATTR},
+    };
+    for (const Backdrop &b : backdrops)
+    {
+        LtSpec base;
+        base.pix_mode     = b.mode;
+        base.full_palette = true;
+        for (uint32_t i = 0; i < b.words + 1; i++)
+        {
+            base.pixel_words.push_back(static_cast<uint16_t>(0x9E37u * (i + 1) ^ (i << 7)));
+        }
+        const std::vector<Rgb444> bd = ls_backdrop(base);
+        uint32_t distinct = 0;
+        for (uint32_t s = 1; s < H_ACTIVE; s++)
+        {
+            distinct += (bd[s] != bd[s - 1]) ? 1u : 0u;
+        }
+        CHECK(distinct > 100, "m14 (a): the %s backdrop is too flat (%u changes) to show a slip",
+              b.name, distinct);
+        for (uint32_t x : {0u, 1u, 2u, 301u, 608u, 624u})
+        {
+            LtSpec spec = base;
+            spec.words  = ls_row_line(x);
+            const LtTrace t = lt_trace(spec);
+            std::vector<Rgb444> want = bd;
+            for (uint32_t e = 0; e < LS_ROW && x + 2 * e + 1 < H_ACTIVE; e++)
+            {
+                if (LS_BACK_ART[e] != LS_HOLE)
+                {
+                    want[x + 2 * e]     = static_cast<Rgb444>(LS_BACK_ART[e]);
+                    want[x + 2 * e + 1] = static_cast<Rgb444>(LS_BACK_ART[e]);
+                }
+            }
+            char name[80];
+            snprintf(name, sizeof(name), "a  row at x=%u over %s%s", x, b.name,
+                     x == 624 ? " (clipped to 8)" : "");
+            ls_line_check(name, t.px[0], want, t.stats);
+            CHECK(t.stats.vidcmd_overruns == 0, "m14 %s: the row overran the line", name);
+        }
+    }
+
+    // (c) LITERAL + HOLD(n) flat spans behind RUN(pt,100): max(n + 2, 4), and
+    // a chain of LITERAL + HOLD(6) spans, each exactly 8.
+    {
+        const Rgb444 pt = TRACE_PASSTHROUGH;
+        for (uint32_t n : {1u, 2u, 3u, 4u, 62u})
+        {
+            const uint32_t width = (n + 2 > VIDCMD_LIT_HOLD_MIN_SLOTS) ? n + 2 : VIDCMD_LIT_HOLD_MIN_SLOTS;
+            const LtTrace t = lt_trace({vidcmd_run(RUN_SRC_PASSTHROUGH, 100), vidcmd_literal(0x5E7),
+                                        vidcmd_hold(n), vidcmd_run(RUN_SRC_PASSTHROUGH, 400)});
+            std::vector<Rgb444> want(H_ACTIVE, pt);
+            for (uint32_t s = 100; s < 100 + width; s++)
+            {
+                want[s] = 0x5E7;
+            }
+            char name[80];
+            snprintf(name, sizeof(name), "c  LITERAL + HOLD(%u) = %u slots", n, width);
+            uint32_t bad = 0;
+            for (uint32_t s = 0; s < H_ACTIVE; s++)
+            {
+                bad += (t.px[0][s] != want[s]) ? 1u : 0u;
+            }
+            printf("  %-50s %3u slots off\n", name, bad);
+            CHECK(bad == 0, "m14 %s: %u slots off", name, bad);
+        }
+        std::vector<uint16_t> w = {vidcmd_run(RUN_SRC_PASSTHROUGH, 64)};
+        for (uint32_t i = 0; i < 8; i++)
+        {
+            w.push_back(vidcmd_literal(ss_c(i)));
+            w.push_back(vidcmd_hold(6));
+        }
+        w.push_back(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE - 128));
+        const LtTrace t = lt_trace(w);
+        std::vector<Rgb444> want(H_ACTIVE, pt);
+        for (uint32_t s = 64; s < 128; s++)
+        {
+            want[s] = ss_c((s - 64) / 8);
+        }
+        ls_line_check("c  eight LITERAL + HOLD(6) spans, 8 slots each", t.px[0], want, t.stats);
+    }
+
+    // (d) A STREAM RUN recoloured by SET(cmp_color1), one word LATE, against
+    // the same content as literals.  x = 100: RUN(pt,99), SET c1 = C0 (the
+    // invisible first half of the pair), STREAM(c1,32) on 100, SETs C1..C11
+    // streamed on 102, 104, ... 122, then the run's flat tail to 131; exit
+    // RUN(pt,508) on 132.  The literal form is LIT C0..C10, LIT C11 + HOLD(8):
+    // the same 32 slots.  Words up to C5 are in the FIFO; C6 onward (and the
+    // exits) arrive at slot 114, two slots after C6 was due (112).  Cold path:
+    // C6 executes on 118 (P + 4), C7..C11 every two after it (120..128).
+    //   stream:  C5 on 110..117, C6 118, ..., C11 128..131; exit on 132 EXACTLY,
+    //            line 1 (a LITERAL + HOLD(638) program) unshifted.
+    //   literal: C5 KEEP 110..117, C6 118, ..., C11 128 + HOLD(8) 130..137; exit
+    //            on 138 — six slots late — overrunning six slots into line 1,
+    //            whose program starts on its slot 6.
+    {
+        const Rgb444 pt   = TRACE_PASSTHROUGH;
+        const Rgb444 next = 0x0D0;
+        for (int form = 0; form < 2; form++)
+        {
+            LtSpec spec;
+            spec.lines = 2;
+            std::vector<uint16_t> all;
+            uint32_t              split = 0;
+            if (form == 0)
+            {
+                all = {vidcmd_run(RUN_SRC_PASSTHROUGH, 99), lt_set1(ss_c(0)),
+                       vidcmd_stream_run(RUN_SRC_COLOR1, 32)};
+                for (uint32_t j = 1; j <= 11; j++)
+                {
+                    if (j == 6)
+                    {
+                        split = static_cast<uint32_t>(all.size());
+                    }
+                    all.push_back(lt_set1(ss_c(j)));
+                }
+            }
+            else
+            {
+                all = {vidcmd_run(RUN_SRC_PASSTHROUGH, 100)};
+                for (uint32_t j = 0; j <= 11; j++)
+                {
+                    if (j == 6)
+                    {
+                        split = static_cast<uint32_t>(all.size());
+                    }
+                    all.push_back(vidcmd_literal(ss_c(j)));
+                }
+                all.push_back(vidcmd_hold(8));
+            }
+            all.push_back(vidcmd_run(RUN_SRC_PASSTHROUGH, 508));
+            for (uint32_t i = 0; i < all.size(); i++)
+            {
+                if (i < split)
+                {
+                    spec.words.push_back(all[i]);
+                }
+                else
+                {
+                    spec.late.push_back({0, 114, all[i]});
+                }
+            }
+            spec.late.push_back({1, LT_BEFORE_BLANK, vidcmd_literal(next)});
+            spec.late.push_back({1, LT_BEFORE_BLANK, vidcmd_hold(638)});
+            const LtTrace t = lt_trace(spec);
+
+            std::vector<Rgb444> want0(H_ACTIVE, pt);
+            std::vector<Rgb444> want1(H_ACTIVE, next);
+            for (uint32_t j = 0; j <= 5; j++)
+            {
+                want0[100 + 2 * j]     = ss_c(j);
+                want0[100 + 2 * j + 1] = ss_c(j);
+            }
+            for (uint32_t s = 110; s < 118; s++)
+            {
+                want0[s] = ss_c(5);
+            }
+            for (uint32_t j = 6; j <= 11; j++)
+            {
+                want0[118 + 2 * (j - 6)]     = ss_c(j);
+                want0[118 + 2 * (j - 6) + 1] = ss_c(j);
+            }
+            const uint32_t tail_end = (form == 0) ? 131 : 137;
+            for (uint32_t s = 128; s <= tail_end; s++)
+            {
+                want0[s] = ss_c(11);
+            }
+            if (form == 1)
+            {
+                for (uint32_t s = 0; s < 6; s++)
+                {
+                    want1[s] = pt;   // the overrunning exit RUN's last six slots
+                }
+            }
+            ls_line_check(form == 0 ? "d  stream run, C6.. late: geometry kept (line 0)"
+                                    : "d  literals, C6.. late: everything after shifts (line 0)",
+                          t.px[0], want0, RenderStats{});
+            uint32_t bad1 = 0;
+            for (uint32_t s = 0; s < H_ACTIVE; s++)
+            {
+                bad1 += (t.px[1][s] != want1[s]) ? 1u : 0u;
+            }
+            printf("  %-50s %3u slots off  overruns %u  leftovers %u\n",
+                   form == 0 ? "d  stream run: line 1 unshifted" : "d  literals: line 1 starts 6 late",
+                   bad1, t.stats.vidcmd_overruns, t.stats.vidcmd_stream_leftovers);
+            CHECK(bad1 == 0, "m14 (d) form %d: line 1 has %u slots off its derivation", form, bad1);
+            CHECK(t.stats.vidcmd_overruns == static_cast<uint32_t>(form == 0 ? 0 : 2),
+                  "m14 (d) form %d: %u overruns, derived %d", form, t.stats.vidcmd_overruns,
+                  form == 0 ? 0 : 2);
+            CHECK(t.stats.vidcmd_stream_leftovers == 0, "m14 (d): stream leftovers");
+        }
+    }
+
+    // (e) A palette entry inside a STREAM RUN: legal over a colour register,
+    // flagged over passthrough (the four disturbed slots after the data SET
+    // reach the DAC).  The entry is stored either way.
+    for (uint32_t src : {RUN_SRC_COLOR1, RUN_SRC_PASSTHROUGH})
+    {
+        const PaletteEntryWords e = vidcmd_palette_entry(0xB, 0x5A5);
+        const LtTrace t = lt_trace({vidcmd_stream_run(src, 40), e.w[0], e.w[1], e.w[2],
+                                    vidcmd_run(RUN_SRC_PASSTHROUGH, 600)});
+        const bool legal = (src != RUN_SRC_PASSTHROUGH);
+        printf("  e  palette entry in STREAM(%s,40)%*s stored 0x%03X  disturbed visible %u  %s\n",
+               legal ? "c1" : "pt", 13, "", t.post[0].clut_b, t.stats.palette_disturbed_visible,
+               legal ? "legal" : "FLAGGED, as derived");
+        CHECK(t.post[0].clut_b == 0x5A5 && t.stats.palette_bad_filler == 0,
+              "m14 (e): the streamed palette entry was not stored");
+        CHECK(legal ? (t.stats.palette_disturbed_visible == 0)
+                    : (t.stats.palette_disturbed_visible > 0),
+              "m14 (e): a streamed palette entry over %s shows %u disturbed pixels",
+              legal ? "colour1" : "passthrough", t.stats.palette_disturbed_visible);
+    }
+}
+
+// --- the frame case: (b) painter's-order slicing and (f) delivery ------------
+//
+// A 4bpp half-rate playfield (the m12/m13 one) and a band of 32 sprite lines,
+// 200..231.  Three variants:
+//
+//   K0_VIDCMD_FIRST  the back row at x = 0 (the left edge), its program two
+//                    descriptors pointing at static data — the row and a tail
+//                    word out of a RUN(pt, n) table — FIRST in the line's own
+//                    HBLANK group, then the line's 80 PIXELS words.  R5: met.
+//   K1_SLICED        a back row at xb(i) and a FRONT row of 8 sliced into it at
+//                    element a(i): lead word, back[0..a), front[0..8),
+//                    back[a+8..16), tail word — up to five descriptors at
+//                    sub-ranges of static rows, deposited one line ahead, behind
+//                    the PIXELS words.  R4: no fix-up word.
+//   K0_PIXELS_FIRST  NEGATIVE CONTROL: K0's program behind the 80 PIXELS words.
+//                    Its first VIDCMD word lands about 211 SYSCLK after the
+//                    edge, 219 pixel clocks into the line (R5): the row is late.
+
+enum class LsVariant : uint8_t
+{
+    K0_VIDCMD_FIRST,
+    K1_SLICED,
+    K0_PIXELS_FIRST,
+};
+
+constexpr uint32_t LS_DATA_BASE      = 0x360000;   // read-only, written once
+constexpr uint32_t LS_OFF_GAP_TABLE  = 0x000;      // RUN(pt, 1..640)
+constexpr uint32_t LS_OFF_BACK       = 0x600;
+constexpr uint32_t LS_OFF_FRONT      = 0x640;
+constexpr uint32_t LS_PREAMBLE_BASE  = 0x380000;
+constexpr uint32_t LS_PREAMBLE_STEP  = 0x000400;
+constexpr uint32_t LS_BAND_FIRST     = 200;
+constexpr uint32_t LS_BAND_LINES     = 32;
+
+bool ls_band(uint32_t y)
+{
+    return y >= LS_BAND_FIRST && y < LS_BAND_FIRST + LS_BAND_LINES;
+}
+
+uint32_t ls_xb(uint32_t i)
+{
+    return 160 + 3 * i;   // both parities
+}
+
+uint32_t ls_a(uint32_t i)
+{
+    return i % (LS_FRONT + 1);   // 0..8: the front's element offset into the back row
+}
+
+uint32_t ls_gap_addr(uint32_t n)
+{
+    return LS_DATA_BASE + LS_OFF_GAP_TABLE + (n - 1u) * 2u;
+}
+
+void ls_write_data(Memory ram)
+{
+    for (uint32_t n = 1; n <= H_ACTIVE; n++)
+    {
+        ram[ls_gap_addr(n)] = vidcmd_run(RUN_SRC_PASSTHROUGH, n);
+    }
+    for (uint32_t e = 0; e < LS_ROW; e++)
+    {
+        ram[LS_DATA_BASE + LS_OFF_BACK + e * 2] = ls_element(LS_BACK_ART[e]);
+    }
+    for (uint32_t e = 0; e < LS_FRONT; e++)
+    {
+        ram[LS_DATA_BASE + LS_OFF_FRONT + e * 2] = ls_element(LS_FRONT_ART[e]);
+    }
+}
+
+struct LsPiece
+{
+    uint32_t addr;
+    uint32_t words;
+};
+
+// Line y's program as pieces of static data, in stream order.
+std::vector<LsPiece> ls_pieces(LsVariant v, uint32_t y)
+{
+    if (!ls_band(y))
+    {
+        return {{ls_gap_addr(H_ACTIVE), 1}};
+    }
+    const uint32_t back  = LS_DATA_BASE + LS_OFF_BACK;
+    const uint32_t front = LS_DATA_BASE + LS_OFF_FRONT;
+    if (v != LsVariant::K1_SLICED)
+    {
+        return {{back, LS_ROW}, {ls_gap_addr(H_ACTIVE - 2 * LS_ROW), 1}};
+    }
+    const uint32_t i  = y - LS_BAND_FIRST;
+    const uint32_t xb = ls_xb(i);
+    const uint32_t a  = ls_a(i);
+    std::vector<LsPiece> p = {{ls_gap_addr(xb), 1}};
+    if (a > 0)
+    {
+        p.push_back({back, a});
+    }
+    p.push_back({front, LS_FRONT});
+    if (a + LS_FRONT < LS_ROW)
+    {
+        p.push_back({back + (a + LS_FRONT) * 2, LS_ROW - (a + LS_FRONT)});
+    }
+    p.push_back({ls_gap_addr(H_ACTIVE - xb - 2 * LS_ROW), 1});
+    return p;
+}
+
+uint32_t ls_line_words(LsVariant v, uint32_t y)
+{
+    uint32_t n = 0;
+    for (const LsPiece &p : ls_pieces(v, y))
+    {
+        n += p.words;
+    }
+    return n;
+}
+
+constexpr uint32_t LS_FIXED_PREAMBLE = PALETTE_ENTRIES * PALETTE_WORDS_PER_ENTRY + 2;
+
+uint32_t ls_author(Memory ram, LsVariant v, uint32_t table, uint32_t frame)
+{
+    const uint32_t preamble = LS_PREAMBLE_BASE + frame * LS_PREAMBLE_STEP;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < PALETTE_ENTRIES; i++)
+    {
+        for (uint16_t w : vidcmd_palette_entry(i, cc_palette(i)))
+        {
+            ram[preamble + (n++) * 2] = w;
+        }
+    }
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_PIX_BASE, 0);
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_PIX_MODE, pixel_mode(PIXEL_DEPTH_4BPP, true));
+    if (v == LsVariant::K1_SLICED)
+    {
+        // One line of lookahead: line 0's program has no group to ride in.
+        for (const LsPiece &p : ls_pieces(v, 0))
+        {
+            for (uint32_t k = 0; k < p.words; k++)
+            {
+                ram[preamble + (n++) * 2] = ram[p.addr + k * 2];
+            }
+        }
+    }
+
+    CcEmitter e{ram, table, 0};
+    for (uint32_t i = 0; i < CC_PACERS_BEFORE_PREAMBLE; i++)
+    {
+        e.pacer(false);
+    }
+    e.stream(preamble, n, DEST_VIDCMD_FIFO_W, false);
+    for (uint32_t i = 0; i < CC_PACERS_AFTER_PREAMBLE; i++)
+    {
+        e.pacer(false);
+    }
+    for (uint32_t y = 0; y < V_ACTIVE; y++)
+    {
+        const uint32_t px = CC_FB_BASE + (y / 2) * CC_FB_STRIDE;
+        auto program = [&](uint32_t line, bool wait_first)
+        {
+            bool first = wait_first;
+            for (const LsPiece &p : ls_pieces(v, line))
+            {
+                e.stream(p.addr, p.words, DEST_VIDCMD_FIFO_W, first);
+                first = false;
+            }
+        };
+        if (v == LsVariant::K0_VIDCMD_FIRST)
+        {
+            program(y, true);
+            e.stream(px, PIXELS_WORDS_4BPP_HALF, DEST_PIXELS_FIFO_W, false);
+        }
+        else
+        {
+            e.stream(px, PIXELS_WORDS_4BPP_HALF, DEST_PIXELS_FIFO_W, true);
+            if (v == LsVariant::K0_PIXELS_FIRST)
+            {
+                program(y, false);
+            }
+            else if (y + 1 < V_ACTIVE)
+            {
+                program(y + 1, false);
+            }
+        }
+    }
+    e.pacer(true);
+    return e.count;
+}
+
+Rgb444 ls_expected(LsVariant v, uint32_t x, uint32_t y)
+{
+    const Rgb444 bd = cc_palette(cc_fb_nibble(x / 2, y / 2));
+    if (!ls_band(y))
+    {
+        return bd;
+    }
+    if (v != LsVariant::K1_SLICED)
+    {
+        if (x < 2 * LS_ROW)
+        {
+            const uint32_t a = LS_BACK_ART[x / 2];
+            return (a == LS_HOLE) ? bd : static_cast<Rgb444>(a);
+        }
+        return bd;
+    }
+    const uint32_t i  = y - LS_BAND_FIRST;
+    const uint32_t xb = ls_xb(i);
+    if (x < xb || x >= xb + 2 * LS_ROW)
+    {
+        return bd;
+    }
+    const uint32_t e = (x - xb) / 2;
+    const uint32_t a = ls_a(i);
+    // Painter's order by slicing: inside the front's extent the FRONT decides,
+    // and its transparent pixels show the backdrop (the notch), not the back.
+    const uint32_t art = (e >= a && e < a + LS_FRONT) ? LS_FRONT_ART[e - a] : LS_BACK_ART[e];
+    return (art == LS_HOLE) ? bd : static_cast<Rgb444>(art);
+}
+
+struct LsRun
+{
+    RenderResult    r;
+    InterpretResult interp;
+    uint32_t        descriptors = 0;
+    int64_t         min_margin  = INT64_MAX;   // SYSCLK: band line pixel 0 - its last VIDCMD word
+};
+
+LsRun ls_run(Memory ram, LsVariant v, bool line_at_a_time)
+{
+    LsRun          out;
+    const uint32_t tables[RENDER_FRAMES] = {TABLE_A, TABLE_B};
+    InterpretParams ip;
+    ip.start_cycle          = first_arm_cycle();
+    ip.end_cycle            = run_end_cycle();
+    ip.rearm_latency_cycles = REARM_LATENCY_CYCLES;
+    for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+    {
+        out.descriptors = ls_author(ram, v, tables[f], f);
+        ip.arm_addresses.push_back(tables[f]);
+    }
+    out.interp = interpret(ram, ip);
+
+    RenderParams rp;
+    rp.first_frame = RENDER_FIRST_FRAME;
+    rp.frame_count = RENDER_FRAMES;
+    out.r = line_at_a_time ? render_line_at_a_time(out.interp.events, rp)
+                           : render(out.interp.events, rp);
+
+    // R5, measured clean-room off the deposit stream.  Each list's VIDCMD
+    // stream is its fixed preamble then the line programs in line order (K1's
+    // line 0 rides in the preamble), so prefix sums turn a word index into the
+    // line it belongs to.
+    std::vector<uint64_t> cycles;
+    for (const DepositEvent &e : out.interp.events)
+    {
+        if (e.destination == DEST_VIDCMD_FIFO_W)
+        {
+            cycles.push_back(e.cycle);
+        }
+    }
+    size_t idx = 0;
+    for (uint32_t f = 0; f < RENDER_FRAMES && idx < cycles.size(); f++)
+    {
+        idx += LS_FIXED_PREAMBLE;
+        for (uint32_t y = 0; y < V_ACTIVE; y++)
+        {
+            idx += ls_line_words(v, y);
+            if (ls_band(y) && idx - 1 < cycles.size())
+            {
+                const uint64_t line0 = static_cast<uint64_t>(RENDER_FIRST_FRAME + f) * V_TOTAL + y;
+                const int64_t  m = static_cast<int64_t>(sysclk_of_pixel(line0 * H_TOTAL)) -
+                                   static_cast<int64_t>(cycles[idx - 1]);
+                out.min_margin = (m < out.min_margin) ? m : out.min_margin;
+            }
+        }
+    }
+    return out;
+}
+
+void run_literal_sprite_case(Memory ram)
+{
+    printf("\n=== m14-literal-sprites — LITERAL rows over a 4bpp half-rate playfield, band "
+           "lines %u..%u ===\n", LS_BAND_FIRST, LS_BAND_FIRST + LS_BAND_LINES - 1);
+    cc_write_framebuffer(ram);
+    ls_write_data(ram);
+
+    // The planner (cushion assumption) agrees every band program closes at
+    // exactly 640 slots with nothing late (R1, R2).
+    for (LsVariant v : {LsVariant::K0_VIDCMD_FIRST, LsVariant::K1_SLICED})
+    {
+        uint32_t bad = 0;
+        for (uint32_t y = LS_BAND_FIRST; y < LS_BAND_FIRST + LS_BAND_LINES; y++)
+        {
+            std::vector<uint16_t> w;
+            for (const LsPiece &p : ls_pieces(v, y))
+            {
+                for (uint32_t k = 0; k < p.words; k++)
+                {
+                    w.push_back(ram[p.addr + k * 2]);
+                }
+            }
+            const VidcmdSlotPlan plan = vidcmd_plan_line(w);
+            bad += (plan.slots != H_ACTIVE || plan.stretch != 0) ? 1u : 0u;
+        }
+        CHECK(bad == 0, "m14: %u band programs do not plan to exactly 640 slots", bad);
+    }
+
+    const uint32_t opaque_back  = 12;   // LS_BACK_ART: 16 minus 4 holes (elements 2, 6, 7, 10)
+    struct Row
+    {
+        const char *name;
+        LsVariant   v;
+        bool        clean;
+    };
+    const Row rows[] = {
+        {"k0-vidcmd-first (left edge, x = 0)", LsVariant::K0_VIDCMD_FIRST, true},
+        {"k1-sliced (painter's order by slices)", LsVariant::K1_SLICED, true},
+        {"k0-pixels-first (NEGATIVE CONTROL)", LsVariant::K0_PIXELS_FIRST, false},
+    };
+    for (const Row &row : rows)
+    {
+        for (bool lat : {false, true})
+        {
+            if (lat && !row.clean)
+            {
+                continue;
+            }
+            const LsRun run = ls_run(ram, row.v, lat);
+            const RenderStats &s = run.r.stats;
+            uint32_t bad = 0;
+            for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+            {
+                for (uint32_t y = 0; y < V_ACTIVE; y++)
+                {
+                    for (uint32_t x = 0; x < H_ACTIVE; x++)
+                    {
+                        bad += (at(run.r.frames[f], x, y) != ls_expected(row.v, x, y)) ? 1u : 0u;
+                    }
+                }
+            }
+            printf("  %-40s %s  %7u px off  margin %+lld SYSCLK  cadence %u  starved %u  "
+                   "literals %u  desc %u\n", row.name, lat ? "emu " : "clk ", bad,
+                   static_cast<long long>(run.min_margin), s.vidcmd_cadence_slots,
+                   s.vidcmd_hold_slots, s.vidcmd_literals, run.descriptors);
+            CHECK(run.interp.violations.empty(), "m14/%s: %zu interpreter violations", row.name,
+                  run.interp.violations.size());
+            CHECK(s.vidcmd_overflows == 0 && s.pixels_overflows == 0,
+                  "m14/%s: a FIFO overflowed", row.name);
+            CHECK(s.palette_unwritten_reads == 0 && s.palette_bad_filler == 0 &&
+                  s.palette_disturbed_visible == 0, "m14/%s: palette rule broken", row.name);
+            CHECK(run.descriptors * DESC_BYTES <= TABLE_HALF_BYTES,
+                  "m14/%s: %u descriptors overflow the table half", row.name, run.descriptors);
+            if (row.clean)
+            {
+                CHECK(bad == 0, "m14/%s: %u pixels differ from the hand-derived frame", row.name, bad);
+                CHECK(s.vidcmd_cadence_slots == 0 && s.vidcmd_hold_slots == 0,
+                      "m14/%s: %u cadence / %u starvation holds, derived 0 / 0 (R1)", row.name,
+                      s.vidcmd_cadence_slots, s.vidcmd_hold_slots);
+                CHECK(s.vidcmd_overruns == 0, "m14/%s: %u overruns", row.name, s.vidcmd_overruns);
+                CHECK(run.min_margin > 0, "m14/%s: a band line's last VIDCMD word arrived %lld "
+                      "SYSCLK after its pixel 0", row.name, static_cast<long long>(-run.min_margin));
+                if (row.v == LsVariant::K0_VIDCMD_FIRST)
+                {
+                    // R5: the last word 55 SYSCLK after the edge, the edge 160
+                    // pixel clocks = 89 SYSCLK before pixel 0: a margin near 34.
+                    CHECK(run.min_margin >= 25 && run.min_margin <= 40,
+                          "m14/%s: margin %lld SYSCLK, derived about 34 (R5)", row.name,
+                          static_cast<long long>(run.min_margin));
+                    CHECK(s.vidcmd_literals == opaque_back * LS_BAND_LINES * RENDER_FRAMES,
+                          "m14/%s: %u literals played, derived %u", row.name, s.vidcmd_literals,
+                          opaque_back * LS_BAND_LINES * RENDER_FRAMES);
+                }
+            }
+            else
+            {
+                CHECK(bad != 0, "m14/%s: the late program went undetected", row.name);
+                CHECK(run.min_margin < 0, "m14/%s: the negative control met its deadline", row.name);
+            }
+        }
+    }
+
+    // NEGATIVE CONTROL on the reference itself: a one-slot slip of the front
+    // slice must be visible.
+    {
+        const LsRun run = ls_run(ram, LsVariant::K1_SLICED, false);
+        uint32_t slip = 0;
+        for (uint32_t y = LS_BAND_FIRST; y < LS_BAND_FIRST + LS_BAND_LINES; y++)
+        {
+            for (uint32_t x = 1; x < H_ACTIVE; x++)
+            {
+                slip += (at(run.r.frames[0], x, y) != ls_expected(LsVariant::K1_SLICED, x - 1, y))
+                            ? 1u : 0u;
+            }
+        }
+        printf("  NEGATIVE CONTROL  reference one slot right: %u pixels wrong\n", slip);
+        CHECK(slip != 0, "m14: a one-slot slip of the sliced rows went undetected");
+        const std::string path = "m14-literal-sprites.ppm";
+        write_ppm(path, run.r.frames[0]);
+        printf("  artifact %s\n", path.c_str());
+    }
+}
+
 }  // namespace
 
 int main()
@@ -4545,6 +6092,7 @@ int main()
     check_palette_traces();
     check_cadence_traces();
     check_mask_traces();
+    check_literal_traces();
 
     // --- Normative slot-arithmetic regression ---------------------------------
     {
@@ -5324,7 +6872,7 @@ int main()
     {
         CaseSpec s;
         s.name  = "m7-kiosk";
-        s.title = "large-text menu: one MASK record per big glyph, SET pairs, RUN_COLOR bar";
+        s.title = "large-text menu: one MASK record per big glyph, SET pairs, LITERAL+HOLD bar";
         s.base  = common;
         s.base.screen      = ScreenStyle::KIOSK;
         s.base.pure_vidcmd = true;
@@ -5358,7 +6906,7 @@ int main()
         {
             const KioskLinePlan plan = kiosk_plan_line(145);
             const uint32_t after_play = plan.seg[0].x0 + plan.seg[0].records * KIOSK_CELL_W;
-            const Rgb444   bg = run_colour_to_rgb444(plan.background_color);
+            const Rgb444   bg = plan.background_color;
             uint32_t first_ink = after_play;
             while (first_ink < H_ACTIVE &&
                    at(r.rendered.frames[0], first_ink, 145) == bg)
@@ -5420,10 +6968,10 @@ int main()
         CHECK(KIOSK_FULL_DENSITY_SLOTS > H_ACTIVE,
               "m7-kiosk: full-density recolouring now fits in %u slots", H_ACTIVE);
 
-        // The RUN_COLOR highlight bar, and the mask backgrounds that have to
-        // match it: inside a mask, dibit 00 is PASSTHROUGH, not "the span
+        // The LITERAL + HOLD highlight bar, and the mask backgrounds that have
+        // to match it: inside a mask, dibit 00 is PASSTHROUGH, not "the span
         // underneath", so the bar's colour has to be re-stated as cmp_color0.
-        const Rgb444 bar = run_colour_to_rgb444(RUN_COLOR_CYAN);
+        const Rgb444 bar = KIOSK_HIGHLIGHT_COLOR;
         uint32_t bar_px = 0;
         for (Rgb444 c : r.rendered.frames[0].pixels)
         {
@@ -5432,7 +6980,7 @@ int main()
                 bar_px++;
             }
         }
-        printf("  highlight bar       %u pixels at 0x%03X: a RUN_COLOR across the line plus "
+        printf("  highlight bar       %u pixels at 0x%03X: LITERAL + HOLD spans across the line plus "
                "the selected item's cmp_color0,\n"
                "                      which must be stated separately because a mask's "
                "dibit 00 is passthrough, not the span under it.\n", bar_px, bar);
@@ -5595,7 +7143,7 @@ int main()
     {
         CaseSpec s;
         s.name  = "tempest-web";
-        s.title = "static wireframe in the bitmap, moving objects as RUN_COLOR spans";
+        s.title = "static wireframe in the bitmap, moving objects as LITERAL spans";
         s.base  = common;
         s.base.fb_base            = FB_WEB_BASE;
         s.base.per_line_palette   = true;
@@ -5623,9 +7171,9 @@ int main()
         const FrameImage &f1 = r.rendered.frames[0];
         const FrameImage &f2 = r.rendered.frames[1];
 
-        const Rgb444 claw    = run_colour_to_rgb444(TEMPEST_CLAW_COLOR);
-        const Rgb444 flipper = run_colour_to_rgb444(TEMPEST_FLIPPER_COLOR);
-        const Rgb444 shot    = run_colour_to_rgb444(TEMPEST_SHOT_COLOR);
+        const Rgb444 claw    = TEMPEST_CLAW_COLOR;
+        const Rgb444 flipper = TEMPEST_FLIPPER_COLOR;
+        const Rgb444 shot    = TEMPEST_SHOT_COLOR;
 
         // (a)(b) Hand-counted object pixels: the shapes are fixed, so the exact
         // pixel totals are known without consulting the authoring code.
@@ -6169,19 +7717,16 @@ int main()
            "     descriptor's 14 SYSCLK back is free.  Note the corollary for the reserved\n"
            "     word0 bits [6:4] freed by the strobe reduction: a 6-bit count would carry a\n"
            "     whole 40-word 1bpp line in one descriptor.\n");
-    printf(" 13. NEW. RUN_COLOR is the atomic answer to finding 9.  Painting a span with the\n"
-           "     held colours costs two SETs and therefore lands one pixel apart; a RUN_COLOR\n"
-           "     is one word, one record, and its colour never touches held_fg/held_bg, so\n"
-           "     independent objects on one line cannot clobber each other's colour.  It cost\n"
-           "     no new semantics either — it is a playback record like any other RUN and it\n"
-           "     counts its slots the same way.  What it does NOT do any more (2026-08-19) is\n"
-           "     satisfy the prefetch invariant for free: one word is one FETCH, and a fetch\n"
-           "     costs two slots, so a one-pixel RUN_COLOR beside a one-pixel gap is exactly\n"
-           "     the shape the cadence cannot sustain.  The price is also in the fit, not the\n"
-           "     format: FIT-RISKY ASSUMPTION 5 in descriptor.h.  Note the encoding squeeze —\n"
-           "     three colour bits come out of the count, so a RUN_COLOR spans at most %u\n"
-           "     pixels where a plain RUN spans 4095.  Nothing in these cases comes close.\n",
-           RUN_COLOR_MAX_COUNT);
+    printf(" 13. REVISED 2026-10-03.  RUN_COLOR was the atomic answer to finding 9 (two\n"
+           "     held-colour SETs land one pixel apart) and it is GONE: its prefix is now\n"
+           "     LITERAL, one pixel of ANY colour that never touches the held colours, so\n"
+           "     independent objects on a line still cannot clobber each other.  The price\n"
+           "     is law LL: a literal holds the on-chip buffer for its slot, so it always\n"
+           "     paints two slots and the record after it lands two later — a literal is a\n"
+           "     320-density pixel, and a flat span is LITERAL + HOLD(n), two words,\n"
+           "     max(n + 2, %u) slots.  One-pixel 640-density marks stay a held-colour\n"
+           "     RUN(c,1) (or MASK).  The run counter is ten bits (RUN up to %u slots).\n",
+           VIDCMD_LIT_HOLD_MIN_SLOTS, VIDCMD_RUN_COUNT_MAX);
     printf(" 14. NEW, AND THE HEADLINE FOR VECTOR GAMES. The two FIFO consumers drain at\n"
            "     rates that differ by 8x, and the per-line descriptor order has to respect\n"
            "     that.  One PIXELS word feeds 16 pixel clocks; one VIDCMD word feeds as few\n"
@@ -6362,6 +7907,8 @@ int main()
     // --- M13: literal pixels out of SET(cmp_color1) streams (SET-STREAM.md) --
     check_set_stream_traces();
     run_set_stream_case(ram);
+    check_literal_sprite_traces();
+    run_literal_sprite_case(ram);
 
     printf("\n=== summary ===\n");
     if (g_failures == 0)

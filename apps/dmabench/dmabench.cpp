@@ -466,11 +466,14 @@ void build_none(Builder &)
 //
 // One VIDCMD word painting the whole frame black (COMPOSITOR holds the last
 // RUN's source to the end of a line, and a line that receives no records keeps
-// holding, so a single one-slot RUN_COLOR covers all 480 lines), and one
-// wait_hblank/stop_after pacer to disarm the engine and raise its IRQ.
+// holding, so a single one-slot HOLD covers all 480 lines: KEEP is RGB_OUT fed
+// back, which is black at every line's start and so stays black; it reads no
+// register and no palette entry), and one wait_hblank/stop_after pacer to
+// disarm the engine and raise its IRQ.  The HOLD is a one-slot run-class
+// record exactly as the RUN_COLOR it replaces was, so the timing is identical.
 void build_blank(Builder &b)
 {
-    g_vidcmd[0][0] = se::vidcmd_run_color(se::RUN_COLOR_BLACK, 1);
+    g_vidcmd[0][0] = se::vidcmd_hold(1);
 
     se::Descriptor d;
     d.src         = vidcmd_addr(0);

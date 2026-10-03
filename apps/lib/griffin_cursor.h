@@ -9,9 +9,9 @@
 //   * 640x480 placement over a 320-wide playfield;
 //   * colours that bypass the palette RAM (cmp_color0 / cmp_color1), so the
 //     cursor costs no palette index and does not move when the palette cycles;
-//   * no save-under: moving the cursor rewrites ~125 words and no pixels.
+//   * no save-under: moving the cursor rewrites CHAIN_WORDS words and no pixels.
 //
-// THE WHOLE FRAME'S CHAIN IS DELIVERED IN VERTICAL BLANKING.  COMPOSITOR counts
+// THE CHAIN IS ONE WHOLE-FRAME RECORD STREAM.  COMPOSITOR counts
 // a record's duration in ACTIVE pixel slots only (playback is frozen while
 // H_ACTIVE is low), and there are exactly 640 slots per line, so the slot at
 // which raster position (x, y) is painted is simply
@@ -28,15 +28,46 @@
 //         ...
 //         RUN(passthrough, 1)                     then COMPOSITOR holds
 //
-// and every word of it sits in the VIDCMD FIFO before line 0.  The per-line
-// display list never mentions the cursor, so it stays static: moving the
-// cursor touches only the preamble's words.
+// and the per-line display list never mentions the cursor's POSITION, so it
+// stays static: moving the cursor touches only the chain's words.
+//
+// IT IS DELIVERED IN TWO FIXED PARTS (2026-10-03).  RUN's count is ten bits
+// (1..1023), so the lead-in alone is up to 301 words and the chain no longer
+// fits the 256-word VIDCMD FIFO in one vblank deposit.  The chain is therefore
+// LEFT-ALIGNED — lead RUNs first, the cursor rows, RUN(passthrough, 1), then
+// target-7 FILLER SETs up to CHAIN_WORDS — and delivered as:
+//
+//   part A   words [0, PART_A_WORDS), in vertical blanking with the caller's
+//            preamble (which must total <= VIDCMD_FIFO_WORDS with it);
+//   part B   words [PART_A_WORDS, CHAIN_WORDS), PART_B_CHUNK words per line
+//            on lines PART_B_FIRST_LINE .. PART_B_FIRST_LINE + PART_B_LINES - 1,
+//            each chunk a VIDCMD descriptor appended to that line's group.
+//
+// Both properties are static_asserts below, derived by hand:
+//
+//   DEADLINE  every playback record is at most RUN_MAX_COUNT slots (a RUN; a
+//             MASK is 2 words per 16 slots, a filler 1 per <= 2), so word i of
+//             the chain cannot start before slot (i - REAL_TAIL - 1) *
+//             RUN_MAX_COUNT unless it is a filler: if it is a cursor-row word,
+//             the lead-in in front of it has at least i - REAL_TAIL words and
+//             all but the first are full.  Fillers have no deadline (they
+//             execute while passthrough holds, invisibly).  Chunk j's first
+//             word must be deposited at least a line before that slot.
+//   CAPACITY  words executed by slot S >= floor(S / RUN_MAX_COUNT), for the
+//             same reason, and two more sit in COMPOSITOR's bank, so at
+//             PART_B_FIRST_LINE at most PART_A_WORDS - floor(S / 1023) - 2
+//             part-A words are still in the FIFO; all of part B on top of
+//             that must fit.
+//
+// A filler is decoded nowhere and does not touch the source, so the padding
+// may sit at the end, after the chain's last RUN, rather than in blanking.
 //
 // WHY EVERY SEAM IS EXACT (descriptor.h, "MASK seam constants"): RUN -> MASK is
 // zero slots, MASK -> next record is zero slots, and every RUN here is either
 // hundreds of slots long or sits behind one that is, so the two-slots-per-word
 // fetch cadence never stretches anything.  super-engine's cursor-chain case
-// asserts the result pixel-exact, including the two clipping cases below.
+// asserts the result pixel-exact, including the two clipping cases below and
+// cursors whose rows straddle the part A / part B split.
 //
 // CLIPPING.  A MASK is sixteen slots and its pixel 0 is implicitly opaque
 // cmp_color0, so a row's record begins at that row's FIRST OPAQUE pixel (hence
@@ -53,7 +84,8 @@
 //
 // The caller owns everything else in the preamble: the palette, pix_base,
 // pix_mode, and SETs of cmp_color0 (outline) and cmp_color1 (fill).  All SETs
-// must come BEFORE this chain -- a SET behind a RUN waits for that RUN.
+// must come BEFORE this chain -- a SET behind a RUN waits for that RUN -- and
+// the caller's list must deliver part B where this header says.
 //
 // Bare-metal safe: header-only, no allocation, bounded loops.
 
@@ -188,30 +220,84 @@ constexpr unsigned art_pixel(const char *const art[ROWS], unsigned column, unsig
     return art[row][column] == '#' ? 1u : (art[row][column] == '.' ? 2u : 0u);
 }
 
-// --- chain size -------------------------------------------------------------
+// --- chain size ----------------------------------------------------------------
 //
 // The leading passthrough is at most T(639, 479) + 15 slots in RUNs of at most
-// 4095, the first row is a bare MASK and each later row is a RUN plus a MASK.
-inline constexpr uint32_t RUN_MAX_COUNT = 4095;      // RUN's 12-bit count
+// RUN_MAX_COUNT, and each emitted row adds at most one more RUN (a gap between
+// rows is under 2 * 640 + 16 slots and every RUN word but one per gap is full)
+// plus its MASK; one RUN(passthrough, 1) closes the chain.
+inline constexpr uint32_t RUN_MAX_COUNT = se::VIDCMD_RUN_COUNT_MAX;   // 1023, ten bits
 inline constexpr uint32_t FRAME_SLOTS   = se::H_ACTIVE * se::V_ACTIVE;
 inline constexpr uint32_t LEAD_RUN_WORDS_MAX =
-    (FRAME_SLOTS + COLUMNS + RUN_MAX_COUNT - 1) / RUN_MAX_COUNT;                // 76
+    (FRAME_SLOTS + COLUMNS + RUN_MAX_COUNT - 1) / RUN_MAX_COUNT;                // 301
 inline constexpr uint32_t CHAIN_WORDS =
-    LEAD_RUN_WORDS_MAX + ROWS * (1 + se::MASK_RECORD_WORDS) + 1;                // 125
-static_assert(LEAD_RUN_WORDS_MAX == 76);
-static_assert(CHAIN_WORDS == 125);
+    LEAD_RUN_WORDS_MAX + ROWS * (1 + se::MASK_RECORD_WORDS) + 1;                // 350
+static_assert(RUN_MAX_COUNT == 1023);
+static_assert(LEAD_RUN_WORDS_MAX == 301);
+static_assert(CHAIN_WORDS == 350);
+
+// Words that can follow the lead-in and still be real (not filler): every row's
+// RUN and MASK, and the closing RUN.
+inline constexpr uint32_t REAL_TAIL = ROWS * (1 + se::MASK_RECORD_WORDS) + 1;   // 49
+
+// --- the two-part delivery (see the header comment) -------------------------
+inline constexpr uint32_t PART_A_WORDS      = 6 * se::DESC_MAX_COUNT;           // 192
+inline constexpr uint32_t PART_B_WORDS      = CHAIN_WORDS - PART_A_WORDS;       // 158
+inline constexpr uint32_t PART_B_CHUNK      = se::DESC_MAX_COUNT;               // 32
+inline constexpr uint32_t PART_B_LINES      = (PART_B_WORDS + PART_B_CHUNK - 1) / PART_B_CHUNK;   // 5
+inline constexpr uint32_t PART_B_FIRST_LINE = 184;
+
+// Words of part B delivered on part-B line j (0 .. PART_B_LINES - 1).
+constexpr uint32_t part_b_chunk_words(uint32_t j)
+{
+    const uint32_t done = j * PART_B_CHUNK;
+    return (PART_B_WORDS - done > PART_B_CHUNK) ? PART_B_CHUNK : (PART_B_WORDS - done);
+}
+
+// The first line on which chain word i (if it is not a filler) can be needed.
+constexpr uint32_t earliest_line_of_word(uint32_t i)
+{
+    return (i <= REAL_TAIL) ? 0u : ((i - REAL_TAIL - 1u) * RUN_MAX_COUNT) / se::H_ACTIVE;
+}
+
+// DEADLINE: chunk j is deposited in line (PART_B_FIRST_LINE + j)'s group, at
+// least one whole line before the earliest line its first word can play on.
+constexpr bool part_b_deadlines_met()
+{
+    for (uint32_t j = 0; j < PART_B_LINES; j++)
+    {
+        if (PART_B_FIRST_LINE + j + 1u >= earliest_line_of_word(PART_A_WORDS + j * PART_B_CHUNK))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(part_b_deadlines_met());
+static_assert(earliest_line_of_word(PART_A_WORDS) == 226);
+
+// CAPACITY: part A still queued at PART_B_FIRST_LINE (bank of two excluded)
+// plus ALL of part B, as if nothing more were consumed while it arrives.
+inline constexpr uint32_t PART_B_FIFO_PEAK =
+    PART_A_WORDS - (PART_B_FIRST_LINE * se::H_ACTIVE) / RUN_MAX_COUNT - se::VIDCMD_BANK_DEPTH +
+    PART_B_WORDS;                                                               // 233
+static_assert(PART_B_FIFO_PEAK == 233);
+static_assert(PART_B_FIFO_PEAK < se::VIDCMD_FIFO_WORDS);
+static_assert(PART_B_FIRST_LINE + PART_B_LINES <= se::V_ACTIVE);
+
+// The pad: target 7 is decoded nowhere (descriptor.h SET_FILLER), so a filler
+// executing behind the chain's last RUN costs a slot of held passthrough and
+// nothing else.
+inline constexpr uint16_t FILLER_WORD = se::vidcmd_set(se::SET_FILLER, 0);
 
 // Write the chain for a cursor whose hotspot is at raster (x, y), 0 <= x < 640,
 // 0 <= y < 480, into out[0 .. CHAIN_WORDS).
 //
-// ALWAYS EXACTLY CHAIN_WORDS WORDS, so the descriptors that deliver the
-// preamble never change: a chain shorter than the maximum is padded AT THE
-// FRONT with `pad`, which must be a SET that is harmless to repeat (the
-// caller's own SET of pix_mode is the obvious one).  Front, because the pad
-// has to be consumed eagerly in blanking, and nothing behind a RUN is.
-inline void build_chain(uint16_t *out, const Shape &shape, uint32_t x, uint32_t y, uint16_t pad)
+// ALWAYS EXACTLY CHAIN_WORDS WORDS, so the descriptors that deliver it never
+// change: a chain shorter than the maximum is padded AT THE END with filler
+// SETs.
+inline void build_chain(uint16_t *out, const Shape &shape, uint32_t x, uint32_t y)
 {
-    uint16_t chain[CHAIN_WORDS];
     uint32_t n   = 0;
     uint32_t pos = 0;       // slot at which the next record would start
 
@@ -238,11 +324,11 @@ inline void build_chain(uint16_t *out, const Shape &shape, uint32_t x, uint32_t 
         }
         if (gap != 0)
         {
-            chain[n++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, gap);
+            out[n++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, gap);
         }
         for (; full != 0; full--)
         {
-            chain[n++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, RUN_MAX_COUNT);
+            out[n++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, RUN_MAX_COUNT);
         }
 
         // The record, with every dibit that would fall past the right edge
@@ -253,24 +339,19 @@ inline void build_chain(uint16_t *out, const Shape &shape, uint32_t x, uint32_t 
         {
             dibits &= ~((1u << (2u * (se::MASK_SLOTS - on_line))) - 1u);
         }
-        chain[n++] = static_cast<uint16_t>(0x4000u | (dibits >> 16));
-        chain[n++] = static_cast<uint16_t>(dibits & 0xFFFFu);
+        out[n++] = static_cast<uint16_t>(0x4000u | (dibits >> 16));
+        out[n++] = static_cast<uint16_t>(dibits & 0xFFFFu);
 
         pos = line * se::H_ACTIVE + column + se::MASK_SLOTS;
     }
 
     // Whatever is left of the frame.  One slot is enough: the count goes
     // terminal, nothing else is staged, and COMPOSITOR holds the source.
-    chain[n++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1);
+    out[n++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1);
 
-    uint32_t o = 0;
-    for (; o < CHAIN_WORDS - n; o++)
+    for (; n < CHAIN_WORDS; n++)
     {
-        out[o] = pad;
-    }
-    for (uint32_t i = 0; i < n; i++)
-    {
-        out[o + i] = chain[i];
+        out[n] = FILLER_WORD;
     }
 }
 

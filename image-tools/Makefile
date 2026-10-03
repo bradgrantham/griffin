@@ -21,7 +21,7 @@
 CXX      ?= c++
 OPT      ?= -O3
 CXXFLAGS := -std=c++23 $(OPT)
-INCLUDES := -I. -I..
+INCLUDES := -I. -I.. -I../audio
 
 SUITE     := ../super-engine
 SUITE_HDR := $(SUITE)/render.h $(SUITE)/descriptor.h $(SUITE)/interpret.h
@@ -57,7 +57,12 @@ TRANSPARENT := FF00FF
 
 all: $(TOOLS)
 
-obj/render.o: $(SUITE)/render.cpp $(SUITE_HDR)
+obj/render.o: $(SUITE)/render.cpp $(SUITE_HDR) ../audio/audio_chip.h
+	@mkdir -p obj
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# render.cpp carries the AUDIO chip's model, so whatever links it links this.
+obj/audio_chip.o: ../audio/audio_chip.cpp ../audio/audio_chip.h
 	@mkdir -p obj
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
@@ -67,8 +72,8 @@ clut_encode: clut_encode.cpp gc4_format.h clut_quant.h clut_color.h
 clut_decode: clut_decode.cpp gc4_format.h clut_color.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
 
-clut_roundtrip: clut_roundtrip.cpp gc4_format.h clut_color.h obj/render.o $(SUITE_HDR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< obj/render.o
+clut_roundtrip: clut_roundtrip.cpp gc4_format.h clut_color.h obj/render.o obj/audio_chip.o $(SUITE_HDR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< obj/render.o obj/audio_chip.o
 
 sprite2spans: sprite2spans.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<

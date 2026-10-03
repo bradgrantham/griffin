@@ -90,23 +90,30 @@ constexpr Rgb444 tempest_palette_bg(uint32_t)
     return RGB444_BLACK;
 }
 
-// Object colours, as RUN_COLOR 3-bit codes.
-inline constexpr uint32_t TEMPEST_CLAW_COLOR    = RUN_COLOR_YELLOW;
-inline constexpr uint32_t TEMPEST_FLIPPER_COLOR = RUN_COLOR_RED;
-inline constexpr uint32_t TEMPEST_SHOT_COLOR    = RUN_COLOR_WHITE;
+// Object colours, any R4G4B4: every object is a LITERAL (RUN_COLOR, which gave
+// the eight saturated corners in one word, is retired; these are the same
+// corners).
+inline constexpr Rgb444 TEMPEST_CLAW_COLOR    = rgb444(15, 15, 0);
+inline constexpr Rgb444 TEMPEST_FLIPPER_COLOR = rgb444(15, 0, 0);
+inline constexpr Rgb444 TEMPEST_SHOT_COLOR    = rgb444(15, 15, 15);
 
-// Object counts and shapes, fixed so the checks can hand-count pixels.
+// Object counts and shapes, fixed so the checks can hand-count pixels.  Every
+// object row is ONE LITERAL, and a literal always paints two slots (law LL),
+// so each is VIDCMD_LITERAL_SLOTS wide: the same one word per object row that
+// RUN_COLOR cost, at 320 density.  (3-pixel claws and flippers would need a
+// held colour: LITERAL + HOLD(1) is four slots, not three.)
 inline constexpr uint32_t TEMPEST_CLAW_ROWS     = 4;
 inline constexpr uint32_t TEMPEST_CLAW_PRONGS   = 2;
-inline constexpr uint32_t TEMPEST_CLAW_WIDTH    = 3;
+inline constexpr uint32_t TEMPEST_CLAW_WIDTH    = VIDCMD_LITERAL_SLOTS;
 inline constexpr uint32_t TEMPEST_FLIPPERS      = 3;
 inline constexpr uint32_t TEMPEST_FLIPPER_ROWS  = 6;
-inline constexpr uint32_t TEMPEST_FLIPPER_WIDTH = 3;
+inline constexpr uint32_t TEMPEST_FLIPPER_WIDTH = VIDCMD_LITERAL_SLOTS;
 inline constexpr uint32_t TEMPEST_SHOTS         = 2;
 inline constexpr uint32_t TEMPEST_SHOT_ROWS     = 2;
-inline constexpr uint32_t TEMPEST_SHOT_WIDTH    = 2;
+inline constexpr uint32_t TEMPEST_SHOT_WIDTH    = VIDCMD_LITERAL_SLOTS;
 
-// Density stress: N one-pixel spans on one band of rows, SPREAD evenly across
+// Density stress: N one-word (literal, two-pixel) spans on one band of rows,
+// SPREAD evenly across
 // the line.  Sweeping this is how the suite turns "the demo works" into an
 // object budget, and what it measures is DELIVERY: the engine puts one VIDCMD
 // word on the bus every 2 SYSCLK, i.e. one word per ~3.6 pixel clocks, so a
@@ -136,7 +143,8 @@ inline constexpr uint32_t TEMPEST_STRESS_MIN_PITCH = 2 * VIDCMD_SLOTS_PER_WORD;
 inline constexpr uint32_t TEMPEST_MAX_STRESS_SPANS = 64;
 inline constexpr uint32_t TEMPEST_STRESS_ROW       = 236;
 inline constexpr uint32_t TEMPEST_STRESS_ROWS      = 6;
-inline constexpr uint32_t TEMPEST_STRESS_COLOR     = RUN_COLOR_MAGENTA;
+inline constexpr Rgb444   TEMPEST_STRESS_COLOR     = rgb444(15, 0, 15);
+inline constexpr uint32_t TEMPEST_STRESS_WIDTH     = VIDCMD_LITERAL_SLOTS;
 
 // The most coloured spans any one line can carry.
 inline constexpr uint32_t TEMPEST_MAX_SPANS =
@@ -323,6 +331,11 @@ inline constexpr uint32_t KIOSK_SCALE_Y = 4;            // 7 rows -> 28 px, +4 b
 inline constexpr uint32_t KIOSK_MAX_SEGMENTS = 4;
 inline constexpr uint32_t KIOSK_MAX_TEXT     = 16;
 
+// The background, painted as LITERAL + HOLD spans (it used to be RUN_COLOR, so
+// these are the same two corner colours).
+inline constexpr Rgb444 KIOSK_BG_COLOR        = rgb444(0, 0, 15);
+inline constexpr Rgb444 KIOSK_HIGHLIGHT_COLOR = rgb444(0, 15, 15);
+
 // One recoloured stretch of a kiosk line: a SET pair followed by `records`
 // chained MASK records, one big glyph each.
 struct KioskSegment
@@ -337,7 +350,7 @@ struct KioskSegment
 
 struct KioskLinePlan
 {
-    uint32_t     background_color = RUN_COLOR_BLUE;   // a RUN_COLOR code
+    Rgb444       background_color = KIOSK_BG_COLOR;   // a LITERAL + HOLD span
     uint32_t     cell_top         = 0;                // first screen line of this cell
     uint32_t     seg_n            = 0;
     KioskSegment seg[KIOSK_MAX_SEGMENTS] = {};
@@ -347,7 +360,7 @@ KioskLinePlan kiosk_plan_line(uint32_t line);
 
 // The class of every pixel of a kiosk segment's glyph row, written into `out`
 // at the segment's own x.  Pixels outside every segment stay BG, which the
-// caller paints from the line's RUN_COLOR background rather than from a cmp
+// caller paints from the line's LITERAL background rather than from a cmp
 // register — the two must agree in value, and kiosk_plan_line() makes them.
 void kiosk_line_classes(const KioskLinePlan &plan, uint32_t line, std::span<InkClass> out);
 
@@ -516,7 +529,7 @@ struct FrameParams
     Rgb444   regression_c2    = rgb444(0, 0, 15);
 
     // Tempest-web: the wireframe lives in the pixel bitmap and never changes;
-    // every moving object is authored per frame as RUN_COLOR spans in VIDCMD.
+    // every moving object is authored per frame as LITERAL spans in VIDCMD.
     bool     tempest_objects  = false;
     bool     depth_fade_palette = false;   // use tempest_palette_fg instead of the ramp
     uint32_t frame_index      = 0;         // animation phase, set per frame by the driver
@@ -745,23 +758,28 @@ uint32_t pixel_words_for(PixelMode mode, uint32_t pixel_skip);
 // The program, identical in both forms and framed at exactly H_ACTIVE slots:
 //
 //   SET(pix_base, b)          eager, executes in blanking, zero slots
-//   RUN_COLOR(black, 64)      left border
+//   HOLD(64)                  left border: KEEP at a line's start is BLACK
 //   RUN(passthrough, g)       gap                     } g + t == SP_MIDDLE_PIXELS
-//   8 x (RUN_COLOR | RUN) of SP_POSE_SPAN slots       } so the sum is H_ACTIVE
+//   8 x (LITERAL | RUN(pt,2)) of SP_POSE_SPAN slots   } so the sum is H_ACTIVE
 //   RUN(passthrough, t)       tail
-//   RUN_COLOR(black, 64)      right border
+//   RUN(cmp_color0, 64)       right border: cmp_color0 is black at every /RS
+//                             and nothing in this case writes it
 //
-// Every record plays at least SP_POSE_SPAN slots, well above the two-slot fetch
-// cadence, so the authored sum IS the occupancy and no line can stretch.
+// (Until 2026-10-03 both borders and the pose words were RUN_COLOR; the word
+// counts did not change, so neither did any delivery number.)  Every record
+// plays at least two slots — a literal exactly two (law LL), a hole RUN(pt,2)
+// two — which is exactly the fetch cadence, so the authored sum IS still the
+// occupancy and no line can stretch: each record is captured on the edge
+// before the one it executes on.
 
 inline constexpr uint32_t SP_FIRST_LINE     = 200;   // first of the consecutive sprite lines
 inline constexpr uint32_t SP_SPRITE_LINES   = 32;
-inline constexpr uint32_t SP_BORDER_PIXELS  = 64;    // left and right, RUN_COLOR black
+inline constexpr uint32_t SP_BORDER_PIXELS  = 64;    // left and right, black
 inline constexpr uint32_t SP_POSE_WORDS     = 8;     // words in one pose row
-inline constexpr uint32_t SP_POSE_SPAN      = 8;     // slots each pose word paints
+inline constexpr uint32_t SP_POSE_SPAN      = VIDCMD_LITERAL_SLOTS;   // slots each pose word paints
 inline constexpr uint32_t SP_SPRITE_PIXELS  = SP_POSE_WORDS * SP_POSE_SPAN;
 inline constexpr uint32_t SP_MIDDLE_PIXELS  =
-    H_ACTIVE - 2u * SP_BORDER_PIXELS - SP_SPRITE_PIXELS;                    // 448
+    H_ACTIVE - 2u * SP_BORDER_PIXELS - SP_SPRITE_PIXELS;                    // 496
 inline constexpr uint32_t SP_GAP_MIN        = 100;   // sprite x varies by moving the gap
 inline constexpr uint32_t SP_GAP_STEP       = 8;
 inline constexpr uint32_t SP_SEMANTIC_WORDS = 2 + 1 + SP_POSE_WORDS + 1 + 1;   // 13
@@ -860,16 +878,26 @@ constexpr bool sp_pose_hole(uint32_t i, uint32_t j)
     return ((i + j) % 4u) == 3u;
 }
 
-constexpr uint32_t sp_pose_color(uint32_t i, uint32_t j)
+// One of the seven non-black corners of the colour cube (code 1..7 is {R,G,B}),
+// so never the border's black.
+constexpr Rgb444 sp_pose_color(uint32_t i, uint32_t j)
 {
-    return 1u + ((i * 3u + j) % 7u);   // never RUN_COLOR_BLACK, so never the border
+    const uint32_t code = 1u + ((i * 3u + j) % 7u);
+    return rgb444(((code >> 2) & 1u) * 15u, ((code >> 1) & 1u) * 15u, (code & 1u) * 15u);
 }
 
+// A pose pixel is ONE LITERAL (two slots), a hole RUN(passthrough, 2).
 constexpr uint16_t sp_pose_word(uint32_t i, uint32_t j)
 {
     return sp_pose_hole(i, j) ? vidcmd_run(RUN_SRC_PASSTHROUGH, SP_POSE_SPAN)
-                              : vidcmd_run_color(sp_pose_color(i, j), SP_POSE_SPAN);
+                              : vidcmd_literal(sp_pose_color(i, j));
 }
+
+// The borders: HOLD at the line's start (KEEP shows black until a real source
+// is loaded) and cmp_color0, black since /RS, at its end.
+constexpr uint16_t sp_left_border_word() { return vidcmd_hold(SP_BORDER_PIXELS); }
+constexpr uint16_t sp_right_border_word() { return vidcmd_run(RUN_SRC_COLOR0, SP_BORDER_PIXELS); }
+static_assert(VIDCMD_RESET_COLOR0 == RGB444_BLACK);
 
 // The words of sprite line i's program, in stream order, semantic part only.
 // Both forms deliver exactly these; MONOLITHIC appends SP_PAD_WORDS filler SETs.

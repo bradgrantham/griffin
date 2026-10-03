@@ -939,9 +939,8 @@ static constexpr uint32_t LEGACY_PALETTE_BYTES = FB_LINES * sizeof(uint16_t);   
 static constexpr uint32_t RETIRED_HAM_IMAGE_BYTES = FB_LINES * 160;               // 76800
 
 // R3G3B2 (the image file's palette encoding) widened to R4G4B4 by field
-// replication -- the same rule the DAC uses to widen 4 bits to 8, and the same
-// rule RUN_COLOR uses, one step earlier in the chain.  3 bits into 4 borrows the
-// top bit; 2 bits into 4 is the pair twice.
+// replication -- the same rule the DAC uses to widen 4 bits to 8.  3 bits
+// into 4 borrows the top bit; 2 bits into 4 is the pair twice.
 static constexpr se::Rgb444 r3g3b2_to_rgb444(uint8_t c)
 {
     const unsigned r3 = (c >> 5) & 0x7;

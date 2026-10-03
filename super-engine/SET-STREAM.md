@@ -1,5 +1,14 @@
 # SET stream: literal pixels on today's COMPOSITOR?
 
+> **2026-10-03 — the chip moved on.**  RUN_COLOR is gone; LITERAL, HOLD and
+> STREAM RUN are in (`cpld/compositor/compositor.v`).  Nothing measured below
+> changes: every stream here runs under an ORDINARY RUN, whose SETs still wait
+> for its terminal.  Under a STREAM RUN the same SETs cost no slots (the run's
+> count fixes the geometry, a late SET only recolours late), and a sprite row is
+> simpler still as one LITERAL per pixel — exact at every x, x = 0 and 2
+> included — see suite case `m14-literal-sprites`.  Where this note says
+> "`RUN_COLOR` also works", read LITERAL (any colour, two slots).
+
 Host-only experiment in `super-engine/`: trace block **`m13-set-stream traces`**
 and frame case **`m13-set-stream`** (`make check`).  Nothing under `cpld/`,
 `emulator/`, `firmware/`, `apps/` or `audio/` was touched.

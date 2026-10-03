@@ -2440,3 +2440,106 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   super-engine/descriptor.h: RUN_SRC_COLOR, RUN_COLOR_MAX_COUNT,
   RUN_COLOR_<colour>, run_colour_to_rgb444, and the 12-bit
   vidcmd_run/vidcmd_run_count.
+
+2026-10-03 -- Video: model, suite, apps and tools on LITERAL / HOLD / STREAM RUN (package 2 of 3)
+  The second of three packages; package 1 was the chip (ccaf72d).
+  Shared model, super-engine/:
+    descriptor.h: RUN_COLOR and its helpers are retired.
+      New encoders vidcmd_literal, vidcmd_hold, vidcmd_stream_run, and a
+      ten-bit vidcmd_run.  Counts are clamped to 1023 and 0 encodes 1024.
+      New decoders vidcmd_run_kind, vidcmd_is_literal, vidcmd_run_count,
+      vidcmd_literal_colour and vidcmd_run_load_src.
+      New source RUN_SRC_KEEP.
+      New seam constants, the bench's numbers:
+        VIDCMD_LITERAL_SLOTS/PITCH/NEXT_GAP = 2
+        VIDCMD_LIT_HOLD_MIN_SLOTS = 4
+        VIDCMD_MASK_LITERAL_GAP = 0
+        VIDCMD_STREAM_FIRST_SET = 1, VIDCMD_STREAM_SET_PITCH = 2
+        VIDCMD_STREAM_CLUT_HOLD = 4
+      vidcmd_plan_line() uses compositor.v's consume and buffer_frees
+      equations, now including the literal's bank hold and the streaming
+      flag.  Its authored slot sum counts a literal as 2 and a streamed
+      SET as 0.  It counts literals, stream SETs and leftovers.
+    render.{h,cpp} CompositorUnit, equation for equation with the RTL:
+      new state: streaming, lit_active, and RGB_OUT fed back for KEEP;
+      in screen space, KEEP is the previous slot on the line, and black
+      at slot 0;
+      /RS clears all three.
+      RenderStats: vidcmd_literals replaces vidcmd_color_runs.
+      vidcmd_stream_leftovers is new: law LS5's under-sized run is the
+      only new fault class.
+      A literal's own KEEP slot is part of its two-slot width.  It counts
+      as neither a cadence hold nor a starvation hold.
+  Suite:
+    56 traces reproduce every LITERAL/HOLD/KEEP/STREAM case of
+      compositor_tb.v at trace level.  The expectations are copied from
+      the bench's derivations.  The traces include 11 rows that check
+      the planner against the same derivations.  All passed on the first
+      run: the model and the bench never disagreed.
+    Model deviations, all documented: PIXEL-target SET values are chosen
+      to leave passthrough intact (the bench's RGB_IN is a constant), and
+      SUSTAINED_LIT is fed in two batches (the model's FIFO is 256 words).
+    Re-authored cases:
+      tempest-web: objects are 2-px literals, the same one word each;
+      m7-kiosk: background and highlight bar are LITERAL+HOLD; the masks
+        restore KEEP, so the trailing span re-issues the literal;
+      m11-static-pieces:
+        left border HOLD(64), since KEEP is black at a line's start;
+        right border RUN(cmp_color0,64), black from /RS;
+        pose row is 8 literals or RUN(pt,2) holes, a 16-px sprite;
+        every piece keeps its word count, so D2-D5 are unchanged;
+      cadence traces: 1-slot held-colour RUNs, the same record class;
+      mask traces: RUN,SET,SET,MASK over RUN(c1).  MASKB_STARVE now runs
+        over a literal span and asserts that the restore is KEEP of the
+        mask's last pixel.
+    m13 is unchanged.  Its header now says why: an ordinary run's SETs
+      still wait for the terminal.
+    New m14-literal-sprites, all hand-derived first, all pass:
+      (a) a 16-px literal row over 4bpp half-rate and attribute
+        backdrops at x = 0, 1, 2, 301, 608 and clipped 624.  It is exact
+        at every x with zero cadence holds.  The SET-stream form could
+        not do x = 0 or 2.
+      (b) painter's-order slicing, back[0..a) + front[8] + back[a+8..16),
+        built from sub-ranges of static rows, k = 1, pixel-exact on both
+        drivers.  No seam needs a fix-up word.  The front's transparent
+        pixels show the backdrop (the notch).
+      (c) LITERAL+HOLD(n) for n = 1, 2, 3, 4 and 62 gives max(n+2, 4).
+        Eight chained LIT+HOLD(6) spans are 8 slots each.
+      (d) a STREAM RUN with one late SET: line 0 still ends on its slot
+        and line 1 is unshifted.  The same content as literals is 6 slots
+        late and overruns into line 1.
+      (e) a palette entry in a stream run is legal over cmp_color1 and
+        flagged over passthrough (4 disturbed pixels).
+      (f) delivery: a left-edge row first in its own HBLANK has a margin
+        of +33 SYSCLK, against 34 derived.  The sliced form at k = 1 has
+        +232.  The PIXELS-first negative control misses by 169 SYSCLK
+        (about 170 derived).
+    super-engine `make check`: all cases PASS.  `make m68k-syntax` passes.
+  Cursor chain (apps/lib/griffin_cursor.h, mandelbrot, suite m12):
+    At 1023 slots per RUN the whole-frame lead-in is up to 301 words, so
+    the chain grew from 125 to 350 words, more than the 256-word FIFO.
+    It is now left-aligned with filler SETs at the end and delivered in
+    two fixed parts:
+      words 0..191 in vblank: 244 words with the 52 fixed preamble words;
+      words 192..349 as 32-word chunks behind the PIXELS of lines
+        184-188.
+    Derived bounds: no part-B word plays before line 226; FIFO peak 233
+    (230 measured).  Mandelbrot double-buffers its preamble and list,
+    because part B is read mid-frame.  m12 has 10 positions plus a
+    late-part-B negative control.
+  Apps and tools:
+    dtest: the square is RUN(held_fg); the paddle bar is LITERAL+HOLD,
+      and its width is asserted even;
+    smurf: corner-colour spans are LITERAL(+HOLD); widths 1 and 3 fall
+      back to SET+RUN(held_fg);
+    dmabench: the C0B cover is HOLD(1), the same timing.
+      check-dma-stall: C1 76.1 %, C2 55.9 %;
+    image-tools: the sprite2spans text is updated and the header is
+      regenerated (data identical).  `make check` was broken at HEAD by
+      audio_chip.h and is fixed in its Makefile;
+    firmware: a comment only.  ROM 130,688 bytes, 384 free, unchanged.
+      The 16 bytes against a fresh HEAD build are the build stamp;
+    emulator: rebuilt.  The headless console screenshot matches the
+      pre-change binary except the build-banner rows 66-75;
+    griffin.md, os-design 01/03, and dmabench RESULTS: prose updated;
+    griffin-video-datasheet.html: records, seams, rules, recipes, fit.

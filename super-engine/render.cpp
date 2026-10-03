@@ -520,8 +520,10 @@ void CompositorUnit::reset()
     ef_meta_       = false;
     ef_sync_       = false;
     run_remaining_ = 0;                     // count already terminal
-    cur_src_       = RUN_SRC_PASSTHROUGH;   // source back to passthrough
-    cur_colour_    = RGB444_BLACK;
+    cur_src_       = RUN_SRC_PASSTHROUGH;   // source back to passthrough, never KEEP
+    streaming_     = false;                 // the streaming flag is cleared
+    lit_active_    = false;                 // and a literal's bank hold abandoned
+    rgb_out_       = RGB444_BLACK;          // RGB_OUT resets to black
     mask_active_   = false;                 // mask playback abandoned
     sav_src_       = RUN_SRC_PASSTHROUGH;
     pending_n_     = 0;
@@ -600,6 +602,7 @@ bool CompositorUnit::fifo_has_data() const
 //               protects the dibits and parks the next record on Q.
 //   mask_reload this edge is the mask's pixel-8 boundary, so the word captured
 //               here is the mask's DATA and must land with have_staged LOW.
+//   load_literal this edge consumed a LITERAL, which keeps staged_word (LL).
 //
 // The two laws the suite has to reproduce come straight out of these five
 // lines: a word captured here cannot execute before the NEXT slot (2 slots per
@@ -608,9 +611,12 @@ bool CompositorUnit::fifo_has_data() const
 // consecutive slots.  The mask's two borrow-back edges are the third: they punch
 // through mask_holds, which is what makes mask-to-mask chaining gapless.
 void CompositorUnit::fetch_edge(bool word_on_q, bool had_staged, bool consumed,
-                                bool mask_holds, bool mask_reload)
+                                bool mask_holds, bool mask_reload, bool load_literal)
 {
-    const bool buffer_frees = (!had_staged || consumed) && !mask_holds;
+    // A literal's consume edge does not free the buffer either (law LL): the
+    // literal's colour is read out of staged_word for one more clock, so the
+    // next word parks on Q and is captured one edge later.
+    const bool buffer_frees = (!had_staged || consumed) && !mask_holds && !load_literal;
     const bool capture_now  = word_on_q && buffer_frees;
     const bool q_parked     = word_on_q && !capture_now;
     const bool re_fall      = !re_low_ && fifo_has_data();
@@ -683,7 +689,8 @@ void CompositorUnit::apply_pending(PixelUnit &pix)
 // it lands before the next line's pixel 0.  A staged RUN — or a staged MASK
 // HEADER, which paints pixel 0 and is therefore playback, not setup — waits for
 // H_ACTIVE and blocks everything behind it: eagerness is positional, not
-// temporal.
+// temporal.  So does a staged LITERAL, HOLD or STREAM RUN — streaming is an
+// active-video rule, so a SET behind a staged stream run is not eager either.
 void CompositorUnit::blank_clock(PixelUnit &pix)
 {
     const bool word_on_q  = re_low_ && ef_at_pop_;
@@ -715,11 +722,17 @@ void CompositorUnit::blank_clock(PixelUnit &pix)
     // RTL has, where set_cdata is live in the commit clock.
     pix.blank_clock();
 
+    // RGB_OUT is forced black outside H_ACTIVE, so KEEP at the next line's
+    // first slot shows black; lit_active <= load_literal, and no literal loads
+    // here (it is playback-class).
+    rgb_out_    = RGB444_BLACK;
+    lit_active_ = false;
+
     // Blanking does not exempt the fetch from the cadence: a run of eager SETs
     // still executes at one per two clocks (a pair when one is parked).  With
     // H_BLANK = 160 clocks that is invisible to a cushioned list and exactly
     // what a starved one runs out of.
-    fetch_edge(word_on_q, had_staged, consumed, mask_holds, false);
+    fetch_edge(word_on_q, had_staged, consumed, mask_holds, false, false);
     set_pix_value_ = static_cast<uint32_t>(staged_word_) & 0xFFFu;
 }
 
@@ -768,82 +781,104 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
         cur_src_ = sav_src_;
     }
 
-    // consume_active = H_ACTIVE & have_staged & terminal
-    if (terminal)
-    {
-        if (staged_valid_)
-        {
-            const uint16_t     w = staged_word_;
-            const VidcmdType   t = vidcmd_type_of(w);
-            staged_valid_ = false;
-            consumed      = true;
+    // consume_active = H_ACTIVE & have_staged & (terminal | (streaming & w_is_set)).
+    // A SET staged behind a STREAM RUN does not wait for the terminal (LS2);
+    // everything else does (LS3), and the count runs on untouched underneath.
+    const bool staged_is_set  = staged_valid_ && vidcmd_type_of(staged_word_) == VidcmdType::SET;
+    const bool consume_active = staged_valid_ && (terminal || (streaming_ && staged_is_set));
+    bool       load_literal   = false;
 
-            if (t == VidcmdType::SET)
+    if (consume_active)
+    {
+        const uint16_t   w = staged_word_;
+        const VidcmdType t = vidcmd_type_of(w);
+        staged_valid_ = false;
+        consumed      = true;
+
+        if (t == VidcmdType::SET)
+        {
+            // LS5: a SET still staged at its stream run's terminal executes as
+            // an ordinary SET and steals its slot from the line.
+            if (terminal && streaming_ && counting_ && stats_ != nullptr)
             {
-                const uint32_t target = vidcmd_set_target(w);
-                const uint32_t skew   = vidcmd_set_skew(target, skew_pix_, skew_cmp_);
-                if (skew == 0)
-                {
-                    commit(target, vidcmd_set_value(w), pix);
-                }
-                else if (pending_n_ < PENDING_MAX)
-                {
-                    pending_[pending_n_].effect_pixel = abs_pixel_ + skew;
-                    pending_[pending_n_].target       = target;
-                    pending_[pending_n_].value        = vidcmd_set_value(w);
-                    pending_n_++;
-                }
-                apply_pending(pix);
+                stats_->vidcmd_stream_leftovers++;
             }
-            else if (t == VidcmdType::RUN)
+            const uint32_t target = vidcmd_set_target(w);
+            const uint32_t skew   = vidcmd_set_skew(target, skew_pix_, skew_cmp_);
+            if (skew == 0)
             {
-                cur_src_ = vidcmd_run_src(w);
-                if (cur_src_ == RUN_SRC_COLOR)
-                {
-                    cur_colour_ = run_colour_to_rgb444(vidcmd_run_color_code(w));
-                    if (counting_ && stats_ != nullptr)
-                    {
-                        stats_->vidcmd_color_runs++;
-                    }
-                }
-                run_remaining_ = vidcmd_record_slots(w);
+                commit(target, vidcmd_set_value(w), pix);
             }
-            else
+            else if (pending_n_ < PENDING_MAX)
             {
-                // MASK.  The header PAINTS: its own slot is the record's pixel
-                // 0, an implicit opaque cmp_color0.  sav_src_ is only taken when
-                // a mask is not already playing, so a chained mask does not
-                // overwrite the source the FIRST one borrowed.
-                if (!mask_active_)
-                {
-                    sav_src_ = cur_src_;
-                }
-                load_mask      = true;
-                run_remaining_ = MASK_SLOTS;
+                pending_[pending_n_].effect_pixel = abs_pixel_ + skew;
+                pending_[pending_n_].target       = target;
+                pending_[pending_n_].value        = vidcmd_set_value(w);
+                pending_n_++;
+            }
+            apply_pending(pix);
+        }
+        else if (t == VidcmdType::RUN)
+        {
+            // load_run: cur_src <= w_run_src (a HOLD forces KEEP, a literal's
+            // src is KEEP already), streaming <= w_streaming.  A literal loads
+            // no count — the count was terminal on its consume edge and stays
+            // terminal — and sets lit_active for its own slot.
+            const VidcmdRunKind kind = vidcmd_run_kind(w);
+            cur_src_   = vidcmd_run_load_src(w);
+            streaming_ = (kind == VidcmdRunKind::STREAM);
+            if (kind == VidcmdRunKind::LITERAL)
+            {
+                load_literal = true;
                 if (counting_ && stats_ != nullptr)
                 {
-                    stats_->vidcmd_mask_records++;
+                    stats_->vidcmd_literals++;
                 }
-            }
-        }
-        else if (counting_ && stats_ != nullptr)
-        {
-            // HOLD: terminal count, nothing staged.  Keep the current source and
-            // keep trying.  First-class line framing, not underrun mercy — but
-            // it arises for two unrelated reasons and the checker cares which.
-            // If a word is on Q or still in the FIFO the hold is the second
-            // slot of the 2-clock fetch, which is structural.  If there is
-            // nothing anywhere, the stream really has run dry.
-            if (word_on_q || count_ > 0)
-            {
-                stats_->vidcmd_cadence_slots++;
             }
             else
             {
-                stats_->vidcmd_hold_slots++;
+                run_remaining_ = vidcmd_run_count(w);
+            }
+        }
+        else
+        {
+            // MASK.  The header PAINTS: its own slot is the record's pixel
+            // 0, an implicit opaque cmp_color0.  sav_src_ is only taken when
+            // a mask is not already playing, so a chained mask does not
+            // overwrite the source the FIRST one borrowed.
+            if (!mask_active_)
+            {
+                sav_src_ = cur_src_;
+            }
+            load_mask      = true;
+            run_remaining_ = MASK_SLOTS;
+            if (counting_ && stats_ != nullptr)
+            {
+                stats_->vidcmd_mask_records++;
             }
         }
     }
+    else if (terminal && !lit_active_ && counting_ && stats_ != nullptr)
+    {
+        // HOLD: terminal count, nothing staged.  Keep the current source and
+        // keep trying.  First-class line framing, not underrun mercy — but
+        // it arises for two unrelated reasons and the checker cares which.
+        // If a word is on Q or still in the FIFO the hold is the second
+        // slot of the 2-clock fetch, which is structural.  If there is
+        // nothing anywhere, the stream really has run dry.  The slot right
+        // after a literal (lit_active, pre-edge) is NEITHER: it is the
+        // literal's own KEEP slot, part of its two-slot width by law LL, so it
+        // is not counted at all.
+        if (word_on_q || count_ > 0)
+        {
+            stats_->vidcmd_cadence_slots++;
+        }
+        else
+        {
+            stats_->vidcmd_hold_slots++;
+        }
+    }
+    lit_active_ = load_literal;
 
     // THE MASK DRIVES cur_src_ FOR ITS OWN SLOT, over anything a load above
     // wrote.  ALIGNMENT, per compositor.v: both halves are read at [13:12],
@@ -888,9 +923,13 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
     {
         out = held_bg_;
     }
-    else if (cur_src_ == RUN_SRC_COLOR)
+    else if (cur_src_ == RUN_SRC_KEEP)
     {
-        out = cur_colour_;
+        // The literal's own slot reads staged_word[11:0] (still the literal:
+        // its consume edge did not free the buffer); every other KEEP slot is
+        // RGB_OUT fed back — the last colour shown on this line, black at its
+        // first slot.  Neither reads RGB_IN, so KEEP covers a palette write.
+        out = lit_active_ ? vidcmd_literal_colour(staged_word_) : rgb_out_;
     }
     else if (pix.pixel_disturbed())
     {
@@ -915,8 +954,9 @@ Rgb444 CompositorUnit::active_slot(PixelUnit &pix)
         stats_->vidcmd_mask_stalls++;
     }
 
-    fetch_edge(word_on_q, had_staged, consumed, mask_holds, mask_reload);
+    fetch_edge(word_on_q, had_staged, consumed, mask_holds, mask_reload, load_literal);
     set_pix_value_ = static_cast<uint32_t>(staged_word_) & 0xFFFu;
+    rgb_out_       = out;
     abs_pixel_++;
     return out;
 }

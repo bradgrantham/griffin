@@ -15,15 +15,16 @@
 //     descriptors at the same eighty words.  The display list is built once
 //     and never changes.
 //   * A 640x480 arrow cursor that is NOT in the framebuffer.  It is a
-//     COMPOSITOR MASK overlay delivered as one record chain in vertical
-//     blanking (apps/lib/griffin_cursor.h), in COMPOSITOR's own two colours,
+//     COMPOSITOR MASK overlay delivered as one record chain, part in vertical
+//     blanking and part from line 184 (apps/lib/griffin_cursor.h), in
+//     COMPOSITOR's own two colours,
 //     which bypass the palette.
 //   * Palette cycling: indices 1..15 are a closed colour loop that rotates
 //     under the picture by rewriting fifteen palette entries in the same
-//     vblank preamble.  The framebuffer is not touched.
+//     preamble.  The framebuffer is not touched.
 //
 // So everything that moves -- the cursor and the colours -- lives in the
-// preamble's 177 words, and everything that is expensive -- the picture -- is
+// preamble's 402 words, and everything that is expensive -- the picture -- is
 // written exactly once per pixel.
 //
 // WHO ARMS THE DISPLAY LIST
@@ -35,14 +36,13 @@
 // pacing model: its own level-6 handler re-arms ENGINE at every vsync and
 // counts the frame, and the mainline notices the count change at its leisure.
 //
-// THE ONE RACE, and why it is not guarded: the mainline rewrites preamble
-// words (cursor moved, palette cycled) and the handler arms a list that
-// delivers them.  The rewrite happens only right after the mainline has seen
-// the frame count change -- within one arithmetic chunk, a few milliseconds
-// after the preamble went out -- and takes well under a millisecond, so it is
-// finished most of a frame before the next vsync.  If it ever were caught, the
-// damage is one frame of a torn cursor or a half-rotated palette; the picture
-// itself cannot be affected.
+// THE PREAMBLE IS DOUBLE-BUFFERED, with a list per buffer.  The cursor chain's
+// part B is read in the middle of the frame (lines 184..188), so rewriting the
+// one buffer "just after vsync" would tear the cursor whenever it sits low on
+// the screen.  Instead the mainline only ever writes the buffer the handler did
+// NOT arm last (g_armed_word says which), then points g_desc_word at it; a
+// vsync that lands mid-rewrite re-arms the old, untouched list.  A change marks
+// both buffers stale, and each frame's service refreshes one of them.
 //
 // THE ARITHMETIC is mandel_ref.h (the definition) and mandel_iter.s (the
 // 68000 inner loop).  host_ref.cpp renders the same definition on the host and
@@ -97,18 +97,22 @@ static_assert(LINE_WORDS * 4 == WIDTH, "four 4-bit pixels per PIXELS word");
 constexpr unsigned VBLANK_WALK_LINES = 34;
 
 // ---------------------------------------------------------------------------
-// The preamble: every VIDCMD word the frame gets, delivered in vblank
+// The preamble: every VIDCMD word the frame gets
 // ---------------------------------------------------------------------------
 //
 //     [0, 48)     sixteen palette entries, three words each
 //     48          SET pix_base 0
 //     49          SET pix_mode 4bpp half rate
 //     50, 51      SET cmp_color0 (cursor outline), SET cmp_color1 (cursor fill)
-//     [52, 177)   the cursor chain, front-padded with repeats of word 49
+//     [52, 402)   the cursor chain, end-padded with filler SETs
 //
-// /RS clears pix_mode and pix_base at every vsync and nothing ever initialises
-// the palette RAM, so all of it goes out every frame regardless; cycling and
-// cursor motion only change which words.
+// Words [0, 244) — the SETs and the chain's part A — go out in vblank; the
+// chain's part B goes out in 32-word chunks appended to the line groups of
+// GriffinCursor::PART_B_FIRST_LINE onward (griffin_cursor.h derives why that
+// is early enough and why the FIFO never overflows).  /RS clears pix_mode and
+// pix_base at every vsync and nothing ever initialises the palette RAM, so all
+// of it goes out every frame regardless; cycling and cursor motion only change
+// which words.
 
 constexpr unsigned PALETTE_WORDS  = se::PALETTE_ENTRIES * se::PALETTE_WORDS_PER_ENTRY;   // 48
 constexpr unsigned PRE_PIX_BASE   = PALETTE_WORDS;
@@ -116,12 +120,16 @@ constexpr unsigned PRE_PIX_MODE   = PALETTE_WORDS + 1;
 constexpr unsigned PRE_COLOR0     = PALETTE_WORDS + 2;
 constexpr unsigned PRE_COLOR1     = PALETTE_WORDS + 3;
 constexpr unsigned PRE_CHAIN      = PALETTE_WORDS + 4;
-constexpr unsigned PREAMBLE_WORDS = PRE_CHAIN + GriffinCursor::CHAIN_WORDS;              // 177
+constexpr unsigned PREAMBLE_WORDS = PRE_CHAIN + GriffinCursor::CHAIN_WORDS;              // 402
+constexpr unsigned VBLANK_WORDS   = PRE_CHAIN + GriffinCursor::PART_A_WORDS;             // 244
+constexpr unsigned PART_B_START   = VBLANK_WORDS;
 
-static_assert(PREAMBLE_WORDS == 177);
+static_assert(PREAMBLE_WORDS == 402);
+static_assert(VBLANK_WORDS == 244);
 // The chain's RUNs and MASKs wait in the FIFO for line 0; the SETs in front of
-// them are consumed in blanking as they arrive.
-static_assert(PREAMBLE_WORDS < se::VIDCMD_FIFO_WORDS);
+// them are consumed in blanking as they arrive, but even if none were the
+// vblank deposit fits.
+static_assert(VBLANK_WORDS < se::VIDCMD_FIFO_WORDS);
 
 constexpr uint16_t PIX_MODE_WORD =
     se::vidcmd_set(se::SET_PIX_MODE, se::pixel_mode(se::PIXEL_DEPTH_4BPP, true));
@@ -129,34 +137,41 @@ constexpr se::Rgb444 CURSOR_OUTLINE = se::rgb444(0x0, 0x0, 0x0);
 constexpr se::Rgb444 CURSOR_FILL    = se::rgb444(0xF, 0xF, 0xF);
 
 constexpr unsigned PREAMBLE_DESCRIPTORS =
-    (PREAMBLE_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;                      // 6
+    (VBLANK_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;                        // 8
 constexpr unsigned LINE_DESCRIPTORS =
     (LINE_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;                          // 3
 constexpr unsigned TABLE_DESCRIPTORS =
-    PREAMBLE_DESCRIPTORS + VBLANK_WALK_LINES + LINES * LINE_DESCRIPTORS + 1;             // 1481
+    PREAMBLE_DESCRIPTORS + VBLANK_WALK_LINES + LINES * LINE_DESCRIPTORS +
+    GriffinCursor::PART_B_LINES + 1;                                                     // 1488
+constexpr unsigned TABLE_BYTES = TABLE_DESCRIPTORS * se::DESC_BYTES;                    // 11904
 
-static_assert(TABLE_DESCRIPTORS * se::DESC_BYTES <= GRIFFIN_APP_DESC_BYTES);
+// Two lists, one per preamble buffer.
+static_assert(2 * TABLE_BYTES <= GRIFFIN_APP_DESC_BYTES);
 
 // Payload storage.  Only the descriptor table has to live in the firmware's
 // carve; these are ordinary DMA sources in the app's own .bss.  Static, never
 // on the stack (firmware/rom.cpp's dl_build_gc4_list note).
 uint16_t g_framebuffer[HEIGHT][LINE_WORDS];
-uint16_t g_preamble[PREAMBLE_WORDS];
+uint16_t g_preamble[2][PREAMBLE_WORDS];
+uint16_t g_list_desc_word[2];           // the ENGINE_DESC value of each buffer's list
 
 // ---------------------------------------------------------------------------
 // The vsync handler
 // ---------------------------------------------------------------------------
 
 volatile uint16_t g_desc_word  = 0;     // what the handler writes to ENGINE_DESC
+volatile uint16_t g_armed_word = 0;     // what it wrote last: the list now playing
 volatile uint32_t g_frames     = 0;     // vsyncs seen
 
 // Level 6.  The latch must be cleared or the level-triggered IRQ re-enters
 // forever; the arm must be here, not in the mainline, for the reason at the
-// top of this file.  Three absolute-address moves and an rte.
+// top of this file.  Four absolute-address moves and an rte.
 __attribute__((interrupt)) void vsync_handler()
 {
     GLUE_VSYNC_CLEAR = static_cast<uint8_t>(Griffin::GLUE_VSYNC_CLEAR_VSYNC_PENDING_MASK);
-    ENGINE_DESC      = g_desc_word;
+    const uint16_t desc = g_desc_word;
+    ENGINE_DESC      = desc;
+    g_armed_word     = desc;
     g_frames         = g_frames + 1;
 }
 
@@ -222,13 +237,13 @@ struct Builder
     }
 };
 
-unsigned build_table(uint32_t table_base)
+unsigned build_table(uint32_t table_base, const uint16_t *preamble)
 {
     Builder b;
     b.table = reinterpret_cast<uint16_t *>(table_base);
 
     // No wait: this runs the moment the handler arms, inside the vsync line.
-    b.stream(reinterpret_cast<uint32_t>(&g_preamble[0]), PREAMBLE_WORDS, se::DEST_VIDCMD_FIFO_W,
+    b.stream(reinterpret_cast<uint32_t>(&preamble[0]), VBLANK_WORDS, se::DEST_VIDCMD_FIFO_W,
              false);
     for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
     {
@@ -238,6 +253,14 @@ unsigned build_table(uint32_t table_base)
     {
         b.stream(reinterpret_cast<uint32_t>(&g_framebuffer[line / 2][0]), LINE_WORDS,
                  se::DEST_PIXELS_FIFO_W, true);
+
+        // The cursor chain's part B, one chunk behind this line's pixels.
+        const unsigned j = line - GriffinCursor::PART_B_FIRST_LINE;
+        if (line >= GriffinCursor::PART_B_FIRST_LINE && j < GriffinCursor::PART_B_LINES)
+        {
+            b.stream(reinterpret_cast<uint32_t>(&preamble[PART_B_START + j * GriffinCursor::PART_B_CHUNK]),
+                     GriffinCursor::part_b_chunk_words(j), se::DEST_VIDCMD_FIFO_W, false);
+        }
     }
     b.pacer(true);
     return b.count;
@@ -247,7 +270,9 @@ unsigned build_table(uint32_t table_base)
 // Preamble maintenance
 // ---------------------------------------------------------------------------
 
-void write_palette(unsigned palette, unsigned phase)
+// One buffer's whole preamble from the UI state: palette, the fixed SETs and
+// the cursor chain.
+void write_preamble(uint16_t *pre, unsigned palette, unsigned phase, unsigned x, unsigned y)
 {
     for (unsigned i = 0; i < se::PALETTE_ENTRIES; i++)
     {
@@ -255,22 +280,14 @@ void write_palette(unsigned palette, unsigned phase)
             se::vidcmd_palette_entry(i, Mandel::palette_colour(palette, i, phase));
         for (unsigned w = 0; w < se::PALETTE_WORDS_PER_ENTRY; w++)
         {
-            g_preamble[i * se::PALETTE_WORDS_PER_ENTRY + w] = e.w[w];
+            pre[i * se::PALETTE_WORDS_PER_ENTRY + w] = e.w[w];
         }
     }
-}
-
-void write_cursor(unsigned x, unsigned y)
-{
-    GriffinCursor::build_chain(&g_preamble[PRE_CHAIN], GriffinCursor::ARROW, x, y, PIX_MODE_WORD);
-}
-
-void write_preamble_fixed()
-{
-    g_preamble[PRE_PIX_BASE] = se::vidcmd_set(se::SET_PIX_BASE, 0);
-    g_preamble[PRE_PIX_MODE] = PIX_MODE_WORD;
-    g_preamble[PRE_COLOR0]   = se::vidcmd_set(se::SET_CMP_COLOR0, CURSOR_OUTLINE);
-    g_preamble[PRE_COLOR1]   = se::vidcmd_set(se::SET_CMP_COLOR1, CURSOR_FILL);
+    pre[PRE_PIX_BASE] = se::vidcmd_set(se::SET_PIX_BASE, 0);
+    pre[PRE_PIX_MODE] = PIX_MODE_WORD;
+    pre[PRE_COLOR0]   = se::vidcmd_set(se::SET_CMP_COLOR0, CURSOR_OUTLINE);
+    pre[PRE_COLOR1]   = se::vidcmd_set(se::SET_CMP_COLOR1, CURSOR_FILL);
+    GriffinCursor::build_chain(&pre[PRE_CHAIN], GriffinCursor::ARROW, x, y);
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +360,7 @@ struct Ui
     Action             pending      = Action::None;
     unsigned           click_px     = 0;    // playfield pixel under the cursor at the click
     unsigned           click_py     = 0;
+    unsigned           stale        = 0;    // preamble buffers not yet showing the state
 };
 
 Ui g_ui;
@@ -379,7 +397,7 @@ void handle_key(uint8_t code)
     else if (code == SCAN_P)
     {
         g_ui.palette = (g_ui.palette + 1) % Mandel::PALETTE_COUNT;
-        write_palette(g_ui.palette, g_ui.phase);
+        g_ui.stale   = 2;
     }
     else if (code == SCAN_Q)
     {
@@ -403,8 +421,8 @@ Action service()
     }
     g_ui.seen_frames = frames;
 
-    // The preamble for this frame has just gone out, so now is the safe time
-    // to change it (see "THE ONE RACE" above).
+    // Mouse, palette cycling and keys only change the UI state; the inactive
+    // preamble buffer is brought up to date at the end.
     GriffinMouseReport now;
     if (griffin_mouse_read(&now) == 0)
     {
@@ -414,8 +432,7 @@ Action service()
         {
             g_ui.cursor_x = clamp(g_ui.cursor_x + dx, 0, static_cast<int>(se::H_ACTIVE) - 1);
             g_ui.cursor_y = clamp(g_ui.cursor_y + dy, 0, static_cast<int>(se::V_ACTIVE) - 1);
-            write_cursor(static_cast<unsigned>(g_ui.cursor_x),
-                         static_cast<unsigned>(g_ui.cursor_y));
+            g_ui.stale = 2;
         }
 
         // A press edge, and only while nothing is waiting: one click, one zoom.
@@ -435,7 +452,7 @@ Action service()
     if (g_ui.cycle && frames % CYCLE_FRAMES == 0)
     {
         g_ui.phase = (g_ui.phase + 1) % Mandel::CYCLE_COLOURS;
-        write_palette(g_ui.palette, g_ui.phase);
+        g_ui.stale = 2;
     }
 
     // The console is in raw mode: whatever is waiting is scancodes.
@@ -451,6 +468,17 @@ Action service()
         {
             break;
         }
+    }
+
+    // Refresh the buffer whose list is NOT playing and arm it for the next
+    // vsync.  A vsync that lands while this runs re-arms the playing list.
+    if (g_ui.stale > 0)
+    {
+        const unsigned idle = (g_armed_word == g_list_desc_word[0]) ? 1u : 0u;
+        write_preamble(g_preamble[idle], g_ui.palette, g_ui.phase,
+                       static_cast<unsigned>(g_ui.cursor_x), static_cast<unsigned>(g_ui.cursor_y));
+        g_desc_word = g_list_desc_word[idle];
+        g_ui.stale--;
     }
     return g_ui.pending;
 }
@@ -657,7 +685,7 @@ int main(int argc, char **argv)
         printf("mandel: SYS_VIDEO_DIRECT_START failed\n");
         return 1;
     }
-    if (info.desc_table_bytes < TABLE_DESCRIPTORS * se::DESC_BYTES)
+    if (info.desc_table_bytes < 2 * TABLE_BYTES)
     {
         (void)griffin_video_direct_end();
         printf("mandel: descriptor carve too small\n");
@@ -673,13 +701,18 @@ int main(int argc, char **argv)
                           static_cast<int>(se::H_ACTIVE) - 1);
     g_ui.cursor_y = clamp(static_cast<int>(se::V_ACTIVE / 2) - static_cast<int>(report.y), 0,
                           static_cast<int>(se::V_ACTIVE) - 1);
-    write_palette(g_ui.palette, g_ui.phase);
-    write_preamble_fixed();
-    write_cursor(static_cast<unsigned>(g_ui.cursor_x), static_cast<unsigned>(g_ui.cursor_y));
-    (void)build_table(info.desc_table_base);
+    for (unsigned k = 0; k < 2; k++)
+    {
+        const uint32_t table = info.desc_table_base + k * TABLE_BYTES;
+        write_preamble(g_preamble[k], g_ui.palette, g_ui.phase,
+                       static_cast<unsigned>(g_ui.cursor_x), static_cast<unsigned>(g_ui.cursor_y));
+        (void)build_table(table, g_preamble[k]);
+        g_list_desc_word[k] = static_cast<uint16_t>((table - se::DESC_TABLE_BASE) >> 1);
+    }
 
     // Vector first, then the enable: the handler must exist before the IRQ can.
-    g_desc_word = static_cast<uint16_t>((info.desc_table_base - se::DESC_TABLE_BASE) >> 1);
+    g_desc_word  = g_list_desc_word[0];
+    g_armed_word = g_list_desc_word[0];
     install_vsync_handler();
     if (griffin_video_vsync_irq(1) != 0)
     {

@@ -16,12 +16,20 @@ The proposal: **five descriptors per sprite line, each pointing at data that is
 never written after start-up.**
 
 ```
-piece 1  2 words   left cap:  SET(pix_base, b) + RUN_COLOR(black, 64)
+piece 1  2 words   left cap:  SET(pix_base, b) + HOLD(64)
 piece 2  1 word    gap:       RUN(passthrough, g)   from a 640-entry table
 piece 3  8 words   the pose row, straight out of the art
 piece 4  1 word    tail:      RUN(passthrough, t)   from the same table
-piece 5  1 word    right border: RUN_COLOR(black, 64)
+piece 5  1 word    right border: RUN(cmp_color0, 64)
 ```
+
+> **2026-10-03.**  RUN_COLOR is retired.  The borders are now a HOLD at the
+> line's start (KEEP is black until a real source is loaded) and
+> RUN(cmp_color0) (black since every /RS), and the pose row is eight LITERALs
+> or RUN(passthrough, 2) holes — a 16-pixel sprite at 320 density instead of
+> eight 8-pixel spans.  Every piece kept its word count, so every delivery
+> number below is unchanged; every record is still at least the two-slot
+> cadence, so occupancy is still the authored sum.
 
 Five descriptors cost four extra ENGINE turn-arounds, which breaks the
 one-hblank deadline, so the pieces must be deposited **k lines ahead** into the

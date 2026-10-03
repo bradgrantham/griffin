@@ -13,8 +13,8 @@
 // direct access so the loader has to reclaim it.
 //
 // THE PICTURE IS ALL-VIDCMD.  There is no framebuffer and no PIXELS DMA at all:
-// every visible pixel comes out of COMPOSITOR's held colours or a RUN_COLOR
-// span.  That is the smallest correct display list -- one descriptor per
+// every visible pixel comes out of COMPOSITOR's held colours or a LITERAL +
+// HOLD span.  That is the smallest correct display list -- one descriptor per
 // scanline, a handful of payload words -- and it proves the whole
 // ENGINE -> VIDCMD FIFO -> COMPOSITOR path without dragging pixel data in.
 //
@@ -97,16 +97,17 @@ constexpr unsigned SQUARE_Y_MAX = BAR_TOP - SQUARE_SIZE;            // 400
 
 static_assert(BAR_SCALE * 255u + 1u <= se::H_ACTIVE,
               "the paddle bar plus its trailing one-slot RUN must fit a line");
-static_assert(BAR_SCALE * 255u <= se::RUN_COLOR_MAX_COUNT,
-              "the paddle bar is one RUN_COLOR record, so it is capped at 511 px");
+static_assert(BAR_SCALE * 255u - se::VIDCMD_LITERAL_SLOTS <= se::VIDCMD_RUN_COUNT_MAX,
+              "the paddle bar is one LITERAL + one HOLD, so its HOLD must fit 10 bits");
+// A LITERAL paints two pixels and LITERAL + HOLD(n) paints n + 2 when n >= 2,
+// so every EVEN width is exact and no odd one is: the scale keeps it even.
+static_assert(BAR_SCALE % se::VIDCMD_LITERAL_SLOTS == 0,
+              "the paddle bar's width must be even to be painted by a literal span");
 static_assert(BAR_TOP + BAR_HEIGHT <= se::V_ACTIVE, "the paddle bar runs off the screen");
 
 constexpr se::Rgb444 BACKGROUND = se::rgb444(0x0, 0x1, 0x4);   // dark blue
-constexpr se::Rgb444 FOREGROUND = se::rgb444(0xF, 0xF, 0xF);   // not used by the
-                                                               // picture; SET so
-                                                               // both COMPOSITOR
-                                                               // held registers
-                                                               // are exercised
+constexpr se::Rgb444 FOREGROUND = se::rgb444(0xF, 0xF, 0xF);   // the square
+constexpr se::Rgb444 BAR_COLOR  = se::rgb444(0xF, 0xF, 0x0);   // the paddle bar
 
 // ---------------------------------------------------------------------------
 // Display-list storage
@@ -207,7 +208,7 @@ unsigned square_records(uint16_t *out, const Scene &s)
     {
         out[n++] = se::vidcmd_run(se::RUN_SRC_HELD_BG, s.square_x);
     }
-    out[n++] = se::vidcmd_run_color(se::RUN_COLOR_WHITE, SQUARE_SIZE);
+    out[n++] = se::vidcmd_run(se::RUN_SRC_HELD_FG, SQUARE_SIZE);
     out[n++] = se::vidcmd_run(se::RUN_SRC_HELD_BG, 1);
     return n;
 }
@@ -215,9 +216,17 @@ unsigned square_records(uint16_t *out, const Scene &s)
 unsigned bar_records(uint16_t *out, const Scene &s)
 {
     unsigned n = 0;
+    // The bar is any width the paddle gives, always even: a LITERAL alone for
+    // 2 px, LITERAL + HOLD(w - 2) from 4 px up.  Either way the RUN behind it
+    // executes exactly w slots in (law LL: it is captured one edge after the
+    // literal, behind a HOLD of n >= 2 it waits for the terminal).
     if (s.bar_width > 0)
     {
-        out[n++] = se::vidcmd_run_color(se::RUN_COLOR_YELLOW, s.bar_width);
+        out[n++] = se::vidcmd_literal(BAR_COLOR);
+        if (s.bar_width >= se::VIDCMD_LIT_HOLD_MIN_SLOTS)
+        {
+            out[n++] = se::vidcmd_hold(s.bar_width - se::VIDCMD_LITERAL_SLOTS);
+        }
     }
     out[n++] = se::vidcmd_run(se::RUN_SRC_HELD_BG, 1);
     return n;
