@@ -34,6 +34,29 @@
 //   within three units.
 //
 // A 68000 iteration is therefore six MULUs; mandel_iter.s has the cycle count.
+//
+// THE FRACTIONAL COUNT.  An integer escape count makes every band edge a hard
+// edge, and where counts change by dozens per pixel that reads as noise.  The
+// usual remedy is the normalised count
+//
+//     mu = n + 1 - log2(log2 |z_n|)            (z_n the first escaped z)
+//
+// which is continuous across band boundaries because squaring z adds one to
+// n and doubles log2 |z|.  (I have not re-derived its constant against a
+// reference; what matters here is the continuity, and the formula is
+// self-consistent under z -> z^2.)  With |z_n|^2 = R that is
+//
+//     mu = n + 2 - log2(log2 R)
+//
+// and the loop records R/4 at escape (norm4 below, so that |z| < 8 fits
+// sq()'s domain).  R/4 is in [1, 12), so log2 R = 2 + e + m with e the
+// position of norm4's leading one and m its mantissa, taken as a straight
+// line (error under 0.09 in log2 R, well under the quarter steps kept).  A
+// 64-entry table then gives log2(log2 R) in quarters, and mu in quarters is
+// the colour's whole band plus a two-bit fraction that a 2x2 ordered dither
+// turns into one of four mixes of the band's colour and the next.  The dither
+// is keyed to the playfield pixel's coordinates, so it is as deterministic as
+// everything else in this file.
 
 #ifndef MANDEL_REF_H
 #define MANDEL_REF_H
@@ -73,39 +96,51 @@ constexpr uint32_t mul(uint32_t a, uint32_t b)
     return ((ah * bh) << 4) + (mid >> 12);
 }
 
-// The layout mandel_iter.s indexes by hand: x 0, y 4, cx 8, cy 12, n 16.
+// The layout mandel_iter.s indexes by hand: x 0, y 4, cx 8, cy 12, norm4 16,
+// n 20.
 struct State
 {
     int32_t  x;
     int32_t  y;
     int32_t  cx;
     int32_t  cy;
+    uint32_t norm4;     // |z|^2 / 4 of the escaped z, valid once escaped
     uint16_t n;         // iterations completed
 };
 
 constexpr State start(int32_t cx, int32_t cy)
 {
-    return State{0, 0, cx, cy, 0};
+    return State{0, 0, cx, cy, 0, 0};
 }
 
-// One iteration.  Returns true, leaving the state untouched, if z has escaped;
-// otherwise advances z and counts the iteration.
+// |z|^2 / 4, formed from the halved magnitudes so that any z the loop can
+// hold (|x|, |y| < 8) is inside sq()'s domain.
+constexpr uint32_t norm_quarter(const State &s)
+{
+    return sq(magnitude(s.x) >> 1) + sq(magnitude(s.y) >> 1);
+}
+
+// One iteration.  Returns true, leaving z untouched and recording norm4, if
+// z has escaped; otherwise advances z and counts the iteration.
 constexpr bool step(State &s)
 {
     const uint32_t ax = magnitude(s.x);
     if (ax >= LIMIT_AXIS)
     {
+        s.norm4 = norm_quarter(s);
         return true;
     }
     const uint32_t ay = magnitude(s.y);
     if (ay >= LIMIT_AXIS)
     {
+        s.norm4 = norm_quarter(s);
         return true;
     }
     const uint32_t xx = sq(ax);
     const uint32_t yy = sq(ay);
     if (xx + yy > LIMIT_NORM)
     {
+        s.norm4 = norm_quarter(s);
         return true;
     }
     const uint32_t sum = magnitude(s.x + s.y);
@@ -116,8 +151,9 @@ constexpr bool step(State &s)
     return false;
 }
 
-// Iterations completed before z was seen to have escaped, at most max_iter.
-constexpr unsigned iterate(int32_t cx, int32_t cy, unsigned max_iter)
+// Run to escape or to max_iter.  The result's n is the iterations completed
+// before z was seen to have escaped, and norm4 is meaningful if n < max_iter.
+constexpr State iterate(int32_t cx, int32_t cy, unsigned max_iter)
 {
     State s = start(cx, cy);
     while (s.n < max_iter)
@@ -127,7 +163,7 @@ constexpr unsigned iterate(int32_t cx, int32_t cy, unsigned max_iter)
             break;
         }
     }
-    return s.n;
+    return s;
 }
 
 // True for a point inside the main cardioid or the period-2 bulb, which never
@@ -264,9 +300,51 @@ constexpr unsigned max_iterations(const View &v)
 
 inline constexpr unsigned CYCLE_COLOURS = 15;
 
-constexpr unsigned colour_index(unsigned n, unsigned max_iter)
+// round(4 * log2(L)) for L = 2 + k/16, k = 0..63: log2(log2 R) in quarters,
+// indexed by log2 R in sixteenths above 2.  Generated once with
+// python3 -c "import math; print([round(4*math.log2(L/16)) for L in range(32,96)])"
+inline constexpr uint8_t QUARTER_LOG2[64] = {
+    4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8,
+    8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+    10, 10, 10,
+};
+
+// log2 R in sixteenths above 2, from norm4 = R/4 in Q4.28, which is in
+// [1, 12): e is the leading one's position above the units bit, m the four
+// bits below it.
+constexpr unsigned log2_norm_sixteenths(uint32_t norm4)
 {
-    return (n >= max_iter) ? 0u : 1u + n % CYCLE_COLOURS;
+    unsigned e = 0;
+    while (e < 3 && norm4 >= (static_cast<uint32_t>(ONE) << (e + 1)))
+    {
+        e++;
+    }
+    const unsigned m = (norm4 >> (28 + e - 4)) & 0xFu;
+    return e * 16 + m;
+}
+
+// mu in quarters: 4n + 8 - 4 log2(log2 R), never below zero.
+constexpr unsigned quarter_count(unsigned n, uint32_t norm4)
+{
+    const unsigned g = QUARTER_LOG2[log2_norm_sixteenths(norm4)];
+    const unsigned q = 4 * n + 8;
+    return (q > g) ? q - g : 0u;
+}
+
+// 2x2 ordered dither: the fraction f (0..3) of the way from band k to band
+// k+1 shows band k+1 on f of the four pixels of each 2x2 cell.
+inline constexpr uint8_t BAYER_2X2[2][2] = {{0, 2}, {3, 1}};
+
+constexpr unsigned colour_index(unsigned n, unsigned max_iter, uint32_t norm4, unsigned px,
+                                unsigned py)
+{
+    if (n >= max_iter)
+    {
+        return 0;
+    }
+    const unsigned q    = quarter_count(n, norm4);
+    const unsigned band = q / 4 + ((q % 4 > BAYER_2X2[py & 1u][px & 1u]) ? 1u : 0u);
+    return 1u + band % CYCLE_COLOURS;
 }
 
 // R4G4B4, 0x0RGB.
@@ -311,13 +389,18 @@ constexpr unsigned pixel_index(const View &v, unsigned px, unsigned py)
         return 0;
     }
     const unsigned max_iter = max_iterations(v);
-    return colour_index(iterate(cx, cy, max_iter), max_iter);
+    const State    s        = iterate(cx, cy, max_iter);
+    return colour_index(s.n, max_iter, s.norm4, px, py);
 }
 
 // Sanity pins: the origin never escapes, a far point escapes at once, and the
 // two closed forms agree with what they are shortcuts for.
-static_assert(iterate(0, 0, 64) == 64);
-static_assert(iterate(3 * (ONE / 2), 3 * (ONE / 2), 64) <= 2);
+static_assert(iterate(0, 0, 64).n == 64);
+static_assert(iterate(3 * (ONE / 2), 3 * (ONE / 2), 64).n <= 2);
+// The fractional count is continuous across a band edge: R = 4 at n gives
+// the same mu as R = 16 at n + 1, both n + 1 whole.
+static_assert(quarter_count(5, static_cast<uint32_t>(ONE)) == 4 * 6);
+static_assert(quarter_count(6, static_cast<uint32_t>(ONE) * 4) == 4 * 6);
 static_assert(in_main_bulbs(0, 0) && in_main_bulbs(-ONE, 0) && in_main_bulbs(-ONE / 2, ONE / 2));
 static_assert(!in_main_bulbs(ONE / 2, 0) && !in_main_bulbs(-(ONE / 4) * 7, 0));
 static_assert(!in_main_bulbs(-(ONE / 100) * 76, ONE / 5));

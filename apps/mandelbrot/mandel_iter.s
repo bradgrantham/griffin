@@ -5,7 +5,8 @@
 | Runs up to `count` (1..65535) iterations of the state, exactly as
 | Mandel::step() in mandel_ref.h defines one, and returns 1 if z was found
 | escaped (state->n iterations completed, z left as it was when the test
-| failed) or 0 if all `count` iterations ran.  The caller chops a pixel into
+| failed, state->norm4 = |z|^2 / 4 for the fractional count) or 0 if all
+| `count` iterations ran.  The caller chops a pixel into
 | chunks so it can look at the frame counter between them.
 |
 | mandel_ref.h IS THE SPECIFICATION and explains the arithmetic: escape test
@@ -64,7 +65,8 @@
 
     .equ    STATE_X, 0
     .equ    STATE_Y, 4
-    .equ    STATE_N, 16
+    .equ    STATE_NORM4, 16
+    .equ    STATE_N, 20
 
     | Nine registers saved, then the return address: the arguments start at 40.
     .equ    ARG_STATE, 40
@@ -127,6 +129,21 @@ mandel_step:
     subq.w  #1, %d1
     sub.w   %d7, %d1
     add.w   %d1, STATE_N(%a0)
+
+    | norm4 = (|x|/2)^2 + (|y|/2)^2, once per pixel: Mandel::norm_quarter().
+    move.l  %a1, %d0
+    jpl     4f
+    neg.l   %d0
+4:  lsr.l   #1, %d0
+    SQUARE
+    move.l  %d0, %d2
+    move.l  %a2, %d0
+    jpl     5f
+    neg.l   %d0
+5:  lsr.l   #1, %d0
+    SQUARE
+    add.l   %d2, %d0
+    move.l  %d0, STATE_NORM4(%a0)
     moveq   #1, %d0
 
 .Lout:

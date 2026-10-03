@@ -299,9 +299,10 @@ bool read_bmp(const char *path, std::vector<Rgb> &screen)
     return true;
 }
 
-// Double-precision escape count with the same escape rule (|z|^2 > 4, tested
-// before the update) and no closed-form shortcut.
-unsigned iterate_double(double cx, double cy, unsigned max_iter)
+// Double-precision escape with the same escape rule (|z|^2 > 4, tested before
+// the update) and no closed-form shortcut; returns the count and R/4 as the
+// fixed-point state would hold them, so the same colouring can be applied.
+Mandel::State iterate_double(double cx, double cy, unsigned max_iter)
 {
     double   x = 0.0;
     double   y = 0.0;
@@ -317,7 +318,10 @@ unsigned iterate_double(double cx, double cy, unsigned max_iter)
         x = nx;
         n++;
     }
-    return n;
+    Mandel::State s{};
+    s.n     = static_cast<uint16_t>(n);
+    s.norm4 = static_cast<uint32_t>((x * x + y * y) / 4.0 * Mandel::ONE);
+    return s;
 }
 
 int check()
@@ -350,10 +354,10 @@ int check()
             {
                 const int32_t  cx   = Mandel::pixel_cx(views[v], px);
                 const int32_t  cy   = Mandel::pixel_cy(views[v], py);
-                const unsigned want = Mandel::colour_index(
+                const Mandel::State d =
                     iterate_double(static_cast<double>(cx) / Mandel::ONE,
-                                   static_cast<double>(cy) / Mandel::ONE, max_iter),
-                    max_iter);
+                                   static_cast<double>(cy) / Mandel::ONE, max_iter);
+                const unsigned want = Mandel::colour_index(d.n, max_iter, d.norm4, px, py);
                 const unsigned got = Mandel::pixel_index(views[v], px, py);
                 differ   += (want != got) ? 1u : 0u;
                 interior += (got == 0) ? 1u : 0u;

@@ -72,7 +72,7 @@ extern "C" int mandel_step(Mandel::State *state, unsigned count);
 // mandel_iter.s indexes the state by hand.
 static_assert(offsetof(Mandel::State, x) == 0 && offsetof(Mandel::State, y) == 4 &&
               offsetof(Mandel::State, cx) == 8 && offsetof(Mandel::State, cy) == 12 &&
-              offsetof(Mandel::State, n) == 16,
+              offsetof(Mandel::State, norm4) == 16 && offsetof(Mandel::State, n) == 20,
               "mandel_iter.s STATE_* offsets");
 
 namespace
@@ -491,7 +491,7 @@ bool compute_pixel(const Mandel::View &view, unsigned px, unsigned py, unsigned 
             return false;
         }
     }
-    index = Mandel::colour_index(state.n, max_iter);
+    index = Mandel::colour_index(state.n, max_iter, state.norm4, px, py);
     return service() == Action::None;
 }
 
@@ -550,7 +550,7 @@ bool selftest_point(int32_t cx, int32_t cy, unsigned max_iter)
     }
 
     return got.n == want.n && got.x == want.x && got.y == want.y &&
-           got_escaped == want_escaped;
+           got_escaped == want_escaped && (!got_escaped || got.norm4 == want.norm4);
 }
 
 int selftest()

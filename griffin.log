@@ -2273,3 +2273,21 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   app follows it (initial cursor = centre + the report accumulated since
   boot).  --mouse-grab keeps the raw relative mode.  Interactive behaviour
   still unverified here (needs a window); scripted runs unchanged.
+
+2026-10-03 -- apps/mandelbrot: fractional escape count with 2x2 ordered dither
+  Brad found the integer bands read as noise where counts change fast.
+  The normalised count mu = n + 2 - log2(log2 R), R = |z|^2 at escape, is
+  continuous across band edges; it is now kept in quarters (two fractional
+  bits) and a 2x2 Bayer dither shows the next band's colour on 0..3 of a
+  cell's four pixels.  The loop records R/4 once per pixel at escape (two
+  extra SQUAREs, State::norm4 at offset 16; n moved to 20) so the
+  axis-escape case has a magnitude too; log2 R comes from the leading-one
+  position plus a four-bit linear mantissa, log2 of that from a 64-entry
+  quarter table (mandel_ref.h QUARTER_LOG2).  Everything deterministic, so
+  the oracle still holds: selftest 4,060 points 0 mismatches (norm4
+  compared too); host_ref check 1 of 76,800 home-view pixels differs from
+  double precision (a dither threshold), 0 at level 16; emulator home view
+  0 of 307,200 pixels differ, 4,291 frames (was 3,870: the two extra
+  squares per pixel and the colour mapping); scripted zoom
+  compare-progress 0 differ.  Rejected for now: band widening with zoom
+  and adaptive supersampling (listed 2026-10-02 as follow-ons).
