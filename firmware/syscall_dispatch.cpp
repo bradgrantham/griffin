@@ -15,6 +15,8 @@
 
 #include "../griffin.generated.h"
 #include "../griffin_dirent.h"
+#include "keymap.h"
+#include "mouse.h"
 
 extern "C"
 {
@@ -35,6 +37,7 @@ extern "C"
     uint32_t get_epoch_seconds(void);
     long     sys_video_direct_start(long info_ptr);
     long     sys_video_direct_end(void);
+    long     sys_video_vsync_irq(long enable);
 
     void app_exit(int code);
     long sys_dispatch(long num, long a1, long a2, long a3);
@@ -117,6 +120,30 @@ long sys_dispatch(long num, long a1, long a2, long a3)
             break;
         case Griffin::SYS_VIDEO_DIRECT_END:
             r = sys_video_direct_end();
+            break;
+        case Griffin::SYS_VIDEO_VSYNC_IRQ:
+            r = sys_video_vsync_irq(a1);
+            break;
+        // d1 is a GriffinMouseReport * (griffin_abi.h).  The decoder runs here,
+        // in the caller's mainline, because nothing else drains the mouse
+        // channel while an application owns the machine.
+        case Griffin::SYS_MOUSE_READ:
+            mouse_poll();
+            mouse_get_report(reinterpret_cast<mouse_report_t *>(a1));
+            r = 0;
+            break;
+        // Raw PS/2 scancodes on the console (keymap.h); the loader puts the
+        // console back into line mode when the application ends.
+        case Griffin::SYS_CONSOLE_RAW:
+            if (a1 != 0)
+            {
+                griffin_enter_raw();
+            }
+            else
+            {
+                griffin_leave_raw();
+            }
+            r = 0;
             break;
         case Griffin::SYS_EXIT:
             app_exit(static_cast<int>(a1));

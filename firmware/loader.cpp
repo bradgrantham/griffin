@@ -27,6 +27,7 @@ extern "C" char _firmware_ram[];   // 0x380000  (top of the app region)
 // masked and the display list unrestored, so the loader always gives it back.
 extern "C" volatile uint8_t video_direct_mode;
 extern "C" long sys_video_direct_end(void);
+extern "C" void griffin_leave_raw(void);        // firmware/keymap.cpp
 
 static jmp_buf app_ctx;
 static int     app_exit_code = 0;
@@ -94,6 +95,7 @@ extern "C" int load_and_run_app(const char *path, int argc, char **argv)
     {
         printf("loader: app left direct video access held; reclaiming\n");
         (void)sys_video_direct_end();
+        griffin_leave_raw();    // an app that died in raw keyboard mode must not take the monitor with it
     }
 
     printf("loader: app exited (code %d)\n", app_exit_code);

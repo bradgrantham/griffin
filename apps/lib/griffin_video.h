@@ -21,6 +21,10 @@
 //
 //   The vsync IRQ enable stays syscall-owned: GLUE CONFIG is write-only and
 //   shadowed by the firmware, so an app cannot safely read-modify-write it.
+//   An app that computes straight through vblank, and so cannot poll within a
+//   scanline of the edge, uses the INTERRUPT model instead: its own level-6
+//   handler plus griffin_video_vsync_irq(1).  griffin_abi.h has the contract;
+//   the three poll calls below are then the handler's business, not mainline's.
 //
 // UNDEFINED OUTSIDE DIRECT MODE: in ordinary console mode the firmware's
 // level-6 ISR is live and clears the same latch.  An app that polls it then is
@@ -50,6 +54,13 @@ int griffin_video_direct_start(GriffinVideoDirectInfo *info);
 // or -1/errno.  Calling it when direct mode is not held is harmless; the
 // loader also calls it for any app that exits or dies while still holding it.
 int griffin_video_direct_end(void);
+
+// Enable (nonzero) or mask (zero) the level-6 vsync IRQ for a handler the app
+// has ALREADY installed in RAM vector 30 (SYS_VIDEO_VSYNC_IRQ).  Direct mode
+// only; returns 0 or -1/errno.  griffin_video_direct_end() masks nothing
+// itself but restores the firmware's vector and its own enable, so no cleanup
+// call is required on the way out.
+int griffin_video_vsync_irq(int enable);
 
 // Block until the next vblank, then acknowledge it.  Direct mode only -- see
 // the pacing contract above.  This spins on the GLUE latch; there is nothing

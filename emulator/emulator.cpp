@@ -3011,6 +3011,18 @@ class GriffinEmulator : public moira::Moira
     bool keys_to_joystick = false;
     uint8_t fire_keys_held = 0;
 
+    // Interactive host mouse -> PS/2 mouse device (see apply_mouse_event).
+    // host_mouse_virtual_* is where the guest's cursor must be, given every
+    // count sent so far; the fractions are what is left of SDL's float
+    // relative motion (grab mode) after the whole counts have been handed on.
+    bool host_mouse = false;
+    bool host_mouse_grab = false;
+    uint8_t host_mouse_buttons = 0;
+    int host_mouse_virtual_x = VideoState::H_ACTIVE / 2;
+    int host_mouse_virtual_y = VideoState::V_ACTIVE / 2;
+    float host_mouse_fraction_x = 0.0f;
+    float host_mouse_fraction_y = 0.0f;
+
     // Scanline count already handed to PORTS as PADDLE_TICK/AUDIO_TICK toggles.
     uint64_t ports_line_count = 0;
 
@@ -3602,6 +3614,38 @@ public:
     // instead of to the PS/2 keyboard.  Interactive only (headless runs get no
     // SDL key events; they use --joystick-in).
     void set_keys_to_joystick(bool on) { keys_to_joystick = on; }
+
+    // Interactive host mouse: SDL motion and buttons over the video window
+    // drive the PS/2 mouse device on PORTS.  Off when a --mouse-in script owns
+    // the device (so a scripted run stays deterministic) and in headless runs
+    // (no window, no events).
+    //
+    // ABSOLUTE by default.  A PS/2 mouse only reports motion, but the window
+    // is exactly the 640x480 raster, so the emulator can keep the guest's
+    // cursor UNDER the host pointer: it tracks where the guest cursor must be
+    // (every count sent so far, integrated and clamped to the screen) and
+    // sends, for each host motion, the delta from there to the pointer.  That
+    // holds for any guest that moves its cursor one pixel per count and clamps
+    // it to the screen, starting from the centre -- the convention apps/lib's
+    // griffin_mouse.h documents.  Pointer leaves and re-enters, fast sweeps,
+    // and the guest's clamping all come out right, because the guest and this
+    // model clamp at the same edges.
+    //
+    // `grab` is relative mode instead: the host pointer is hidden and confined
+    // and SDL's relative motion is passed straight through, for a guest that
+    // scales or accelerates counts itself.
+    void set_host_mouse(bool on, bool grab)
+    {
+        host_mouse = on;
+        host_mouse_grab = grab;
+        if (on && grab && video.window != nullptr)
+        {
+            if (!SDL_SetWindowRelativeMouseMode(video.window, true))
+            {
+                fprintf(stderr, "Warning: --mouse-grab failed: %s\n", SDL_GetError());
+            }
+        }
+    }
     AudioChipState &audio_chip_model() { return audio_chip; }
 
     // Interactive joystick input comes from SDL gamepads.  Only meaningful
@@ -3696,6 +3740,10 @@ public:
                     ps2.enqueue_byte(getClock(), static_cast<uint8_t>(code & 0xFFu));
                 }
             }
+            else if (apply_mouse_event(ev))
+            {
+                // consumed by the PS/2 mouse device
+            }
             else
             {
                 handle_gamepad_event(ev);
@@ -3706,6 +3754,96 @@ public:
         ps2.check_timer(getClock());
         ports.check_timer(getClock());
         update_ipl();
+    }
+
+    // Host mouse -> PS/2 mouse device.  Returns true if the event was a mouse
+    // event (consumed whether or not the host mouse is enabled, so it never
+    // reaches the gamepad handler).
+    //
+    // The device speaks relative motion, so SDL's relative fields are what it
+    // gets; the window is H_ACTIVE x V_ACTIVE unscaled, which makes one window
+    // point one PS/2 count.  PS/2 Y is up positive and SDL's is down positive,
+    // hence the negation.  The device model does the 9-bit packet clamping and
+    // the sample-rate pacing, so a fast sweep arrives as several packets
+    // exactly as it would from a real mouse.
+    bool apply_mouse_event(const SDL_Event &ev)
+    {
+        if (ev.type == SDL_EVENT_MOUSE_MOTION)
+        {
+            if (host_mouse && host_mouse_grab)
+            {
+                host_mouse_fraction_x += ev.motion.xrel;
+                host_mouse_fraction_y -= ev.motion.yrel;
+                int dx = static_cast<int>(host_mouse_fraction_x);
+                int dy = static_cast<int>(host_mouse_fraction_y);
+                host_mouse_fraction_x -= static_cast<float>(dx);
+                host_mouse_fraction_y -= static_cast<float>(dy);
+                if (dx != 0 || dy != 0)
+                {
+                    ports.mouse_device.move(dx, dy);
+                }
+            }
+            else if (host_mouse)
+            {
+                // Absolute: send whatever moves the guest cursor under the
+                // pointer.  The window is unscaled, so points are pixels.
+                int hx = static_cast<int>(ev.motion.x);
+                int hy = static_cast<int>(ev.motion.y);
+                hx = hx < 0 ? 0 : (hx >= VideoState::H_ACTIVE ? VideoState::H_ACTIVE - 1 : hx);
+                hy = hy < 0 ? 0 : (hy >= VideoState::V_ACTIVE ? VideoState::V_ACTIVE - 1 : hy);
+                const int dx = hx - host_mouse_virtual_x;
+                const int dy = hy - host_mouse_virtual_y;
+                if (dx != 0 || dy != 0)
+                {
+                    ports.mouse_device.move(dx, -dy);    // PS/2 Y is up
+                    host_mouse_virtual_x = hx;
+                    host_mouse_virtual_y = hy;
+                }
+            }
+            return true;
+        }
+        if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev.type == SDL_EVENT_MOUSE_BUTTON_UP)
+        {
+            uint8_t bit = 0;
+            if (ev.button.button == SDL_BUTTON_LEFT)
+            {
+                bit = PS2Mouse::BUTTON_LEFT;
+            }
+            else if (ev.button.button == SDL_BUTTON_RIGHT)
+            {
+                bit = PS2Mouse::BUTTON_RIGHT;
+            }
+            else if (ev.button.button == SDL_BUTTON_MIDDLE)
+            {
+                bit = PS2Mouse::BUTTON_MIDDLE;
+            }
+            if (host_mouse && bit != 0)
+            {
+                if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+                {
+                    host_mouse_buttons = static_cast<uint8_t>(host_mouse_buttons | bit);
+                }
+                else
+                {
+                    host_mouse_buttons = static_cast<uint8_t>(host_mouse_buttons & ~bit);
+                }
+                ports.mouse_device.set_buttons(host_mouse_buttons);
+            }
+            return true;
+        }
+        if (ev.type == SDL_EVENT_MOUSE_WHEEL)
+        {
+            if (host_mouse)
+            {
+                int dz = static_cast<int>(ev.wheel.y);
+                if (dz != 0)
+                {
+                    ports.mouse_device.move(0, 0, dz);
+                }
+            }
+            return true;
+        }
+        return false;
     }
 
     // --keys-to-joystick: divert the host arrow keys and space/left-control to
@@ -4579,6 +4717,9 @@ void usage(const char *progname)
     printf("  --serialb-out FILE            write DUART channel B output to FILE\n");
     printf("  --keys-to-joystick            host arrows + space/left-ctrl drive joystick\n");
     printf("                                port 1 instead of the PS/2 keyboard\n");
+    printf("  --mouse-grab                  relative mouse mode: hide and confine the host\n");
+    printf("                                pointer and pass its motion through (default:\n");
+    printf("                                the guest cursor is kept under the free pointer)\n");
     printf("  --selftest-audio              no firmware needed: drive the AUDIO chip through\n");
     printf("                                ENGINE with the scheduler; nonzero exit on failure\n");
     printf("  --wav-out FILE                record the AUDIO output to FILE (8-bit stereo WAV)\n");
@@ -4610,6 +4751,7 @@ int main(int argc, const char** argv)
     const char *screenshot_path = nullptr;
     const char *wav_out_path = nullptr;
     bool keys_to_joystick = false;
+    bool mouse_grab = false;
     bool selftest_audio = false;
     bool selftest_displaylist = false;
     bool headless = false;
@@ -4715,6 +4857,10 @@ int main(int argc, const char** argv)
             argc -= 1;
         } else if(strcmp(argv[0], "--keys-to-joystick") == 0) {
             keys_to_joystick = true;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--mouse-grab") == 0) {
+            mouse_grab = true;
             argv += 1;
             argc -= 1;
         } else if(strcmp(argv[0], "--selftest-audio") == 0) {
@@ -4910,6 +5056,9 @@ int main(int argc, const char** argv)
         emulator.init_gamepads();
     }
     emulator.set_keys_to_joystick(keys_to_joystick);
+    // The host mouse drives the PS/2 mouse only in an interactive run with no
+    // --mouse-in script; a script owns the device outright.
+    emulator.set_host_mouse(!headless && mouse_in_path == nullptr, mouse_grab);
 
     // Attach the DAC sink before the CPU is released so a capture always
     // starts at reset and is reproducible for a given --run-cycles.  Host

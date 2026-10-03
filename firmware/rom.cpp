@@ -1079,8 +1079,10 @@ static void dl_build_gc4_list(const Gc4Target::Picture &pic)
     // as zero and its last word, SET(pix_mode), was never deposited, so PIXEL
     // stayed in its /RS 1bpp mode and the picture came out as noise.  The same
     // code with the same dl_put_vidcmd() call and a static array is correct,
-    // reproducibly, on -O3 with the project toolchain.  The mechanism is not
-    // understood (PACKAGE3-NOTES.md); .bss is the right home for it regardless.
+    // reproducibly, on -O3 with the project toolchain.  The mechanism (found
+    // 2026-10-02, griffin.log) is a GCC 15.2 m68k miscompile of the copy loop:
+    // move.w (%a0)+, 0(%a0,%d0.l), whose destination is computed AFTER the
+    // post-increment.  .bss is the right home for it regardless.
     static uint16_t preamble[GC4_PREAMBLE_WORDS];
     unsigned n = 0;
     for (unsigned i = 0; i < se::PALETTE_ENTRIES; i++)
@@ -1648,6 +1650,30 @@ extern "C" long sys_video_direct_end(void)
     GLUE_VSYNC_CLEAR = Griffin::GLUE_VSYNC_CLEAR_VSYNC_PENDING_MASK;
     glue_config_set_bits(Griffin::GLUE_CONFIG_VSYNC_IRQ_EN_MASK);
     return 0;   // the next vsync ISR writes DESC and the console is back
+}
+
+// SYS_VIDEO_VSYNC_IRQ: the interrupt pacing model of griffin_abi.h.  Only the
+// enable bit moves here; the handler is whatever the app put in the level-6
+// vector (saved at START, restored at END).  The latch is cleared first so a
+// vsync that was latched while the IRQ was masked does not fire the app's
+// handler mid-frame the instant it is enabled.
+extern "C" long sys_video_vsync_irq(long enable)
+{
+    if (video_direct_mode == 0)
+    {
+        errno = EPERM;
+        return -1;
+    }
+    if (enable != 0)
+    {
+        GLUE_VSYNC_CLEAR = Griffin::GLUE_VSYNC_CLEAR_VSYNC_PENDING_MASK;
+        glue_config_set_bits(Griffin::GLUE_CONFIG_VSYNC_IRQ_EN_MASK);
+    }
+    else
+    {
+        glue_config_clear_bits(Griffin::GLUE_CONFIG_VSYNC_IRQ_EN_MASK);
+    }
+    return 0;
 }
 
 void process_ps2_inputs()

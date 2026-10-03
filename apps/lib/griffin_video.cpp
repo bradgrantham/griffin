@@ -54,6 +54,12 @@ int griffin_video_direct_end(void)
         griffin_syscall(Griffin::SYS_VIDEO_DIRECT_END, 0, 0, 0)));
 }
 
+int griffin_video_vsync_irq(int enable)
+{
+    return static_cast<int>(griffin_sys_ret(
+        griffin_syscall(Griffin::SYS_VIDEO_VSYNC_IRQ, enable, 0, 0)));
+}
+
 void griffin_vsync_wait(void)
 {
     while ((GLUE_VSYNC_STATUS & VSYNC_PENDING) == 0)

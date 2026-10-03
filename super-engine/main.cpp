@@ -19,6 +19,8 @@
 #include "interpret.h"
 #include "render.h"
 
+#include "../apps/lib/griffin_cursor.h"
+
 using namespace SuperEngine;
 
 namespace
@@ -3170,6 +3172,353 @@ uint32_t sp_frame_diff(const FrameImage &a, const FrameImage &b)
     return n;
 }
 
+// ---------------------------------------------------------------------------
+// m12-cursor-chain — a whole frame's cursor as ONE record chain buffered in
+// vertical blanking, over a static 320x240 16-colour playfield
+// ---------------------------------------------------------------------------
+//
+// THE QUESTION.  apps/lib/griffin_cursor.h draws a mouse cursor without ever
+// touching the per-line display list: the vblank preamble carries passthrough
+// RUNs totalling y*640 + x slots, then one MASK per cursor row separated by
+// passthrough RUNs, then a one-slot RUN that holds.  Every word is in the
+// VIDCMD FIFO before line 0 and the list's 480 line groups are pure PIXELS.
+// That only works if duration arithmetic really does close across hundreds of
+// line boundaries — playback frozen in every HBLANK, RUNs resuming mid-count,
+// a MASK landing on its exact slot 300,000 slots after the chain began.
+//
+// THE EXPECTATION, derived from the laws and NOT from this model's output:
+//
+//   D1  Slots are active pixel clocks only (compositor.v "SLOTS"), 640 per
+//       line, so raster (x, y) is slot y*640 + x of the frame.
+//   D2  RUN -> MASK and MASK -> next record are zero-slot seams
+//       (MASK_GAP_AFTER_RUN, MASK_GAP_AFTER_MASK), and every RUN in the chain
+//       is long enough to keep the two-deep bank full, so no record is late.
+//   D3  A mask caught by the H_ACTIVE fall freezes and resumes at the start of
+//       the next line (compositor.v "HOLD"); the chain's arithmetic already
+//       counts those slots, and griffin_cursor.h forces their dibits to
+//       passthrough, so a cursor clipped by the right edge shows nothing on
+//       the left edge of the line below.
+//
+//   Therefore: pixel (X, Y) is the art's colour wherever the art is opaque at
+//   (X - x, Y - y), and the playfield's palette colour everywhere else.  Every
+//   one of the 307,200 pixels is compared.
+//
+// The playfield is the mode the Mandelbrot app uses: 4bpp half rate, three
+// PIXELS descriptors per line (32 + 32 + 16 words), each framebuffer row shown
+// on two scanlines by pointing both lines' descriptors at the same words.
+constexpr uint32_t CC_FB_BASE       = 0x300000;
+constexpr uint32_t CC_FB_STRIDE     = PIXELS_WORDS_4BPP_HALF * 2;         // 160 bytes
+constexpr uint32_t CC_FB_ROWS       = V_ACTIVE / 2;                       // 240
+constexpr uint32_t CC_PREAMBLE_BASE = 0x310000;
+constexpr uint32_t CC_PREAMBLE_STEP = 0x000400;                           // per frame
+constexpr uint32_t CC_FIXED_WORDS   = PALETTE_ENTRIES * PALETTE_WORDS_PER_ENTRY + 4;   // 52
+constexpr uint32_t CC_PREAMBLE_WORDS = CC_FIXED_WORDS + GriffinCursor::CHAIN_WORDS;    // 177
+constexpr Rgb444   CC_OUTLINE       = rgb444(0x0, 0x0, 0x0);
+constexpr Rgb444   CC_FILL          = rgb444(0xF, 0xF, 0xF);
+
+// The suite arms inside line 480; /RS is at the top of line 490.  The preamble
+// has to follow /RS, so it sits behind the pacers that walk 480..490.
+constexpr uint32_t CC_PACERS_BEFORE_PREAMBLE = V_SYNC_START - FIRST_ARM_LINE + 1;      // 11
+constexpr uint32_t CC_PACERS_AFTER_PREAMBLE  = VBLANK_PACING_LINES - CC_PACERS_BEFORE_PREAMBLE;
+
+uint32_t cc_fb_nibble(uint32_t fx, uint32_t fy)
+{
+    // Changes on every pixel in both directions, so a one-slot or one-line
+    // slip of the playfield cannot hide.
+    return (fx * 7u + fy * 11u + (fx >> 4) + (fy >> 3)) & 0xFu;
+}
+
+Rgb444 cc_palette(uint32_t i)
+{
+    // Sixteen distinct colours, none of them the cursor's black or white.
+    return rgb444(1u + (i * 13u) % 14u, 1u + (i * 5u) % 14u, 1u + (i * 11u) % 14u);
+}
+
+void cc_write_framebuffer(Memory ram)
+{
+    for (uint32_t fy = 0; fy < CC_FB_ROWS; fy++)
+    {
+        for (uint32_t w = 0; w < PIXELS_WORDS_4BPP_HALF; w++)
+        {
+            uint16_t word = 0;
+            for (uint32_t n = 0; n < 4; n++)
+            {
+                word = static_cast<uint16_t>((word << 4) | cc_fb_nibble(w * 4 + n, fy));
+            }
+            ram[CC_FB_BASE + fy * CC_FB_STRIDE + w * 2] = word;
+        }
+    }
+}
+
+struct CcEmitter
+{
+    Memory   ram;
+    uint32_t at    = 0;
+    uint32_t count = 0;
+
+    void emit(const Descriptor &d)
+    {
+        const DescriptorWords w = encode_descriptor(d);
+        for (uint32_t i = 0; i < DESC_WORDS; i++)
+        {
+            ram[at + i * 2] = w.w[i];
+        }
+        at += DESC_BYTES;
+        count++;
+    }
+
+    void pacer(bool stop_after)
+    {
+        Descriptor d;
+        d.src         = CC_FB_BASE;
+        d.count       = 1;
+        d.destination = DEST_NONE;
+        d.wait_hblank = true;
+        d.stop_after  = stop_after;
+        emit(d);
+    }
+
+    void stream(uint32_t src, uint32_t words, uint8_t destination, bool wait_first)
+    {
+        uint32_t done = 0;
+        while (done < words)
+        {
+            const uint32_t take = (words - done > DESC_MAX_COUNT) ? DESC_MAX_COUNT : (words - done);
+            Descriptor d;
+            d.src         = src + done * 2;
+            d.count       = static_cast<uint16_t>(take);
+            d.destination = destination;
+            d.wait_hblank = wait_first && done == 0;
+            emit(d);
+            done += take;
+        }
+    }
+};
+
+// One frame's list and preamble.  Returns the descriptor count.
+uint32_t cc_author(Memory ram, uint32_t table, uint32_t preamble, uint32_t x, uint32_t y)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < PALETTE_ENTRIES; i++)
+    {
+        for (uint16_t w : vidcmd_palette_entry(i, cc_palette(i)))
+        {
+            ram[preamble + (n++) * 2] = w;
+        }
+    }
+    const uint16_t mode = vidcmd_set(SET_PIX_MODE, pixel_mode(PIXEL_DEPTH_4BPP, true));
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_PIX_BASE, 0);
+    ram[preamble + (n++) * 2] = mode;
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_CMP_COLOR0, CC_OUTLINE);
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_CMP_COLOR1, CC_FILL);
+
+    uint16_t chain[GriffinCursor::CHAIN_WORDS];
+    GriffinCursor::build_chain(chain, GriffinCursor::ARROW, x, y, mode);
+    for (uint16_t w : chain)
+    {
+        ram[preamble + (n++) * 2] = w;
+    }
+
+    CcEmitter e{ram, table, 0};
+    for (uint32_t i = 0; i < CC_PACERS_BEFORE_PREAMBLE; i++)
+    {
+        e.pacer(false);
+    }
+    e.stream(preamble, n, DEST_VIDCMD_FIFO_W, false);
+    for (uint32_t i = 0; i < CC_PACERS_AFTER_PREAMBLE; i++)
+    {
+        e.pacer(false);
+    }
+    for (uint32_t line = 0; line < V_ACTIVE; line++)
+    {
+        e.stream(CC_FB_BASE + (line / 2) * CC_FB_STRIDE, PIXELS_WORDS_4BPP_HALF,
+                 DEST_PIXELS_FIFO_W, true);
+    }
+    e.pacer(true);
+    return e.count;
+}
+
+Rgb444 cc_expected(uint32_t px, uint32_t py, uint32_t x, uint32_t y)
+{
+    if (px >= x && py >= y)
+    {
+        const unsigned a = GriffinCursor::art_pixel(GriffinCursor::ARROW_ART, px - x, py - y);
+        if (a == 1)
+        {
+            return CC_OUTLINE;
+        }
+        if (a == 2)
+        {
+            return CC_FILL;
+        }
+    }
+    return cc_palette(cc_fb_nibble(px / 2, py / 2));
+}
+
+struct CcPosition
+{
+    uint32_t    x;
+    uint32_t    y;
+    const char *why;
+};
+
+// Frame 1 shows positions[0], frame 2 positions[1] — the two list halves carry
+// different chains, which is also what a moving cursor is.
+RenderResult cc_run(Memory ram, const CcPosition &a, const CcPosition &b, uint32_t &descriptors,
+                    InterpretResult &interp, bool line_at_a_time = false)
+{
+    const uint32_t  tables[RENDER_FRAMES] = {TABLE_A, TABLE_B};
+    const CcPosition *pos[RENDER_FRAMES]  = {&a, &b};
+    InterpretParams ip;
+    ip.start_cycle          = first_arm_cycle();
+    ip.end_cycle            = run_end_cycle();
+    ip.rearm_latency_cycles = REARM_LATENCY_CYCLES;
+    for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+    {
+        descriptors = cc_author(ram, tables[f], CC_PREAMBLE_BASE + f * CC_PREAMBLE_STEP,
+                                pos[f]->x, pos[f]->y);
+        ip.arm_addresses.push_back(tables[f]);
+    }
+    interp = interpret(ram, ip);
+
+    RenderParams rp;
+    rp.first_frame = RENDER_FIRST_FRAME;
+    rp.frame_count = RENDER_FRAMES;
+    return line_at_a_time ? render_line_at_a_time(interp.events, rp) : render(interp.events, rp);
+}
+
+uint32_t cc_mismatches(const FrameImage &img, uint32_t x, uint32_t y)
+{
+    uint32_t bad = 0;
+    for (uint32_t py = 0; py < V_ACTIVE; py++)
+    {
+        for (uint32_t px = 0; px < H_ACTIVE; px++)
+        {
+            bad += (at(img, px, py) != cc_expected(px, py, x, y)) ? 1u : 0u;
+        }
+    }
+    return bad;
+}
+
+void run_cursor_chain_case(Memory ram)
+{
+    static_assert(CC_PREAMBLE_WORDS * 2 <= CC_PREAMBLE_STEP);
+    static_assert(CC_PREAMBLE_WORDS < VIDCMD_FIFO_WORDS);
+
+    printf("\n=== m12-cursor-chain — a 640x480 MASK cursor as one vblank-buffered record "
+           "chain over a static 4bpp half-rate playfield ===\n");
+    printf("  preamble %u words (palette %u, SETs 4, chain %u padded at the front), "
+           "%u pacers, then /RS, then the preamble, then %u pacers\n",
+           CC_PREAMBLE_WORDS, PALETTE_ENTRIES * PALETTE_WORDS_PER_ENTRY,
+           GriffinCursor::CHAIN_WORDS, CC_PACERS_BEFORE_PREAMBLE, CC_PACERS_AFTER_PREAMBLE);
+
+    cc_write_framebuffer(ram);
+
+    // Chosen for what each one stresses, not for coverage by volume.
+    const CcPosition positions[] = {
+        {0, 0, "no leading RUN at all: the first MASK is the first record of the frame"},
+        {1, 0, "a ONE-slot leading RUN in front of a MASK"},
+        {317, 243, "mid-screen, odd x and odd y: 640-res placement over the 320 playfield"},
+        {4095 % 640, 4095 / 640, "leading passthrough is exactly one maximum RUN"},
+        {639, 100, "right edge: one visible column, fifteen dibits run onto the next line"},
+        {630, 470, "right edge and bottom edge together: rows past 479 not emitted"},
+        {5, 479, "last line: a single one-pixel row"},
+        {633, 465, "row 15's offset record starts at column 638"},
+    };
+    const uint32_t count = sizeof(positions) / sizeof(positions[0]);
+    static_assert(sizeof(positions) / sizeof(positions[0]) % 2 == 0);
+
+    uint32_t fifo_high       = 0;
+    uint32_t line_driver_bad = 0;
+    for (uint32_t i = 0; i < count; i += 2)
+    {
+        uint32_t        descriptors = 0;
+        InterpretResult interp;
+        const RenderResult r = cc_run(ram, positions[i], positions[i + 1], descriptors, interp);
+        const RenderStats &s = r.stats;
+
+        for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+        {
+            const CcPosition &p   = positions[i + f];
+            const uint32_t    bad = cc_mismatches(r.frames[f], p.x, p.y);
+            printf("  (%3u,%3u)  %6u of %u pixels wrong   %s\n", p.x, p.y, bad,
+                   H_ACTIVE * V_ACTIVE, p.why);
+            CHECK(bad == 0, "m12-cursor-chain: cursor at (%u,%u): %u pixels differ from the "
+                  "hand-derived frame", p.x, p.y, bad);
+        }
+        if (s.vidcmd_fifo_high > fifo_high)
+        {
+            fifo_high = s.vidcmd_fifo_high;
+        }
+
+        // The emulator's driver: a line's deposits lumped into its HBLANK, then
+        // the line rendered whole.  A chain whose records span hundreds of
+        // lines is exactly what could come apart there, and the emulator is
+        // where the application actually runs.
+        {
+            uint32_t        d2 = 0;
+            InterpretResult i2;
+            const RenderResult e = cc_run(ram, positions[i], positions[i + 1], d2, i2, true);
+            for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+            {
+                const CcPosition &p   = positions[i + f];
+                const uint32_t    bad = cc_mismatches(e.frames[f], p.x, p.y);
+                CHECK(bad == 0, "m12-cursor-chain: emulator driver, cursor at (%u,%u): %u pixels "
+                      "differ from the hand-derived frame", p.x, p.y, bad);
+                line_driver_bad += bad;
+            }
+        }
+
+        CHECK(interp.violations.empty(), "m12-cursor-chain: interpreter reported %zu structural "
+              "violations", interp.violations.size());
+        CHECK(descriptors * DESC_BYTES <= TABLE_HALF_BYTES,
+              "m12-cursor-chain: %u descriptors overflow the %u-byte table half", descriptors,
+              TABLE_HALF_BYTES);
+        CHECK(s.vidcmd_overflows == 0, "m12-cursor-chain: VIDCMD FIFO overflowed %u times",
+              s.vidcmd_overflows);
+        CHECK(s.pixels_tiled_words == 0, "m12-cursor-chain: PIXEL tiled its last word %u times",
+              s.pixels_tiled_words);
+        CHECK(s.pixels_overflows == 0, "m12-cursor-chain: PIXELS FIFO overflowed %u times",
+              s.pixels_overflows);
+        CHECK(s.palette_unwritten_reads == 0, "m12-cursor-chain: %u pixels came out of palette "
+              "entries the list never loaded", s.palette_unwritten_reads);
+        CHECK(s.palette_bad_filler == 0, "m12-cursor-chain: %u palette writes stored the wrong "
+              "colour", s.palette_bad_filler);
+        CHECK(s.palette_disturbed_visible == 0, "m12-cursor-chain: %u palette-write slots "
+              "reached the DAC", s.palette_disturbed_visible);
+        if (i == 0)
+        {
+            printf("  list              %u descriptors, %u bytes of a %u-byte half\n",
+                   descriptors, descriptors * DESC_BYTES, TABLE_HALF_BYTES);
+            const std::string path = "m12-cursor-chain.ppm";
+            write_ppm(path, r.frames[1]);
+            printf("  artifact          %s\n", path.c_str());
+        }
+    }
+    printf("  emulator driver   %u pixels wrong across all %u positions "
+           "(render_line_at_a_time)\n", line_driver_bad, count);
+    printf("  VIDCMD FIFO       high water %u of %u words\n", fifo_high, VIDCMD_FIFO_WORDS);
+    CHECK(fifo_high < VIDCMD_FIFO_WORDS, "m12-cursor-chain: the vblank chain filled the FIFO");
+
+    // NEGATIVE CONTROLS.  The comparison has to be able to fail, and it has to
+    // fail for a slip of ONE slot and of ONE line: author the chain a pixel
+    // right, then a line down, and hold each against the unmoved expectation.
+    {
+        const CcPosition want{317, 243, ""};
+        const CcPosition right{318, 243, ""};
+        const CcPosition down{317, 244, ""};
+        uint32_t        descriptors = 0;
+        InterpretResult interp;
+        const RenderResult r = cc_run(ram, right, down, descriptors, interp);
+        const uint32_t bad_x = cc_mismatches(r.frames[0], want.x, want.y);
+        const uint32_t bad_y = cc_mismatches(r.frames[1], want.x, want.y);
+        printf("  NEGATIVE CONTROL  chain one slot late: %u pixels wrong   one line late: %u "
+               "pixels wrong\n", bad_x, bad_y);
+        CHECK(bad_x != 0, "m12-cursor-chain: a one-slot slip went undetected");
+        CHECK(bad_y != 0, "m12-cursor-chain: a one-line slip went undetected");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -5039,6 +5388,9 @@ int main()
            "     slots, and adjacent pixels inside the sprite cells that DO differ.\n",
            H_ACTIVE / 2, PIXELS_WORDS_1BPP_HALF, PIXELS_WORDS_2BPP_HALF,
            PIXELS_WORDS_ATTR_HALF, PIXELS_WORDS_4BPP_HALF, H_ACTIVE, H_ACTIVE / 2);
+
+    // --- M12: the whole-frame cursor chain (apps/lib/griffin_cursor.h) --------
+    run_cursor_chain_case(ram);
 
     printf("\n=== summary ===\n");
     if (g_failures == 0)

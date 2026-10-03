@@ -509,9 +509,10 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
     </div>
 
     <div class="recipe">
-      <div class="recipe-head"><b>16-color bitmap &mdash; 320&times;480 (or 320&times;240 by line repeat)</b><span class="cost">&asymp;83 words/line &middot; CPU keeps ~52%</span><span class="st prelim">PRELIMINARY</span></div>
+      <div class="recipe-head"><b>16-color bitmap &mdash; 320&times;480 (or 320&times;240 by line repeat)</b><span class="cost">&asymp;83 words/line &middot; CPU keeps ~52%</span><span class="st prod">PRODUCTION (branch)</span></div>
       <div class="recipe-body">
         <p><b>Recipe:</b> 4bpp half rate; fine horizontal scroll by pixel_skip 0/4/8/12 plus the word pointer; vertical scroll by descriptors.</p>
+        <p><b>Notes:</b> a static 320&times;240 screen needs no per-line VIDCMD at all: mode, base and palette go out once in the vblank preamble and each line is 80 PIXELS words in three descriptors, both scanlines of a pair pointing at the same row. Exercised by <code>apps/mandelbrot</code>, whose emulator screenshots are compared pixel-exact with a host render.</p>
       </div>
     </div>
 
@@ -520,6 +521,7 @@ dibit {opacity,select}: 00 passthrough &middot; 10 color0 &middot; 11 color1 &mi
       <div class="recipe-body">
         <p><b>Recipe:</b> one MASK record per row (&sect;3.5): fill=color1, outline=color0, transparent surround; leading transparency via a passthrough RUN; wider sprites chain gapless.</p>
         <p><b>Notes:</b> spans-as-cursor is retired for 1-px art (4-px pitch floor, L4). Per-object recolor: SET seam 2&ndash;4 slots (&sect;3.5) or place SETs in hblank for free.</p>
+        <p><b>Whole-frame chain:</b> over a static passthrough playfield a cursor needs no per-line records. Slots are active pixel clocks only, 640 per line, so raster (x,&nbsp;y) is slot y&middot;640&nbsp;+&nbsp;x of the frame: deliver passthrough RUNs totalling that, then one MASK per row separated by passthrough RUNs, then a one-slot RUN, all in the vblank preamble behind every SET. At most 125 words; the per-line list never changes. A record running off the right edge resumes on the next line, so its off-screen dibits are authored as passthrough. <code>apps/lib/griffin_cursor.h</code>; suite case m12-cursor-chain, pixel-exact at eight stress positions under both render drivers.</p>
       </div>
     </div>
 

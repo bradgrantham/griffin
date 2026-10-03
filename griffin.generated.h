@@ -464,5 +464,8 @@ static constexpr unsigned SYS_GETTICKS = 11U;  // Return milliseconds since boot
 static constexpr unsigned SYS_GETTIME = 12U;  // Return seconds since the Unix epoch derived from the boot epoch plus milliseconds since boot.
 static constexpr unsigned SYS_VIDEO_DIRECT_START = 13U;  // Take direct control of the video ENGINE: d1 points to a GriffinVideoDirectInfo the firmware fills with the app descriptor-table region.
 static constexpr unsigned SYS_VIDEO_DIRECT_END = 14U;  // Return the video ENGINE to the firmware console.
+static constexpr unsigned SYS_MOUSE_READ = 15U;  // Decode pending PS/2 mouse packets and fill the GriffinMouseReport that d1 points to.
+static constexpr unsigned SYS_VIDEO_VSYNC_IRQ = 16U;  // While direct video is held, d1 nonzero enables the level-6 vsync IRQ for a handler the app installed and zero masks it again.
+static constexpr unsigned SYS_CONSOLE_RAW = 17U;  // d1 nonzero makes console reads return raw PS/2 scancodes until zero restores line editing, which the loader also restores when the application exits.
 
 } // namespace Griffin

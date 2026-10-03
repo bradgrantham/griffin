@@ -126,6 +126,11 @@ int griffin_inputready(void)
     return static_cast<int>(griffin_sys_ret(griffin_syscall(Griffin::SYS_INPUTREADY, 0, 0, 0)));
 }
 
+int griffin_console_raw(int enable)
+{
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(Griffin::SYS_CONSOLE_RAW, enable, 0, 0)));
+}
+
 int griffin_readdir(const char *path, int index, GriffinDirEnt *out)
 {
     return static_cast<int>(griffin_sys_ret(griffin_syscall(

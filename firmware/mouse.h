@@ -7,6 +7,8 @@ extern "C" {
 
 #include <stdint.h>
 
+#include "../griffin_abi.h"
+
 /* ====================================================================
  * PS/2 mouse packet decoder, sitting on top of the PORTS mouse channel in
  * ps2.cpp (as keymap.cpp sits on top of the GLUE keyboard channel).
@@ -15,21 +17,14 @@ extern "C" {
  * calls mouse_get_report.
  * ==================================================================== */
 
-#define MOUSE_BUTTON_LEFT   0x01u
-#define MOUSE_BUTTON_RIGHT  0x02u
-#define MOUSE_BUTTON_MIDDLE 0x04u
+/* The report IS the syscall ABI structure (griffin_abi.h): SYS_MOUSE_READ hands
+ * an application's pointer straight to mouse_get_report, so there is one
+ * layout and no copy between two that could drift. */
+#define MOUSE_BUTTON_LEFT   GRIFFIN_MOUSE_BUTTON_LEFT
+#define MOUSE_BUTTON_RIGHT  GRIFFIN_MOUSE_BUTTON_RIGHT
+#define MOUSE_BUTTON_MIDDLE GRIFFIN_MOUSE_BUTTON_MIDDLE
 
-typedef struct mouse_report
-{
-    int32_t  x;         /* accumulated X since init, right positive */
-    int32_t  y;         /* accumulated Y since init, up positive (PS/2 sense) */
-    int32_t  wheel;     /* accumulated wheel detents (IntelliMouse only) */
-    uint32_t packets;   /* decoded packets, i.e. a change counter */
-    uint32_t resyncs;   /* bytes discarded hunting for a packet boundary */
-    uint8_t  buttons;   /* MOUSE_BUTTON_* bitmask, live state */
-    uint8_t  packet_bytes;  /* 3 standard, 4 IntelliMouse (wheel) */
-    uint8_t  present;   /* 1 once the reset/enable sequence succeeded */
-} mouse_report_t;
+typedef GriffinMouseReport mouse_report_t;
 
 /* Reset the mouse and enable data reporting.  Returns true if the device
  * answered.

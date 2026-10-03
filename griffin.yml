@@ -1007,6 +1007,16 @@ syscalls:
     - name: VIDEO_DIRECT_END
       number: 14
       description: "Return the video ENGINE to the firmware console."
+    # GriffinMouseReport: griffin_abi.h.
+    - name: MOUSE_READ
+      number: 15
+      description: "Decode pending PS/2 mouse packets and fill the GriffinMouseReport that d1 points to."
+    - name: VIDEO_VSYNC_IRQ
+      number: 16
+      description: "While direct video is held, d1 nonzero enables the level-6 vsync IRQ for a handler the app installed and zero masks it again."
+    - name: CONSOLE_RAW
+      number: 17
+      description: "d1 nonzero makes console reads return raw PS/2 scancodes until zero restores line editing, which the loader also restores when the application exits."
 
 # Rev 1 board reworks (applied to board/board-pcb-rev-1.distilled.txt).
 bodges:

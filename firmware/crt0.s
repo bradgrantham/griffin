@@ -32,7 +32,7 @@ vector_table:
 
     .long   _default_handler_24 | 24: Spurious interrupt
     .long   _default_handler_25 | 25: Level 1 autovector
-    .long   ports_isr           | 26: Level 2 autovector (PORTS: PS/2 mouse + audio FIFO half-full)
+    .long   ports_isr           | 26: Level 2 autovector (PORTS: PS/2 mouse frame IRQ)
     .long   _engine_isr         | 27: Level 3 autovector (ENGINE display list stop+IRQ)
     .long   ps2_isr             | 28: Level 4 autovector (PS/2 keyboard frame IRQ in GLUE)
     .long   _duart_isr          | 29: Level 5 autovector (DUART)

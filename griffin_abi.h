@@ -43,10 +43,26 @@ extern "C" {
  *    and the supervisor stack all stay BELOW desc_table_base, so the console
  *    text page comes back intact when direct mode ends.
  *
- * The supported model is POLLING: the app watches GLUE_VSYNC_STATUS bit 0 and
- * write-1-to-clears GLUE_VSYNC_CLEAR itself.  The vsync IRQ enable stays
- * syscall-owned because GLUE CONFIG is a write-only register shadowed by the
- * firmware, so an app cannot safely read-modify-write it.
+ * TWO PACING MODELS, and which one an app needs is decided by one fact: the
+ * vblank pacers at the head of a list count HBLANK edges FROM THE ARM, so a
+ * list armed N lines after the vsync edge puts the whole picture N lines low.
+ *
+ *  - POLLING (the default after START).  The app watches GLUE_VSYNC_STATUS
+ *    bit 0, write-1-to-clears GLUE_VSYNC_CLEAR and writes ENGINE_DESC itself.
+ *    Right for an app that finishes its frame's work and then SPINS on vsync,
+ *    because the spin arms within a few instructions of the edge.
+ *  - INTERRUPT.  An app that computes straight through vblank cannot poll
+ *    often enough (one scanline is 445 SYSCLK), so it installs its own handler
+ *    in the level-6 autovector (RAM vector 30, address 0x78) and then calls
+ *    SYS_VIDEO_VSYNC_IRQ(1).  The handler must write-1-to-clear
+ *    GLUE_VSYNC_CLEAR (the IRQ is level-triggered off the latch; leaving it
+ *    set livelocks), should write ENGINE_DESC, and ends in rte.  The firmware
+ *    saved the vector at START and restores it at END, so an app that dies
+ *    cannot leave its handler installed.  Install the vector BEFORE enabling.
+ *
+ * The enable is a syscall, not a register write, because GLUE CONFIG is a
+ * write-only register shadowed by the firmware, so an app cannot safely
+ * read-modify-write it.
  * ------------------------------------------------------------------------ */
 
 /* Upper 32 KB of the descriptor page: the app's descriptor-table carve. */
@@ -58,6 +74,37 @@ typedef struct GriffinVideoDirectInfo
     uint32_t desc_table_base;   /* first byte of the app's descriptor carve */
     uint32_t desc_table_bytes;  /* size of the carve in bytes */
 } GriffinVideoDirectInfo;
+
+/* ---------------------------------------------------------------------------
+ * PS/2 mouse (SYS_MOUSE_READ)
+ *
+ * The firmware's level-2 ISR owns the PORTS mouse channel for the whole time an
+ * application runs, so an app must NOT read the PORTS mouse registers itself:
+ * it would race the ISR for every byte.  SYS_MOUSE_READ decodes whatever
+ * packets have arrived and copies out this snapshot.
+ *
+ * x, y and wheel are ACCUMULATED since boot, not per-call deltas: an app
+ * remembers the last values it saw and subtracts.  That makes a missed poll
+ * harmless and lets several readers coexist.  Y is UP positive (the PS/2
+ * sense), the opposite of raster line numbering.  One count is whatever the
+ * device calls one count; nothing here scales or accelerates.
+ * ------------------------------------------------------------------------ */
+
+#define GRIFFIN_MOUSE_BUTTON_LEFT   0x01u
+#define GRIFFIN_MOUSE_BUTTON_RIGHT  0x02u
+#define GRIFFIN_MOUSE_BUTTON_MIDDLE 0x04u
+
+typedef struct GriffinMouseReport
+{
+    int32_t  x;         /* accumulated X since init, right positive */
+    int32_t  y;         /* accumulated Y since init, up positive (PS/2 sense) */
+    int32_t  wheel;     /* accumulated wheel detents (IntelliMouse only) */
+    uint32_t packets;   /* decoded packets, i.e. a change counter */
+    uint32_t resyncs;   /* bytes discarded hunting for a packet boundary */
+    uint8_t  buttons;   /* GRIFFIN_MOUSE_BUTTON_* bitmask, live state */
+    uint8_t  packet_bytes;  /* 3 standard, 4 IntelliMouse (wheel) */
+    uint8_t  present;   /* 1 once the reset/enable sequence succeeded */
+} GriffinMouseReport;
 
 #ifdef __cplusplus
 }

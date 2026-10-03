@@ -26,7 +26,7 @@ interpret.o: interpret.cpp interpret.h
 render.o:    render.cpp render.h interpret.h ../audio/audio_chip.h
 audio_chip.o: ../audio/audio_chip.cpp ../audio/audio_chip.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
-main.o:      main.cpp author.h interpret.h render.h
+main.o:      main.cpp author.h interpret.h render.h ../apps/lib/griffin_cursor.h
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@

@@ -31,6 +31,13 @@ extern "C" {
 // pumps the firmware's line editor, so echo and editing stay live.
 int griffin_inputready(void);
 
+// Console keyboard input as raw PS/2 scan-code set 2 bytes (SYS_CONSOLE_RAW).
+// With enable nonzero, griffin_inputready() answers for scancodes and read()
+// on fd 0 returns them (make codes, F0 break prefixes, E0 extended prefixes)
+// instead of edited lines; zero restores line editing.  The loader restores
+// line editing when the app exits, however it exits.  Returns 0 or -1/errno.
+int griffin_console_raw(int enable);
+
 // Fill *out with entry `index` of directory `path`.  Returns 0 when an entry
 // was filled in, 1 when index is past the end, -1/errno on failure.  Iteration
 // is stateless: each call reopens the directory and skips forward.

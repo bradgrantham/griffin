@@ -2152,3 +2152,124 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   sentinel is safe (6-bit values).  T8 no longer excludes underrunning
   cases: it fails on any.  make -C audio test: 0 excluded in all four
   sweeps, PASS; A/B WAV md5 unchanged; m68k build clean.
+
+2026-10-02 -- apps/mandelbrot: Mandelbrot explorer; mouse syscall, app vsync IRQ, whole-frame cursor chain
+  A 320x240 16-colour Mandelbrot explorer in Q4.28 fixed point, driven by
+  the PS/2 mouse: left click zooms in about the cursor, right click zooms
+  out, q + Enter quits.  It exercises the mouse path end to end, the 4bpp
+  half-rate playfield, palette cycling and a MASK cursor.
+
+  Syscalls added (griffin.yml): MOUSE_READ 15 (mouse_poll + mouse_get_report
+  into the caller's GriffinMouseReport; the firmware's mouse_report_t is now
+  that same struct, in griffin_abi.h) and VIDEO_VSYNC_IRQ 16 (sets or clears
+  GLUE CONFIG VSYNC_IRQ_EN while direct video is held).  ROM 130,644 bytes,
+  428 free of 131,072 (was 572 free).
+
+  Why VIDEO_VSYNC_IRQ.  A list's vblank pacers count HBLANK edges from the
+  arm, so a list armed N lines after vsync shows the picture N lines low.
+  Polling is fine for an app that spins on vsync (smurf, dtest); a
+  compute-bound app can only poll between chunks of work thousands of cycles
+  long.  sys_video_direct_start already saved and restored the level-6
+  vector for exactly this, but nothing could turn the IRQ back on.  The app
+  now installs its own handler (ack, write ENGINE_DESC, count the frame) and
+  enables it.  griffin_abi.h states both pacing models.
+
+  Emulator: host mouse motion, buttons and wheel over the window now drive
+  the PS/2 mouse device (they were only reachable from --mouse-in).  One
+  window point = one count, Y negated; --mouse-grab for relative mode;
+  disabled when --mouse-in is given.  NOT verified here: it needs a window.
+
+  Cursor: apps/lib/griffin_cursor.h.  The whole frame's cursor is one
+  record chain in the vblank preamble (passthrough RUNs totalling
+  y*640 + x slots, a MASK per row, RUNs between rows), so the per-line list
+  is static and moving the cursor rewrites at most 125 words.  super-engine
+  m12-cursor-chain: 0 of 307,200 pixels wrong at eight stress positions
+  (no leading RUN, one-slot leading RUN, exactly one maximum RUN, right-edge
+  wrap, bottom clip, offset row at column 638) under both render() and
+  render_line_at_a_time(); negative controls one slot and one line late
+  fail (68 and 46 pixels); VIDCMD FIFO high water 116 of 256.
+  Rejected: a cursor drawn into the framebuffer with save-under (Brad:
+  use the COMPOSITOR overlay); a per-line JIT VIDCMD packet (a fourth
+  descriptor on every line, about 6% of the CPU, for nothing the chain
+  does not do).
+
+  Arithmetic: apps/mandelbrot/mandel_ref.h is the definition; mandel_iter.s
+  is the 68000 loop.  Squares are two MULUs on the magnitude shifted left
+  two (Al*Al dropped, result the exact floor or one less); 2xy is
+  (x+y)^2 - x^2 - y^2, a third square, no sign logic.  Six MULUs per
+  iteration.  Counted from instruction timings: 758 cycles worst, 662
+  typical, against a 900 budget.  First design (three-MULU squares plus a
+  four-MULU signed product, shifts by 12 and 4) counted 1,192 worst and was
+  dropped before coding.
+  `mandel selftest` in the emulator: 4,060 points, 0 mismatches against
+  mandel_ref.h; 40,000 iterations in 1,740 ms of the 100 Hz tick with the
+  text console displayed.  host_ref check: 0 of 76,800 pixels differ from
+  double precision at the home view and at level 16.
+  Render times in the emulator (its DMA cost model, not hardware): home
+  view 3,870 frames (64 s), a level-1 view 4,783, a level-2 view 3,509.
+  The plan's estimate of "a few minutes" was pessimistic.
+
+  End to end, emulator screenshot against host_ref, 307,200 pixels each:
+  home view; move + left click (level 1, cursor 380,200); in then out
+  (back to home, cursor 180,350); two levels in with the cursor driven into
+  the corner (639,479).  All four: 0 pixels differ.  That path is
+  --mouse-in script -> PS2Mouse -> PORTS model -> ports_isr -> mouse.cpp ->
+  SYS_MOUSE_READ -> app -> preamble -> COMPOSITOR model.
+  Regression: the stored apps/dmabench C2 screenshot reproduces
+  byte-identical from the OLD dmabench.bin on the new ROM.
+
+  FINDING: GCC 15.2 m68k miscompiles small copy loops.  For
+  `dst[i] = src[i]` out of a local array, with the pointer difference in a
+  register, it emits
+        move.w  (%a0)+, 0(%a0,%d0.l)        | d0 = dst - src, NOT adjusted
+  The 68000 computes the destination after the source's post-increment, so
+  every word lands two bytes high.  In mandelbrot it put the descriptor
+  table one word late: ENGINE walked 1,481 one-word no-wait descriptors in
+  one arm, 24 reserved-bit violations, black screen.  This is the "stack
+  copy came out shifted by one word" firmware/rom.cpp recorded as not
+  understood on the gc4 preamble.  apps/mandelbrot builds with
+  -fno-auto-inc-dec, which removes the instruction (0 occurrences).
+  The same instruction form (source (aN)+ with aN in the destination) is
+  present in binaries NOT rebuilt here; each needs its index register
+  checked before it is called a bug:
+        firmware/rom.elf      2, both in view_gc4
+        apps/smurf/smurf.elf  1, in main
+        apps/exctest          1
+        basic, dtest, dmabench, hello: 0
+  Scan: m68k-objdump -d X.elf | perl -ne 'print if /\tmove\S*\s+%a(\d)@\+,.*%a\1\b/'
+  OPEN: whether to add -fno-auto-inc-dec to firmware/ and apps/app.mk
+  (ROM has 428 bytes free, so the size cost has to be measured first).
+
+2026-10-02 -- apps/mandelbrot: keys for palette animation and palette choice; CONSOLE_RAW syscall
+  Brad found the rainbow animation jarring.  `a` now toggles the palette
+  animation and `p` steps through four palettes (rainbow, ochre ramp, grey
+  ramp, black-and-white alternation; Mandel::PALETTES in mandel_ref.h);
+  `q` quits without Enter.  Single keypresses need the firmware's raw
+  keyboard path (keymap.cpp griffin_enter_raw, which read() on fd 0 already
+  honours by returning scan-code set 2 bytes), so syscall CONSOLE_RAW 17
+  switches it, and the loader calls griffin_leave_raw() after any app so a
+  crash in raw mode cannot take the monitor with it.  ROM 130,688 bytes,
+  384 free.  The app decodes F0 (break) and E0 (extended) prefixes itself.
+  Verified in the emulator with --ps2-in scripts against host_ref: `pp`
+  gives the grey palette and `aa` then `p` the ochre one, both 0 pixels
+  different; a single `a` after 1.2 s of animation leaves the picture at
+  phase 3 (72 frames / 4 = 18 steps mod 15), exactly where host_ref `phase
+  3` puts it, and no other phase matches; `q` returns to the monitor and a
+  following `help` line is accepted, so line editing is back.
+
+2026-10-02 -- emulator host mouse: absolute mapping (zoom "regressed" interactively)
+  Brad reported the zoom landing in the wrong place.  Scripted zooms on the
+  same build are still pixel-exact against host_ref (a new
+  `compare-progress` mode accepts a mid-render screenshot, so the check
+  takes a 200M-cycle run instead of a finished render), so the app's zoom
+  arithmetic is unchanged; what no script covers is the interactive SDL
+  path.  There the free host pointer and the guest cursor drift apart
+  whenever the pointer leaves the window or the guest clamps, and a click
+  zooms about the guest cursor, not the pointer.  Fix: the emulator now
+  keeps the guest cursor UNDER the pointer.  It tracks where a cursor that
+  integrates one count per pixel from the screen centre and clamps to
+  640x480 must be, and sends the delta from there to the pointer on every
+  motion event.  That convention is now stated in griffin_mouse.h and the
+  app follows it (initial cursor = centre + the report accumulated since
+  boot).  --mouse-grab keeps the raw relative mode.  Interactive behaviour
+  still unverified here (needs a window); scripted runs unchanged.
