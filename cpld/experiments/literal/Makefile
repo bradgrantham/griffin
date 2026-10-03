@@ -85,6 +85,11 @@ sim:
 	$(LIT) r8bn -DFORM_C
 	$(LIT) r7 -DSTREAM
 	$(LIT) r1h -DHOLDONLY
+	$(LIT) r2st -DFORM_A -DSTREAM
+	$(LIT) r4st -DFORM_A -DHOLD -DSTREAM10
+	$(LIT) r5n -DFORM_BN
+	$(LIT) r2s -DFORM_A2
+	$(LIT) r4s -DFORM_A2 -DHOLD
 
 regress:
 	./regress.sh r0 "" keep
@@ -99,6 +104,11 @@ regress:
 	./regress.sh r5
 	./regress.sh r6
 	./regress.sh r6n narrow
+	./regress.sh r2st
+	./regress.sh r4st narrow
+	./regress.sh r2s
+	./regress.sh r4s narrow
+	./regress.sh r5n
 
 negative:
 	$(NEG) r5 -DFORM_A
@@ -115,8 +125,23 @@ negative:
 	$(NEG) r8b_m1 -DFORM_C
 	$(NEG) r8b_m2 -DFORM_C
 	$(NEG) r8b_m3 -DFORM_C
+	$(NEG) r4 -DSTREAM10
+	$(NEG) r2 -DFORM_A2
+	$(NEG) r8b -DFORM_A2
+	$(NEG) r2s -DFORM_A
+	$(NEG) r5 -DFORM_BN
+	$(NEG) r5n -DFORM_B
+	$(NEG) r2s -DFORM_A2 -DHOLD
 
 pins:
 	@for r in r0 r1 r1h r7 r8b r8bn; do ./pincheck.sh $$r; done
 
 .PHONY: sim regress negative pins
+
+# Part 2: free placement.  `make pfree R=r4st` -> r4st_pfree.v / .fit, harvested pins.
+pfree:
+	python3 genpins.py $(R) pfree
+	$(MAKE) $(R)_pfree.jed
+	./fitrow.sh $(R)_pfree
+	-./harvest.sh $(R)_pfree
+.PHONY: pfree

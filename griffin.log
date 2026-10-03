@@ -2358,3 +2358,27 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   120/128) is this stream with the select built in -- no lead-in, true
   one-pixel holes and patches -- at the cost of RUN_COLOR.  Write-up:
   super-engine/SET-STREAM.md.
+  Addendum (same day, all pins free; RESULTS.md "Part 2"): with the
+  //PIN block removed (free placement, production flags otherwise), LC /
+  FF / Nodes+FB / PT, pass, tightest block fan-in:
+    R2  form A literal                   123/93/120/412 p1, 34/40
+    R3  form A + HOLD, 12-bit counter    no fit (grouping)
+    R4  form A + HOLD, 10-bit counter    114/91/124/381 p2, 35
+    R2st form A + streaming              126/94/141/392 p2, 38
+    R4st form A + HOLD + streaming       118/92/119/357 p1, 35
+         (streaming = count bits 11:10 = 10; HOLD = 0x)
+    R5, R6, R6n form B with KEEP         no fit even free; xor no help
+    R5n form B without KEEP              118 p1, four blocks at 40/40
+    R2s/R4s stall-free form A (+HOLD)    123 p1 / 120 p1; +streaming no fit
+  Free placement moves 55-59 of 62 pins.  Runs made before the scope
+  change found less: swapping RGB_OUT 3/0/1/2 with VIDCMD_Q 10/11/8/13
+  (block G) fits R4st at 118 p1, tightest 34, moving 8 pins.  Releasing
+  only RGB_OUT under keep makes the fitter refuse.
+  lit_tb (new cases STREAM10, FORM_BN, FORM_A2) passed on the first run
+  against hand derivations.  The production bench shows 0 unexpected
+  failures on every fitting rung; all negative controls fail.
+  Correction to the entry above: R2s ("stall-free form A") is not form A.
+  It is a one-slot literal that lands adjacent in a banked pair; its
+  first claimed simulation had not been run.
+  Answer: form A (+ HOLD + streaming) fits a re-pinned COMPOSITOR with
+  10 LC spare.  Form B as proposed fits no pinout tried.

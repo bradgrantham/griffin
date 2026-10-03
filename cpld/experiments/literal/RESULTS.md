@@ -196,8 +196,11 @@ this chip, not partners.
 3. **"No 12-bit latch exists to hold the colour."**  Two do: cmp_color1 and
    cmp_color0 already feed the mux (form C), and set_pix_value registers
    staged_word on every edge, so it holds a literal for exactly the slot
-   after its consume edge.  That gives a stall-free form A (R2s), which
-   simulates correctly but has the same fan-in problem.
+   after its consume edge.  That gives a stall-free form A (R2s), which has
+   the same fan-in problem.  (CORRECTION, Part 2: "simulates correctly" was
+   written here without a run.  R2s is not form A's semantics.  It is a
+   one-slot record that lands adjacent in a banked pair; Part 2 derives its
+   own expectations, FORM_A2, and those pass.)
 4. **"About -5 FF."**  Removing RUN_COLOR frees 3 FF and 1 LC (R1: 121 / 92 /
    370 PT).  Narrowing the counter frees 2 more FF but costs LC (R8bn: 124
    against R8b's 120).  Rung 3's narrowing buys nothing on this chip.
@@ -239,3 +242,131 @@ this chip, not partners.
    RUN_COLOR users: apps/dtest, apps/smurf + image-tools/sprite2spans,
    apps/dmabench, the griffin-ports Smurf borders, vidcmd-spec §3/4,
    griffin.yml constants, the datasheet's LITERAL section and status stamp.
+
+# Part 2: all pins free (2026-10-03, Brad: "just test all pins free")
+
+The question: is block E's fan-in the only thing stopping forms A and B?
+Rev 2 is not routed, so the COMPOSITOR pinout may change.  `genpins.py rN
+pfree` writes `rN_pfree.v`, which is the rung's logic byte for byte (checked
+by diff) with NO `//PIN:` lines.  An empty `.pin` under `-preassign keep` is
+free placement.  The flags are otherwise the production set.  `harvest.sh`
+writes the fitter's chosen pins to `pins_rN_pfree.txt` (a `//PIN:` block
+with the block of each pin, NOT FROZEN) and counts how many moved from rev 1.
+
+New rungs (in `gen.py`):
+* `r2st` = R2 + streaming RUN, with count bit 11 low as the flag.
+* `r4st` = R4 (form A + HOLD, 10-bit counter) + streaming RUN.  HOLD owns
+  bits 11:10 = `0x`, so streaming takes the proposal's reserved `10`
+  (`11` RUN, `10` streaming RUN, `0x` HOLD).
+* `r4s` = R2s + HOLD + 10-bit counter.
+* `r4sst` = `r4s` + streaming.
+
+| rung | what | fits | LC | FF | Nodes+FB | PT | pass | tightest block fan-in | RGB_OUT per block | pins moved (of 62) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| R2 | form A literal | **yes** | 123 | 93 | 120 | 412 | 1 | 34/40 | E4 F4 G4 | 58 |
+| R3 | R2 + HOLD, 12-bit counter | NO | | | | | 5 | | | grouping fail x5 |
+| R4 | R2 + HOLD, 10-bit counter | **yes** | 114 | 91 | 124 | 381 | 2 | 35 | F4 G4 H4 | 59 |
+| R2st | R2 + streaming RUN | yes | 126 | 94 | 141 | 392 | 2 | 38 | E5 F5 G2 | 58 |
+| **R4st** | **R4 + streaming RUN (form A + HOLD + streaming)** | **yes** | **118** | 92 | 119 | 357 | **1** | **35** | D1 E4 F4 G3 | 58 |
+| R5 | form B literal (KEEP) | NO | | | | | 5 | | | grouping fail x5 |
+| R6 / R6n | R5 + HOLD, 12- / 10-bit counter | NO | | | | | 5 | | | grouping fail x5 |
+| R5n | form B without KEEP | yes | 118 | 92 | 116 | 373 | 1 | **40/40** (B, C, D, E) | B3 C3 D3 E3 | 59 |
+| R2s | stall-free form A (colour from set_pix_value) | yes | 123 | 93 | 117 | 393 | 1 | 37 | E4 F4 G4 | 59 |
+| R4s | R2s + HOLD, 10-bit counter | yes | 120 | 91 | 114 | 396 | 1 | 38 | E4 F4 G4 | 55 |
+| R4sst | R4s + streaming RUN | NO | | | | | 5 | | | grouping, placement and routing fails |
+| lever R5 + xor_synthesis | | NO | | | | | 3 | | | INTERNAL ERROR |
+| lever R6n + xor_synthesis | | NO | | | | | 5 | | | grouping fail |
+
+On a failed free placement the fitter prints no fan-in figure, only "Grouping
+fail".  Free placement moves almost every pin (55 to 59 of 62).  That cost is
+a property of free placement, not of the logic: see the spread results kept
+below.
+
+## Answers
+
+1. **Form A fits with all pins free.**  The bare literal (R2) uses 123/128
+   LC, pass 1, with the tightest block at fan-in 34/40.  With HOLD it fits
+   only on the 10-bit counter: R4 uses 114/128 (14 LC spare), pass 2,
+   tightest 35/40.  The 12-bit R3 fails.  Narrowing the counter matters
+   here, unlike on form C.
+2. **Form B as proposed (with KEEP, with or without HOLD) does not fit, even
+   with all pins free**, and xor_synthesis does not help.  Its RGB_OUT D input
+   carries the whole consume decode: the fit report shows a 20-literal product
+   term per bit, with H_ACTIVE, the 12-bit terminal and staged_word[15:12].
+   Only form B without KEEP (R5n) fits: 118 LC, with four blocks at exactly
+   40/40, so zero fan-in spare.  That variant gives the true one-pixel patch
+   (BN2: X on slot n-1 only), but a literal stream alternates with the
+   background (BN1).
+3. **Form A coexists with streaming RUN.**  R4st (form A + HOLD + streaming,
+   10-bit counter) uses 118/128 LC (10 spare), pass 1, tightest fan-in 35/40
+   (5 spare).  R2st (no HOLD, 12-bit) also fits but at 126 LC, pass 2.  The
+   stall-free form A does not take streaming as well (R4sst fails).
+4. **Timing depth, as far as the report shows.**  The fitter gives no
+   delay numbers or path report, only equations.  In R4st, RGB_OUT_n.D is 5
+   product terms in one array pass.  All inputs are registers (the literal's
+   bit comes from staged_word's Q) plus RGB_IN.  There is no cascade or
+   foldback on the RGB_OUT cells.  Production is 4 terms, same shape, so form A
+   adds one term and no logic level.  Form B's term includes the H_ACTIVE pin
+   and about 20 literals.  That is still one array level, but it is the deeper
+   path the proposal worried about, and it does not fit anyway.
+
+## Simulation (fitting logic rungs; the placement does not change logic)
+
+* lit_tb (all first-run passes against hand derivations):
+  * R2st: `-DFORM_A -DSTREAM`.
+  * R4st: `-DFORM_A -DHOLD -DSTREAM10`.  STREAM10 is the S1/S2 case with
+    the `10` coding.
+  * R5n: `-DFORM_BN`.  New cases BN1-BN3: stream `pt 0-2, A 3, B 4, pt 5,
+    C 6`; patch `X on n-1 only`; the literal's own slot shows the previous
+    source.
+  * R2s, R4s: `-DFORM_A2` (`+ -DHOLD` for R4s).  Cases A2_1 to A2_5 and
+    A2_H, derived in Part 2.  The literal is a one-slot record: `A 0, B 1-2,
+    C 3-4` opening a line; one-pixel patch on slot n; literal after MASK gap
+    0; KEEP repeats a mask's last pixel; LIT + HOLD(N) = N + 1 px.  The colour
+    registers stay untouched.
+  * R2, R3 and R4 still pass `-DFORM_A`.
+* Production `compositor_tb.v`, with the same pre-set exclusions (29
+  RUN_COLOR-built checks, plus 4 `run_count` width checks on 10-bit rungs):
+  0 unexpected failures out of 179 on R2st, R4st, R2s, R4s and R5n.  R2 and
+  R4 were done in Part 1.
+* Negative controls, all of which fail as required:
+  * STREAM10 against R4;
+  * FORM_A2 against R2, R8b and R4 (with HOLD);
+  * FORM_A against R2s;
+  * FORM_BN against R5 and R2;
+  * FORM_B against R5n;
+  * FORM_A2+HOLD against R2s.
+
+## Earlier Part 2 runs kept as results (before the scope change)
+
+* **P-min** (RGB_OUT released, everything else frozen): the fitter refuses on
+  every rung (R2, R3, R4, R4st, R5, R6), with grouping or placement fails.
+  This is the known behaviour: under keep, it will not pick pins for
+  unassigned ports on a near-full chip.
+* **P-spread** (RGB_OUT spread 4/4/4 by swapping pins with VIDCMD_Q inputs;
+  RGB_IN does not use block fan-in, and moving it changed nothing, per R2/R3
+  `p444i`):
+
+  | regime | R2 | R3 | R4 | R2st | R4st | R2s | R5 | R6 | R6n | R5n |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | `p444` | 123, p1, tightest 35 | 124, p1, tightest 40 | 114, p1, tightest 32 | 126, p1, tightest 36 | 118, p2, tightest 35 | 123, p1 | fan-in 41 on D | fan-in 41 on D | fan-in 42 on F | no fit |
+  | `p444g` | 123, p1, tightest 35 | routing fail | 114, p1, tightest 34 | 126, p1, tightest 37 | **118, p1, tightest 34** | INTERNAL ERROR | fan-in 41 on E | fan-in 41 on E | fan-in 42 on F | INTERNAL ERROR |
+  | `p3333` | placement fail | no fit | 114, p1 | routing fail | no fit | | INTERNAL ERROR | no fit | no fit | |
+
+  `p444` swaps RGB_OUT 3/0/1/2 with VIDCMD_Q 3/2/4/6 (block D pins 39, 40,
+  41, 37).  `p444g` swaps RGB_OUT 3/0/1/2 with VIDCMD_Q 10/11/8/13 (block G
+  pins 63, 64, 65, 67).  **So form A + HOLD + streaming fits with only 8 pins
+  moved (four input/output swaps), not the 58 that free placement moves.**
+  Form B fails every spread.
+
+## Recommendation (Part 2)
+
+If the rev-2 pinout may change, **form A + HOLD + streaming RUN (R4st) is
+adoptable**: 118/128 LC, pass 1, at least 5 fan-in spare.  Adopting it means
+narrowing RUN and HOLD counts to 10 bits (1023 max, as the proposal's rule 6
+says).  The minimal pin change found is `p444g`'s four swaps.  Free
+placement's table (`pins_r4st_pfree.txt`) is a valid fallback but moves 58
+pins.  Form B with KEEP does not fit any pinout tried.  Form C (Part 1) stays
+the only option that keeps the frozen rev-1 pinout.  Adopting R4st is a
+semantic change through all five video-chain layers.  The lit_tb FORM_A,
+HOLD and STREAM10 cases are the starting point for the production bench.

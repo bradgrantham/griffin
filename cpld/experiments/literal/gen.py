@@ -341,6 +341,42 @@ r2s = edit(r2s, "            mask_active    <= 1'b0;\n",
 r2s = edit(r2s, "            mask_active <= mask_next;\n",
            "            mask_active <= mask_next;\n            lit_active  <= load_literal;\n")
 
+# ----------------------------------------------------------------------------
+# Part 2 -- form A + streaming RUN.
+# r2st: R2 + streaming (12-bit counter; count bit 11 low = streaming RUN).
+# r4st: R4 (form A + HOLD, 10-bit counter) + streaming.  HOLD already owns
+#       bit 11 low, so streaming takes bits 11:10 = 10 (the proposal's
+#       reserved code): 11 RUN, 10 streaming RUN, 0x HOLD.
+# ----------------------------------------------------------------------------
+
+def add_streaming(src, flag_expr, src_line):
+    src = edit(src,
+               "    reg        mask_active;             // a mask record is playing its sixteen slots\n",
+               "    reg        mask_active;             // a mask record is playing its sixteen slots\n"
+               "    reg        streaming;               // the RUN in force lets SETs through\n")
+    src = edit(src,
+               "    wire consume_active = H_ACTIVE & have_staged & terminal;\n",
+               "    wire        w_streaming = " + flag_expr + ";\n"
+               "    wire consume_active = H_ACTIVE & have_staged & (terminal | (streaming & w_is_set));\n")
+    src = edit(src, "            mask_active    <= 1'b0;\n",
+               "            mask_active    <= 1'b0;\n            streaming      <= 1'b0;\n")
+    src = edit(src, src_line, src_line + "                streaming  <= w_streaming;\n")
+    return src
+
+
+r2st = edit(r2, "    wire [11:0] w_load = staged_word[11:0];\n",
+            "    wire [11:0] w_load = {1'b1, staged_word[10:0]};\n")
+r2st = add_streaming(r2st, "~staged_word[11] & ~w_is_literal",
+                     "                cur_src    <= w_src;\n")
+r4st = add_streaming(r4, "staged_word[11] & ~staged_word[10] & ~w_is_literal",
+                     "                cur_src    <= w_run_src;\n")
+
+# r4s / r4sst -- the stall-free form A (R2s, colour from set_pix_value) with
+# HOLD and the 10-bit counter, and that plus streaming RUN (bits 11:10 = 10).
+r4s = narrow10(hold12(r2s))
+r4sst = add_streaming(r4s, "staged_word[11] & ~staged_word[10] & ~w_is_literal",
+                      "                cur_src    <= w_run_src;\n")
+
 RUNGS = {
     "r1": (r1, "R1: RUN_COLOR removed, src 11 reserved (plays as cmp_color0)"),
     "r2": (r2, "R2: form A LITERAL (bank held for its slot, then KEEP)"),
@@ -357,6 +393,10 @@ RUNGS = {
     "r8bn": (r8bn, "R8bn: R8b with a 10-bit run counter (no HOLD)"),
     "r9": (r9, "R9: R8b + streaming RUN (count bit 11 low lets SETs through)"),
     "r2s": (r2s, "R2s: form A colour from set_pix_value, no bank stall"),
+    "r2st": (r2st, "R2st: R2 + streaming RUN (bit 11 low)"),
+    "r4st": (r4st, "R4st: R4 + streaming RUN (bits 11:10 = 10)"),
+    "r4s": (r4s, "R4s: R2s + HOLD(N), 10-bit counter"),
+    "r4sst": (r4sst, "R4sst: R4s + streaming RUN (bits 11:10 = 10)"),
     "r7": (r7, "R7: streaming RUN on R0 (bit 11 low lets SETs through), no LITERAL"),
 }
 

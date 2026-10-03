@@ -11,6 +11,11 @@
 //   FORM_C   r8b/r8bn   literal = SET cmp_color1 + select colour1, one record
 //   STREAM   r7         streaming RUN on r0 (no literal)
 //   HOLDONLY r1h        HOLD(N) alone (KEEP), no literal
+//   FORM_A2  r2s/r4s/r4sst  stall-free form A: the literal's slot reads
+//            set_pix_value (which registered the literal on its consume
+//            edge), no bank stall, then KEEP (Part 2)
+//   FORM_BN  r5n        form B without KEEP (Part 2: fits only free-placed)
+//   STREAM10 r4st       streaming RUN coded as count bits 11:10 = 10 (Part 2)
 // plus HOLD for the A/B rungs that have HOLD(N) (r3, r4, r6, r6n).
 //
 // EVERY EXPECTATION IS DERIVED BY HAND FROM compositor.v's laws (L1 entry-edge
@@ -162,6 +167,14 @@ module LitTb;
         input [10:0] count;
         begin
             vc_run_stream = {2'b00, src, 1'b0, ~count};
+        end
+    endfunction
+
+    function [15:0] vc_run_stream10;              // streaming RUN, bits 11:10 = 10
+        input [1:0] src;
+        input [9:0] count;
+        begin
+            vc_run_stream10 = {2'b00, src, 2'b10, ~count};
         end
     endfunction
 
@@ -582,6 +595,7 @@ module LitTb;
 `endif
 
 `ifdef HOLD
+`ifndef FORM_A2
         // -----------------------------------------------------------
         // H1  RUN(pt,4) X HOLD(5) RUN(pt).
 `ifdef FORM_A
@@ -608,6 +622,7 @@ module LitTb;
         chk("H1B pt 0-2", span_is(0, 2, PT));
         chk("H1B X 3-9", span_is(3, 9, LX));
         chk("H1B pt 10..", span_is(10, SLOTS - 1, PT));
+`endif
 `endif
 `endif
 
@@ -638,6 +653,168 @@ module LitTb;
         chk("R1h HOLD keeps slot 3's pixel on 4-8", span_is(4, 8, pix[3]));
         chk("R1h RUN(c1) from 9", span_is(9, SLOTS - 1, 12'hFFF));
         RGB_IN = PT;
+`endif
+
+`ifdef FORM_A2
+        // -----------------------------------------------------------
+        // Stall-free form A.  No bank hold, so the literal is an ordinary
+        // one-slot record for L4/L5 (slot pattern as form C) and its colour
+        // reaches RGB_OUT from set_pix_value, which registers staged_word on
+        // every edge and so holds the literal through the cycle after E_k.
+        // In a banked pair the second literal's consume edge reloads
+        // set_pix_value, so pairs land on adjacent slots.  KEEP afterwards.
+        // A2_1  LIT A B C RUN(pt) in HBLANK: A 0, B 1 (pair), KEEP 2, C 3,
+        //   KEEP 4, pt 5.
+        // -----------------------------------------------------------
+        reset_dut;
+        push(vc_lit(LA)); push(vc_lit(LB)); push(vc_lit(LC));
+        push(vc_run(2'd0, 12'd630));
+        blank(40);
+        line(SLOTS);
+        dump(10);
+        chk("A2_1 A on slot 0", pix[0] === LA);
+        chk("A2_1 B on 1-2", span_is(1, 2, LB));
+        chk("A2_1 C on 3-4", span_is(3, 4, LC));
+        chk("A2_1 pt 5..", span_is(5, SLOTS - 1, PT));
+        chk("A2_1 colour registers untouched", dut.cmp_color1 === 12'hFFF && dut.cmp_color0 === 12'h000);
+
+        // A2_2  RUN(pt,4) A B C RUN(pt): A 4, B 5-6, C 7-8, pt 9..
+        reset_dut;
+        push(vc_run(2'd0, 12'd4));
+        push(vc_lit(LA)); push(vc_lit(LB)); push(vc_lit(LC));
+        push(vc_run(2'd0, 12'd630));
+        blank(40);
+        line(SLOTS);
+        chk("A2_2 pt 0-3", span_is(0, 3, PT));
+        chk("A2_2 A 4", pix[4] === LA);
+        chk("A2_2 B 5-6", span_is(5, 6, LB));
+        chk("A2_2 C 7-8", span_is(7, 8, LC));
+        chk("A2_2 pt 9..", span_is(9, SLOTS - 1, PT));
+
+        // A2_3  RUN(pt,8) X RUN(pt): X slot 8 only, pt from 9 (one-pixel patch).
+        reset_dut;
+        push(vc_run(2'd0, 12'd8)); push(vc_lit(LX)); push(vc_run(2'd0, 12'd630));
+        blank(40);
+        line(SLOTS);
+        chk("A2_3 pt 0-7", span_is(0, 7, PT));
+        chk("A2_3 X slot 8 only", pix[8] === LX);
+        chk("A2_3 pt 9..", span_is(9, SLOTS - 1, PT));
+
+        // A2_4  literal after MASK: X captured on the pixel-15 edge E19, consumed
+        //   E20 -> slot 20; RUN fetched at E20, captured E21, consumed E22 ->
+        //   KEEP on 21.  => mask 4-19, X 20-21, pt 22..
+        reset_dut;
+        push(vc_set(3'd1, 12'h00F)); push(vc_set(3'd0, 12'hF0F));
+        push(vc_run(2'd0, 12'd4));
+        push(vc_mask_hdr({7{D_C1}})); push({8{D_C1}});
+        push(vc_lit(LX)); push(vc_run(2'd0, 12'd600));
+        blank(60);
+        line(SLOTS);
+        chk("A2_4 mask 4-19", pix[4] === 12'h00F && span_is(5, 19, 12'hF0F));
+        chk("A2_4 X 20-21 (gap 0 after mask)", span_is(20, 21, LX));
+        chk("A2_4 pt 22..", span_is(22, SLOTS - 1, PT));
+
+        // A2_5  MASK after literal: X slot 4, header pair -> L = 5, mask 5..20,
+        //   then KEEP repeats the mask's last pixel (d15 = C0, 00F) from 21.
+        reset_dut;
+        push(vc_set(3'd1, 12'h00F)); push(vc_set(3'd0, 12'hF0F));
+        push(vc_run(2'd0, 12'd4)); push(vc_lit(LX));
+        push(vc_mask_hdr({7{D_C1}})); push({{7{D_C1}}, D_C0});
+        blank(60);
+        line(SLOTS);
+        chk("A2_5 X 4", pix[4] === LX);
+        chk("A2_5 mask px0 at 5, px1-14 on 6-19", pix[5] === 12'h00F && span_is(6, 19, 12'hF0F));
+        chk("A2_5 px15 at 20, KEEP repeats it", span_is(20, SLOTS - 1, 12'h00F));
+
+`ifdef HOLD
+        // A2_H  RUN(pt,4) X HOLD(5) RUN(pt): X slot 4; HOLD (pair) consumed E5
+        //   -> 5..9 KEEP; RUN captured E6, consumed E10.  => X 4-9 (N + 1), pt 10..
+        reset_dut;
+        push(vc_run(2'd0, 12'd4)); push(vc_lit(LX)); push(vc_hold(10'd5));
+        push(vc_run(2'd0, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("A2_H pt 0-3", span_is(0, 3, PT));
+        chk("A2_H X 4-9", span_is(4, 9, LX));
+        chk("A2_H pt 10..", span_is(10, SLOTS - 1, PT));
+`endif
+`endif
+
+`ifdef FORM_BN
+        // -----------------------------------------------------------
+        // Form B without KEEP: the literal's colour is registered into RGB_OUT
+        // at its consume edge E_k (slot k-1) and cur_src is NOT touched, so
+        // slot k shows the source that was in force before the literal.
+        // BN1  RUN(pt,4) A B C RUN(pt): E4 A -> slot 3; E5 B (pair) -> slot 4
+        //   (overriding slot 4's pt); C captured E6, consumed E7 -> slot 6;
+        //   slot 5 is pt; RUN consumed E9.  => pt 0-2, A 3, B 4, pt 5, C 6,
+        //   pt 7..  (a literal stream alternates with the background)
+        // -----------------------------------------------------------
+        reset_dut;
+        push(vc_run(2'd0, 12'd4));
+        push(vc_lit(LA)); push(vc_lit(LB)); push(vc_lit(LC));
+        push(vc_run(2'd0, 12'd630));
+        blank(40);
+        line(SLOTS);
+        dump(12);
+        chk("BN1 pt 0-2", span_is(0, 2, PT));
+        chk("BN1 A 3, B 4", pix[3] === LA && pix[4] === LB);
+        chk("BN1 pt 5 between arrivals", pix[5] === PT);
+        chk("BN1 C 6", pix[6] === LC);
+        chk("BN1 pt 7..", span_is(7, SLOTS - 1, PT));
+
+        // BN2  RUN(pt,8) X RUN(pt): X on slot 7 only, pt from 8 -- the
+        //   proposal's one-pixel patch, true in THIS variant.
+        reset_dut;
+        push(vc_run(2'd0, 12'd8)); push(vc_lit(LX)); push(vc_run(2'd0, 12'd630));
+        blank(40);
+        line(SLOTS);
+        chk("BN2 pt 0-6", span_is(0, 6, PT));
+        chk("BN2 X on slot 7 only", pix[7] === LX);
+        chk("BN2 pt 8..", span_is(8, SLOTS - 1, PT));
+
+        // BN3  RUN(c1,8) X RUN(pt): X slot 7, slot 8 is X's own slot and shows
+        //   the previous source colour1 (FFF); RUN(pt) pair at E9 -> 9..
+        reset_dut;
+        push(vc_run(2'd1, 12'd8)); push(vc_lit(LX)); push(vc_run(2'd0, 12'd630));
+        blank(40);
+        line(SLOTS);
+        chk("BN3 c1 0-6", span_is(0, 6, 12'hFFF));
+        chk("BN3 X 7", pix[7] === LX);
+        chk("BN3 own slot 8 keeps colour1", pix[8] === 12'hFFF);
+        chk("BN3 pt 9..", span_is(9, SLOTS - 1, PT));
+`endif
+
+`ifdef STREAM10
+        // S1 and S2 of STREAM, with the 10-bit-counter coding (bits 11:10 = 10).
+        // Same derivation: FFF 0, A 1-2, B 3-4, C 5-19, 00F 20..
+        reset_dut;
+        push(vc_set(3'd1, 12'h00F));
+        push(vc_run_stream10(2'd1, 10'd20));
+        push(vc_set(3'd0, LA)); push(vc_set(3'd0, LB)); push(vc_set(3'd0, LC));
+        push(vc_run(2'd2, 12'd600));
+        blank(40);
+        line(SLOTS);
+        dump(24);
+        chk("S10 slot 0 old colour1", pix[0] === 12'hFFF);
+        chk("S10 A 1-2", span_is(1, 2, LA));
+        chk("S10 B 3-4", span_is(3, 4, LB));
+        chk("S10 C 5-19 (run keeps counting)", span_is(5, 19, LC));
+        chk("S10 RUN(c0) at slot 20 exactly", span_is(20, SLOTS - 1, 12'h00F));
+
+        reset_dut;
+        push(vc_set(3'd1, 12'h00F));
+        push(vc_run(2'd1, 12'd20));
+        push(vc_set(3'd0, LA)); push(vc_set(3'd0, LB)); push(vc_set(3'd0, LC));
+        push(vc_run(2'd2, 12'd600));
+        blank(40);
+        line(SLOTS);
+        chk("S10b non-streaming: FFF 0-19", span_is(0, 19, 12'hFFF));
+        chk("S10b A 20, B 21-22, C 23-24", pix[20] === LA && span_is(21, 22, LB) && span_is(23, 24, LC));
+        chk("S10b RUN(c0) 25..", span_is(25, SLOTS - 1, 12'h00F));
+
+        // HOLD still decodes beside streaming: RUN(pt,4) X HOLD(5) RUN(pt)
+        // is covered by -DFORM_A -DHOLD on the same rung.
 `endif
 
 `ifdef STREAM
