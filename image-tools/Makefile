@@ -26,7 +26,8 @@ INCLUDES := -I. -I.. -I../audio
 SUITE     := ../super-engine
 SUITE_HDR := $(SUITE)/render.h $(SUITE)/descriptor.h $(SUITE)/interpret.h
 
-TOOLS := clut_encode clut_decode clut_roundtrip sprite2spans make_smurf_assets
+TOOLS := clut_encode clut_decode clut_roundtrip fixup_encode gcx_roundtrip gcx_decode \
+         sprite2spans make_smurf_assets
 
 ASSET_DIR := smurf-assets
 SRC_DIR   := $(ASSET_DIR)/src
@@ -66,7 +67,7 @@ obj/audio_chip.o: ../audio/audio_chip.cpp ../audio/audio_chip.h
 	@mkdir -p obj
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-clut_encode: clut_encode.cpp gc4_format.h clut_quant.h clut_color.h
+clut_encode: clut_encode.cpp gc4_format.h clut_quant.h clut_color.h clut_source.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
 
 clut_decode: clut_decode.cpp gc4_format.h clut_color.h
@@ -74,6 +75,23 @@ clut_decode: clut_decode.cpp gc4_format.h clut_color.h
 
 clut_roundtrip: clut_roundtrip.cpp gc4_format.h clut_color.h obj/render.o obj/audio_chip.o $(SUITE_HDR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< obj/render.o obj/audio_chip.o
+
+obj/interpret.o: $(SUITE)/interpret.cpp $(SUITE_HDR)
+	@mkdir -p obj
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+GCX_HDR   := gcx_format.h gcx_target.h gcx_verify.h clut_color.h
+SUITE_OBJ := obj/render.o obj/interpret.o obj/audio_chip.o
+
+# -pthread: the per-line planner runs on std::thread.
+fixup_encode: fixup_encode.cpp $(GCX_HDR) clut_quant.h clut_source.h $(SUITE_OBJ) $(SUITE_HDR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -o $@ $< $(SUITE_OBJ)
+
+gcx_roundtrip: gcx_roundtrip.cpp $(GCX_HDR) $(SUITE_OBJ) $(SUITE_HDR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(SUITE_OBJ)
+
+gcx_decode: gcx_decode.cpp gcx_target.h clut_color.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
 
 sprite2spans: sprite2spans.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
@@ -108,7 +126,8 @@ assets: $(BACKDROP_GC4) $(SPRITE_HEADER)
 CHECK_DIR := obj/check
 CHECK_K   := 0 4 8
 
-check: clut_encode clut_decode clut_roundtrip assets sprite_header_test.cpp
+check: clut_encode clut_decode clut_roundtrip fixup_encode gcx_roundtrip gcx_decode assets \
+       sprite_header_test.cpp
 	@mkdir -p $(CHECK_DIR)
 	@for k in $(CHECK_K); do \
 		for d in none ordered fs; do \
@@ -137,6 +156,53 @@ check: clut_encode clut_decode clut_roundtrip assets sprite_header_test.cpp
 	else \
 		echo "  validator rejects a corrupted file: $$(cat $(CHECK_DIR)/corrupt.err)"; \
 	fi
+	@# The .gcx round trip: encoder preview == suite model with real delivery
+	@# timing == independent decoder, with the fix-up planner on and off, and at
+	@# one thread and many (the planner must not depend on scheduling).  K = 1
+	@# because the backdrop is drawn art: at a photograph's K it needs no
+	@# fix-ups, and at 1 its lines carry loads, literals and flat spans together.
+	@for d in none fs; do \
+		for f in on off; do \
+			./fixup_encode --k 1 --dither $$d --fixups $$f --threads 1 \
+				--preview $(CHECK_DIR)/x-$$d-$$f.png \
+				$(SRC_DIR)/backdrop1-meadow.png $(CHECK_DIR)/x-$$d-$$f.gcx \
+				> /dev/null || exit 1; \
+			./fixup_encode --k 1 --dither $$d --fixups $$f --threads 8 \
+				$(SRC_DIR)/backdrop1-meadow.png $(CHECK_DIR)/x-$$d-$$f-t8.gcx \
+				> /dev/null || exit 1; \
+			cmp $(CHECK_DIR)/x-$$d-$$f.gcx $(CHECK_DIR)/x-$$d-$$f-t8.gcx \
+				|| { echo "thread count changed the .gcx ($$d fixups $$f)"; exit 1; }; \
+			./gcx_roundtrip $(CHECK_DIR)/x-$$d-$$f.gcx $(CHECK_DIR)/x-$$d-$$f.png \
+				| sed "s/^/  gcx $$d fixups=$$f /" || exit 1; \
+			./gcx_decode --quiet $(CHECK_DIR)/x-$$d-$$f.gcx \
+				$(CHECK_DIR)/x-$$d-$$f-dec.png || exit 1; \
+			cmp $(CHECK_DIR)/x-$$d-$$f.png $(CHECK_DIR)/x-$$d-$$f-dec.png \
+				|| { echo "gcx decoder disagrees with the preview ($$d $$f)"; exit 1; }; \
+			echo "  gcx $$d fixups=$$f  decode == preview, 1 thread == 8 threads"; \
+		done; \
+	done
+	@# With the planner off and the same K, dither and diffusion limit (clut_encode's
+	@# is 128), the picture is clut_encode's.
+	@./clut_encode --k 4 --dither fs --preview $(CHECK_DIR)/gc4-k4-fs.png \
+		$(SRC_DIR)/backdrop1-meadow.png $(CHECK_DIR)/gc4-k4-fs.gc4 > /dev/null
+	@./fixup_encode --k 4 --dither fs --fixups off --fs-limit 128 \
+		--preview $(CHECK_DIR)/x-k4-fs-off.png \
+		$(SRC_DIR)/backdrop1-meadow.png $(CHECK_DIR)/x-k4-fs-off.gcx > /dev/null
+	@cmp $(CHECK_DIR)/gc4-k4-fs.png $(CHECK_DIR)/x-k4-fs-off.png \
+		|| { echo "fixup_encode --fixups off differs from clut_encode"; exit 1; }
+	@echo "  gcx fixups=off == clut_encode at the same K and dither"
+	@# Negative controls: each fault must be REJECTED by the suite round trip.
+	@for fault in lookahead0 short-line long-line bad-filler stream-end over-budget; do \
+		./fixup_encode --k 1 --fault $$fault --preview $(CHECK_DIR)/fault.png \
+			$(SRC_DIR)/backdrop1-meadow.png $(CHECK_DIR)/fault-$$fault.gcx \
+			> /dev/null || exit 1; \
+		if ./gcx_roundtrip $(CHECK_DIR)/fault-$$fault.gcx $(CHECK_DIR)/fault.png \
+				> $(CHECK_DIR)/fault-$$fault.log; then \
+			echo "the round trip ACCEPTED fault $$fault"; exit 1; \
+		else \
+			echo "  gcx fault $$fault rejected: $$(head -1 $(CHECK_DIR)/fault-$$fault.log | cut -c10-110)"; \
+		fi; \
+	done
 	@mkdir -p obj
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -Wall -Wextra -c sprite_header_test.cpp \
 		-o obj/sprite_header_test.o
