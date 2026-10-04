@@ -20,6 +20,7 @@
 #include "render.h"
 
 #include "../apps/lib/griffin_cursor.h"
+#include "../apps/lib/griffin_cursor_chain.h"
 
 using namespace SuperEngine;
 
@@ -3237,8 +3238,8 @@ constexpr uint32_t CC_FB_ROWS       = V_ACTIVE / 2;                       // 240
 constexpr uint32_t CC_PREAMBLE_BASE = 0x310000;
 constexpr uint32_t CC_PREAMBLE_STEP = 0x000400;                           // per frame
 constexpr uint32_t CC_FIXED_WORDS   = PALETTE_ENTRIES * PALETTE_WORDS_PER_ENTRY + 4;   // 52
-constexpr uint32_t CC_PREAMBLE_WORDS = CC_FIXED_WORDS + GriffinCursor::CHAIN_WORDS;    // 402
-constexpr uint32_t CC_VBLANK_WORDS   = CC_FIXED_WORDS + GriffinCursor::PART_A_WORDS;   // 244
+constexpr uint32_t CC_PREAMBLE_WORDS = CC_FIXED_WORDS + GriffinCursorChain::CHAIN_WORDS;    // 402
+constexpr uint32_t CC_VBLANK_WORDS   = CC_FIXED_WORDS + GriffinCursorChain::PART_A_WORDS;   // 244
 constexpr Rgb444   CC_OUTLINE       = rgb444(0x0, 0x0, 0x0);
 constexpr Rgb444   CC_FILL          = rgb444(0xF, 0xF, 0xF);
 
@@ -3324,7 +3325,7 @@ struct CcEmitter
 // One frame's list and preamble.  Returns the descriptor count.  part_b_line
 // moves the chain's part B, for the negative control only.
 uint32_t cc_author(Memory ram, uint32_t table, uint32_t preamble, uint32_t x, uint32_t y,
-                   uint32_t part_b_line = GriffinCursor::PART_B_FIRST_LINE)
+                   uint32_t part_b_line = GriffinCursorChain::PART_B_FIRST_LINE)
 {
     uint32_t n = 0;
     for (uint32_t i = 0; i < PALETTE_ENTRIES; i++)
@@ -3340,8 +3341,8 @@ uint32_t cc_author(Memory ram, uint32_t table, uint32_t preamble, uint32_t x, ui
     ram[preamble + (n++) * 2] = vidcmd_set(SET_CMP_COLOR0, CC_OUTLINE);
     ram[preamble + (n++) * 2] = vidcmd_set(SET_CMP_COLOR1, CC_FILL);
 
-    uint16_t chain[GriffinCursor::CHAIN_WORDS];
-    GriffinCursor::build_chain(chain, GriffinCursor::ARROW, x, y);
+    uint16_t chain[GriffinCursorChain::CHAIN_WORDS];
+    GriffinCursorChain::build_chain(chain, GriffinCursorChain::ARROW, x, y);
     for (uint16_t w : chain)
     {
         ram[preamble + (n++) * 2] = w;
@@ -3361,11 +3362,11 @@ uint32_t cc_author(Memory ram, uint32_t table, uint32_t preamble, uint32_t x, ui
     {
         e.stream(CC_FB_BASE + (line / 2) * CC_FB_STRIDE, PIXELS_WORDS_4BPP_HALF,
                  DEST_PIXELS_FIFO_W, true);
-        if (line >= part_b_line && line - part_b_line < GriffinCursor::PART_B_LINES)
+        if (line >= part_b_line && line - part_b_line < GriffinCursorChain::PART_B_LINES)
         {
             const uint32_t j = line - part_b_line;
-            e.stream(preamble + (CC_VBLANK_WORDS + j * GriffinCursor::PART_B_CHUNK) * 2,
-                     GriffinCursor::part_b_chunk_words(j), DEST_VIDCMD_FIFO_W, false);
+            e.stream(preamble + (CC_VBLANK_WORDS + j * GriffinCursorChain::PART_B_CHUNK) * 2,
+                     GriffinCursorChain::part_b_chunk_words(j), DEST_VIDCMD_FIFO_W, false);
         }
     }
     e.pacer(true);
@@ -3376,7 +3377,7 @@ Rgb444 cc_expected(uint32_t px, uint32_t py, uint32_t x, uint32_t y)
 {
     if (px >= x && py >= y)
     {
-        const unsigned a = GriffinCursor::art_pixel(GriffinCursor::ARROW_ART, px - x, py - y);
+        const unsigned a = GriffinCursorChain::art_pixel(GriffinCursorChain::ARROW_ART, px - x, py - y);
         if (a == 1)
         {
             return CC_OUTLINE;
@@ -3400,7 +3401,7 @@ struct CcPosition
 // different chains, which is also what a moving cursor is.
 RenderResult cc_run(Memory ram, const CcPosition &a, const CcPosition &b, uint32_t &descriptors,
                     InterpretResult &interp, bool line_at_a_time = false,
-                    uint32_t part_b_line = GriffinCursor::PART_B_FIRST_LINE)
+                    uint32_t part_b_line = GriffinCursorChain::PART_B_FIRST_LINE)
 {
     const uint32_t  tables[RENDER_FRAMES] = {TABLE_A, TABLE_B};
     const CcPosition *pos[RENDER_FRAMES]  = {&a, &b};
@@ -3442,17 +3443,17 @@ void run_cursor_chain_case(Memory ram)
 
     printf("\n=== m12-cursor-chain — a 640x480 MASK cursor as one record chain (part A in "
            "vblank, part B from line %u) over a static 4bpp half-rate playfield ===\n",
-           GriffinCursor::PART_B_FIRST_LINE);
+           GriffinCursorChain::PART_B_FIRST_LINE);
     printf("  preamble %u words (palette %u, SETs 4, chain %u padded at the end); %u in "
            "vblank after %u pacers and /RS, then %u pacers; part B %u words on lines "
            "%u..%u (FIFO bound %u, earliest part-B use line %u)\n",
            CC_PREAMBLE_WORDS, PALETTE_ENTRIES * PALETTE_WORDS_PER_ENTRY,
-           GriffinCursor::CHAIN_WORDS, CC_VBLANK_WORDS, CC_PACERS_BEFORE_PREAMBLE,
-           CC_PACERS_AFTER_PREAMBLE, GriffinCursor::PART_B_WORDS,
-           GriffinCursor::PART_B_FIRST_LINE,
-           GriffinCursor::PART_B_FIRST_LINE + GriffinCursor::PART_B_LINES - 1,
-           GriffinCursor::PART_B_FIFO_PEAK,
-           GriffinCursor::earliest_line_of_word(GriffinCursor::PART_A_WORDS));
+           GriffinCursorChain::CHAIN_WORDS, CC_VBLANK_WORDS, CC_PACERS_BEFORE_PREAMBLE,
+           CC_PACERS_AFTER_PREAMBLE, GriffinCursorChain::PART_B_WORDS,
+           GriffinCursorChain::PART_B_FIRST_LINE,
+           GriffinCursorChain::PART_B_FIRST_LINE + GriffinCursorChain::PART_B_LINES - 1,
+           GriffinCursorChain::PART_B_FIFO_PEAK,
+           GriffinCursorChain::earliest_line_of_word(GriffinCursorChain::PART_A_WORDS));
 
     cc_write_framebuffer(ram);
 
@@ -3577,6 +3578,570 @@ void run_cursor_chain_case(Memory ram)
                "(576,306) %u pixels wrong\n", bad_a, bad_b);
         CHECK(bad_a != 0 && bad_b != 0,
               "m12-cursor-chain: part B delivered past its deadline went undetected");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// m15-cursor-per-line — the DEFAULT cursor recipe: one fixed four-word VIDCMD
+// record per line, each line exactly 640 slots on its own
+// ---------------------------------------------------------------------------
+//
+// THE QUESTION.  apps/lib/griffin_cursor.h replaces m12's whole-frame chain as
+// the default.  Every visible line's group carries ONE VIDCMD descriptor of
+// four words, delivered one line early (line L's descriptor sits behind line
+// L-1's PIXELS; line 0's after the vblank pacers, behind /RS).  A line without
+// the cursor points at one shared blank record, FILLER x3 + RUN(pt, 640); the
+// sixteen cursor lines point at sixteen row records, gap RUN(pt, c) + MASK +
+// tail RUN(pt, 624 - c), with a FILLER standing in for an empty gap or tail.
+// A move is word stores into one list: gap/tail patches for x, descriptor
+// re-points for y.
+//
+// THE EXPECTATION, derived from the laws and NOT from this model's output:
+//
+//   P1  Each line's records sum to 640: c + 16 + (624 - c), or 16 + 624 with a
+//       leading filler at c = 0, or 624 + 16 with a trailing filler at
+//       c = 624, or 640 for the blank record.
+//   P2  A filler is a SET decoded nowhere.  Ahead of the line's first playback
+//       record it executes in blanking (compositor.v "BLANKING": a staged SET
+//       executes at pop); behind a MASK that ends on slot 639 it is captured on
+//       the pixel-15 edge and consumed at the next edge, which is blanking
+//       (consume_blank).  Zero slots either way.
+//   P3  RUN -> MASK and MASK -> RUN are zero-slot seams; a gap of 1..3 slots
+//       is the head of a banked pair (both words were fetched in blanking),
+//       so the MASK still lands on slot c.  Occupancy == the authored sum, no
+//       cadence holds, no starvation, no overruns.
+//   P4  Delivery one line early: line L's four words are deposited during
+//       line L-1, behind words that are consumed by the end of line L-1, so
+//       they are in the FIFO before L's pixel 0 with most of a line to spare.
+//   P5  A MASK is 16 slots with pixel 0 implicitly opaque cmp_color0, so a
+//       row whose first opaque column c exceeds 640 - 16 = 624 cannot be drawn
+//       inside its own line; the recipe leaves that line blank.  Rows past
+//       line 479 have no line.
+//
+//   Therefore pixel (X, Y) is the art's colour where the art is opaque at
+//   (X - x, Y - y) AND that art row starts at a column <= 624, and the
+//   playfield's palette colour everywhere else.  All 307,200 pixels compared,
+//   both frames, under both render drivers.
+//
+// The playfield, palette and preamble SETs are m12's.
+constexpr uint32_t PL_PREAMBLE_BASE = 0x320000;
+constexpr uint32_t PL_RECORDS_BASE  = 0x321000;
+constexpr uint32_t PL_STEP          = 0x000100;                           // per frame
+constexpr uint32_t PL_PIX_DESCRIPTORS =
+    (PIXELS_WORDS_4BPP_HALF + DESC_MAX_COUNT - 1) / DESC_MAX_COUNT;        // 3
+constexpr uint32_t PL_STRIDE_SHIFT  = 5;    // (3 PIXELS + 1 cursor) descriptors x 8 bytes
+static_assert((PL_PIX_DESCRIPTORS + 1) * DESC_BYTES == (1u << PL_STRIDE_SHIFT));
+static_assert(CC_FIXED_WORDS * 2 <= PL_STEP);
+static_assert(sizeof(GriffinCursor::Records) <= PL_STEP);
+static_assert(PL_RECORDS_BASE % alignof(GriffinCursor::Records) == 0);
+
+// Counts every word store the recipe makes, into the model RAM.
+struct PlStore
+{
+    Memory   ram;
+    uint32_t stores = 0;
+
+    void operator()(uint32_t address, uint16_t word)
+    {
+        ram[address] = word;
+        stores++;
+    }
+};
+
+enum class PlDelivery : uint8_t
+{
+    K1,         // the recipe: line L's descriptor behind line L-1's PIXELS
+    K0,         // NEGATIVE CONTROL: behind line L's own PIXELS
+    NONE,       // no cursor descriptors at all (bus measurement only)
+};
+
+struct PlList
+{
+    GriffinCursor::Layout layout;
+    uint32_t              descriptors = 0;
+};
+
+// One frame's preamble and list, the cursor placed at (x, y).
+PlList pl_author(Memory ram, uint32_t table, uint32_t f, uint32_t x, uint32_t y,
+                 PlDelivery delivery = PlDelivery::K1)
+{
+    const uint32_t preamble = PL_PREAMBLE_BASE + f * PL_STEP;
+    uint32_t       n        = 0;
+    for (uint32_t i = 0; i < PALETTE_ENTRIES; i++)
+    {
+        for (uint16_t w : vidcmd_palette_entry(i, cc_palette(i)))
+        {
+            ram[preamble + (n++) * 2] = w;
+        }
+    }
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_PIX_BASE, 0);
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_PIX_MODE, pixel_mode(PIXEL_DEPTH_4BPP, true));
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_CMP_COLOR0, CC_OUTLINE);
+    ram[preamble + (n++) * 2] = vidcmd_set(SET_CMP_COLOR1, CC_FILL);
+
+    PlList out;
+    out.layout.records      = PL_RECORDS_BASE + f * PL_STEP;
+    out.layout.stride_shift = PL_STRIDE_SHIFT;
+
+    // Placeholders: place() writes every cursor descriptor whole.
+    Descriptor cursor;
+    cursor.count       = static_cast<uint16_t>(GriffinCursor::RECORD_WORDS);
+    cursor.destination = DEST_VIDCMD_FIFO_W;
+    cursor.src         = out.layout.records;
+
+    CcEmitter e{ram, table, 0};
+    for (uint32_t i = 0; i < CC_PACERS_BEFORE_PREAMBLE; i++)
+    {
+        e.pacer(false);
+    }
+    e.stream(preamble, CC_FIXED_WORDS, DEST_VIDCMD_FIFO_W, false);
+    for (uint32_t i = 0; i < CC_PACERS_AFTER_PREAMBLE; i++)
+    {
+        e.pacer(false);
+    }
+    if (delivery == PlDelivery::K1)
+    {
+        out.layout.line0_desc = e.at;       // line 0's, after the last vblank pacer
+        e.emit(cursor);
+    }
+    for (uint32_t line = 0; line < V_ACTIVE; line++)
+    {
+        e.stream(CC_FB_BASE + (line / 2) * CC_FB_STRIDE, PIXELS_WORDS_4BPP_HALF,
+                 DEST_PIXELS_FIFO_W, true);
+        if (delivery == PlDelivery::K1 && line + 1 < V_ACTIVE)
+        {
+            e.emit(cursor);                 // line + 1's
+        }
+        else if (delivery == PlDelivery::K0)
+        {
+            if (line == 0)
+            {
+                out.layout.line0_desc = e.at;
+            }
+            e.emit(cursor);                 // this line's own, too late
+        }
+    }
+    e.pacer(true);
+    out.descriptors = e.count;
+
+    if (delivery != PlDelivery::NONE)
+    {
+        PlStore st{ram, 0};
+        GriffinCursor::place(st, out.layout, GriffinCursor::ARROW, x, y);
+    }
+    return out;
+}
+
+// The art row's first opaque column, straight off the strings (COLUMNS if none).
+uint32_t pl_first_opaque(uint32_t r)
+{
+    for (uint32_t c = 0; c < GriffinCursor::COLUMNS; c++)
+    {
+        if (GriffinCursor::ARROW_ART[r][c] != ' ')
+        {
+            return c;
+        }
+    }
+    return GriffinCursor::COLUMNS;
+}
+
+Rgb444 pl_expected(uint32_t px, uint32_t py, uint32_t x, uint32_t y)
+{
+    if (px >= x && py >= y && py - y < GriffinCursor::ROWS)
+    {
+        const uint32_t r   = py - y;
+        const uint32_t off = pl_first_opaque(r);
+        if (off < GriffinCursor::COLUMNS && x + off <= H_ACTIVE - MASK_SLOTS)      // P5
+        {
+            const unsigned a = GriffinCursor::art_pixel(GriffinCursor::ARROW_ART, px - x, r);
+            if (a == 1)
+            {
+                return CC_OUTLINE;
+            }
+            if (a == 2)
+            {
+                return CC_FILL;
+            }
+        }
+    }
+    return cc_palette(cc_fb_nibble(px / 2, py / 2));
+}
+
+uint32_t pl_mismatches(const FrameImage &img, uint32_t x, uint32_t y)
+{
+    uint32_t bad = 0;
+    for (uint32_t py = 0; py < V_ACTIVE; py++)
+    {
+        for (uint32_t px = 0; px < H_ACTIVE; px++)
+        {
+            bad += (at(img, px, py) != pl_expected(px, py, x, y)) ? 1u : 0u;
+        }
+    }
+    return bad;
+}
+
+// Rows of the arrow drawn at (x, y), by P5: the MASK records one frame plays.
+uint32_t pl_rows_drawn(uint32_t x, uint32_t y)
+{
+    uint32_t n = 0;
+    for (uint32_t r = 0; r < GriffinCursor::ROWS; r++)
+    {
+        const uint32_t off = pl_first_opaque(r);
+        n += (off < GriffinCursor::COLUMNS && x + off <= H_ACTIVE - MASK_SLOTS &&
+              y + r < V_ACTIVE) ? 1u : 0u;
+    }
+    return n;
+}
+
+struct PlRun
+{
+    RenderResult    r;
+    InterpretResult interp;
+    int64_t         min_margin = INT64_MAX;   // SYSCLK: line pixel 0 - its last cursor word
+    uint32_t        late_lines = 0;           // lines whose words arrived after their pixel 0
+};
+
+// Interpret and render whatever the two tables hold now.  The cursor's VIDCMD
+// words are, per list, CC_FIXED_WORDS of preamble and then four per line in
+// line order, so a word index names its line.
+PlRun pl_render(Memory ram, bool line_at_a_time, bool measure_margin)
+{
+    PlRun          out;
+    InterpretParams ip;
+    ip.start_cycle          = first_arm_cycle();
+    ip.end_cycle            = run_end_cycle();
+    ip.rearm_latency_cycles = REARM_LATENCY_CYCLES;
+    ip.arm_addresses        = {TABLE_A, TABLE_B};
+    out.interp = interpret(ram, ip);
+
+    RenderParams rp;
+    rp.first_frame = RENDER_FIRST_FRAME;
+    rp.frame_count = RENDER_FRAMES;
+    out.r = line_at_a_time ? render_line_at_a_time(out.interp.events, rp)
+                           : render(out.interp.events, rp);
+
+    if (measure_margin)
+    {
+        std::vector<uint64_t> cycles;
+        for (const DepositEvent &ev : out.interp.events)
+        {
+            if (ev.destination == DEST_VIDCMD_FIFO_W)
+            {
+                cycles.push_back(ev.cycle);
+            }
+        }
+        const uint32_t per_list = CC_FIXED_WORDS + V_ACTIVE * GriffinCursor::RECORD_WORDS;
+        for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+        {
+            for (uint32_t y = 0; y < V_ACTIVE; y++)
+            {
+                const size_t last = f * per_list + CC_FIXED_WORDS +
+                                    (y + 1) * GriffinCursor::RECORD_WORDS - 1;
+                if (last >= cycles.size())
+                {
+                    out.late_lines++;
+                    continue;
+                }
+                const uint64_t line = static_cast<uint64_t>(RENDER_FIRST_FRAME + f) * V_TOTAL + y;
+                const int64_t  m    = static_cast<int64_t>(sysclk_of_pixel(line * H_TOTAL)) -
+                                      static_cast<int64_t>(cycles[last]);
+                out.min_margin = (m < out.min_margin) ? m : out.min_margin;
+                out.late_lines += (m < 0) ? 1u : 0u;
+            }
+        }
+    }
+    return out;
+}
+
+struct PlPosition
+{
+    uint32_t    x;
+    uint32_t    y;
+    const char *why;
+};
+
+void pl_check_clean(const PlRun &run, const char *what, uint32_t rows_drawn)
+{
+    const RenderStats &s = run.r.stats;
+    CHECK(run.interp.violations.empty(), "m15 %s: %zu interpreter violations", what,
+          run.interp.violations.size());
+    CHECK(s.vidcmd_overflows == 0 && s.pixels_overflows == 0, "m15 %s: a FIFO overflowed", what);
+    CHECK(s.pixels_tiled_words == 0, "m15 %s: PIXEL tiled %u words", what, s.pixels_tiled_words);
+    CHECK(s.vidcmd_overruns == 0, "m15 %s: %u overruns, derived 0 (P1-P3)", what,
+          s.vidcmd_overruns);
+    CHECK(s.vidcmd_hold_slots == 0, "m15 %s: %u starvation holds, derived 0 (P4)", what,
+          s.vidcmd_hold_slots);
+    CHECK(s.vidcmd_cadence_slots == 0, "m15 %s: %u cadence holds, derived 0 (P3)", what,
+          s.vidcmd_cadence_slots);
+    CHECK(s.vidcmd_mask_stalls == 0, "m15 %s: %u mask stalls", what, s.vidcmd_mask_stalls);
+    CHECK(s.vidcmd_mask_records == rows_drawn, "m15 %s: %u MASK records played, derived %u",
+          what, s.vidcmd_mask_records, rows_drawn);
+    CHECK(s.palette_unwritten_reads == 0 && s.palette_bad_filler == 0 &&
+          s.palette_disturbed_visible == 0, "m15 %s: palette rule broken", what);
+}
+
+// Is the moved list the same, word for word where it matters, as one placed
+// fresh at the destination?  Descriptor sources for all 480 lines, and the
+// gap/tail of every row that fits.
+uint32_t pl_state_diff(Memory ram, const GriffinCursor::Layout &l, uint32_t x, uint32_t y)
+{
+    uint32_t diff = 0;
+    for (uint32_t line = 0; line < V_ACTIVE; line++)
+    {
+        uint32_t want = l.records + GriffinCursor::BLANK_OFFSET;
+        if (line >= y && line - y < GriffinCursor::ROWS &&
+            GriffinCursor::row_shown(GriffinCursor::ARROW, line - y, x, y))
+        {
+            want = l.records + GriffinCursor::row_offset(line - y);
+        }
+        diff += (ram[GriffinCursor::descriptor_address(l, line) + 4] ==
+                 GriffinCursor::source_low(want)) ? 0u : 1u;
+    }
+    for (uint32_t r = 0; r < GriffinCursor::ROWS; r++)
+    {
+        if (GriffinCursor::row_fits(GriffinCursor::ARROW, r, x))
+        {
+            const uint32_t row = l.records + GriffinCursor::row_offset(r);
+            const uint32_t c   = x + GriffinCursor::ARROW.rows[r].offset;
+            diff += (ram[row] == GriffinCursor::gap_word(c)) ? 0u : 1u;
+            diff += (ram[row + 6] == GriffinCursor::tail_word(c)) ? 0u : 1u;
+        }
+    }
+    return diff;
+}
+
+void run_cursor_per_line_case(Memory ram)
+{
+    printf("\n=== m15-cursor-per-line — the default cursor: one fixed 4-word VIDCMD record per "
+           "line, delivered one line early, over m12's 4bpp half-rate playfield ===\n");
+    cc_write_framebuffer(ram);
+
+    // Every row record and the blank record sum to 640 (P1), checked on the
+    // words themselves with the planner's slot costs, at every column.
+    {
+        uint32_t bad = 0;
+        uint32_t blank = 0;
+        for (uint16_t w : GriffinCursor::BLANK_RECORD)
+        {
+            blank += (vidcmd_type_of(w) == VidcmdType::SET) ? 0u : vidcmd_record_slots(w);
+        }
+        for (uint32_t c = 0; c <= GriffinCursor::X_FIT_MAX; c++)
+        {
+            const uint16_t g = GriffinCursor::gap_word(c);
+            const uint16_t t = GriffinCursor::tail_word(c);
+            const uint32_t sum = ((vidcmd_type_of(g) == VidcmdType::SET) ? 0u : vidcmd_record_slots(g)) +
+                                 MASK_SLOTS +
+                                 ((vidcmd_type_of(t) == VidcmdType::SET) ? 0u : vidcmd_record_slots(t));
+            bad += (sum == H_ACTIVE) ? 0u : 1u;
+        }
+        printf("  records           blank sums to %u; row records at c = 0..%u: %u not 640 "
+               "(fillers counted as 0, P2)\n", blank, GriffinCursor::X_FIT_MAX, bad);
+        CHECK(blank == H_ACTIVE && bad == 0, "m15: a record does not sum to 640 slots");
+    }
+
+    // --- static positions -------------------------------------------------
+    const PlPosition positions[] = {
+        {0, 0, "x = 0: the gap is a FILLER ahead of the MASK, first line of the frame"},
+        {1, 1, "x = 1: a one-slot gap, banked pair with the MASK header"},
+        {2, 240, "x = 2"},
+        {3, 464, "x = 3; y = 464: row 15 is line 479, the last line"},
+        {319, 465, "mid x; y = 465: row 15 would be line 480, not pointed at"},
+        {623, 479, "x = 623, tail one slot; y = 479: one row on the last line"},
+        {624, 0, "x = 624: the tail is a FILLER behind a MASK ending on slot 639"},
+        {625, 240, "x = 625: no row fits, the cursor is not drawn (P5)"},
+        {638, 464, "x = 638 (P5)"},
+        {639, 479, "x = 639 (P5)"},
+        {619, 1, "x = 619: the last x at which row 15 (offset 5) fits"},
+        {620, 100, "x = 620: row 15 no longer fits, rows 0..14 do"},
+    };
+    const uint32_t count = sizeof(positions) / sizeof(positions[0]);
+    static_assert(sizeof(positions) / sizeof(positions[0]) % 2 == 0);
+
+    uint32_t descriptors     = 0;
+    uint32_t fifo_high       = 0;
+    int64_t  min_margin      = INT64_MAX;
+    uint32_t line_driver_bad = 0;
+    for (uint32_t i = 0; i < count; i += 2)
+    {
+        descriptors = pl_author(ram, TABLE_A, 0, positions[i].x, positions[i].y).descriptors;
+        (void)pl_author(ram, TABLE_B, 1, positions[i + 1].x, positions[i + 1].y);
+        const PlRun run = pl_render(ram, false, true);
+        for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+        {
+            const PlPosition &p   = positions[i + f];
+            const uint32_t    bad = pl_mismatches(run.r.frames[f], p.x, p.y);
+            printf("  (%3u,%3u)  %6u of %u pixels wrong   %s\n", p.x, p.y, bad,
+                   H_ACTIVE * V_ACTIVE, p.why);
+            CHECK(bad == 0, "m15-cursor-per-line: cursor at (%u,%u): %u pixels differ from the "
+                  "hand-derived frame", p.x, p.y, bad);
+        }
+        pl_check_clean(run, "static", pl_rows_drawn(positions[i].x, positions[i].y) +
+                                      pl_rows_drawn(positions[i + 1].x, positions[i + 1].y));
+        CHECK(run.late_lines == 0, "m15: %u lines' cursor words arrived after their pixel 0",
+              run.late_lines);
+        min_margin = (run.min_margin < min_margin) ? run.min_margin : min_margin;
+        fifo_high  = (run.r.stats.vidcmd_fifo_high > fifo_high) ? run.r.stats.vidcmd_fifo_high
+                                                                : fifo_high;
+
+        const PlRun e = pl_render(ram, true, false);
+        for (uint32_t f = 0; f < RENDER_FRAMES; f++)
+        {
+            const uint32_t bad = pl_mismatches(e.r.frames[f], positions[i + f].x, positions[i + f].y);
+            CHECK(bad == 0, "m15: emulator driver, cursor at (%u,%u): %u pixels wrong",
+                  positions[i + f].x, positions[i + f].y, bad);
+            line_driver_bad += bad;
+        }
+        if (i == 0)
+        {
+            write_ppm("m15-cursor-per-line.ppm", run.r.frames[1]);
+        }
+    }
+    printf("  emulator driver   %u pixels wrong across all %u positions "
+           "(render_line_at_a_time)\n", line_driver_bad, count);
+    printf("  list              %u descriptors, %u bytes of a %u-byte half\n", descriptors,
+           descriptors * DESC_BYTES, TABLE_HALF_BYTES);
+    printf("  delivery          worst line: last cursor word %lld SYSCLK before its pixel 0 "
+           "(derived 315..316, line = %llu); VIDCMD FIFO high water %u of %u\n",
+           static_cast<long long>(min_margin), static_cast<unsigned long long>(LINE_SYSCLK),
+           fifo_high, VIDCMD_FIFO_WORDS);
+    CHECK(descriptors * DESC_BYTES <= TABLE_HALF_BYTES, "m15: the list overflows a table half");
+    // P4 in SYSCLK.  Line L's words are the last descriptor of group L-1,
+    // whose HBLANK edge is H_BLANK + H_TOTAL = 960 pixel clocks before line L's
+    // pixel 0, floor(960 * 560 / 1007) = 533 SYSCLK.  The group spends 2
+    // (HBLANK sync) + 70 (the waiting PIXELS descriptor's payload half:
+    // 4 + 1 + 64 + 1) + 78 + 46 (the other two PIXELS descriptors) + 22 (this
+    // one) = 218, so the worst line has 533 - 218 = 315..316 SYSCLK to spare,
+    // depending on where the line falls in the 560/1007 ratio.
+    CHECK(min_margin >= 315 && min_margin <= 316,
+          "m15: worst delivery margin %lld SYSCLK, derived 315..316", min_margin);
+    printf("  artifact          m15-cursor-per-line.ppm\n");
+
+    // --- ENGINE cost, measured: the same lists without the cursor ----------
+    {
+        (void)pl_author(ram, TABLE_A, 0, 300, 200);
+        (void)pl_author(ram, TABLE_B, 1, 300, 200);
+        const uint64_t with = pl_render(ram, false, false).interp.busy_cycles;
+        (void)pl_author(ram, TABLE_A, 0, 300, 200, PlDelivery::NONE);
+        (void)pl_author(ram, TABLE_B, 1, 300, 200, PlDelivery::NONE);
+        const uint64_t without = pl_render(ram, false, false).interp.busy_cycles;
+        const uint64_t per_field = (with - without) / RENDER_FRAMES;
+        const uint64_t derived =
+            V_ACTIVE * engine_descriptor_cycles(ENGINE_ARBITRATION_CYCLES, GriffinCursor::RECORD_WORDS);
+        const uint64_t field = static_cast<uint64_t>(LINE_SYSCLK) * V_TOTAL;
+        printf("  ENGINE cost       %llu SYSCLK/field for the cursor descriptors (derived %llu = "
+               "480 x 22), %.2f%% of a %llu-SYSCLK field\n",
+               static_cast<unsigned long long>(per_field), static_cast<unsigned long long>(derived),
+               100.0 * static_cast<double>(per_field) / static_cast<double>(field),
+               static_cast<unsigned long long>(field));
+        CHECK(per_field == derived, "m15: cursor costs %llu SYSCLK a field, derived %llu",
+              static_cast<unsigned long long>(per_field), static_cast<unsigned long long>(derived));
+    }
+
+    // --- moves ---------------------------------------------------------------
+    //
+    // List A stays put at (100, 50); list B is placed once and then only
+    // MOVED, each step from where that list last had the cursor, and rendered
+    // after every step.  Budgets: x-only <= 3 stores per row (48), y-only <= 32
+    // re-points and no record edits.
+    struct PlMove
+    {
+        uint32_t    x;
+        uint32_t    y;
+        const char *kind;
+        uint32_t    budget;
+    };
+    const PlMove moves[] = {
+        {301, 200, "x-only +1", 48},
+        {621, 200, "x-only across row 15's fit limit", 48},
+        {621, 207, "y-only +7, old and new lines overlap", 32},
+        {621, 190, "y-only -17, disjoint", 32},
+        {3, 470, "diagonal, rows 10..15 below the screen", 64},
+        {630, 470, "x-only past 624: the cursor goes", 48},
+        {0, 0, "diagonal back to the origin", 64},
+        {0, 464, "y-only to the bottom", 32},
+    };
+    {
+        const PlList la = pl_author(ram, TABLE_A, 0, 100, 50);
+        const PlList lb = pl_author(ram, TABLE_B, 1, 300, 200);
+        (void)la;
+        uint32_t cx = 300;
+        uint32_t cy = 200;
+        for (const PlMove &m : moves)
+        {
+            PlStore st{ram, 0};
+            GriffinCursor::move(st, lb.layout, GriffinCursor::ARROW, cx, cy, m.x, m.y);
+            const uint32_t state = pl_state_diff(ram, lb.layout, m.x, m.y);
+            const PlRun    run   = pl_render(ram, false, false);
+            const uint32_t bad_a = pl_mismatches(run.r.frames[0], 100, 50);
+            const uint32_t bad_b = pl_mismatches(run.r.frames[1], m.x, m.y);
+            printf("  move (%3u,%3u) -> (%3u,%3u)  %2u stores (budget %2u)  %u pixels wrong   %s\n",
+                   cx, cy, m.x, m.y, st.stores, m.budget, bad_b, m.kind);
+            CHECK(bad_b == 0 && bad_a == 0, "m15 move to (%u,%u): %u + %u pixels wrong", m.x, m.y,
+                  bad_a, bad_b);
+            CHECK(st.stores <= m.budget, "m15 move to (%u,%u): %u stores, budget %u", m.x, m.y,
+                  st.stores, m.budget);
+            CHECK(state == 0, "m15 move to (%u,%u): %u words differ from a fresh place()", m.x,
+                  m.y, state);
+            pl_check_clean(run, m.kind, pl_rows_drawn(100, 50) + pl_rows_drawn(m.x, m.y));
+            cx = m.x;
+            cy = m.y;
+        }
+    }
+
+    // --- NEGATIVE CONTROLS ---------------------------------------------------
+    // Each must FAIL the comparison, or the comparison proves nothing.
+    {
+        // A one-slot slip of the whole cursor.
+        (void)pl_author(ram, TABLE_A, 0, 320, 240);
+        (void)pl_author(ram, TABLE_B, 1, 319, 241);
+        const PlRun run = pl_render(ram, false, false);
+        const uint32_t bad_x = pl_mismatches(run.r.frames[0], 319, 240);
+        const uint32_t bad_y = pl_mismatches(run.r.frames[1], 319, 240);
+        printf("  NEGATIVE CONTROL  cursor one slot right: %u pixels wrong   one line down: %u\n",
+               bad_x, bad_y);
+        CHECK(bad_x != 0 && bad_y != 0, "m15: a one-slot or one-line slip went undetected");
+    }
+    {
+        // Row 3's tail one short (639) and, in the other list, one long (641).
+        const PlList a = pl_author(ram, TABLE_A, 0, 319, 240);
+        const PlList b = pl_author(ram, TABLE_B, 1, 319, 240);
+        const uint32_t c = 319 + GriffinCursor::ARROW.rows[3].offset;
+        ram[a.layout.records + GriffinCursor::row_offset(3) + 6] =
+            vidcmd_run(RUN_SRC_PASSTHROUGH, GriffinCursor::X_FIT_MAX - c - 1);
+        ram[b.layout.records + GriffinCursor::row_offset(3) + 6] =
+            vidcmd_run(RUN_SRC_PASSTHROUGH, GriffinCursor::X_FIT_MAX - c + 1);
+        const PlRun run = pl_render(ram, false, false);
+        const uint32_t bad639 = pl_mismatches(run.r.frames[0], 319, 240);
+        const uint32_t bad641 = pl_mismatches(run.r.frames[1], 319, 240);
+        printf("  NEGATIVE CONTROL  one row record summing to 639: %u pixels wrong   to 641: %u "
+               "(overruns %u)\n", bad639, bad641, run.r.stats.vidcmd_overruns);
+        CHECK(bad639 != 0, "m15: a 639-slot row record went undetected");
+        CHECK(bad641 != 0, "m15: a 641-slot row record went undetected");
+    }
+    {
+        // A y move that forgets to return one old line to the blank record.
+        (void)pl_author(ram, TABLE_A, 0, 100, 50);
+        const PlList b = pl_author(ram, TABLE_B, 1, 319, 240);
+        PlStore st{ram, 0};
+        GriffinCursor::move(st, b.layout, GriffinCursor::ARROW, 319, 240, 319, 260);
+        ram[GriffinCursor::descriptor_address(b.layout, 245) + 4] =
+            GriffinCursor::source_low(b.layout.records + GriffinCursor::row_offset(5));
+        const PlRun run = pl_render(ram, false, false);
+        const uint32_t bad = pl_mismatches(run.r.frames[1], 319, 260);
+        printf("  NEGATIVE CONTROL  stale descriptor after a y move (line 245 still row 5): %u "
+               "pixels wrong\n", bad);
+        CHECK(bad != 0, "m15: a stale descriptor after a y move went undetected");
+    }
+    {
+        // Delivered in the line's OWN group, behind its PIXELS: too late.
+        (void)pl_author(ram, TABLE_A, 0, 319, 240, PlDelivery::K0);
+        (void)pl_author(ram, TABLE_B, 1, 0, 0, PlDelivery::K0);
+        const PlRun run = pl_render(ram, false, false);
+        const uint32_t bad_a = pl_mismatches(run.r.frames[0], 319, 240);
+        const uint32_t bad_b = pl_mismatches(run.r.frames[1], 0, 0);
+        printf("  NEGATIVE CONTROL  each line's record behind its own PIXELS (k = 0): %u and %u "
+               "pixels wrong, %u starvation holds\n", bad_a, bad_b, run.r.stats.vidcmd_hold_slots);
+        CHECK(bad_a != 0 && bad_b != 0, "m15: k = 0 delivery went undetected");
     }
 }
 
@@ -7901,8 +8466,11 @@ int main()
            H_ACTIVE / 2, PIXELS_WORDS_1BPP_HALF, PIXELS_WORDS_2BPP_HALF,
            PIXELS_WORDS_ATTR_HALF, PIXELS_WORDS_4BPP_HALF, H_ACTIVE, H_ACTIVE / 2);
 
-    // --- M12: the whole-frame cursor chain (apps/lib/griffin_cursor.h) --------
+    // --- M12: the whole-frame cursor chain (apps/lib/griffin_cursor_chain.h) --
     run_cursor_chain_case(ram);
+
+    // --- M15: the default per-line cursor (apps/lib/griffin_cursor.h) -------
+    run_cursor_per_line_case(ram);
 
     // --- M13: literal pixels out of SET(cmp_color1) streams (SET-STREAM.md) --
     check_set_stream_traces();

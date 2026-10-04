@@ -2619,3 +2619,61 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   with audio at 0 drops.  The port still uses 2,005 descriptors a table --
   its doubled backdrop rows and copied two-object lines were forced by the
   old limit and can now be undone.
+
+2026-10-03 -- Cursor: the per-line recipe becomes the default (decision from the design review; implemented)
+  apps/lib/griffin_cursor.h is now the per-line recipe; the whole-frame
+  chain moved unchanged in behaviour to apps/lib/griffin_cursor_chain.h
+  (namespace GriffinCursorChain, art shared) as the advanced recipe.
+  Shape: every visible line's group carries ONE VIDCMD descriptor of four
+  words for the NEXT line (line 0's after the vblank pacers, behind /RS).
+  Non-cursor lines point at one shared blank record FILLER x3 +
+  RUN(pt, 640); the sixteen cursor lines at row records gap RUN(pt, c) +
+  MASK (2 words) + tail RUN(pt, 624 - c), c = x + the row's first opaque
+  column, a FILLER standing in for an empty gap (c = 0) or tail (c = 624).
+  Every line is 640 slots on its own.  The descriptors are evenly spaced
+  (1 << stride_shift bytes) so move() finds line L's by a shift.
+  Paper count, before building: ENGINE 480 x (14 + 2 x 4) = 10,560 SYSCLK a
+  field, 4.52 % of 233,625 (the bound, at W = 4 on every line); x move
+  <= 3 stores a row (gap, tail, one re-point) <= 48; y move <= 32 re-points,
+  no record edits (fit depends on x only); move path adds and one shift.
+  Measured (super-engine m15-cursor-per-line): ENGINE 10,560 SYSCLK a field
+  for the cursor descriptors (with-minus-without, = derived); worst line's
+  last cursor word 316 SYSCLK before its pixel 0 (derived 533 - 218 =
+  315..316); VIDCMD FIFO high water 5; list 1,967 descriptors (15,736 bytes
+  a half); 0 overruns, 0 starvation, 0 cadence holds, 0 mask stalls; moves
+  measured 32 (x+1), 31 (x across row 15's fit), 22 and 30 (y overlap /
+  disjoint), 10 (x past 624), 32 (y to the bottom), 57 and 48 (diagonals)
+  stores.  Pixel-exact at x 0,1,2,3,319,619,620,623,624,625,638,639 and
+  y 0,1,100,240,464,465,479 under both render drivers; negative controls
+  that fail: one slot / one line slip (68 / 46 px), a row record of 639 or
+  641 slots (56 px each), a stale descriptor after a y move (6 px, row 5's
+  opaque count), k = 0 delivery (46 / 188 px, 440 starvation holds).
+  Derivation and model agreed everywhere; nothing was tuned.
+  FINDING -- the right edge cannot be exact per line.  A MASK is always 16
+  slots and its pixel 0 is always opaque cmp_color0, so a row whose first
+  opaque pixel is right of column 624 cannot be drawn inside its own line:
+  shortening is impossible, a fixed start at 624 with shifted dibits paints
+  cmp_color0 on a transparent pixel (one wrong pixel per row), colour RUNs
+  cannot follow 1-px detail past the banked pair (the third record pays a
+  cadence slot), and running past 640 couples the line to the next.  The
+  recipe leaves such a row off (exact, never a wrong pixel); for the arrow
+  the whole cursor goes at x > 624 and its offset-5 bottom row at x > 619.
+  The chain recipe still clips exactly, because there a record may run on.
+  Rejected: the shifted-dibit edge (wrong pixel), per-line overrun with a
+  compensating next line (the thing this recipe exists to avoid), a 1-word
+  blank record (16 instead of 22 SYSCLK a line, 7,776 a field, but a
+  re-point would then also rewrite the count: 4 stores for a row coming
+  back into fit, over the 3-store budget, and two descriptor shapes).
+  Tearing: gap and tail are separate stores, and a line ENGINE delivers
+  between them is 639 or 641 slots and shifts every later line, so lists
+  stay double-buffered, each with its own Records; single-buffering was
+  not adopted (mandelbrot notices vsync only between arithmetic chunks).
+  apps/mandelbrot: per-line cursor, hot spot clamped to x <= 624; preamble
+  402 -> 52 words; 1,957 descriptors a list.  host_ref follows (clamp and
+  row rule).  Emulator, headless, compare-progress against host_ref,
+  0 pixels differ at cursor (320,240), (624,240), (619,240), (624,479),
+  (0,0), (620,440) (one move after another, so move() between lists ran on
+  the target) and after a zoom click at (619,240).  check-dma-stall: C1
+  76.1 %, C2 55.9 %, PASS.  NOTE for scripted runs: --mouse-in moves at
+  time 0 were lost (probably before the firmware enables reporting; not
+  traced); a leading delay 12000 makes them land.

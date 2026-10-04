@@ -15,17 +15,21 @@
 //     descriptors at the same eighty words.  The display list is built once
 //     and never changes.
 //   * A 640x480 arrow cursor that is NOT in the framebuffer.  It is a
-//     COMPOSITOR MASK overlay delivered as one record chain, part in vertical
-//     blanking and part from line 184 (apps/lib/griffin_cursor.h), in
-//     COMPOSITOR's own two colours,
-//     which bypass the palette.
+//     COMPOSITOR MASK overlay in COMPOSITOR's own two colours, which bypass
+//     the palette: every line's group carries one fixed four-word VIDCMD
+//     record for the NEXT line, the shared blank record or one of the
+//     cursor's sixteen row records (apps/lib/griffin_cursor.h, the per-line
+//     recipe).  The hot spot is clamped to x <= 624, the last column a
+//     sixteen-slot row record can start on; from x = 620 the arrow's bottom
+//     row (which starts five columns in) is not drawn.
 //   * Palette cycling: indices 1..15 are a closed colour loop that rotates
 //     under the picture by rewriting fifteen palette entries in the same
 //     preamble.  The framebuffer is not touched.
 //
-// So everything that moves -- the cursor and the colours -- lives in the
-// preamble's 402 words, and everything that is expensive -- the picture -- is
-// written exactly once per pixel.
+// So everything that moves -- the cursor and the colours -- is a few words of
+// VIDCMD payload (the preamble's 52, the cursor's records and descriptor
+// sources), and everything that is expensive -- the picture -- is written
+// exactly once per pixel.
 //
 // WHO ARMS THE DISPLAY LIST
 //
@@ -36,13 +40,20 @@
 // pacing model: its own level-6 handler re-arms ENGINE at every vsync and
 // counts the frame, and the mainline notices the count change at its leisure.
 //
-// THE PREAMBLE IS DOUBLE-BUFFERED, with a list per buffer.  The cursor chain's
-// part B is read in the middle of the frame (lines 184..188), so rewriting the
-// one buffer "just after vsync" would tear the cursor whenever it sits low on
-// the screen.  Instead the mainline only ever writes the buffer the handler did
-// NOT arm last (g_armed_word says which), then points g_desc_word at it; a
-// vsync that lands mid-rewrite re-arms the old, untouched list.  A change marks
-// both buffers stale, and each frame's service refreshes one of them.
+// THE LIST IS DOUBLE-BUFFERED: two lists, each with its own preamble, cursor
+// records and descriptors.  It has to be.  ENGINE reads the cursor's records
+// and descriptors all through the frame, and an x move is two separate stores
+// per row (gap and tail): a line delivered between them sums to 639 or 641
+// slots and shifts every line after it until the next vsync.  A single list
+// rewritten "just after vsync" is no answer either, because this program only
+// notices a vsync between chunks of arithmetic, at any line.  So the mainline
+// only ever writes the list the handler did NOT arm last (g_armed_word says
+// which), then points g_desc_word at it; a vsync that lands mid-rewrite re-arms
+// the old, untouched list.  service() runs at most once per vsync, so it can
+// never start on the list it has just handed over before that list is armed.
+// A change marks both lists stale, and each frame's service refreshes one;
+// each list remembers where it last had the cursor, so moving it is
+// griffin_cursor.h's word patches, not a rebuild.
 //
 // THE ARITHMETIC is mandel_ref.h (the definition) and mandel_iter.s (the
 // 68000 inner loop).  host_ref.cpp renders the same definition on the host and
@@ -97,39 +108,26 @@ static_assert(LINE_WORDS * 4 == WIDTH, "four 4-bit pixels per PIXELS word");
 constexpr unsigned VBLANK_WALK_LINES = 34;
 
 // ---------------------------------------------------------------------------
-// The preamble: every VIDCMD word the frame gets
+// The preamble: the frame's vblank VIDCMD words
 // ---------------------------------------------------------------------------
 //
 //     [0, 48)     sixteen palette entries, three words each
 //     48          SET pix_base 0
 //     49          SET pix_mode 4bpp half rate
 //     50, 51      SET cmp_color0 (cursor outline), SET cmp_color1 (cursor fill)
-//     [52, 402)   the cursor chain, end-padded with filler SETs
 //
-// Words [0, 244) — the SETs and the chain's part A — go out in vblank; the
-// chain's part B goes out in 32-word chunks appended to the line groups of
-// GriffinCursor::PART_B_FIRST_LINE onward (griffin_cursor.h derives why that
-// is early enough and why the FIFO never overflows).  /RS clears pix_mode and
-// pix_base at every vsync and nothing ever initialises the palette RAM, so all
-// of it goes out every frame regardless; cycling and cursor motion only change
-// which words.
+// It goes out in vblank, after /RS.  /RS clears pix_mode and pix_base at every
+// vsync and nothing ever initialises the palette RAM, so all of it goes out
+// every frame regardless; cycling only changes which words.  The cursor's own
+// words are per line: see build_table().
 
 constexpr unsigned PALETTE_WORDS  = se::PALETTE_ENTRIES * se::PALETTE_WORDS_PER_ENTRY;   // 48
 constexpr unsigned PRE_PIX_BASE   = PALETTE_WORDS;
 constexpr unsigned PRE_PIX_MODE   = PALETTE_WORDS + 1;
 constexpr unsigned PRE_COLOR0     = PALETTE_WORDS + 2;
 constexpr unsigned PRE_COLOR1     = PALETTE_WORDS + 3;
-constexpr unsigned PRE_CHAIN      = PALETTE_WORDS + 4;
-constexpr unsigned PREAMBLE_WORDS = PRE_CHAIN + GriffinCursor::CHAIN_WORDS;              // 402
-constexpr unsigned VBLANK_WORDS   = PRE_CHAIN + GriffinCursor::PART_A_WORDS;             // 244
-constexpr unsigned PART_B_START   = VBLANK_WORDS;
-
-static_assert(PREAMBLE_WORDS == 402);
-static_assert(VBLANK_WORDS == 244);
-// The chain's RUNs and MASKs wait in the FIFO for line 0; the SETs in front of
-// them are consumed in blanking as they arrive, but even if none were the
-// vblank deposit fits.
-static_assert(VBLANK_WORDS < se::VIDCMD_FIFO_WORDS);
+constexpr unsigned PREAMBLE_WORDS = PALETTE_WORDS + 4;                                   // 52
+static_assert(PREAMBLE_WORDS < se::VIDCMD_FIFO_WORDS);
 
 constexpr uint16_t PIX_MODE_WORD =
     se::vidcmd_set(se::SET_PIX_MODE, se::pixel_mode(se::PIXEL_DEPTH_4BPP, true));
@@ -137,23 +135,34 @@ constexpr se::Rgb444 CURSOR_OUTLINE = se::rgb444(0x0, 0x0, 0x0);
 constexpr se::Rgb444 CURSOR_FILL    = se::rgb444(0xF, 0xF, 0xF);
 
 constexpr unsigned PREAMBLE_DESCRIPTORS =
-    (VBLANK_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;                        // 8
+    (PREAMBLE_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;                      // 2
 constexpr unsigned LINE_DESCRIPTORS =
     (LINE_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;                          // 3
+// One cursor descriptor per line, so line L's is (LINE_DESCRIPTORS + 1)
+// descriptors after line L-1's: 32 bytes.
+constexpr unsigned CURSOR_STRIDE_SHIFT = 5;
+static_assert((LINE_DESCRIPTORS + 1) * se::DESC_BYTES == (1u << CURSOR_STRIDE_SHIFT));
 constexpr unsigned TABLE_DESCRIPTORS =
-    PREAMBLE_DESCRIPTORS + VBLANK_WALK_LINES + LINES * LINE_DESCRIPTORS +
-    GriffinCursor::PART_B_LINES + 1;                                                     // 1488
-constexpr unsigned TABLE_BYTES = TABLE_DESCRIPTORS * se::DESC_BYTES;                    // 11904
+    PREAMBLE_DESCRIPTORS + VBLANK_WALK_LINES + LINES * (LINE_DESCRIPTORS + 1) + 1;     // 1957
+constexpr unsigned TABLE_BYTES = TABLE_DESCRIPTORS * se::DESC_BYTES;                    // 15656
 
-// Two lists, one per preamble buffer.
+// Two lists.
 static_assert(2 * TABLE_BYTES <= GRIFFIN_APP_DESC_BYTES);
+
+// The hot spot's range: past X_FIT_MAX no row record fits on its line.
+constexpr int CURSOR_X_MAX = static_cast<int>(GriffinCursor::X_FIT_MAX);                 // 624
+constexpr int CURSOR_Y_MAX = static_cast<int>(se::V_ACTIVE) - 1;
 
 // Payload storage.  Only the descriptor table has to live in the firmware's
 // carve; these are ordinary DMA sources in the app's own .bss.  Static, never
 // on the stack (firmware/rom.cpp's dl_build_gc4_list note).
 uint16_t g_framebuffer[HEIGHT][LINE_WORDS];
 uint16_t g_preamble[2][PREAMBLE_WORDS];
-uint16_t g_list_desc_word[2];           // the ENGINE_DESC value of each buffer's list
+GriffinCursor::Records g_cursor_records[2];
+GriffinCursor::Layout  g_cursor_layout[2];
+unsigned g_list_cursor_x[2];            // where each list last had the cursor
+unsigned g_list_cursor_y[2];
+uint16_t g_list_desc_word[2];           // the ENGINE_DESC value of each list
 
 // ---------------------------------------------------------------------------
 // The vsync handler
@@ -237,42 +246,48 @@ struct Builder
     }
 };
 
-unsigned build_table(uint32_t table_base, const uint16_t *preamble)
+// One list.  Line L's cursor descriptor rides one line early, behind line
+// L-1's PIXELS; line 0's is the last thing in vblank, after the pacers (and so
+// long after /RS).  They are written here as placeholders and filled in by
+// GriffinCursor::place(); returns where line 0's is.
+uint32_t build_table(uint32_t table_base, const uint16_t *preamble, uint32_t records)
 {
     Builder b;
     b.table = reinterpret_cast<uint16_t *>(table_base);
 
+    se::Descriptor cursor;
+    cursor.src         = records;
+    cursor.count       = static_cast<uint16_t>(GriffinCursor::RECORD_WORDS);
+    cursor.destination = se::DEST_VIDCMD_FIFO_W;
+
     // No wait: this runs the moment the handler arms, inside the vsync line.
-    b.stream(reinterpret_cast<uint32_t>(&preamble[0]), VBLANK_WORDS, se::DEST_VIDCMD_FIFO_W,
+    b.stream(reinterpret_cast<uint32_t>(&preamble[0]), PREAMBLE_WORDS, se::DEST_VIDCMD_FIFO_W,
              false);
     for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
     {
         b.pacer(false);
     }
+    const uint32_t line0 = table_base + b.count * se::DESC_BYTES;
+    b.emit(cursor);
     for (unsigned line = 0; line < LINES; line++)
     {
         b.stream(reinterpret_cast<uint32_t>(&g_framebuffer[line / 2][0]), LINE_WORDS,
                  se::DEST_PIXELS_FIFO_W, true);
-
-        // The cursor chain's part B, one chunk behind this line's pixels.
-        const unsigned j = line - GriffinCursor::PART_B_FIRST_LINE;
-        if (line >= GriffinCursor::PART_B_FIRST_LINE && j < GriffinCursor::PART_B_LINES)
+        if (line + 1 < LINES)
         {
-            b.stream(reinterpret_cast<uint32_t>(&preamble[PART_B_START + j * GriffinCursor::PART_B_CHUNK]),
-                     GriffinCursor::part_b_chunk_words(j), se::DEST_VIDCMD_FIFO_W, false);
+            b.emit(cursor);
         }
     }
     b.pacer(true);
-    return b.count;
+    return line0;
 }
 
 // ---------------------------------------------------------------------------
 // Preamble maintenance
 // ---------------------------------------------------------------------------
 
-// One buffer's whole preamble from the UI state: palette, the fixed SETs and
-// the cursor chain.
-void write_preamble(uint16_t *pre, unsigned palette, unsigned phase, unsigned x, unsigned y)
+// One list's whole preamble from the UI state: the palette and the fixed SETs.
+void write_preamble(uint16_t *pre, unsigned palette, unsigned phase)
 {
     for (unsigned i = 0; i < se::PALETTE_ENTRIES; i++)
     {
@@ -287,7 +302,16 @@ void write_preamble(uint16_t *pre, unsigned palette, unsigned phase, unsigned x,
     pre[PRE_PIX_MODE] = PIX_MODE_WORD;
     pre[PRE_COLOR0]   = se::vidcmd_set(se::SET_CMP_COLOR0, CURSOR_OUTLINE);
     pre[PRE_COLOR1]   = se::vidcmd_set(se::SET_CMP_COLOR1, CURSOR_FILL);
-    GriffinCursor::build_chain(&pre[PRE_CHAIN], GriffinCursor::ARROW, x, y);
+}
+
+// Bring list k's cursor from where it last was to the UI's position.
+void move_cursor(unsigned k, unsigned x, unsigned y)
+{
+    GriffinCursor::DirectStore st;
+    GriffinCursor::move(st, g_cursor_layout[k], GriffinCursor::ARROW, g_list_cursor_x[k],
+                        g_list_cursor_y[k], x, y);
+    g_list_cursor_x[k] = x;
+    g_list_cursor_y[k] = y;
 }
 
 // ---------------------------------------------------------------------------
@@ -430,8 +454,8 @@ Action service()
         const int dy = static_cast<int>(g_ui.last_report.y - now.y);     // PS/2 Y is up
         if (dx != 0 || dy != 0)
         {
-            g_ui.cursor_x = clamp(g_ui.cursor_x + dx, 0, static_cast<int>(se::H_ACTIVE) - 1);
-            g_ui.cursor_y = clamp(g_ui.cursor_y + dy, 0, static_cast<int>(se::V_ACTIVE) - 1);
+            g_ui.cursor_x = clamp(g_ui.cursor_x + dx, 0, CURSOR_X_MAX);
+            g_ui.cursor_y = clamp(g_ui.cursor_y + dy, 0, CURSOR_Y_MAX);
             g_ui.stale = 2;
         }
 
@@ -470,13 +494,14 @@ Action service()
         }
     }
 
-    // Refresh the buffer whose list is NOT playing and arm it for the next
-    // vsync.  A vsync that lands while this runs re-arms the playing list.
+    // Refresh the list that is NOT playing and arm it for the next vsync.  A
+    // vsync that lands while this runs re-arms the playing list.
     if (g_ui.stale > 0)
     {
         const unsigned idle = (g_armed_word == g_list_desc_word[0]) ? 1u : 0u;
-        write_preamble(g_preamble[idle], g_ui.palette, g_ui.phase,
-                       static_cast<unsigned>(g_ui.cursor_x), static_cast<unsigned>(g_ui.cursor_y));
+        write_preamble(g_preamble[idle], g_ui.palette, g_ui.phase);
+        move_cursor(idle, static_cast<unsigned>(g_ui.cursor_x),
+                    static_cast<unsigned>(g_ui.cursor_y));
         g_desc_word = g_list_desc_word[idle];
         g_ui.stale--;
     }
@@ -698,15 +723,22 @@ int main(int argc, char **argv)
     // mouse has reported since boot, so the emulator's pointer is already on
     // it, and on hardware nothing worse than a cursor not quite centred.
     g_ui.cursor_x = clamp(static_cast<int>(se::H_ACTIVE / 2) + static_cast<int>(report.x), 0,
-                          static_cast<int>(se::H_ACTIVE) - 1);
+                          CURSOR_X_MAX);
     g_ui.cursor_y = clamp(static_cast<int>(se::V_ACTIVE / 2) - static_cast<int>(report.y), 0,
-                          static_cast<int>(se::V_ACTIVE) - 1);
+                          CURSOR_Y_MAX);
     for (unsigned k = 0; k < 2; k++)
     {
-        const uint32_t table = info.desc_table_base + k * TABLE_BYTES;
-        write_preamble(g_preamble[k], g_ui.palette, g_ui.phase,
-                       static_cast<unsigned>(g_ui.cursor_x), static_cast<unsigned>(g_ui.cursor_y));
-        (void)build_table(table, g_preamble[k]);
+        const uint32_t table   = info.desc_table_base + k * TABLE_BYTES;
+        const uint32_t records = reinterpret_cast<uint32_t>(&g_cursor_records[k]);
+        write_preamble(g_preamble[k], g_ui.palette, g_ui.phase);
+        g_cursor_layout[k].records      = records;
+        g_cursor_layout[k].line0_desc   = build_table(table, g_preamble[k], records);
+        g_cursor_layout[k].stride_shift = CURSOR_STRIDE_SHIFT;
+        g_list_cursor_x[k] = static_cast<unsigned>(g_ui.cursor_x);
+        g_list_cursor_y[k] = static_cast<unsigned>(g_ui.cursor_y);
+        GriffinCursor::DirectStore st;
+        GriffinCursor::place(st, g_cursor_layout[k], GriffinCursor::ARROW, g_list_cursor_x[k],
+                             g_list_cursor_y[k]);
         g_list_desc_word[k] = static_cast<uint16_t>((table - se::DESC_TABLE_BASE) >> 1);
     }
 

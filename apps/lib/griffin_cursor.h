@@ -1,97 +1,77 @@
-// A mouse cursor as a COMPOSITOR overlay, for an app whose screen is otherwise
-// one static passthrough playfield.
+// A mouse cursor as a COMPOSITOR overlay: the PER-LINE recipe (the default).
 //
-// The cursor is NOT drawn into the framebuffer.  It is a short VIDCMD record
-// chain -- passthrough RUNs and MASK records (super-engine/descriptor.h, "MASK")
-// -- that COMPOSITOR plays over whatever PIXEL is producing.  That buys three
-// things a framebuffer cursor cannot have:
+// The cursor is NOT drawn into the framebuffer.  Each of the 480 visible lines
+// gets ONE VIDCMD descriptor of RECORD_WORDS words, and every line's words sum
+// to exactly 640 slots on their own:
 //
-//   * 640x480 placement over a 320-wide playfield;
-//   * colours that bypass the palette RAM (cmp_color0 / cmp_color1), so the
-//     cursor costs no palette index and does not move when the palette cycles;
-//   * no save-under: moving the cursor rewrites CHAIN_WORDS words and no pixels.
+//   a line without the cursor    the ONE shared blank record
+//                                    FILLER FILLER FILLER RUN(pt, 640)
+//   cursor row r (16 of them)    that row's own record
+//                                    gap  MASK-header  MASK-data  tail
+//                                gap  = RUN(pt, c)            (FILLER if c == 0)
+//                                tail = RUN(pt, 624 - c)      (FILLER if c == 624)
+//                                c    = x + the row's first opaque column
 //
-// THE CHAIN IS ONE WHOLE-FRAME RECORD STREAM.  COMPOSITOR counts
-// a record's duration in ACTIVE pixel slots only (playback is frozen while
-// H_ACTIVE is low), and there are exactly 640 slots per line, so the slot at
-// which raster position (x, y) is painted is simply
+// so no line relies on anything another line left behind (no hold framing, no
+// record running across a line end).  Moving in x patches the gap and tail
+// words of the row records; moving in y re-points line descriptors between the
+// blank record and the row records.  Nothing else changes, and nothing is
+// multiplied or divided.
 //
-//         T(x, y) = y * 640 + x
+// WHY EVERY LINE IS EXACT (super-engine/descriptor.h, "MASK seam constants"):
+// RUN -> MASK and MASK -> next record are zero-slot seams, a RUN(pt, 1..3) in
+// front of the MASK is a banked pair at the line start, and a FILLER (SET
+// target 7, decoded nowhere) costs no slot where it sits -- in front of the
+// line's first playback record it executes in blanking, and behind a MASK that
+// ends on slot 639 it is consumed in the blanking that follows.  So the
+// occupancy is the authored sum, 640, at every x.  Suite case
+// m15-cursor-per-line asserts it pixel-exact at x = 0, 1, 2, 3, 619, 620,
+// 623, 624, 625, 638 and 639 among others, and through a sequence of moves.
 //
-// counted from the first pixel of the frame.  The chain is therefore plain
-// duration arithmetic:
+// THE RIGHT EDGE CLIPS WHOLE ROWS.  A MASK is always sixteen slots and its
+// pixel 0 is always opaque cmp_color0, so a row record must start at the row's
+// first opaque pixel and must end by slot 640.  A row whose first opaque
+// pixel lies right of X_FIT_MAX (624) therefore cannot be drawn on its own line
+// at all: shortening the record is impossible, starting it earlier paints
+// cmp_color0 on a transparent pixel, and letting it run past 640 makes the next
+// line depend on this one.  Such a row is simply not shown (its line keeps the
+// blank record).  For the arrow that means the whole cursor disappears once the
+// hot spot passes x = 624 (row 15, offset 5, already at x = 620).  An app that
+// wants the cursor always whole clamps the hot spot to whole_x_max(shape).
+// griffin_cursor_chain.h, the advanced recipe, does clip exactly at the right
+// edge, because there a record IS allowed to run on into the next line.
 //
-//         passthrough RUNs totalling T(first record)
-//         MASK                                    16 slots, a cursor row
-//         passthrough RUN  T(next) - T(prev) - 16
-//         MASK
-//         ...
-//         RUN(passthrough, 1)                     then COMPOSITOR holds
+// THE BOTTOM EDGE clips by not pointing: a row below line 479 has no line.
 //
-// and the per-line display list never mentions the cursor's POSITION, so it
-// stays static: moving the cursor touches only the chain's words.
+// DELIVERY is the caller's display list, with these rules (vidcmd-spec.md,
+// griffin-video-datasheet.html):
+//   * line L's descriptor sits in line L-1's group BEHIND that group's PIXELS
+//     descriptors (one line early, so it is in the FIFO long before line L);
+//   * line 0's descriptor goes in vertical blanking, AFTER /RS (which empties
+//     the FIFOs) -- e.g. as the last item before line 0's group;
+//   * the 480 descriptors are evenly spaced, 1 << stride_shift bytes apart,
+//     so the descriptor of line L is at line0_desc + (L << stride_shift);
+//   * every one is (count RECORD_WORDS, DEST_VIDCMD_FIFO_W, no wait) with its
+//     source in the same 64K as the Records block; place() writes them all.
+//   * cmp_color0 (outline) and cmp_color1 (fill) are set once in the vblank
+//     preamble, before any of this.
 //
-// IT IS DELIVERED IN TWO FIXED PARTS (2026-10-03).  RUN's count is ten bits
-// (1..1023), so the lead-in alone is up to 301 words and the chain no longer
-// fits the 256-word VIDCMD FIFO in one vblank deposit.  The chain is therefore
-// LEFT-ALIGNED — lead RUNs first, the cursor rows, RUN(passthrough, 1), then
-// target-7 FILLER SETs up to CHAIN_WORDS — and delivered as:
+// TEARING.  A line's gap and tail are two separate stores, and a line that
+// ENGINE delivers between them sums to the wrong count and shifts every line
+// after it.  So these words must never be edited while ENGINE may read them:
+// keep two lists with their own Records and edit the one not playing.
 //
-//   part A   words [0, PART_A_WORDS), in vertical blanking with the caller's
-//            preamble (which must total <= VIDCMD_FIFO_WORDS with it);
-//   part B   words [PART_A_WORDS, CHAIN_WORDS), PART_B_CHUNK words per line
-//            on lines PART_B_FIRST_LINE .. PART_B_FIRST_LINE + PART_B_LINES - 1,
-//            each chunk a VIDCMD descriptor appended to that line's group.
-//
-// Both properties are static_asserts below, derived by hand:
-//
-//   DEADLINE  every playback record is at most RUN_MAX_COUNT slots (a RUN; a
-//             MASK is 2 words per 16 slots, a filler 1 per <= 2), so word i of
-//             the chain cannot start before slot (i - REAL_TAIL - 1) *
-//             RUN_MAX_COUNT unless it is a filler: if it is a cursor-row word,
-//             the lead-in in front of it has at least i - REAL_TAIL words and
-//             all but the first are full.  Fillers have no deadline (they
-//             execute while passthrough holds, invisibly).  Chunk j's first
-//             word must be deposited at least a line before that slot.
-//   CAPACITY  words executed by slot S >= floor(S / RUN_MAX_COUNT), for the
-//             same reason, and two more sit in COMPOSITOR's bank, so at
-//             PART_B_FIRST_LINE at most PART_A_WORDS - floor(S / 1023) - 2
-//             part-A words are still in the FIFO; all of part B on top of
-//             that must fit.
-//
-// A filler is decoded nowhere and does not touch the source, so the padding
-// may sit at the end, after the chain's last RUN, rather than in blanking.
-//
-// WHY EVERY SEAM IS EXACT (descriptor.h, "MASK seam constants"): RUN -> MASK is
-// zero slots, MASK -> next record is zero slots, and every RUN here is either
-// hundreds of slots long or sits behind one that is, so the two-slots-per-word
-// fetch cadence never stretches anything.  super-engine's cursor-chain case
-// asserts the result pixel-exact, including the two clipping cases below and
-// cursors whose rows straddle the part A / part B split.
-//
-// CLIPPING.  A MASK is sixteen slots and its pixel 0 is implicitly opaque
-// cmp_color0, so a row's record begins at that row's FIRST OPAQUE pixel (hence
-// the per-row offset) and a record is never shifted to fit.  At the right edge
-// the record simply runs off the line: its remaining slots are the first slots
-// of the next line, which is consistent with the arithmetic above, and the
-// dibits that would land there are forced to passthrough so nothing shows.  A
-// row that starts beyond the right edge, or below line 479, is not emitted.
-//
-// FAILURE IS CONFINED TO THE CURSOR.  Every source in the chain other than a
-// mask's opaque dibits is passthrough, so a framing slip can shear the cursor
-// but cannot disturb the playfield, and /RS at the next vsync discards
-// whatever is left.
-//
-// The caller owns everything else in the preamble: the palette, pix_base,
-// pix_mode, and SETs of cmp_color0 (outline) and cmp_color1 (fill).  All SETs
-// must come BEFORE this chain -- a SET behind a RUN waits for that RUN -- and
-// the caller's list must deliver part B where this header says.
+// COST.  ENGINE spends engine_descriptor_cycles(4, RECORD_WORDS) = 22 SYSCLK
+// per line, 10,560 SYSCLK = 4.5% of a 233,625-SYSCLK field.  An x move is at
+// most 3 word stores per cursor row (gap, tail, one re-point), a y move at most
+// 32 re-points (one store each: only the source's low word changes).
 //
 // Bare-metal safe: header-only, no allocation, bounded loops.
 
 #ifndef GRIFFIN_CURSOR_H
 #define GRIFFIN_CURSOR_H
 
+#include <array>
 #include <cstdint>
 
 #include "../../super-engine/descriptor.h"
@@ -104,68 +84,15 @@ namespace se = SuperEngine;
 inline constexpr unsigned ROWS    = 16;
 inline constexpr unsigned COLUMNS = 16;
 
-// One row of art, already in record form.
-struct Row
-{
-    uint8_t  offset  = 0;       // column of the row's first opaque pixel
-    uint8_t  visible = 0;       // 0 = the row has no opaque pixel, emit nothing
-    uint32_t dibits  = 0;       // pixels 1..15 of the record, pixel 1 in bits 29:28
-};
-
-struct Shape
-{
-    Row rows[ROWS];
-};
-
-// Art is ROWS strings of COLUMNS characters, hotspot at row 0 column 0:
+// --- art ---------------------------------------------------------------------
+//
+// Art is ROWS strings of COLUMNS characters, hot spot at row 0 column 0:
 //     '#'  outline, cmp_color0
 //     '.'  fill,    cmp_color1
 //     ' '  transparent
 // A row's record starts at its first non-space column, so that column must be
 // '#' (pixel 0 of a MASK is cmp_color0 whether the art likes it or not);
 // shape_ok() is the assertion for that.
-constexpr Shape make_shape(const char *const art[ROWS])
-{
-    Shape s;
-    for (unsigned r = 0; r < ROWS; r++)
-    {
-        unsigned first = COLUMNS;
-        for (unsigned c = 0; c < COLUMNS; c++)
-        {
-            if (art[r][c] != ' ')
-            {
-                first = c;
-                break;
-            }
-        }
-        if (first == COLUMNS)
-        {
-            continue;
-        }
-        uint32_t dibits = 0;
-        for (unsigned i = 1; i < se::MASK_SLOTS; i++)
-        {
-            const unsigned c = first + i;
-            uint32_t       d = se::MASK_DIBIT_PASSTHROUGH;
-            if (c < COLUMNS)
-            {
-                if (art[r][c] == '#')
-                {
-                    d = se::MASK_DIBIT_COLOR0;
-                }
-                else if (art[r][c] == '.')
-                {
-                    d = se::MASK_DIBIT_COLOR1;
-                }
-            }
-            dibits |= d << (2u * (se::MASK_SLOTS - 1u - i));
-        }
-        s.rows[r].offset  = static_cast<uint8_t>(first);
-        s.rows[r].visible = 1;
-        s.rows[r].dibits  = dibits;
-    }
-    return s;
-}
 
 constexpr bool shape_ok(const char *const art[ROWS])
 {
@@ -207,7 +134,6 @@ inline constexpr const char *const ARROW_ART[ROWS] = {
     "     ###        ",
 };
 static_assert(shape_ok(ARROW_ART));
-inline constexpr Shape ARROW = make_shape(ARROW_ART);
 
 // What the art shows at (column, row): 0 transparent, 1 cmp_color0, 2 cmp_color1.
 // For checkers and host tools; the target never calls it.
@@ -220,149 +146,37 @@ constexpr unsigned art_pixel(const char *const art[ROWS], unsigned column, unsig
     return art[row][column] == '#' ? 1u : (art[row][column] == '.' ? 2u : 0u);
 }
 
-// --- chain size ----------------------------------------------------------------
-//
-// The leading passthrough is at most T(639, 479) + 15 slots in RUNs of at most
-// RUN_MAX_COUNT, and each emitted row adds at most one more RUN (a gap between
-// rows is under 2 * 640 + 16 slots and every RUN word but one per gap is full)
-// plus its MASK; one RUN(passthrough, 1) closes the chain.
-inline constexpr uint32_t RUN_MAX_COUNT = se::VIDCMD_RUN_COUNT_MAX;   // 1023, ten bits
-inline constexpr uint32_t FRAME_SLOTS   = se::H_ACTIVE * se::V_ACTIVE;
-inline constexpr uint32_t LEAD_RUN_WORDS_MAX =
-    (FRAME_SLOTS + COLUMNS + RUN_MAX_COUNT - 1) / RUN_MAX_COUNT;                // 301
-inline constexpr uint32_t CHAIN_WORDS =
-    LEAD_RUN_WORDS_MAX + ROWS * (1 + se::MASK_RECORD_WORDS) + 1;                // 350
-static_assert(RUN_MAX_COUNT == 1023);
-static_assert(LEAD_RUN_WORDS_MAX == 301);
-static_assert(CHAIN_WORDS == 350);
-
-// Words that can follow the lead-in and still be real (not filler): every row's
-// RUN and MASK, and the closing RUN.
-inline constexpr uint32_t REAL_TAIL = ROWS * (1 + se::MASK_RECORD_WORDS) + 1;   // 49
-
-// --- the two-part delivery (see the header comment) -------------------------
-inline constexpr uint32_t PART_A_WORDS      = 6 * se::DESC_MAX_COUNT;           // 192
-inline constexpr uint32_t PART_B_WORDS      = CHAIN_WORDS - PART_A_WORDS;       // 158
-inline constexpr uint32_t PART_B_CHUNK      = se::DESC_MAX_COUNT;               // 32
-inline constexpr uint32_t PART_B_LINES      = (PART_B_WORDS + PART_B_CHUNK - 1) / PART_B_CHUNK;   // 5
-inline constexpr uint32_t PART_B_FIRST_LINE = 184;
-
-// Words of part B delivered on part-B line j (0 .. PART_B_LINES - 1).
-constexpr uint32_t part_b_chunk_words(uint32_t j)
+// One row of art in record form: where its record starts and its MASK words.
+struct Row
 {
-    const uint32_t done = j * PART_B_CHUNK;
-    return (PART_B_WORDS - done > PART_B_CHUNK) ? PART_B_CHUNK : (PART_B_WORDS - done);
-}
+    uint8_t  offset  = 0;       // column of the row's first opaque pixel
+    uint8_t  visible = 0;       // 0 = the row has no opaque pixel and is never shown
+    uint16_t header  = 0;       // MASK word 1
+    uint16_t data    = 0;       // MASK word 2
+};
 
-// The first line on which chain word i (if it is not a filler) can be needed.
-constexpr uint32_t earliest_line_of_word(uint32_t i)
+struct Shape
 {
-    return (i <= REAL_TAIL) ? 0u : ((i - REAL_TAIL - 1u) * RUN_MAX_COUNT) / se::H_ACTIVE;
-}
+    Row rows[ROWS];
+};
 
-// DEADLINE: chunk j is deposited in line (PART_B_FIRST_LINE + j)'s group, at
-// least one whole line before the earliest line its first word can play on.
-constexpr bool part_b_deadlines_met()
+// Encoded by descriptor.h's reference encoder, so this header never splits
+// dibits by hand.
+constexpr Shape make_shape(const char *const art[ROWS])
 {
-    for (uint32_t j = 0; j < PART_B_LINES; j++)
-    {
-        if (PART_B_FIRST_LINE + j + 1u >= earliest_line_of_word(PART_A_WORDS + j * PART_B_CHUNK))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-static_assert(part_b_deadlines_met());
-static_assert(earliest_line_of_word(PART_A_WORDS) == 226);
-
-// CAPACITY: part A still queued at PART_B_FIRST_LINE (bank of two excluded)
-// plus ALL of part B, as if nothing more were consumed while it arrives.
-inline constexpr uint32_t PART_B_FIFO_PEAK =
-    PART_A_WORDS - (PART_B_FIRST_LINE * se::H_ACTIVE) / RUN_MAX_COUNT - se::VIDCMD_BANK_DEPTH +
-    PART_B_WORDS;                                                               // 233
-static_assert(PART_B_FIFO_PEAK == 233);
-static_assert(PART_B_FIFO_PEAK < se::VIDCMD_FIFO_WORDS);
-static_assert(PART_B_FIRST_LINE + PART_B_LINES <= se::V_ACTIVE);
-
-// The pad: target 7 is decoded nowhere (descriptor.h SET_FILLER), so a filler
-// executing behind the chain's last RUN costs a slot of held passthrough and
-// nothing else.
-inline constexpr uint16_t FILLER_WORD = se::vidcmd_set(se::SET_FILLER, 0);
-
-// Write the chain for a cursor whose hotspot is at raster (x, y), 0 <= x < 640,
-// 0 <= y < 480, into out[0 .. CHAIN_WORDS).
-//
-// ALWAYS EXACTLY CHAIN_WORDS WORDS, so the descriptors that deliver it never
-// change: a chain shorter than the maximum is padded AT THE END with filler
-// SETs.
-inline void build_chain(uint16_t *out, const Shape &shape, uint32_t x, uint32_t y)
-{
-    uint32_t n   = 0;
-    uint32_t pos = 0;       // slot at which the next record would start
-
+    Shape s;
     for (unsigned r = 0; r < ROWS; r++)
     {
-        const Row &row = shape.rows[r];
-        const uint32_t line   = y + r;
-        const uint32_t column = x + row.offset;
-        if (row.visible == 0 || line >= se::V_ACTIVE || column >= se::H_ACTIVE)
+        unsigned first = COLUMNS;
+        for (unsigned c = 0; c < COLUMNS; c++)
         {
-            continue;
+            if (art[r][c] != ' ')
+            {
+                first = c;
+                break;
+            }
         }
-
-        // Passthrough up to this row's first opaque pixel.  The remainder goes
-        // FIRST so the RUN in front of a MASK is always a long one.
-        // Counted by subtraction: a 68000 has no 32-bit divide, and the
-        // quotient is at most LEAD_RUN_WORDS_MAX.
-        uint32_t gap  = line * se::H_ACTIVE + column - pos;
-        uint32_t full = 0;
-        while (gap >= RUN_MAX_COUNT)
-        {
-            gap -= RUN_MAX_COUNT;
-            full++;
-        }
-        if (gap != 0)
-        {
-            out[n++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, gap);
-        }
-        for (; full != 0; full--)
-        {
-            out[n++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, RUN_MAX_COUNT);
-        }
-
-        // The record, with every dibit that would fall past the right edge
-        // (and so onto the start of the next line) forced to passthrough.
-        const uint32_t on_line = se::H_ACTIVE - column;          // >= 1
-        uint32_t       dibits  = row.dibits;
-        if (on_line < se::MASK_SLOTS)
-        {
-            dibits &= ~((1u << (2u * (se::MASK_SLOTS - on_line))) - 1u);
-        }
-        out[n++] = static_cast<uint16_t>(0x4000u | (dibits >> 16));
-        out[n++] = static_cast<uint16_t>(dibits & 0xFFFFu);
-
-        pos = line * se::H_ACTIVE + column + se::MASK_SLOTS;
-    }
-
-    // Whatever is left of the frame.  One slot is enough: the count goes
-    // terminal, nothing else is staged, and COMPOSITOR holds the source.
-    out[n++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1);
-
-    for (; n < CHAIN_WORDS; n++)
-    {
-        out[n] = FILLER_WORD;
-    }
-}
-
-// The MASK header/data split above is descriptor.h's encoding: check it against
-// the reference encoder for the arrow's first few rows rather than trust it.
-constexpr bool encoding_matches_reference(const Shape &shape, const char *const art[ROWS])
-{
-    for (unsigned r = 0; r < ROWS; r++)
-    {
-        const Row &row = shape.rows[r];
-        if (row.visible == 0)
+        if (first == COLUMNS)
         {
             continue;
         }
@@ -370,20 +184,226 @@ constexpr bool encoding_matches_reference(const Shape &shape, const char *const 
         d[0] = se::MASK_PIXEL0_DIBIT;
         for (unsigned i = 1; i < se::MASK_SLOTS; i++)
         {
-            const unsigned p = art_pixel(art, row.offset + i, r);
+            const unsigned p = art_pixel(art, first + i, r);
             d[i] = (p == 1) ? se::MASK_DIBIT_COLOR0
-                            : (p == 2) ? se::MASK_DIBIT_COLOR1 : se::MASK_DIBIT_PASSTHROUGH;
+                            : ((p == 2) ? se::MASK_DIBIT_COLOR1 : se::MASK_DIBIT_PASSTHROUGH);
         }
         const se::VidcmdMask m = se::vidcmd_mask(d);
-        if (m.header != static_cast<uint16_t>(0x4000u | (row.dibits >> 16)) ||
-            m.data != static_cast<uint16_t>(row.dibits & 0xFFFFu))
+        s.rows[r].offset  = static_cast<uint8_t>(first);
+        s.rows[r].visible = 1;
+        s.rows[r].header  = m.header;
+        s.rows[r].data    = m.data;
+    }
+    return s;
+}
+
+inline constexpr Shape ARROW = make_shape(ARROW_ART);
+
+// --- records -------------------------------------------------------------------
+
+inline constexpr uint32_t RECORD_WORDS = 4;
+inline constexpr uint32_t RECORD_BYTES = RECORD_WORDS * 2;
+
+// The last column a sixteen-slot record can start on and still end by slot 640.
+inline constexpr uint32_t X_FIT_MAX = se::H_ACTIVE - se::MASK_SLOTS;          // 624
+static_assert(X_FIT_MAX == 624);
+
+// Target 7 is decoded nowhere (descriptor.h SET_FILLER).
+inline constexpr uint16_t FILLER = se::vidcmd_set(se::SET_FILLER, 0);
+
+inline constexpr uint16_t BLANK_RECORD[RECORD_WORDS] = {
+    FILLER, FILLER, FILLER, se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, se::H_ACTIVE)};
+static_assert(se::H_ACTIVE <= se::VIDCMD_RUN_COUNT_MAX);
+
+// The gap and tail words of a row record starting at column c <= X_FIT_MAX.
+// There is no zero-count RUN (RUN(0) is 1024 slots), so an empty gap or tail
+// is a FILLER in the same position: the record keeps its shape.
+constexpr uint16_t gap_word(uint32_t c)
+{
+    return (c == 0) ? FILLER : se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, c);
+}
+
+constexpr uint16_t tail_word(uint32_t c)
+{
+    return (c == X_FIT_MAX) ? FILLER : se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, X_FIT_MAX - c);
+}
+
+// The blank record and the sixteen row records, together and aligned so they
+// share one 64K bank: then a re-point changes only a descriptor's low source
+// word.
+struct alignas(256) Records
+{
+    uint16_t blank[RECORD_WORDS];
+    uint16_t rows[ROWS][RECORD_WORDS];
+};
+static_assert(sizeof(Records) <= 256);
+
+// Byte offsets inside a Records block.
+inline constexpr uint32_t BLANK_OFFSET = 0;
+constexpr uint32_t row_offset(unsigned r)
+{
+    return RECORD_BYTES + r * RECORD_BYTES;
+}
+inline constexpr uint32_t GAP_WORD  = 0;   // word index inside a row record
+inline constexpr uint32_t TAIL_WORD = 3;
+
+// Is row r of a cursor whose hot spot is at (x, y) on screen?
+constexpr bool row_fits(const Shape &s, unsigned r, uint32_t x)
+{
+    return s.rows[r].visible != 0 && x + s.rows[r].offset <= X_FIT_MAX;
+}
+
+constexpr bool row_shown(const Shape &s, unsigned r, uint32_t x, uint32_t y)
+{
+    return row_fits(s, r, x) && y + r < se::V_ACTIVE;
+}
+
+// The largest hot-spot x at which every row of the shape is still shown.
+constexpr uint32_t whole_x_max(const Shape &s)
+{
+    uint32_t widest = 0;
+    for (unsigned r = 0; r < ROWS; r++)
+    {
+        if (s.rows[r].visible != 0 && s.rows[r].offset > widest)
         {
-            return false;
+            widest = s.rows[r].offset;
         }
     }
-    return true;
+    return X_FIT_MAX - widest;
 }
-static_assert(encoding_matches_reference(ARROW, ARROW_ART));
+static_assert(whole_x_max(ARROW) == 619);
+
+// --- where things are --------------------------------------------------------
+//
+// All addresses are ENGINE byte addresses (on the target, plain pointers).
+struct Layout
+{
+    uint32_t records      = 0;   // a Records block
+    uint32_t line0_desc   = 0;   // line 0's cursor descriptor
+    uint32_t stride_shift = 0;   // log2 of the bytes from one line's descriptor to the next
+};
+
+// Word stores go through a callable st(byte_address, word), so the suite can
+// run exactly this code against its model RAM and count the stores.
+struct DirectStore
+{
+    void operator()(uint32_t address, uint16_t word) const
+    {
+        // Volatile so the compiler cannot sink these stores past the store
+        // that hands the list to the vsync handler.
+        *reinterpret_cast<volatile uint16_t *>(static_cast<uintptr_t>(address)) = word;
+    }
+};
+
+// The descriptor's source low word (descriptor word 2) for a record.
+constexpr uint16_t source_low(uint32_t record_address)
+{
+    return static_cast<uint16_t>(record_address & 0xFFFEu);
+}
+
+constexpr uint32_t descriptor_address(const Layout &l, uint32_t line)
+{
+    return l.line0_desc + (line << l.stride_shift);
+}
+
+// Everything, from nothing: the records for a hot spot at (x, y), and all 480
+// line descriptors written whole.  Call once per list, before it is armed.
+template <class Store>
+void place(Store &st, const Layout &l, const Shape &s, uint32_t x, uint32_t y)
+{
+    for (uint32_t i = 0; i < RECORD_WORDS; i++)
+    {
+        st(l.records + BLANK_OFFSET + i * 2, BLANK_RECORD[i]);
+    }
+    for (unsigned r = 0; r < ROWS; r++)
+    {
+        const uint32_t row = l.records + row_offset(r);
+        const uint32_t c   = x + s.rows[r].offset;
+        st(row + 0, row_fits(s, r, x) ? gap_word(c) : FILLER);
+        st(row + 2, s.rows[r].header);
+        st(row + 4, s.rows[r].data);
+        st(row + 6, row_fits(s, r, x) ? tail_word(c) : FILLER);
+    }
+
+    se::Descriptor d;
+    d.count       = static_cast<uint16_t>(RECORD_WORDS);
+    d.destination = se::DEST_VIDCMD_FIFO_W;
+    d.src         = l.records + BLANK_OFFSET;
+    const se::DescriptorWords w = se::encode_descriptor(d);
+    uint32_t at = l.line0_desc;
+    for (uint32_t line = 0; line < se::V_ACTIVE; line++)
+    {
+        for (uint32_t i = 0; i < se::DESC_WORDS; i++)
+        {
+            st(at + i * 2, w.w[i]);
+        }
+        at += 1u << l.stride_shift;
+    }
+    for (unsigned r = 0; r < ROWS; r++)
+    {
+        if (row_shown(s, r, x, y))
+        {
+            st(descriptor_address(l, y + r) + 4, source_low(l.records + row_offset(r)));
+        }
+    }
+}
+
+// Move the cursor of ONE list from (ox, oy) -- where that list last had it --
+// to (nx, ny).  Stores only what changes:
+//   * the gap and tail of every row whose start column changes (or that comes
+//     back into fit at the right edge): <= 2 stores a row;
+//   * the old lines that no longer show a row go back to the blank record,
+//     then the new lines are pointed at their rows: one store a line.
+// The blanking pass comes first so that a line that is both old and new ends
+// pointing at its new row.
+template <class Store>
+void move(Store &st, const Layout &l, const Shape &s, uint32_t ox, uint32_t oy, uint32_t nx,
+          uint32_t ny)
+{
+    for (unsigned r = 0; r < ROWS; r++)
+    {
+        if (!row_fits(s, r, nx))
+        {
+            continue;
+        }
+        const uint32_t oc = ox + s.rows[r].offset;
+        const uint32_t nc = nx + s.rows[r].offset;
+        if (!row_fits(s, r, ox) || oc != nc)
+        {
+            const uint32_t row = l.records + row_offset(r);
+            st(row + GAP_WORD * 2, gap_word(nc));
+            st(row + TAIL_WORD * 2, tail_word(nc));
+        }
+    }
+
+    const uint16_t blank = source_low(l.records + BLANK_OFFSET);
+    for (unsigned r = 0; r < ROWS; r++)
+    {
+        if (!row_shown(s, r, ox, oy))
+        {
+            continue;
+        }
+        const uint32_t line = oy + r;
+        if (line >= ny && line - ny < ROWS && row_shown(s, line - ny, nx, ny))
+        {
+            continue;   // the second pass points it at its new row
+        }
+        st(descriptor_address(l, line) + 4, blank);
+    }
+
+    for (unsigned r = 0; r < ROWS; r++)
+    {
+        if (!row_shown(s, r, nx, ny))
+        {
+            continue;
+        }
+        if (ny == oy && row_shown(s, r, ox, oy))
+        {
+            continue;   // already points at row r
+        }
+        st(descriptor_address(l, ny + r) + 4, source_low(l.records + row_offset(r)));
+    }
+}
 
 }   // namespace GriffinCursor
 

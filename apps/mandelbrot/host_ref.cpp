@@ -26,8 +26,8 @@
 // the centre of the screen):
 //
 //     move DX DY      mouse motion in PS/2 counts, +Y up, as in a --mouse-in
-//                     script; the cursor clamps at the screen edges as the
-//                     app's does
+//                     script; the cursor clamps as the app's does: x to
+//                     0..624 (GriffinCursor::X_FIT_MAX), y to 0..479
 //     left            left click: zoom in about the cursor
 //     right           right click: zoom out about the cursor
 //     key p           the p key: next palette
@@ -86,13 +86,30 @@ int clamp(int v, int lo, int hi)
     return (v < lo) ? lo : ((v > hi) ? hi : v);
 }
 
+// The per-line recipe draws an art row only if its sixteen-slot MASK record,
+// which starts at the row's first opaque column, ends by slot 640; a row that
+// cannot is left off (griffin_cursor.h, "THE RIGHT EDGE CLIPS WHOLE ROWS").
+bool row_drawn(int cursor_x, unsigned row)
+{
+    for (unsigned c = 0; c < GriffinCursor::COLUMNS; c++)
+    {
+        if (GriffinCursor::ARROW_ART[row][c] != ' ')
+        {
+            return cursor_x + static_cast<int>(c) + static_cast<int>(se::MASK_SLOTS) <=
+                   static_cast<int>(se::H_ACTIVE);
+        }
+    }
+    return false;
+}
+
 bool apply_actions(Scene &scene, int argc, char **argv)
 {
     for (int i = 0; i < argc; i++)
     {
         if (strcmp(argv[i], "move") == 0 && i + 2 < argc)
         {
-            scene.cursor_x = clamp(scene.cursor_x + atoi(argv[i + 1]), 0, se::H_ACTIVE - 1);
+            scene.cursor_x = clamp(scene.cursor_x + atoi(argv[i + 1]), 0,
+                                   static_cast<int>(GriffinCursor::X_FIT_MAX));
             scene.cursor_y = clamp(scene.cursor_y - atoi(argv[i + 2]), 0, se::V_ACTIVE - 1);
             i += 2;
         }
@@ -161,7 +178,8 @@ Candidates expected_screens(const Scene &scene)
                                                       scene.phase));
                 const int ax = static_cast<int>(x) - scene.cursor_x;
                 const int ay = static_cast<int>(y) - scene.cursor_y;
-                if (ax >= 0 && ay >= 0)
+                if (ax >= 0 && ay >= 0 && ay < static_cast<int>(GriffinCursor::ROWS) &&
+                    row_drawn(scene.cursor_x, static_cast<unsigned>(ay)))
                 {
                     const unsigned a = GriffinCursor::art_pixel(GriffinCursor::ARROW_ART,
                                                                 static_cast<unsigned>(ax),
