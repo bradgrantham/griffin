@@ -1,6 +1,6 @@
 # Build all Griffin applications (flat binaries loadable by the firmware), and
 # stage them (plus their data files) into a CF image.
-SUBDIRS = hello exctest basic dtest smurf mandelbrot
+SUBDIRS = hello exctest basic dtest smurf mandelbrot view
 
 # Where `make stage` collects the guest-visible files, and what `make cf`
 # turns into a raw FAT16 card image.  FAT uppercases and 8.3-mangles names, so
@@ -22,6 +22,7 @@ stage: all
 	cp dtest/dtest.bin        $(STAGE)/DTEST.BIN
 	cp smurf/smurf.bin        $(STAGE)/SMURF.BIN
 	cp mandelbrot/mandelbrot.bin $(STAGE)/MANDEL.BIN
+	cp view/view.bin          $(STAGE)/VIEW.BIN
 	cp $(SMURF_ASSETS)/backdrop1-meadow.gc4    $(STAGE)/MEADOW.GC4
 	cp $(SMURF_ASSETS)/backdrop2-forest.gc4    $(STAGE)/FOREST.GC4
 	cp $(SMURF_ASSETS)/backdrop3-clearing.gc4  $(STAGE)/CLEARING.GC4

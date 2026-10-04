@@ -12,7 +12,6 @@
 // #include "splash.h"
 
 #include "ps2.h"
-#include "keymap.h"
 #include "mouse.h"
 #include "textport.h"
 #include "vt102.h"
@@ -632,7 +631,6 @@ static uint32_t parse_hex(const char *s, const char **end)
 // ---------------------------------------------------------------------------
 
 #include "../super-engine/descriptor.h"
-#include "../image-tools/gc4_target.h"
 
 namespace se   = SuperEngine;
 namespace gtxt = griffin::textport;
@@ -645,10 +643,8 @@ static constexpr unsigned FB_BYTES       = FB_LINES * FB_STRIDE;          // 384
 
 // MICRO-HAM IS RETIRED (2026-09-20, the indexed PIXEL).  PIXEL is index-only
 // now: there is no HAM decoder, no pal_fg/pal_bg/ham_held, and a `.ham` file has
-// no mode to be displayed in.  Its replacement is the .gc4 VIEWER below --
-// 320x480 4bpp half rate out of the sixteen-entry palette RAM, built by
-// image-tools/clut_encode -- and `view` refuses a .ham plane by name rather than
-// painting garbage.
+// no mode to be displayed in.  Pictures are shown by apps/view (.gcx files,
+// image-tools/gcx_target.h), not by the ROM.
 
 // Console colours, as R4G4B4 palette entries.  The console's 1bpp plane at
 // pix_base 0 selects ENTRY 1 for a set bit and ENTRY 0 for a clear one, and the
@@ -679,14 +675,8 @@ static constexpr unsigned   CONSOLE_PIX_BASE = 0;
 //            | holding direct video access   |  SYS_VIDEO_DIRECT_START
 //   0x400000 +-------------------------------+
 //
-// While no app holds direct access the firmware uses the WHOLE 64 KB: the 1bpp
-// viewer's list is 1476 descriptors (11808 bytes) plus 3360 VIDCMD words
-// (6720 bytes), and the .gc4 viewer's is 1957 descriptors (15656 bytes) plus a
-// 50-word preamble, neither of which fits under 0x3F2000.  All the lists start
-// at dl_table_base, so engine_desc_word_addr never changes; only the region
-// sizes differ, and dl_reset() takes them.  (The .gc4 viewer's per-line VIDCMD
-// packets are an ordinary malloc, not part of this window: 480 lines of up to
-// 25 words is 24 KB, and only the descriptor TABLE has to be in edma3's page.)
+// The firmware's only list is the console's, so the region above it is unused
+// while no app holds direct access.
 // ---------------------------------------------------------------------------
 extern "C" char _displaylist_start[];
 
@@ -699,10 +689,6 @@ static constexpr uint32_t DL_START = se::DESC_TABLE_BASE + 0x10000 - DL_SIZE;   
 static constexpr uint32_t DL_CONSOLE_TABLE_BYTES  = 0x1F40;   // 1000 descriptors
 static constexpr uint32_t DL_CONSOLE_VIDCMD_BYTES = 0x00C0;   // 96 words
 
-// Viewer: the whole window, descriptors low and payload high, as before.
-static constexpr uint32_t DL_VIEWER_TABLE_BYTES   = 0x8000;   // 4096 descriptors
-static constexpr uint32_t DL_VIEWER_VIDCMD_BYTES  = DL_SIZE - DL_VIEWER_TABLE_BYTES;
-
 static_assert(DL_START + DL_CONSOLE_TABLE_BYTES + DL_CONSOLE_VIDCMD_BYTES
                   <= GRIFFIN_APP_DESC_BASE,
               "the console list and its VIDCMD payload must fit below the app "
@@ -710,10 +696,8 @@ static_assert(DL_START + DL_CONSOLE_TABLE_BYTES + DL_CONSOLE_VIDCMD_BYTES
               "the console");
 static_assert(DL_START + DL_SIZE == GRIFFIN_APP_DESC_BASE + GRIFFIN_APP_DESC_BYTES,
               "the display-list window must end at the top of the descriptor page");
-static_assert(DL_VIEWER_TABLE_BYTES + DL_VIEWER_VIDCMD_BYTES == DL_SIZE,
-              "the viewer regions must tile the display-list window exactly");
 
-static uint32_t dl_table_base = 0;    // 0x3F0000, both lists
+static uint32_t dl_table_base = 0;    // 0x3F0000
 static uint32_t dl_max_desc = 0;      // descriptor capacity of the active list's region
 static uint32_t dl_vidcmd_base = 0;   // just above the active list's table
 static uint32_t dl_vidcmd_bytes = 0;  // payload capacity of the active list's region
@@ -836,20 +820,11 @@ static constexpr unsigned VBLANK_WALK_LINES = 34;   // lines 491..524
 // keeps the console list below GRIFFIN_APP_DESC_BASE.
 static constexpr unsigned CONSOLE_PREAMBLE_WORDS = 2 * se::PALETTE_WORDS_PER_ENTRY + 3;
 static constexpr unsigned CONSOLE_DESCRIPTORS = 1 + VBLANK_WALK_LINES + 2 * FB_LINES + 1;
-static constexpr unsigned VIEWER_DESCRIPTORS  = 1 + VBLANK_WALK_LINES + 3 * FB_LINES + 1;
-
-// One viewer line's VIDCMD packet: the two palette entries the 1bpp plane
-// selects, three words each, plus the 1-slot passthrough RUN.
-static constexpr unsigned VIEWER_LINE_WORDS = 2 * se::PALETTE_WORDS_PER_ENTRY + 1;
 
 static_assert(CONSOLE_DESCRIPTORS * se::DESC_BYTES <= DL_CONSOLE_TABLE_BYTES,
               "console display list outgrew its below-the-carve table region");
 static_assert(CONSOLE_PREAMBLE_WORDS * 2 <= DL_CONSOLE_VIDCMD_BYTES,
               "console frame preamble outgrew its below-the-carve payload region");
-static_assert(VIEWER_DESCRIPTORS * se::DESC_BYTES <= DL_VIEWER_TABLE_BYTES,
-              "viewer display list outgrew the 64 KB display-list window");
-static_assert(FB_LINES * VIEWER_LINE_WORDS * 2 + 2 * 2 <= DL_VIEWER_VIDCMD_BYTES,
-              "viewer per-line palette payload outgrew the display-list window");
 
 static void dl_build_console_list()
 {
@@ -891,472 +866,6 @@ static void dl_build_console_list()
         dl_emit_pixel_line(line, true);
     }
     dl_emit_pacer(true);
-}
-
-// ---------------------------------------------------------------------------
-// Image viewers
-//
-// `view IMAGE`           a .gc4 picture: 320x480 4bpp half rate out of the
-//                        sixteen-entry palette RAM, with up to K palette
-//                        reloads per line.  image-tools/clut_encode writes it
-//                        and image-tools/gc4_target.h is its layout.
-// `view IMAGE PALETTE`   the older 1bpp pair, unchanged.
-//
-// TWO on-CF 1bpp-pair formats, told apart by the image file's SIZE and nothing
-// else -- both planes are headerless and neither carries a magic number:
-//
-//   38400 bytes   1bpp       480 x 40 words, palette 480 x {fg,bg} R3G3B2 bytes
-//   76800 bytes   micro-HAM  RETIRED; refused by name
-//
-// The palette file is then required to be the size that mode implies, so a
-// mismatched pair is refused rather than rendered half right.
-//
-// The 1bpp format is unchanged and needed no migration: image-tools writes a
-// plain 640x480 1bpp plane (480 x 80 bytes, no headers) plus a companion file
-// of 480 per-line palette words, D[15:8] fg / D[7:0] bg, each byte R3G3B2.
-// Rev-1 had to INTERLEAVE those two files into an 84-byte-stride framebuffer
-// so ENGINE could stream the palette in band; rev 2 does not, because the
-// palette has its own path now.  The pixel plane loads straight into the
-// framebuffer and the palette words become one VIDCMD packet per line.
-//
-// Both lists gain one VIDCMD descriptor per line, and both are the same JIT
-// discipline: the packet lands during the line's HBLANK, its palette writes
-// commit and complete there at zero slot cost (a write disturbs four PIXEL
-// slots, and in blanking there are none), and a 1-slot passthrough RUN plus
-// COMPOSITOR's hold covers the line.
-// ---------------------------------------------------------------------------
-
-// On-CF image geometry.  Not hardware; just the file layout, and it happens to
-// match the framebuffer exactly now that neither has a header.
-static constexpr unsigned IMG_PIXEL_BYTES = 2 * Griffin::PIXELS_WORDS_PER_LINE_1BPP;  // 80
-
-// The file sizes `view` recognises, all derived from the raster geometry above
-// rather than written out.
-static constexpr uint32_t LEGACY_IMAGE_BYTES   = FB_BYTES;                        // 38400
-static constexpr uint32_t LEGACY_PALETTE_BYTES = FB_LINES * sizeof(uint16_t);     // 960
-// The size a retired micro-HAM plane happens to be, kept only so `view` can
-// refuse one by name instead of by byte count.
-static constexpr uint32_t RETIRED_HAM_IMAGE_BYTES = FB_LINES * 160;               // 76800
-
-// R3G3B2 (the image file's palette encoding) widened to R4G4B4 by field
-// replication -- the same rule the DAC uses to widen 4 bits to 8.  3 bits
-// into 4 borrows the top bit; 2 bits into 4 is the pair twice.
-static constexpr se::Rgb444 r3g3b2_to_rgb444(uint8_t c)
-{
-    const unsigned r3 = (c >> 5) & 0x7;
-    const unsigned g3 = (c >> 2) & 0x7;
-    const unsigned b2 = c & 0x3;
-    return se::rgb444((r3 << 1) | (r3 >> 2), (g3 << 1) | (g3 >> 2),
-                      (b2 << 2) | b2);
-}
-
-static void dl_build_viewer_list(const uint16_t *palettes)
-{
-    dl_reset(DL_VIEWER_TABLE_BYTES, DL_VIEWER_VIDCMD_BYTES);
-
-    // /RS at vsync clears pix_base and pix_mode, so the frame preamble re-sends
-    // them; it runs the instant the vsync ISR arms the list, inside vertical
-    // blanking.  The palette itself is per line, below.
-    const uint16_t preamble[2] = {
-        se::vidcmd_set(se::SET_PIX_BASE, 0),
-        se::vidcmd_set(se::SET_PIX_MODE, se::pixel_mode(se::PIXEL_DEPTH_1BPP, false)),
-    };
-    const uint32_t pre_addr = dl_put_vidcmd(preamble, 2);
-    se::Descriptor pre;
-    pre.src         = pre_addr;
-    pre.count       = 2;
-    pre.destination = se::DEST_VIDCMD_FIFO_W;
-    dl_emit(pre);
-
-    for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
-    {
-        dl_emit_pacer(false);
-    }
-
-    for (unsigned line = 0; line < FB_LINES; line++)
-    {
-        const uint16_t pal = palettes[line];
-        const se::PaletteEntryWords bg =
-            se::vidcmd_palette_entry(0, r3g3b2_to_rgb444(static_cast<uint8_t>(pal & 0xFF)));
-        const se::PaletteEntryWords fg =
-            se::vidcmd_palette_entry(1, r3g3b2_to_rgb444(static_cast<uint8_t>(pal >> 8)));
-        const uint16_t packet[VIEWER_LINE_WORDS] = {
-            bg.w[0], bg.w[1], bg.w[2],
-            fg.w[0], fg.w[1], fg.w[2],
-            se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1),
-        };
-        const uint32_t at = dl_put_vidcmd(packet, VIEWER_LINE_WORDS);
-
-        // VIDCMD ahead of the pixels: COMPOSITOR must have this line's entries
-        // before pixel 0, and it is only seven words against the pixel stream's
-        // forty.
-        se::Descriptor d;
-        d.src         = at;
-        d.count       = VIEWER_LINE_WORDS;
-        d.destination = se::DEST_VIDCMD_FIFO_W;
-        d.wait_hblank = true;
-        dl_emit(d);
-
-        dl_emit_pixel_line(line, false);
-    }
-    dl_emit_pacer(true);
-}
-
-// ---------------------------------------------------------------------------
-// The .gc4 viewer: 320x480 4bpp half rate
-//
-// 80 PIXELS words a line, streamed STRAIGHT OUT OF THE LOADED FILE -- the
-// format's pixel section is contiguous and fixed stride precisely so no copy is
-// needed -- under a per-line VIDCMD packet of that line's palette loads.
-//
-// A load costs three VIDCMD words (SET clut_index, SET clut_data, the same-value
-// filler, vidcmd-spec.md §3.2) and the packet is capped by the HBLANK delivery
-// deadline the smurf app derives: 20 + 2W + 15 <= HBLANK_SYSCLK - 2, i.e.
-// W <= 26.  K = 8 makes 8*3 + 1 = 25, so the format's ceiling and the packet
-// budget are the same number, checked below.
-//
-// THE PACKETS DO NOT LIVE IN THE DISPLAY-LIST WINDOW.  Only the descriptor
-// TABLE has to be inside edma3's hard-wired page; a descriptor's `src` is a full
-// 24-bit address, so the packets are an ordinary malloc.  480 lines of 25 words
-// is 24 KB, three times the window's whole payload region.
-// ---------------------------------------------------------------------------
-
-static constexpr unsigned GC4_PIXEL_DESCS_PER_LINE = 3;   // 32 + 32 + 16
-static constexpr unsigned GC4_PREAMBLE_WORDS =
-    se::PALETTE_ENTRIES * se::PALETTE_WORDS_PER_ENTRY + 2;   // 50
-static constexpr unsigned GC4_PREAMBLE_DESCS =
-    (GC4_PREAMBLE_WORDS + se::DESC_MAX_COUNT - 1) / se::DESC_MAX_COUNT;
-static constexpr unsigned GC4_DESCRIPTORS =
-    GC4_PREAMBLE_DESCS + VBLANK_WALK_LINES
-    + FB_LINES * (1 + GC4_PIXEL_DESCS_PER_LINE) + 1;
-static constexpr unsigned GC4_PACKET_MAX_WORDS =
-    Gc4Target::MAX_K * se::PALETTE_WORDS_PER_ENTRY + 1;      // 25
-
-static_assert(GC4_DESCRIPTORS * se::DESC_BYTES <= DL_VIEWER_TABLE_BYTES,
-              "the .gc4 viewer's display list outgrew the table region");
-static_assert(GC4_PREAMBLE_WORDS * 2 <= DL_VIEWER_VIDCMD_BYTES,
-              "the .gc4 viewer's frame preamble outgrew the payload region");
-static_assert(20 + 2 * GC4_PACKET_MAX_WORDS + 15 <= se::HBLANK_SYSCLK - 2,
-              "a K=8 packet must still leave the line's first PIXELS word inside HBLANK");
-static_assert(Gc4Target::WORDS_PER_LINE == se::PIXELS_WORDS_4BPP_HALF,
-              "the .gc4 line length must be the mode's record");
-
-// The one buffer the .gc4 viewer builds: 480 packets of a fixed stride, so a
-// line's packet is a multiply.
-static uint16_t *gc4_packets = nullptr;
-static unsigned  gc4_packet_stride = 0;
-
-// `n` words from `src` into one FIFO, split into descriptors of at most
-// DESC_MAX_COUNT words; only the first may wait for the HBLANK edge.
-static void dl_emit_stream(uint32_t src, unsigned n, uint8_t destination, bool wait_first)
-{
-    unsigned done = 0;
-    while (done < n)
-    {
-        const unsigned left  = n - done;
-        const unsigned count = (left > se::DESC_MAX_COUNT) ? se::DESC_MAX_COUNT : left;
-        se::Descriptor d;
-        d.src         = src + done * 2;
-        d.count       = static_cast<uint16_t>(count);
-        d.destination = destination;
-        d.wait_hblank = wait_first && (done == 0);
-        dl_emit(d);
-        done += count;
-    }
-}
-
-static void dl_build_gc4_list(const Gc4Target::Picture &pic)
-{
-    dl_reset(DL_VIEWER_TABLE_BYTES, DL_VIEWER_VIDCMD_BYTES);
-
-    // The frame preamble, in vertical blanking with no wait_hblank: all sixteen
-    // entries (fifty words is more than an HBLANK delivers) plus the mode and
-    // base /RS clears at every vsync.  The palette RAM itself is never reset.
-    //
-    // STATIC, not a local.  As a 50-word stack array its copy into the payload
-    // region came out SHIFTED BY ONE WORD -- the region's first word read back
-    // as zero and its last word, SET(pix_mode), was never deposited, so PIXEL
-    // stayed in its /RS 1bpp mode and the picture came out as noise.  The same
-    // code with the same dl_put_vidcmd() call and a static array is correct,
-    // reproducibly, on -O3 with the project toolchain.  The mechanism (found
-    // 2026-10-02, griffin.log) is a GCC 15.2 m68k miscompile of the copy loop:
-    // move.w (%a0)+, 0(%a0,%d0.l), whose destination is computed AFTER the
-    // post-increment.  .bss is the right home for it regardless.
-    static uint16_t preamble[GC4_PREAMBLE_WORDS];
-    unsigned n = 0;
-    for (unsigned i = 0; i < se::PALETTE_ENTRIES; i++)
-    {
-        const se::PaletteEntryWords e = se::vidcmd_palette_entry(i, pic.palette()[i]);
-        for (unsigned w = 0; w < se::PALETTE_WORDS_PER_ENTRY; w++)
-        {
-            preamble[n++] = e.w[w];
-        }
-    }
-    preamble[n++] = se::vidcmd_set(se::SET_PIX_BASE, 0);
-    preamble[n++] = se::vidcmd_set(se::SET_PIX_MODE, pic.pix_mode());
-
-    const uint32_t pre_at = dl_put_vidcmd(preamble, n);
-    dl_emit_stream(pre_at, n, se::DEST_VIDCMD_FIFO_W, false);
-
-    for (unsigned i = 0; i < VBLANK_WALK_LINES; i++)
-    {
-        dl_emit_pacer(false);
-    }
-
-    for (unsigned line = 0; line < pic.height; line++)
-    {
-        uint16_t *const packet = &gc4_packets[line * gc4_packet_stride];
-        const uint16_t *slots  = pic.loads(line);
-        const unsigned  loads  = slots[0];
-        unsigned        k      = 0;
-        for (unsigned i = 0; i < loads; i++)
-        {
-            const se::PaletteEntryWords e = se::vidcmd_palette_entry(
-                Gc4Target::load_index(slots[1 + i]),
-                static_cast<se::Rgb444>(Gc4Target::load_colour(slots[1 + i])));
-            for (unsigned w = 0; w < se::PALETTE_WORDS_PER_ENTRY; w++)
-            {
-                packet[k++] = e.w[w];
-            }
-        }
-        packet[k++] = se::vidcmd_run(se::RUN_SRC_PASSTHROUGH, 1);
-
-        // VIDCMD first in the line's group: its loads must commit before pixel 0.
-        dl_emit_stream(reinterpret_cast<uint32_t>(packet), k, se::DEST_VIDCMD_FIFO_W, true);
-        dl_emit_stream(reinterpret_cast<uint32_t>(pic.pixels(line)),
-                       Gc4Target::WORDS_PER_LINE, se::DEST_PIXELS_FIFO_W, false);
-    }
-    dl_emit_pacer(true);
-}
-
-// Read a file f_stat() has already measured at exactly `bytes` long.
-static bool view_read_exact(const char *path, void *dst, uint32_t bytes)
-{
-    FILE *f = fopen(path, "rb");
-    if (!f)
-    {
-        printf("view_image: cannot open %s\n", path);
-        return false;
-    }
-    const size_t got = fread(dst, 1, bytes, f);
-    fclose(f);
-    if (got != bytes)
-    {
-        printf("view_image: %s short read (%lu of %lu bytes)\n", path,
-               static_cast<unsigned long>(got), static_cast<unsigned long>(bytes));
-        return false;
-    }
-    return true;
-}
-
-// Block until a fresh key arrives on EITHER console (interrupts stay enabled),
-// then restore the console list.
-//
-// Deliberately keyboard_ready(), not ps2_received_ready(): the raw scancode
-// queue also carries key RELEASES, and the Enter that launched this command
-// lands its break code (F0 xx) tens of milliseconds AFTER the wait begins --
-// waiting on the raw queue exits immediately and the image flashes for one
-// frame (the original bug).  keyboard_ready() sits above the make/break
-// decoder, so releases never satisfy it.  The DUART side is accepted too so a
-// serial-only session can dismiss the image; both queues are drained first so
-// stale type-ahead cannot end the wait either.
-static void view_wait_and_restore()
-{
-    while (keyboard_ready())
-    {
-        (void)keyboard_getchar();
-    }
-    while (duart_received_ready())
-    {
-        (void)duart_getchar();
-    }
-    while (!keyboard_ready() && !duart_received_ready())
-    {
-        // idle; ENGINE refreshes the screen from the list
-    }
-    if (keyboard_ready())
-    {
-        (void)keyboard_getchar();
-    }
-    else
-    {
-        (void)duart_getchar();
-    }
-
-    dl_build_console_list();
-    gtxt::g_textport.clear();
-}
-
-static void view_image(const char *image_path, const char *palette_path)
-{
-    if (FB_ADDR == 0)
-    {
-        printf("view_image: no framebuffer\n");
-        return;
-    }
-
-    // Which format?  The image file's size decides, and the palette file's
-    // size must then agree with it.  f_stat rather than fseek(SEEK_END): the
-    // newlib glue's SEEK_END is off by one, and FatFs is already linked in
-    // here (ls uses it directly too).
-    FILINFO info;
-    if (f_stat(image_path, &info) != FR_OK)
-    {
-        printf("view_image: cannot open %s\n", image_path);
-        return;
-    }
-    const uint32_t image_bytes = static_cast<uint32_t>(info.fsize);
-    if (image_bytes == RETIRED_HAM_IMAGE_BYTES)
-    {
-        // MICRO-HAM IS RETIRED with the indexed PIXEL: there is no mode to show
-        // this file in, and painting it as 1bpp would be noise.  A 4bpp or
-        // attribute-mode viewer is the replacement.
-        printf("view_image: %s is a micro-HAM plane; micro-HAM is retired (PIXEL is "
-               "index-only now) and there is no viewer for it\n", image_path);
-        return;
-    }
-    if (image_bytes != LEGACY_IMAGE_BYTES)
-    {
-        printf("view_image: %s is %lu bytes; expected %lu (1bpp plane)\n",
-               image_path, static_cast<unsigned long>(image_bytes),
-               static_cast<unsigned long>(LEGACY_IMAGE_BYTES));
-        return;
-    }
-
-    const uint32_t pal_bytes = LEGACY_PALETTE_BYTES;
-    if (f_stat(palette_path, &info) != FR_OK)
-    {
-        printf("view_image: cannot open %s\n", palette_path);
-        return;
-    }
-    if (static_cast<uint32_t>(info.fsize) != pal_bytes)
-    {
-        printf("view_image: %s is %lu bytes; a 1bpp image needs a %lu-byte palette "
-               "(one R3G3B2 pair per line)\n",
-               palette_path, static_cast<unsigned long>(info.fsize),
-               static_cast<unsigned long>(pal_bytes));
-        return;
-    }
-
-    // Per-line palette set: 480 R3G3B2 words, D[15:8] = fg (palette entry 1),
-    // D[7:0] = bg (entry 0).
-    // malloc, not new[]: the throwing array-new drags in libstdc++ exception
-    // machinery and overflows ROM; newlib malloc/free keeps the image lean.
-    uint16_t *palettes = static_cast<uint16_t *>(malloc(pal_bytes));
-    if (!palettes)
-    {
-        printf("view_image: out of memory for palette set\n");
-        return;
-    }
-    if (!view_read_exact(palette_path, palettes, pal_bytes))
-    {
-        free(palettes);
-        return;
-    }
-
-    // A 1bpp plane loads straight into the framebuffer: the file's stride and the
-    // framebuffer's are both 80 now, so it is one read — rev-1's per-line
-    // interleave is gone.
-    static_assert(IMG_PIXEL_BYTES == FB_STRIDE,
-                  "image file stride must match the framebuffer stride");
-    if (!view_read_exact(image_path, reinterpret_cast<void *>(FB_ADDR),
-                         LEGACY_IMAGE_BYTES))
-    {
-        free(palettes);
-        return;
-    }
-
-    // Swap the display list under the running raster.  The vsync ISR re-arms
-    // from engine_desc_word_addr every frame, and both lists start at the same
-    // table base, so rebuilding in place and letting the next vsync pick it up
-    // is the whole handshake.  Single-buffered: there is a one-frame window
-    // where the engine may be mid-list while this rewrites it, which can tear
-    // one frame.  Acceptable for a still-image viewer; a double-buffered
-    // version would need a second 12 KB table and a pointer swap.
-    dl_build_viewer_list(palettes);
-    free(palettes);
-    if (dl_overflow)
-    {
-        printf("view_image: display list overflowed the reserved window\n");
-        dl_build_console_list();
-        return;
-    }
-
-    view_wait_and_restore();
-}
-
-// Show a .gc4 picture: 320x480 4bpp half rate.  The file is read whole into one
-// malloc and the display list streams its pixel section IN PLACE, so nothing is
-// copied into the framebuffer and the console's plane survives the viewing.
-static void view_gc4(const char *path)
-{
-    FILINFO info;
-    if (f_stat(path, &info) != FR_OK)
-    {
-        printf("view_image: cannot open %s\n", path);
-        return;
-    }
-    const uint32_t bytes = static_cast<uint32_t>(info.fsize);
-    if (bytes < 2u * Gc4Target::HEADER_WORDS || (bytes & 1u) != 0
-        || bytes > Gc4Target::file_bytes(Gc4Target::MAX_K, Gc4Target::MAX_HEIGHT))
-    {
-        printf("view_image: %s is %lu bytes; not a .gc4 picture\n", path,
-               static_cast<unsigned long>(bytes));
-        return;
-    }
-
-    // malloc, not new[]: the throwing array-new drags in libstdc++ exception
-    // machinery and overflows ROM; newlib malloc/free keeps the image lean.
-    uint16_t *file = static_cast<uint16_t *>(malloc(bytes));
-    if (!file)
-    {
-        printf("view_image: out of memory for %s (%lu bytes)\n", path,
-               static_cast<unsigned long>(bytes));
-        return;
-    }
-    if (!view_read_exact(path, file, bytes))
-    {
-        free(file);
-        return;
-    }
-
-    Gc4Target::Picture pic;
-    const char        *why = nullptr;
-    if (!Gc4Target::open_picture(file, bytes / 2, &pic, &why))
-    {
-        printf("view_image: %s: %s\n", path, why);
-        free(file);
-        return;
-    }
-
-    gc4_packet_stride = pic.k * se::PALETTE_WORDS_PER_ENTRY + 1;
-    gc4_packets = static_cast<uint16_t *>(malloc(pic.height * gc4_packet_stride * 2));
-    if (!gc4_packets)
-    {
-        printf("view_image: out of memory for %u VIDCMD packets\n", pic.height);
-        free(file);
-        return;
-    }
-
-    // Swap the display list under the running raster.  The vsync ISR re-arms
-    // from engine_desc_word_addr every frame and every list starts at the same
-    // table base, so rebuilding in place and letting the next vsync pick it up
-    // is the whole handshake.  Single-buffered: one frame may tear.
-    dl_build_gc4_list(pic);
-    if (dl_overflow)
-    {
-        printf("view_image: display list overflowed the reserved window\n");
-        dl_build_console_list();
-    }
-    else
-    {
-        printf("view_image: %s, 320x%u 4bpp half rate, K=%u\n", path, pic.height, pic.k);
-        view_wait_and_restore();
-    }
-
-    free(gc4_packets);
-    gc4_packets = nullptr;
-    free(file);
 }
 
 // ---------------------------------------------------------------------------
@@ -1633,9 +1142,8 @@ extern "C" long sys_video_direct_end(void)
     *vector_slot(VECTOR_LEVEL6_ADDR) = video_direct_saved_vector;
     video_direct_mode = 0;
 
-    // Unconditionally rebuild: the app's carve overlaps the region the viewer
-    // list uses, and the app may have armed anything at all, so nothing about
-    // the previous list can be trusted.  The framebuffer is NOT in the carve or
+    // Unconditionally rebuild: the app may have armed anything at all, so
+    // nothing about the previous list can be trusted.  The framebuffer is NOT in the carve or
     // in the app region (it is a firmware heap allocation up above
     // _firmware_ram), so the console text page is still intact and must NOT be
     // cleared here.  Apps run supervisor and could scribble on it anyway; that
@@ -1818,9 +1326,6 @@ static void monitor_help()
     printf("ls [PATH]                  list directory (default /)\n");
     printf("time                       print time since boot\n");
     printf("run FILE [ARGS...]         load and run FILE from CF\n");
-    printf("view IMAGE                 show a .gc4 image (320x480 4bpp, 16 colours)\n");
-    printf("view IMAGE PALETTE         show a 1bpp (.bin) image + per-line palette\n");
-    printf("                           either holds until a key is pressed\n");
     printf("help                 (?)   this text\n");
     printf("CMD [ARGS...]              run CMD.bin from CF with those args\n");
 }
@@ -1961,23 +1466,6 @@ static bool monitor_run_cf_command(int argc, char *argv[])
                 // launched as, then the remaining tokens.
                 int result = load_and_run_app(argv[1], argc - 1, &argv[1]);
                 printf("%s: exited with status %d\n", argv[1], result);
-            }
-        }
-        else if (strcmp(cmd, "view") == 0)
-        {
-            if (argc == 2)
-            {
-                view_gc4(argv[1]);
-            }
-            else if (argc >= 3)
-            {
-                view_image(argv[1], argv[2]);
-            }
-            else
-            {
-                printf("usage: view IMAGE            .gc4, 320x480 4bpp half rate\n");
-                printf("       view IMAGE PALETTE    38400-byte 1bpp plane + 960-byte palette\n");
-                printf("  (micro-HAM planes are retired: PIXEL is index-only)\n");
             }
         }
         else if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0)

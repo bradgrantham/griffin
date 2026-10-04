@@ -2677,3 +2677,111 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   76.1 %, C2 55.9 %, PASS.  NOTE for scripted runs: --mouse-in moves at
   time 0 were lost (probably before the firmware enables reporting; not
   traced); a leading delay 12000 makes them land.
+
+2026-10-04 -- Firmware: `view` leaves the ROM for apps/view (decision, Brad; implemented)
+  The monitor's `view` command and all its viewer code -- view_gc4,
+  dl_build_gc4_list, the legacy 1bpp .bin + palette viewer, the DL_VIEWER_*
+  regions, the gc4_target.h include -- are gone from firmware/rom.cpp; the
+  console list is the firmware's only display list.  ROM 130,692 -> 122,436
+  bytes (380 -> 8,636 free of 131,072).  Pictures are now .gcx files
+  (image-tools/fixup_encode) shown by apps/view: `VIEW FILE.GCX` reads the
+  file into the heap, relocate_table()s its prebuilt list into the 56 KB
+  carve and re-arms it at every polled vsync until Enter (either console;
+  line mode, so the launching Enter's release cannot end it).  A lowercase
+  `view` now reaches VIEW.BIN through the monitor's CMD.bin fallback.
+  .gc4 files have no viewer any more (smurf still reads its own).
+  Checked headless: maya2 through fixup_encode (2,877 descriptors, K=4),
+  emulator screenshot vs the encoder's --preview PNG, 0 of 307,200 pixels
+  differ (a one-line-shifted control differs in 170,572); Enter returns to
+  the monitor with the console restored; usage, missing file and bad-magic
+  paths print their reasons; rom.bin boots to the monitor prompt.
+
+2026-10-04 -- image-tools: fixup_encode and the .gcx picture (half-rate 16 colour + COMPOSITOR fix-ups)
+  Asked for (Brad): a half-rate 16-colour image mode with COMPOSITOR fix-ups,
+  few palette loads per line, encoded offline (threads allowed), the file a
+  memory image ENGINE can DMA with no per-line CPU work.  Decisions: bus share
+  about 95%; viewer is an app and `view` leaves the ROM (entry above).
+  FORMAT (.gcx, gcx_format.h / gcx_target.h): header, PREBUILT descriptor
+  table with file-relative sources (viewer adds the load address once),
+  VIDCMD stream, 480 x 80 pixel words, per-line length index.  Schedule:
+  preamble + line 0's packet at the vsync arm, 34 pacers, then group g =
+  [wait] line g's PIXELS, line g+1's VIDCMD.  Group cost 208 + 14d + 2V
+  SYSCLK; default V = 82 (414 SYSCLK at arbitration 4, 442 at 8, limit 442).
+  Every line framed at exactly 640 slots.
+  RECORDS: palette loads (3 words), LITERAL (1 word, one 320 pixel),
+  LITERAL + HOLD (2 words, flat span >= 3 px), MASK (2 words, 16 slots at
+  640 resolution; two held colours per line set in hblank, 2 more words),
+  RUN(passthrough).  Per-line DP over (pixel, words), lines in parallel;
+  joint loop re-derives the palette chain from the pixels no fix-up covers
+  while frame error falls (3-4 rounds kept on the photographs).
+  VERIFICATION: the encoder renders its own file through interpret() +
+  render() (real delivery timing, arbitration 4 and 8, both frames) and
+  refuses to write on any violation, nonzero fault counter, group over the
+  line, or pixel differing from its prediction.  make -C image-tools check:
+  preview == suite == independent decoder (gcx_decode), 1 thread == 8
+  threads byte for byte, --fixups off == clut_encode at the same K/dither,
+  and six negative controls all rejected (lookahead 0, 639- and 641-slot
+  lines, bad filler, line ending in a STREAM RUN ahead of a load, over-budget
+  group).  Emulator headless screenshot of VIEW ADOBE2.GCX (1,679 masks) and
+  VIEW MAYA2.GCX: 0 of 307,200 pixels differ from the preview.
+  FOUND ON THE WAY: (1) a line ending in a STREAM RUN executes the next
+  line's prefetched palette SETs over passthrough (palette_disturbed_visible
+  = 8 in the control) -- now a format rule.  (2) A bad filler in the vblank
+  preamble is NOT caught by the model at arbitration 4: the preamble is
+  consumed faster than ENGINE delivers it, so the write pulse has passed
+  before the filler arrives; the control corrupts a per-line load instead.
+  (3) the suite model does not flag a group that outruns its line
+  (EngineWalker::advance restarts at each edge); gcx_verify.h prices groups
+  from the table itself.
+  MEASURED, K = 4, 82 words/line, against clut_encode K = 4 (same K = 8 is
+  within 2%); columns per-pixel RGB444 MSE / 4x4-box MSE / PSNR dB
+  (clut-experiment/clut_compare, references out/*-ref.png):
+    undithered      clut_encode              fixup_encode (masks on)
+      adobe2    2.584 / 150.6 / 24.42     1.537 /  66.2 / 26.68
+      maya2     0.703 /  51.8 / 30.58     0.417 /  25.6 / 32.38
+      millie2   0.727 /  69.0 / 30.65     0.383 /  30.5 / 32.86
+      oops2     0.332 /  55.9 / 31.82     0.217 /  48.0 / 32.86
+    Floyd-Steinberg clut_encode              fixup_encode (masks off)
+      adobe2    3.984 / 108.5 / 22.55     2.568 /  52.2 / 24.57
+      maya2     1.474 /  39.6 / 27.23     0.852 /  16.0 / 29.95
+      millie2   1.518 /  51.3 / 27.13     0.956 /  26.8 / 29.29
+      oops2     1.171 /  28.1 / 28.39     0.933 /  14.7 / 29.67
+  LADDERS (rejected or settled):
+    K: 0 is clearly worse (maya2 undithered 0.540 vs 0.428); 1, 2, 4, 8 are
+      within 2% of each other because the chain uses about 3 loads/line
+      whatever it is allowed.  Default 4.
+    MASK: undithered per-pixel -18% adobe2, -8.6% oops2, -2.6% maya2, -0.5%
+      millie2 (gate was 5% on two images: met).  DITHERED it hurts (maya2 FS
+      0.852 -> 1.013 per-pixel, box 16.0 -> 23.1), with or without charging
+      mask passthrough slots the dither-discounted cost, so dither turns
+      masks off by default.
+    Dither-aware planning (--dither-noise, passthrough charged its distance
+      to the palette's hull plus this share of the rest): 100 / 50 / 25 / 10 /
+      0 % gives maya2 box 18.4 / 16.0 / 16.2 / 17.6 / 26.1 and adobe2 54.5 /
+      52.2 / 51.3 / 50.8 / 53.5; millie2 and oops2 flat to 25% then worse.
+      Default 50.
+    --word-cost 0 vs 24: no measurable difference; 24 kept so a word that
+      buys nothing is not delivered.
+  NOT DONE: mid-line palette writes under a colour-register STREAM RUN, and
+  borrowing words between lines through the FIFO (both were gated on an
+  oracle experiment that was not run).  Nothing has run on hardware; at this
+  bus share the CPU has about 30 SYSCLK per active line plus vblank.
+
+2026-10-04 -- fixup_encode: bright single pixels under dither (reported by Brad, maya2 line 53)
+  Symptom: two LITERALs at pixels 145-146 of line 53 showed #FF0 / #FF3 where
+  the reference is about (234,165,89).  Cause: the passthrough run before them
+  sat on one palette entry slightly darker than the source with nothing
+  brighter in the palette to mix, so Floyd-Steinberg error accumulated along
+  the run (and from the lines above), and the first LITERAL -- which can show
+  any colour -- absorbed all of it.  Not a palette or LITERAL-placement fault.
+  Fix: a LITERAL takes in at most --fs-literal (8) 8-bit units of diffused
+  error, a fix-up pixel passes on only its own error against the source, and
+  no pixel passes on more than --fs-limit (32; clut_encode's inherited 128
+  is kept there, and make check's parity run passes --fs-limit 128).
+  FS results, per-pixel / 4x4 box, K = 4, 82 words (before -> after):
+    adobe2   2.568 / 52.2 -> 2.256 / 43.9     maya2   0.852 / 16.0 -> 0.752 / 12.6
+    millie2  0.956 / 26.8 -> 0.731 / 18.3     oops2   0.933 / 14.7 -> 0.759 / 10.5
+  Ladder of --fs-limit with the literal clamp in (box): 128: 44.9 13.0 18.8
+  13.5; 48: 43.8 12.8 18.5 10.8; 32: 43.9 12.6 18.3 10.5; 16: 46.2 12.7 18.8
+  10.5 (adobe2, maya2, millie2, oops2).  32 chosen.  Supersedes the FS column
+  of the entry above: against clut_encode the box error now falls 60-68%.
