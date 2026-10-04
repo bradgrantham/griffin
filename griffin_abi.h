@@ -37,7 +37,7 @@ extern "C" {
  *    ANYWHERE in RAM -- normally in the app's own region or heap, not in this
  *    carve.
  *  - The carve is the app's only while it runs.  The firmware image viewer
- *    builds lists that span the whole 40 KB window between app runs, so an app
+ *    builds lists that span the whole 64 KB window between app runs, so an app
  *    must NOT expect anything it left here to survive to its next invocation.
  *  - Firmware guarantees its console display list, that list's VIDCMD payload,
  *    and the supervisor stack all stay BELOW desc_table_base, so the console
@@ -65,9 +65,12 @@ extern "C" {
  * read-modify-write it.
  * ------------------------------------------------------------------------ */
 
-/* Upper 32 KB of the descriptor page: the app's descriptor-table carve. */
-#define GRIFFIN_APP_DESC_BASE   0x3F8000u
-#define GRIFFIN_APP_DESC_BYTES  0x8000u
+/* The app's descriptor-table carve: the descriptor page above the firmware's
+ * 8 KB console list, 56 KB = 7,168 descriptors (raised from the upper 32 KB on
+ * 2026-10-03).  Take the base and size from SYS_VIDEO_DIRECT_START's info at
+ * run time; these are for static sizing only. */
+#define GRIFFIN_APP_DESC_BASE   0x3F2000u
+#define GRIFFIN_APP_DESC_BYTES  0xE000u
 
 typedef struct GriffinVideoDirectInfo
 {

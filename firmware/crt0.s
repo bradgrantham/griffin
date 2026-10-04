@@ -155,7 +155,7 @@ vec_copy:
     /* Stack top is _stack_top, NOT RAM_TOTAL_SIZE.  This used to reload the
        top of RAM (a leftover from before the display list had a home), which
        silently put the supervisor stack ABOVE _displaylist_start and let it
-       grow down through the 40 KB descriptor window — including the 32 KB
+       grow down through the 64 KB descriptor window — including the 56 KB
        carve an app owns in direct-video mode (GRIFFIN_APP_DESC_BASE).  An app
        whose tables actually reach the top of the carve had its descriptors and
        the firmware's stack writing over each other.  Reset already loads this

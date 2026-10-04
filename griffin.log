@@ -2601,3 +2601,21 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
     for a word every 8 clocks where this mode needs one every 4.
   Left alone as whiteboard-simple: double-buffered lists re-armed at
   vblank, static tables walked by ENGINE, MASK, RUN, LITERAL.
+
+2026-10-03 -- ABI: the app descriptor carve raised from 32 KB to 56 KB (decision, Brad)
+  First item acted on from the design review of the same day ("meet a
+  limit with a resource").  The display-list window is now the whole
+  descriptor page, 0x3F0000..0x3FFFFF: the firmware's console list and its
+  VIDCMD payload in the first 8 KB, GRIFFIN_APP_DESC_BASE = 0x3F2000 with
+  GRIFFIN_APP_DESC_BYTES = 0xE000 above it -- 7,168 descriptors, 3,584 a
+  frame double-buffered (was 4,096 / 2,048).  linker.ld's window is 64 KB,
+  so _stack_top moves down to 0x3F0000; nothing else in the firmware's
+  512 KB reserve changes.  Apps take base and size from
+  SYS_VIDEO_DIRECT_START and their static_asserts are "<= BYTES", so dtest,
+  dmabench, smurf (demo) and mandelbrot rebuild unchanged.  Checked: ROM
+  130,692 bytes (380 free); headless boot shows the console with its list
+  at 0x3F0000; check-dma-stall passes; suite passes; the griffin-ports Smurf
+  rebuilt against the header passes host-check and two emulator screenshots
+  with audio at 0 drops.  The port still uses 2,005 descriptors a table --
+  its doubled backdrop rows and copied two-object lines were forced by the
+  old limit and can now be undone.

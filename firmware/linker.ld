@@ -17,20 +17,21 @@ INCLUDE ../griffin.generated.ld
    descriptor pointer is 15 bits of WORD address inside one hard-wired 64K
    page (edma3.v forms {8'h3F, desc_ptr}), so every descriptor must live in
    0x3F0000..0x3FFFFF, 8-byte aligned, and must not straddle the top of RAM.
-   40 KB at the very top is reserved for it below, which also means THE STACK
+   The whole 64K page is reserved for it below, which also means THE STACK
    CANNOT START AT THE TOP OF RAM ANY MORE: it used to be
    ORIGIN(RAM)+LENGTH(RAM) = 0x400000 and would have grown straight down
    through the table.  _stack_top now sits just under the window.
 
-   The window grew from 32 KB to 40 KB (0x3F8000 -> 0x3F6000) for the direct
-   video syscalls: the upper 32 KB (0x3F8000..0x3FFFFF, GRIFFIN_APP_DESC_BASE
-   in griffin_abi.h) is carved out and handed to an application that takes
-   direct control of ENGINE, so firmware's own console list plus its VIDCMD
-   payload has to fit in the 8 KB below that carve and survive the app run.
-   Firmware still uses the whole 40 KB while no app is running (the image
-   viewer's list is ~14.5 KB). */
-_displaylist_size  = 0xA000;    /* 40 KB: 8 KB console-safe + the 32 KB app carve */
-_displaylist_start = RAM_ORIGIN + RAM_TOTAL_SIZE - _displaylist_size;   /* 0x3F6000 */
+   The window is the whole page (0x3F0000..0x3FFFFF) since 2026-10-03: the
+   upper 56 KB (0x3F2000..0x3FFFFF, GRIFFIN_APP_DESC_BASE in griffin_abi.h) is
+   carved out and handed to an application that takes direct control of
+   ENGINE, so firmware's own console list plus its VIDCMD payload has to fit
+   in the 8 KB below that carve and survive the app run.  Firmware uses the
+   whole 64 KB while no app is running (the image viewer's list is ~14.5 KB).
+   It was 40 KB with a 32 KB carve before; ENGINE could always address the
+   page, and a game's per-line descriptor groups outgrew 2,048 a frame. */
+_displaylist_size  = 0x10000;   /* 64 KB: 8 KB console-safe + the 56 KB app carve */
+_displaylist_start = RAM_ORIGIN + RAM_TOTAL_SIZE - _displaylist_size;   /* 0x3F0000 */
 _displaylist_end   = RAM_ORIGIN + RAM_TOTAL_SIZE;                       /* 0x400000 */
 _app_base     = 0x001000;   /* loaded apps link and run here (just above vectors) */
 /* firmware .data / .bss / heap base: 512K reserved at the top of RAM, tracking
@@ -109,7 +110,7 @@ SECTIONS
     } >RAM
 
     /* Just below the display-list window, NOT at the top of RAM: the engine
-       owns 0x3F6000..0x3FFFFF and the stack must not grow into it. */
+       owns 0x3F0000..0x3FFFFF and the stack must not grow into it. */
     _stack_top = _displaylist_start;
 
     /* newlib's __libc_init_array iterates between __init_array_start and

@@ -663,26 +663,26 @@ static constexpr unsigned   CONSOLE_PIX_BASE = 0;
 //
 // edma3.v's descriptor pointer is 15 bits of WORD address inside a hard-wired
 // page, so every descriptor has to live in 0x3F0000..0x3FFFFF and be 8-byte
-// aligned.  linker.ld reserves the top 40 KB (0x3F6000..0x3FFFFF) for it and
+// aligned.  linker.ld reserves the whole page (0x3F0000..0x3FFFFF) for it and
 // drops _stack_top below the window, because the stack used to start at
 // 0x400000 and would have grown straight down through the table.
 //
 // The window is split by the direct-video syscalls, not by the hardware:
 //
-//   0x3F6000 +-------------------------------+
+//   0x3F0000 +-------------------------------+
 //            | console table   0x1F40 (1000  |  the CONSOLE list and its VIDCMD
 //            |                  descriptors) |  payload live entirely below the
-//   0x3F7F40 | console VIDCMD  0x00C0        |  app carve, so they survive an
-//   0x3F8000 +-------------------------------+  app owning it
-//            | GRIFFIN_APP_DESC_BASE, 32 KB  |
+//   0x3F1F40 | console VIDCMD  0x00C0        |  app carve, so they survive an
+//   0x3F2000 +-------------------------------+  app owning it
+//            | GRIFFIN_APP_DESC_BASE, 56 KB  |
 //            | carved out for an application |  handed to the app by
 //            | holding direct video access   |  SYS_VIDEO_DIRECT_START
 //   0x400000 +-------------------------------+
 //
-// While no app holds direct access the firmware uses the WHOLE 40 KB: the 1bpp
+// While no app holds direct access the firmware uses the WHOLE 64 KB: the 1bpp
 // viewer's list is 1476 descriptors (11808 bytes) plus 3360 VIDCMD words
 // (6720 bytes), and the .gc4 viewer's is 1957 descriptors (15656 bytes) plus a
-// 50-word preamble, neither of which fits under 0x3F8000.  All the lists start
+// 50-word preamble, neither of which fits under 0x3F2000.  All the lists start
 // at dl_table_base, so engine_desc_word_addr never changes; only the region
 // sizes differ, and dl_reset() takes them.  (The .gc4 viewer's per-line VIDCMD
 // packets are an ordinary malloc, not part of this window: 480 lines of up to
@@ -692,8 +692,8 @@ extern "C" char _displaylist_start[];
 
 // Must match linker.ld's _displaylist_size / _displaylist_start; checked
 // against the linker symbol at runtime in video_framebuffer_init().
-static constexpr uint32_t DL_SIZE  = 0xA000;
-static constexpr uint32_t DL_START = se::DESC_TABLE_BASE + 0x10000 - DL_SIZE;   // 0x3F6000
+static constexpr uint32_t DL_SIZE  = 0x10000;
+static constexpr uint32_t DL_START = se::DESC_TABLE_BASE + 0x10000 - DL_SIZE;   // 0x3F0000
 
 // Console: table + payload sized to land exactly on the app carve boundary.
 static constexpr uint32_t DL_CONSOLE_TABLE_BYTES  = 0x1F40;   // 1000 descriptors
@@ -713,7 +713,7 @@ static_assert(DL_START + DL_SIZE == GRIFFIN_APP_DESC_BASE + GRIFFIN_APP_DESC_BYT
 static_assert(DL_VIEWER_TABLE_BYTES + DL_VIEWER_VIDCMD_BYTES == DL_SIZE,
               "the viewer regions must tile the display-list window exactly");
 
-static uint32_t dl_table_base = 0;    // 0x3F6000, both lists
+static uint32_t dl_table_base = 0;    // 0x3F0000, both lists
 static uint32_t dl_max_desc = 0;      // descriptor capacity of the active list's region
 static uint32_t dl_vidcmd_base = 0;   // just above the active list's table
 static uint32_t dl_vidcmd_bytes = 0;  // payload capacity of the active list's region
@@ -847,7 +847,7 @@ static_assert(CONSOLE_DESCRIPTORS * se::DESC_BYTES <= DL_CONSOLE_TABLE_BYTES,
 static_assert(CONSOLE_PREAMBLE_WORDS * 2 <= DL_CONSOLE_VIDCMD_BYTES,
               "console frame preamble outgrew its below-the-carve payload region");
 static_assert(VIEWER_DESCRIPTORS * se::DESC_BYTES <= DL_VIEWER_TABLE_BYTES,
-              "viewer display list outgrew the 40 KB display-list window");
+              "viewer display list outgrew the 64 KB display-list window");
 static_assert(FB_LINES * VIEWER_LINE_WORDS * 2 + 2 * 2 <= DL_VIEWER_VIDCMD_BYTES,
               "viewer per-line palette payload outgrew the display-list window");
 
