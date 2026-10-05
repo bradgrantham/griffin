@@ -30,6 +30,8 @@ extern "C"
     int     isatty(int fd);
     int     stat(const char *path, struct stat *st);
     bool    console_input_ready(void);
+    void    console_char_mode_set(int on);
+    int     fsync(int fd);
     int     sys_readdir(const char *path, int index, GriffinDirEnt *out);
 
     // firmware/rom.cpp
@@ -132,18 +134,29 @@ long sys_dispatch(long num, long a1, long a2, long a3)
             mouse_get_report(reinterpret_cast<mouse_report_t *>(a1));
             r = 0;
             break;
-        // Raw PS/2 scancodes on the console (keymap.h); the loader puts the
-        // console back into line mode when the application ends.
+        // Console mode: 0 line editing, 1 raw PS/2 scancodes (keymap.h),
+        // 2 character mode (syscalls.c).  The loader puts the console back
+        // into line mode when the application ends.
         case Griffin::SYS_CONSOLE_RAW:
-            if (a1 != 0)
+            if (a1 == 1)
             {
+                console_char_mode_set(0);
                 griffin_enter_raw();
+            }
+            else if (a1 == 2)
+            {
+                griffin_leave_raw();
+                console_char_mode_set(1);
             }
             else
             {
                 griffin_leave_raw();
+                console_char_mode_set(0);
             }
             r = 0;
+            break;
+        case Griffin::SYS_FSYNC:
+            r = fsync(static_cast<int>(a1));
             break;
         case Griffin::SYS_EXIT:
             app_exit(static_cast<int>(a1));

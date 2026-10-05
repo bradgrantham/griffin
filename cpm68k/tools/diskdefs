@@ -1,0 +1,43 @@
+# cpmtools definitions for Griffin CP/M-68K drive images (bios/bios.c).
+# For cpmtools:  cpmls -f griffin8 A.CPM ;  cpmcp -f griffin8 A.CPM file 0:
+# (the Ubuntu 24.04 package, 2.23, corrupts its heap on these images once a
+# few files are on them; tools/cpmdisk.py needs nothing but python3)
+# The BIOS derives the block count from the file size, so an image of any
+# whole number of 2 KB blocks works on the machine; cpmtools needs the track
+# count spelled out, hence one definition per size.
+
+# 8 MB: 512 tracks x 32 x 512-byte sectors
+diskdef griffin8
+  seclen 512
+  tracks 512
+  sectrk 32
+  blocksize 2048
+  maxdir 512
+  skew 0
+  boottrk 0
+  os 2.2
+end
+
+# 4 MB
+diskdef griffin4
+  seclen 512
+  tracks 256
+  sectrk 32
+  blocksize 2048
+  maxdir 512
+  skew 0
+  boottrk 0
+  os 2.2
+end
+
+# 16 MB
+diskdef griffin16
+  seclen 512
+  tracks 1024
+  sectrk 32
+  blocksize 2048
+  maxdir 512
+  skew 0
+  boottrk 0
+  os 2.2
+end

@@ -121,11 +121,25 @@ static void console_tee_emit_byte(uint8_t c)
     }
 }
 
+// Character mode (SYS_CONSOLE_RAW mode 2): the program owns the terminal.
+// Input is unbuffered ASCII with no echo, from the keyboard and the DUART
+// merged; output is passed through byte for byte.  CP/M's BIOS runs in this
+// mode.  Set/cleared by console_char_mode_set(); the loader clears it when an
+// app exits.
+static int console_char_mode = 0;
+static int cons_char_pending = -1;   /* one byte of lookahead, see below */
+
+void console_char_mode_set(int on)
+{
+    console_char_mode = on ? 1 : 0;
+}
+
 // All write() bytes flow through here.  Translates bare '\n' into "\r\n"
-// so both VT102 and serial terminals advance to column 0.
+// so both VT102 and serial terminals advance to column 0 -- except in
+// character mode, where the program emits its own CR LF pairs.
 static void console_tee_putchar(uint8_t c)
 {
-    if (c == '\n')
+    if (c == '\n' && !console_char_mode)
     {
         console_tee_emit_byte('\r');
     }
@@ -183,10 +197,35 @@ ssize_t write (int file,  const void *ptr, size_t len)
     }
 }
 
+int fsync(int file)
+{
+    if((file == 0) || (file == 1) || (file == 2))
+    {
+        return 0;
+    }
+    int myFile = file - FD_OFFSET;
+    if(myFile < 0 || myFile >= MAX_FILES || !filesOpened[myFile])
+    {
+        errno = EBADF;
+        return -1;
+    }
+#ifdef USE_FATFS
+    if(f_sync(&files[myFile]) != FR_OK)
+    {
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+#else /* not USE_FATFS */
+    errno = EIO;
+    return -1;
+#endif /* USE_FATFS */
+}
+
 int close(int file)
 {
     int myFile = file - FD_OFFSET;
-    if(!filesOpened[myFile])
+    if(myFile < 0 || myFile >= MAX_FILES || !filesOpened[myFile])
     {
         errno = EBADF;
         return -1;
@@ -289,6 +328,12 @@ static int console_try_getchar(void)
     {
         return keyboard_raw_ready() ? (int)keyboard_raw_getchar() : -1;
     }
+    if (cons_char_pending >= 0)         /* parked by a character-mode poll */
+    {
+        int c = cons_char_pending;
+        cons_char_pending = -1;
+        return c;
+    }
     if (keyboard_ready())
     {
         return (int)keyboard_getchar();
@@ -372,6 +417,11 @@ static void console_cooked_pump(void)
     }
 }
 
+// Character mode keeps one byte of lookahead (cons_char_pending): the
+// facilities' rings can only be consumed, so a readiness poll that found a
+// byte parks it there, and console_try_getchar() hands it out first -- in
+// whichever mode the next read happens, so a byte typed ahead of an app's
+// exit still reaches the monitor's line editor.
 // Non-blocking: will read(0) return immediately?  Pumps the line editor as a
 // side effect, so a poll loop (e.g. rom.cpp's clock loop) echoes and edits
 // live while the user types; true only once a whole line (or EOF, or a raw
@@ -381,6 +431,14 @@ bool console_input_ready(void)
     if (griffin_is_raw())
     {
         return keyboard_raw_ready();
+    }
+    if (console_char_mode)
+    {
+        if (cons_char_pending < 0)
+        {
+            cons_char_pending = console_try_getchar();
+        }
+        return cons_char_pending >= 0;
     }
     console_cooked_pump();
     return cons_line_done || cons_eof_pending;
@@ -398,6 +456,21 @@ ssize_t read(int file, void *buf, size_t len)
         {
             // Raw: block for the first scancode, then return whatever else
             // is immediately available (POSIX short-read semantics).
+            int c;
+            while ((c = console_try_getchar()) < 0) { }
+            size_t n = 0;
+            ptr[n++] = (char)c;
+            while (n < len && (c = console_try_getchar()) >= 0)
+            {
+                ptr[n++] = (char)c;
+            }
+            return (ssize_t)n;
+        }
+
+        if (console_char_mode)
+        {
+            // Character mode: same short-read shape as raw, but ASCII from
+            // both facilities, honouring the lookahead byte, and no echo.
             int c;
             while ((c = console_try_getchar()) < 0) { }
             size_t n = 0;

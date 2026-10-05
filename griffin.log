@@ -2785,3 +2785,46 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   13.5; 48: 43.8 12.8 18.5 10.8; 32: 43.9 12.6 18.3 10.5; 16: 46.2 12.7 18.8
   10.5 (adobe2, maya2, millie2, oops2).  32 chosen.  Supersedes the FS column
   of the entry above: against clut_encode the box error now falls 60-68%.
+
+2026-10-05 -- CP/M-68K port (cpm68k/)
+  CP/M-68K runs as a Griffin application, CPM.BIN, loaded by the monitor at
+  0x1000; the TPA is the rest of the app region (about 3.5 MB).  The BDOS and
+  CCP are DRI's 1983 C sources in roman65536's GCC conversion (vendored,
+  see cpm68k/system/PROVENANCE.md); the BIOS is new.
+  Decisions:
+    Drives are files on the FAT card (A.CPM..D.CPM), reached through the
+      ROM's TRAP #15 open/lseek/read/write plus a new FSYNC syscall.
+      Rejected: raw LBA ranges with a BIOS copy of the CF driver (a second
+      card layout convention, and host images would need dd offsets); the
+      DRI CPM400.SR binary plus a BIOS only (a blob at a fixed address, and
+      its source site is unreachable from the build container).
+    Console through the ROM in a new character mode (SYS_CONSOLE_RAW = 2:
+      unbuffered ASCII, keyboard and DUART merged, no echo, no newline
+      translation), so CP/M has the screen, the PS/2 keyboard and the serial
+      console at once and the ROM's ISRs stay installed.  Rejected: the
+      BIOS driving the DUART (serial only, and it would race the ROM's RX
+      ISR).
+    Geometry: 512-byte sectors x 32 per track, 2 KB blocks, 512 directory
+      entries, EXM 0, 16-bit block numbers, dsm from the file size.  4 KB
+      blocks (EXM 1) were tried first; 2 KB with EXM 0 is the simplest
+      layout every tool agrees on.  Ubuntu's cpmtools 2.23 corrupts its heap
+      writing these images (any image over a few files), so
+      tools/cpmdisk.py is the host tool; tools/diskdefs keeps the geometry
+      for cpmtools.
+    The vector table: CP/M's BDOS re-installs vectors 2..23 and 32..46 at
+      every boot through BIOS setexc; the BIOS refuses 47 (TRAP #15) and
+      24..31 and keeps the ROM's originals for `GRIFFIN EXIT`.
+    stack.s: 16 KB, because ROM syscalls (FatFs) and the ROM's ISRs run on
+      whatever supervisor stack is current, which under CP/M is this one.
+  68010: user programs that read SR trap and are patched to `move ccr`
+    (exceptn.s privviol); the exception reporter's "user address" is wrong
+    for bus/address errors only (68000 frame assumed), warm boot still works.
+  Seek cost: FatFs without FF_USE_FASTSEEK walks the cluster chain from the
+    start on every backward seek, and CP/M seeks back to its directory all
+    the time.  apps/mkcf.sh now formats with 4 KB clusters (an 8 MB drive is
+    2048 FAT entries, 8 FAT sectors).  If real cards feel slow, the next
+    step is FF_USE_FASTSEEK with a cluster map per open file in the ROM.
+  Not done: CPMLDR-style boot from a CP/M filesystem; list device on DUART
+    B / iobyte routing; more than 4 drives (the ROM's open-file limit); an
+    ELF-to-.68K converter with relocation entries so gcc C programs can be
+    built on the host (GRIFFIN.68K is PC-relative gas only).

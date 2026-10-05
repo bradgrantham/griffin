@@ -38,6 +38,16 @@ int griffin_inputready(void);
 // line editing when the app exits, however it exits.  Returns 0 or -1/errno.
 int griffin_console_raw(int enable);
 
+// Console modes for griffin_console_mode() (SYS_CONSOLE_RAW's d1).  LINE is
+// the default line editor; RAW is griffin_console_raw(1); CHAR is unbuffered
+// ASCII from the keyboard and the serial port merged, no echo, and no
+// '\n' -> "\r\n" translation on output -- for programs that drive the terminal
+// themselves (an editor, CP/M).  The loader restores LINE when the app exits.
+#define GRIFFIN_CONSOLE_LINE 0
+#define GRIFFIN_CONSOLE_RAW  1
+#define GRIFFIN_CONSOLE_CHAR 2
+int griffin_console_mode(int mode);
+
 // Fill *out with entry `index` of directory `path`.  Returns 0 when an entry
 // was filled in, 1 when index is past the end, -1/errno on failure.  Iteration
 // is stateless: each call reopens the directory and skips forward.
