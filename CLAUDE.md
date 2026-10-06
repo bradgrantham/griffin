@@ -25,6 +25,7 @@
   * ROM in firmware/{crt0.s,linker.ld,rom.cpp,Makefile} and associated other files in firmware/
   * bringup ROM in sanity/{sanity.s,linker.ld,Makefile} (not keeping up to date)
   * emulator in emulator/ and the intent is to at least emulate the 68k and MMIO accesses.  TBD whether to emulate the ATF1508's using Verilator.
+  * CP/M-68K in cpm68k/: DRI's BDOS+CCP (system/), the Griffin BIOS (bios/, console and drive files through the ROM's TRAP #15 syscalls), drive-image tools (tools/), the 1.3 distribution (dist/).  CPM.BIN is a Griffin app the monitor runs with `cpm`.
 
 * When possible, store new hardware definitions in griffin.yml; register addresses, bits and bitfields, constants, protocol between peripherals, constants, and then generate included headers.
   * In a register `description:`, keep the **first sentence on one physical line ending in a period**, with no mid-text periods in it (e.g. avoid `FOO.BAR`).  codegen.py uses that first sentence verbatim — newlines included — as the C header `//` comment, so a wrapped first sentence leaks bare text into griffin.generated.h/.refs.h and breaks the build.  (The .inc/.vh outputs only emit the access keyword, so only the C++ headers are sensitive.)

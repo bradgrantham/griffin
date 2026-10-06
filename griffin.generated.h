@@ -467,6 +467,7 @@ static constexpr unsigned SYS_VIDEO_DIRECT_START = 13U;  // Take direct control 
 static constexpr unsigned SYS_VIDEO_DIRECT_END = 14U;  // Return the video ENGINE to the firmware console.
 static constexpr unsigned SYS_MOUSE_READ = 15U;  // Decode pending PS/2 mouse packets and fill the GriffinMouseReport that d1 points to.
 static constexpr unsigned SYS_VIDEO_VSYNC_IRQ = 16U;  // While direct video is held, d1 nonzero enables the level-6 vsync IRQ for a handler the app installed and zero masks it again.
-static constexpr unsigned SYS_CONSOLE_RAW = 17U;  // d1 nonzero makes console reads return raw PS/2 scancodes until zero restores line editing, which the loader also restores when the application exits.
+static constexpr unsigned SYS_CONSOLE_RAW = 17U;  // d1 selects the console mode until the application exits or changes it again: 0 is line editing with echo, 1 makes console reads return raw PS/2 scancodes, 2 is character mode (unbuffered ASCII from keyboard and serial merged, no echo, no newline translation on output).
+static constexpr unsigned SYS_FSYNC = 18U;  // fsync(fd): flush a file's buffered data and directory entry to the card.
 
 } // namespace Griffin

@@ -109,11 +109,11 @@ How to reduce chance of spin and reduce likelihood of bodge?  Use golden referen
     - [ ] S-record or Intel HEX loader over serial  
     - [ ] xmodem?  
     - [ ] Basic trap dispatch (so user code calls ROM services via TRAP \#n rather than hardcoded addresses)  
-  * Boot and run CP/M-68K over serial:  
-    - [ ] Memory sizing  
-    - [ ] Serial console (polled): init, putchar, getchar, status  
-    - [ ] Block device: read sector, write sector, select, geometry query  
-    - [ ] Boot: cold start, warm start  
+  * Boot and run CP/M-68K over serial (done 2026-10-05 as cpm68k/, on the ROM's syscalls rather than on the serial port alone):  
+    - [x] Memory sizing (one TPA region from the end of CPM.BIN to the firmware's RAM)  
+    - [x] Serial console (polled): init, putchar, getchar, status (ROM console character mode: screen, keyboard and serial together)  
+    - [x] Block device: read sector, write sector, select, geometry query (drive image files on the FAT card)  
+    - [x] Boot: cold start, warm start (`cpm` at the monitor; `GRIFFIN EXIT` returns)  
   * Timer hardware  
     - [ ] Timer ISR with a tick counter  
     - [ ] GET\_TIME / SET\_TIME (calendar time, seeded at boot or via serial command)  

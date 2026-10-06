@@ -26,6 +26,7 @@ stage: all
 	cp $(SMURF_ASSETS)/backdrop1-meadow.gc4    $(STAGE)/MEADOW.GC4
 	cp $(SMURF_ASSETS)/backdrop2-forest.gc4    $(STAGE)/FOREST.GC4
 	cp $(SMURF_ASSETS)/backdrop3-clearing.gc4  $(STAGE)/CLEARING.GC4
+	$(MAKE) -C ../cpm68k stage STAGE=$(abspath $(STAGE))   # CPM.BIN, A.CPM, B.CPM
 	@ls -l $(STAGE)
 
 cf: stage

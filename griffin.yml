@@ -1020,7 +1020,10 @@ syscalls:
       description: "While direct video is held, d1 nonzero enables the level-6 vsync IRQ for a handler the app installed and zero masks it again."
     - name: CONSOLE_RAW
       number: 17
-      description: "d1 nonzero makes console reads return raw PS/2 scancodes until zero restores line editing, which the loader also restores when the application exits."
+      description: "d1 selects the console mode until the application exits or changes it again: 0 is line editing with echo, 1 makes console reads return raw PS/2 scancodes, 2 is character mode (unbuffered ASCII from keyboard and serial merged, no echo, no newline translation on output)."
+    - name: FSYNC
+      number: 18
+      description: "fsync(fd): flush a file's buffered data and directory entry to the card."
 
 # Rev 1 board reworks (applied to board/board-pcb-rev-1.distilled.txt).
 bodges:

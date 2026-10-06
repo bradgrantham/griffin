@@ -28,6 +28,7 @@ extern "C" char _firmware_ram[];   // 0x380000  (top of the app region)
 extern "C" volatile uint8_t video_direct_mode;
 extern "C" long sys_video_direct_end(void);
 extern "C" void griffin_leave_raw(void);        // firmware/keymap.cpp
+extern "C" void console_char_mode_set(int on);  // firmware/syscalls.c
 
 static jmp_buf app_ctx;
 static int     app_exit_code = 0;
@@ -95,8 +96,11 @@ extern "C" int load_and_run_app(const char *path, int argc, char **argv)
     {
         printf("loader: app left direct video access held; reclaiming\n");
         (void)sys_video_direct_end();
-        griffin_leave_raw();    // an app that died in raw keyboard mode must not take the monitor with it
     }
+    // Whatever console mode the app chose (raw scancodes, character mode),
+    // the monitor needs its line editor back -- also when the app died.
+    griffin_leave_raw();
+    console_char_mode_set(0);
 
     printf("loader: app exited (code %d)\n", app_exit_code);
     return app_exit_code;

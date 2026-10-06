@@ -29,6 +29,12 @@ extern "C" {
 int usleep(useconds_t useconds);
 #endif
 
+/* Flush a file's data and directory entry to the card (SYS_FSYNC); newlib
+ * declares it only when POSIX is visible, same guard idea as usleep. */
+#if !(__POSIX_VISIBLE >= 199309)
+int fsync(int fd);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

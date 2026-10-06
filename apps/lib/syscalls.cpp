@@ -60,6 +60,11 @@ off_t lseek(int fd, off_t off, int whence)
         Griffin::SYS_LSEEK, fd, static_cast<long>(off), whence)));
 }
 
+int fsync(int fd)
+{
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(Griffin::SYS_FSYNC, fd, 0, 0)));
+}
+
 int fstat(int fd, struct stat *st)
 {
     return static_cast<int>(griffin_sys_ret(griffin_syscall(
@@ -128,7 +133,12 @@ int griffin_inputready(void)
 
 int griffin_console_raw(int enable)
 {
-    return static_cast<int>(griffin_sys_ret(griffin_syscall(Griffin::SYS_CONSOLE_RAW, enable, 0, 0)));
+    return griffin_console_mode(enable ? GRIFFIN_CONSOLE_RAW : GRIFFIN_CONSOLE_LINE);
+}
+
+int griffin_console_mode(int mode)
+{
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(Griffin::SYS_CONSOLE_RAW, mode, 0, 0)));
 }
 
 int griffin_readdir(const char *path, int index, GriffinDirEnt *out)
