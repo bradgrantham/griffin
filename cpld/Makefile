@@ -34,7 +34,7 @@ OPENOCD_JTAG = sudo openocd -f interface/ftdi/um232h.cfg \
     -c "adapter speed 2000" \
     -c init
 
-.PHONY: all glue video engine audio audio-sim ports compositor compositor-sim compositor-mutants \
+.PHONY: all glue glue-sim video engine audio audio-sim ports compositor compositor-sim compositor-mutants \
         pixel pixel-sim pixel-mutants timing-sim clut-pair-sim clean
 
 # The default set is the Rev 2 super-engine video path: display-list ENGINE,
@@ -70,6 +70,25 @@ glue/glue.jed: glue/glue.edif
 
 glue/glue.svf: glue/glue.jed
 	cd $(PRJBUREAU) && python3 -m util.fuseconv -d ATF1508AS $(CURDIR)/glue/glue.jed $(CURDIR)/glue/glue.svf
+
+# `make glue-sim` runs the iverilog testbench: the bus, decode, DTACK, BERR,
+# reset and interrupt laws of griffin.yml / glue.v's header as one 68000 bus
+# cycle per law.  It then recompiles the bench with each -DMUTATE=n wrong
+# expectation (list in glue_tb.v) and requires every one of those runs to FAIL.
+# vvp exits 0 even on $fatal in this oss-cad-suite, so the verdict is the
+# printed "TESTBENCH RESULT" line.
+GLUE_MUTATIONS := 1 2 3 4 5 6 7 8
+glue-sim: glue/glue_tb.v glue/glue.v ../griffin.generated.vh
+	cd glue && iverilog -g2012 -o glue_tb.vvp glue_tb.v glue.v 2>&1 | grep -v "Extra digits" ; \
+	    vvp glue_tb.vvp | grep -v WARNING | tee glue_tb.log
+	@grep -q "TESTBENCH RESULT: PASS" glue/glue_tb.log || { echo "GLUE TESTBENCH FAILED"; exit 1; }
+	@for n in $(GLUE_MUTATIONS); do \
+	    (cd glue && iverilog -g2012 -DMUTATE=$$n -o glue_tb_mut.vvp glue_tb.v glue.v 2>/dev/null \
+	        && vvp glue_tb_mut.vvp 2>&1 | grep -q "TESTBENCH RESULT: PASS"); \
+	    if [ $$? -eq 0 ]; then echo "NEGATIVE CONTROL MUTATE=$$n DID NOT FAIL"; exit 1; \
+	    else echo "negative control MUTATE=$$n fails as required"; fi; \
+	done
+	@rm -f glue/glue_tb_mut.vvp
 
 flash-glue: glue/glue.svf
 	$(OPENOCD_JTAG) \

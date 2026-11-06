@@ -2785,3 +2785,310 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   13.5; 48: 43.8 12.8 18.5 10.8; 32: 43.9 12.6 18.3 10.5; 16: 46.2 12.7 18.8
   10.5 (adobe2, maya2, millie2, oops2).  32 chosen.  Supersedes the FS column
   of the entry above: against clut_encode the box error now falls 60-68%.
+
+2026-10-09 -- GLUE: glue_tb.v, the bus/decode/IRQ laws as an executable spec
+  cpld/glue/glue_tb.v, `make glue-sim` (iverilog; bench + 8 -DMUTATE=n
+  negative controls that must FAIL).  The bench is the 68000 side of the
+  bus: one bus cycle per law, expectations derived from griffin.yml (map,
+  14 MHz dtack tables via codegen's THRESHOLD = min(2 + 2*ws, 14), interrupt
+  levels, GLUE register bits) and glue.v's header BEFORE simulating; the
+  derivation block is at the top of the bench.  74 checks, all pass:
+    decode: RAM banks 2-4, ROM window + 3 mirrors, ENGINE (+mirror), GLUE,
+      CF (A4 -> crossed nCF_CS1/nCF_CS0 per the glue.v comment), DUART,
+      PORTS; nothing selected in 0x4-0x7, 0xC, 0xE
+    DTACK: E(2) for the 0 WS regions, E(4) ROM (both paths), E(14) CF,
+      DUART handshake with no count (E(0) when ~DUART_DTACK is already low,
+      E(5) when it arrives after edge 5), where E(N) = ~DTACK low at the
+      falling edge after the N-th SYSCLK rising edge with ~AS low
+    BERR: E(15) for the undecoded regions, a DUART that never answers, a
+      CF cycle with IORDY held low; IORDY released after edge 13 gives
+      DTACK at E(15) and no BERR (synchronizer 2 edges, DTACK wins)
+    strobes: nWRITE_LO/HI from ~LDS/~UDS & write; nR_W low on reads
+    nROM_WE: word write in the raw ROM region with FLASH_WE_EN only; not on
+      byte writes (either lane), not with the bit clear, not through the
+      overlay window, not to bank 1 with the overlay off
+    reset: overlay + CONFIG clear on ~RESET; ~HALT low only while
+      nSUPERVISOR_RESET is low, not for ~RESET alone
+    IRQ: all six levels, ENGINE>PORTS, DUART>CF, vsync>DUART, CF gated by
+      CF_IRQ_EN; vsync 2-FF sync + edge: nIPL 111 after 2 edges, 001 after
+      3; holds after release; W1C with bit 0 only; re-arms on the next edge;
+      VSYNC_IRQ_EN off = latch + readback live, no IRQ
+    IACK: nVPA low only with FC=111 & ~AS; no select/DTACK/BERR in 20 edges
+    readback: ENGINE_STATUS {IRQ,WAITING,ACTIVE}, CF_PINS {IORDY,INTRQ},
+      VSYNC_STATUS, DEBUG_OUT one clock after the write
+    PS/2 smoke: one device frame of 0xAA -> level 4, byte, W1C drops IRQ
+  Mutants (each flips one expectation): 1 ROM at E(2); 2 ENGINE at level 2;
+  3 overlay persists after ROM_OVERLAY_DISABLE; 4 nROM_WE on a byte write;
+  5 BERR at E(14); 6 ~HALT low on ~RESET alone; 7 CF IORDY-held cycle
+  DTACKs; 8 VSYNC_CLEAR of 0 clears.  All eight fail as required.
+  Derivation-vs-sim disagreements: none in the RTL.  Two bench mistakes were
+  fixed on the bench side (strobes sampled after the cycle had ended; the
+  nR_W polarity typed backwards against its own derivation).
+  glue.v change, NOT a logic change: iverilog binds names in file order and
+  glue.v used ws_cnt, dtack_comb, vsync_clear_write_select and eight PS/2
+  regs before declaring them (yosys does not care).  The reg declarations
+  were hoisted to the top, the nBERR assign moved below dtack_comb, and
+  glue_select + the VSYNC_CLEAR decode moved up beside the vsync latch.
+  Re-fit (production flags, -preassign keep): HEAD control 119/128 LC,
+  72 FF, 17 foldback, 344 PT; hoisted 120/128 LC, 72 FF, 17 foldback,
+  334 PT; pinout identical pin for pin, JED differs.  yosys/abc's mapping
+  itself moves with declaration order (2069 vs 2057 gate instances, same
+  FFs), so the delta is netlist-order sensitivity, not new logic.  A first
+  variant that rewrote the two `wire x = ...` lines as assigns landed at
+  121 LC / 342 PT; rejected for the smaller one.
+  Spec notes for griffin.yml (not edited here): DUART `berr_timeout: 256`
+  has no consumer (codegen, emulator, RTL all ignore it) and GLUE's single
+  4-bit counter BERRs a silent DUART at E(15) like everything else;
+  "0 WS" is codegen's name for THRESHOLD 2, which is the S6-position edge
+  (one Sw clock in 68000 terms) -- the bench asserts the convention, not a
+  4-clock cycle; the CF chip-select crossing exists only as a glue.v
+  comment; the IPL/VPA contract the yml `issues:` list flags is now
+  executable here.  codegen emits masks like `3'h04` (3-bit width, two
+  hex digits) which iverilog warns on -- cosmetic, 8'h would be clean.
+
+2026-10-09 -- RTC: firmware driver, DUART MFP interrupt, date/SETTIME, FatFs
+  timestamps, emulator MCP7940N model (package; nothing on hardware yet)
+  Decision (Brad): the MFP interrupt stays; polling is not wanted where an
+  ISR can do the job.  Design: firmware programs MFP as the 1 Hz square
+  wave (CONTROL = SQWEN, SQWFS 00) and _duart_isr counts its rising edges
+  (ACR.IP3_INT_EN, ISR.IPC, IPCR read clears) into rtc_seconds; the chip is
+  read over I2C once at boot and written on a set, so wall time costs no
+  I2C after boot.  Boot waits for an MFP rising edge (<= 1.2 s) before the
+  read so the counter is in phase with the chip's second.  Without a chip
+  (no ACK at 0x6F) the ISR advances rtc_seconds once per 100 systick ticks
+  from BUILD_EPOCH and the IP3 interrupt is left disabled (a floating IP3
+  would storm).
+  Firmware: firmware/rtc.{h,cpp} -- bit-bang I2C master on OP2/OP3/IP2
+  (SCL high = OPR_CLR bit 2; SDA released = OPR_SET bit 3, the FET's
+  inversion on top of the OPR complement), nine-clock bus recovery at init
+  because reset leaves OPR = 0 = SDA held low, MCP7940N ST/VBATEN set on a
+  fresh part, Hinnant civil<->epoch.  rtc.o compiled -Os (5156 B at -O3,
+  2154 B at -Os; the bit-bang unrolled).  ROM 127268 of 131072 (3804 free)
+  on the rev-1 128 KB part.  `date [YYYY-MM-DD HH:MM:SS]` in the monitor;
+  SYS_SETTIME 18 (griffin.yml); apps/lib griffin_settime + settimeofday;
+  FatFs FF_FS_NORTC 0 with get_fattime from the clock (UTC; FAT has no
+  zone).  IPCR bitfields added to griffin.yml.
+  Emulator: MCP7940NState (I2C slave run from OPR writes, registers
+  0x00..0x5F, OSCRUN/LPYR read-only, MFP = 1 Hz / OUT bit, time on the
+  GUEST clock), DUART IP/IPCR/ISR.IPC modelled; --no-rtc, --rtc-blank
+  (factory-fresh: zero registers, oscillator stopped), --rtc-epoch N;
+  default = host wall clock at start.  Headless run of all three modes:
+  boot read, `date`, set, `date` agree with the model.
+  ASSUMPTION in the model: the MFP rising edge sits at the seconds
+  rollover.  The datasheet does not say; measure it.
+  Prove-out still owed on hardware (rev 1: the DUART carrier leaves
+  OP2/OP3/IP2/IP3 unconnected, so the chip breadboards onto them with no
+  board or bitfile change):
+    1. SCL rate on a scope (one DUART write per edge + 4 NOPs; expect well
+       inside the chip's 400 kHz limits, unmeasured).
+    2. The polarity chain and the SDA-low-at-reset hold: first ACK on real
+       silicon.
+    3. MFP edge phase against the seconds rollover (the assumption above).
+    4. Battery switchover across a power cycle; crystal is the 6-9 pF load
+       part; OSCTRIM after a multi-day drift measurement against the
+       systick or a host.
+
+2026-10-09 -- PIXEL: DUART OP4..OP7 reserved on pins 67..70 (decision, Brad:
+  keep the alternate-raster hook on free pins)
+  pixel.v used 43 of 64 I/O; 67/68/69/70 are four adjacent free I/O (the
+  other free runs are 54/55, 63..65, 73..77, 79..81).  Reservation is a
+  header comment only -- no ports, no fit change, nothing in the //PIN
+  block -- so the fitter cannot place a future output there only by the
+  rule that the block is complete.  The earlier 54..57 reservation (which
+  collided with PIXELS_Q_0 / H_ACTIVE, PACKAGE3-NOTES.md) had already been
+  dropped from pixel.v; griffin.md's two mentions of the conflict are
+  updated.  griffin.yml issues entry rewritten: pins reserved, contract
+  still absent.
+
+2026-10-09 -- schematic-checklist.md re-based on the current design
+  Stale entries removed or corrected: a separate TIMING ATF1504 (TIMING is
+  inside PIXEL), the TIMING->PORTS command bus (now PADDLE_TICK), the CD4049
+  MSB inverters and the old LM358 buffer chain (offset binary; 74HC4066
+  gates + inverting summers + three LM386s), "AUDIO FIFO pair" (five
+  byte-wide 7200s), the 74HCT155 direct-bus decoder (no direct-bus region
+  in rev 2).  Added: AUDIO CPLD, palette RAM, bus-loading item, barrel-jack
+  harness, DIP-28 ROM footprint removal, buzzer removal.  All CPLD pin
+  numbers removed from the file (every one had drifted from the //PIN
+  blocks: ENGINE_ACTIVE/WAITING, nSUPERVISOR_RESET, GLUE spares); the
+  checklist now points at the Verilog.  griffin.md and griffin.yml's
+  "GLUE bodge spares: pins 24 and 64" (pin 24 is PS2_CLK now) likewise.
+
+2026-10-09 -- FIFO write buffers: two pairs of 74AHCT541, one pair per pipeline
+  (decision, Brad)
+  The 2026-08 electrical review accepted the 7200 data pins directly on
+  D[15:0] when there were four of them; the five AUDIO FIFOs took the
+  count past that, and the yml issue carried stale totals ("seven on
+  D[7:0], six on D[15:8]" whose own parenthetical summed to five and
+  four).  Per-lane recount, every load: before -- D[7:0] CPU, 4 RAM, ROM,
+  GLUE, PORTS, DUART, CF, ENGINE, 5 FIFOs = 16; D[15:8] CPU, 4 RAM, ROM,
+  CF, ENGINE, 4 FIFOs = 11.  After -- 13 and 10, the FIFO loads replaced
+  by one buffer input per lane per pipeline.
+  Decision: 74AHCT541 unidirectional buffers (the 7200 data pins are
+  write-only from the bus side, so no direction control, /OE tied low),
+  one pair with the video FIFOs (D_VIDEO_FIFO[15:0] to PIXELS + VIDCMD)
+  and one pair with the audio FIFOs (D_AUDIO_FIFO[15:0] to the five
+  AUDIO parts), because Brad places the audio FIFOs with the AUDIO chip
+  and analog stage, not with the video FIFOs; a shared pair would put one
+  buffered net across both regions.  Buffer inputs tap the main bus where
+  it already runs and the buffered copy travels, so the main bus never
+  reaches the audio section (hub-and-spoke).  Strobes, /RS, /R, /EF and
+  Q are unbuffered.  Rejected: one shared pair near ENGINE with a two-
+  branch buffered net (two fewer chips, one long multi-drop net); HCT
+  (slower than AHCT in the /W setup path).
+  Still owed: the data-setup margin at the 7200 /W rising edge with the
+  AHCT541 delay in the path, from the 7200 and ATF1508 tables (new yml
+  issue replaces the loading one).  Written into griffin.yml Stream FIFO
+  parts, griffin.md Audio placement / Board changes, schematic-checklist.
+
+2026-10-09 -- Bus loading after the FIFO buffers: 13 / 10 loads accepted,
+  no RAM transceiver pair (decision, Brad)
+  Question (Brad): is 13 on D[7:0] and 10 on D[15:8] still heavy, and is
+  a 74AHCT245 pair in front of the eight RAM chips worth it?
+  Assessment: 13 is back to the ~14-load / 110-140 pF worst case the
+  2026-08 electrical review (obsolete/rev2-electrical-review.md, section
+  on transceivers) accepted against the 68000's 130 pF AC test-load
+  condition, which that review flagged "[verify]" and which is still
+  unverified; the five audio FIFOs had pushed the low lane to 16 before
+  the 74AHCT541 decision.  A RAM '245 pair would cut four loads per lane,
+  the largest single lever, but it sits in the only zero-wait path in
+  both directions, needs R/~W direction control with a turnaround on
+  every write-to-read transition, and lands in the ENGINE deposit path
+  as RAM -> '245 -> bus -> '541 -> FIFO (two buffer delays before the
+  7200's /W setup).  Rev 1's only bus failure was a weak-driver problem
+  (the 8051 port), not a load-count problem; the weakest remaining driver
+  is the CF card (its outputs are rated into a light load, believed
+  ~50 pF, unchecked), which has 7 wait states of timing slack but whose
+  read edges are the thing to scope at bring-up.  Trace capacitance is
+  the controllable term: keep the bus compact (hub-and-spoke).
+  Decision: leave the design as decided -- two 74AHCT541 pairs, no RAM
+  transceivers.  What would reopen it: a datasheet capacitance tally
+  above ~150 pF, or bring-up scope evidence.  If reopened, the fallback
+  is a '245 pair isolating the wait-stated low-byte peripherals (GLUE,
+  PORTS, DUART, CF), which can absorb a buffer delay, rather than RAM.
+  The tally is added to the owed derivation in the griffin.yml issue.
+
+2026-10-09 -- Rev-2 schematic brought up to the current configuration
+  (board/, 20 sheets, generated)
+  What changed: root re-gridded on A3 (layout_root.py, pages 2..21, TIMING
+  sheet composite.kicad_sch deleted with mmu/test-points; expansion ->
+  engine.kicad_sch; panel.kicad_sch added to git).  CPLD sheets relabelled
+  from the //PIN blocks through board/cpld_map.py (PORTS, ENGINE in place;
+  PIXEL, COMPOSITOR regenerated; AUDIO new): check_cpld_pins.py reports 0
+  mismatches on all six.  JTAG chain decided (Brad): GLUE -> PORTS -> AUDIO
+  -> ENGINE -> PIXEL -> COMPOSITOR, 1x6 header TCK/TMS/TDI/TDO/+5V/GND.
+  New: 74AHCT541 write-buffer pairs (video on COMPOSITOR sheet ->
+  D_VIDEO_FIFO, audio on AUDIO sheet -> D_AUDIO_FIFO); PIXELS pair ganged
+  16-bit with one /RE; five audio 7200s (U25/U26/U30/U31 samples, U29
+  control) with /EF test pads; 0R series footprints on every /W and /RE
+  (R28/R30/R35-R39/R150-R157); palette RAM U40-U42 (placeholder symbol
+  Griffin:RAM_16x4_74x219) on the PIXEL sheet; DUART OP4-7 -> PIXEL 67-70
+  (DUART_OP4..7); Y3/Y4 moved to POWER_CLOCK_RESET, CLK2 on PIXEL GCLK2;
+  PIXEL spare-I/O 2x10 header J23, PORTS spare J13; VGA_OUT sheet (U47/U48
+  74AC541, ladders, DE-15 J22 on the AMPHENOL footprint rev 1 used);
+  AUDIO_DAC (R22/R80-R82 ladders, U32 74HC4066, U17 LM358 summers, line
+  out J14/J15); AUDIO_AMP (pot header J16, U33-U35 LM386, jack J6, speaker
+  header J17); SERIAL (U36/U37 MAX232, U38 SN75189, J18 DB-25F DCE, J19
+  DB-25M DTE, pull-ups); RTC (U39 MCP7940N, Y6, BT1, Q2); FTDI headers
+  J3/J12 rebuilt to the TTL-232R pinout with 1k series (R100-R103); game
+  ports on PANEL (A3 now: J20/J21, polyfuses, 100R + 1N4148 clamps, RN1/RN2,
+  paddle 1M/10 nF/2N7000); DUART OP2/OP3/IP2/IP3 -> RTC nets; ROM footprints
+  DIP-32; project symbol library board/library/griffin.kicad_sym replaces
+  the global-table-only "68k_board" dependency (the "paths changed while
+  running" damage).
+  Outputs: board_rev_2_schematic.pdf, board/board-pcb-rev-2.distilled.txt.
+  ERC: 17 violations, all pre-existing on the root/POWER_CLOCK_RESET sheets
+  (-12V/-5V/+12V lib mismatches, off-grid wires, CP1 "Apple-II" footprint
+  lib, CF/HD15 lib mismatches, two unflagged power inputs) -- not touched
+  (power is out of this pass).  Single-pin nets: -12V, -5V (CP1 pass-
+  through), CF S2-S4 only.
+  Verified pinouts: Bourns 4610X-R2R 10-pin SIP (R/2R app note r2rap.pdf):
+  pin 1 OUT, pin 2 MSB .. pin 9 LSB, pin 10 RT to ground -- matches the
+  existing symbol; SN75189 (TI); 74x219 indirectly (Philips 74F189A text,
+  Fairchild 74F219 "similar to 74F189"): 1 A0, 2 ~CS, 3 ~WE, 4/6/10/12 D,
+  5/7/9/11 Q, 13-15 A3-A1, 16 VCC, outputs 3-state.  RGB_OUT[11:8] = R,
+  [7:4] = G, [3:0] = B (descriptor.h Rgb444 0x0RGB).  68C681 symbol: OP0-7
+  = pins 29/12/28/13/27/14/26/15, IP0-5 = 7/4/36/2/39/38.
+  Found: the SJ3-35063B jack has a TIP switch only (Same Sky SJ3-3506x
+  rev 1.01); the BG variant adds an isolated N-O switch, not a ring
+  contact.  The yml speaker-mute contract (NC tip AND ring) is drawn with
+  Connector_Audio:AudioJack3_SwitchTR and no footprint; part is Brad's
+  call (yml issue added).
+  Assumed values, not in griffin.yml: MAX232 5x 1 uF (datasheet);
+  RTC SDA/SCL 4.7k, MFP 10k; joystick bussed 10k, ESD 100R + 1N4148,
+  polyfuse 0.5 A; paddle 10 nF; port-2 pin 5 10k.  Paddle range check
+  (agent arithmetic): 1M || 1M pot with 10 nF gives ~3.5 ms (~54 ticks)
+  at a midpoint threshold against griffin.md's ~8.1 ms target; 22-47 nF or
+  no pull-up on port-1 pins 5/9 would be needed -- size against the
+  ATF1508 input threshold.  VGA BOM says 21x 1k; the stated topology
+  (2 parallel + 1 + 2 series per colour) uses 15.
+  Tooling: cpld_map.py (schematic-side map), label_cpld.py --chip/--relabel,
+  relabel_pins.py, remove_symbol.py, check_cpld_pins.py (oracle),
+  place_parts.py + board/sheets/*_spec.py, place_fifo.py PAIRS rewrite,
+  new_cpld_sheet.py --replace, layout_root.py.  A regex in place_fifo /
+  place_headers / new_cpld_sheet matched across sheet blocks and returned
+  the first sheet's uuid; fixed.  ports.kicad_sch U14 carried a stale
+  second instance path (GLUE sheet uuid, "U12"); removed.
+  Still open: palette RAM part; jack part; CP1 footprint library; U27/U1/
+  J1/J10/J11 footprints; the FT232H note on GLUE reworded for the 1x6
+  order; cpld/Makefile programming targets still describe the rev-1 chain;
+  Brad to open the project once in KiCad (no rescue dialog expected).
+
+2026-10-13 -- Rev-2 netlist walked against griffin.yml interfaces (and the
+  per-peripheral wiring comments), kicad-cli kicadsexpr export
+  Method: flattened every net to its pins (scratch script over
+  kicad_netlist_summary_2.parse_netlist) and read each interfaces entry
+  against it, pin numbers from the datasheet pinouts of the 7200, 74x541,
+  74F219, 4610X, 74HC4066, LM358/LM386, MAX232, 75189, 68C681, MCP7940N,
+  SST39SF040/AS6C4008, CF (True IDE) and the DE-9/DB-25/DE-15 pin maps.
+  check_cpld_pins.py covers the six CPLD pin sets (0 mismatches).
+  Agreed with the yml: VGA stage (U47 RGB_OUT[11:4], U48 RGB_OUT[3:0] +
+  syncs, 2||/1/2s/3.9k ladders + 100R shunts, 100R sync series, DE-15 pins,
+  /OE grounded); both 74AHCT541 pairs (A on D[15:0], Y on D_*_FIFO, /OE low)
+  and all nine 7200s (PIXELS ganged on one ~PIXELS_RE, VIDCMD /EF from the
+  low-byte part, audio ch 0/1 on D_AUDIO_FIFO[15:8], 2/3 + control on
+  [7:0], /RS from nRS (video) or ~RESET (audio), /FL high, /XI low, /XO//HF
+  open); the 14 0R strobe footprints; palette RAM (IDX, ~CLUT_WE, /CS low,
+  set_pix_value[11:0] in, RGB_IN out, PIXEL on value[3:0] only); JTAG
+  order and link names; reset topology (DS1233 RST = ~SUPERVISOR_RESET to
+  button, Schottky K, GLUE pin 84; ~RESET pull-up, CPU, CF, debug header);
+  ENGINE/GLUE status wires; CF sideband pulls; spare headers and bodge
+  pads; the three oscillators and their loads; the whole audio chain
+  (ladders pin 2 MSB..9 LSB, 4066 pairs 1-2/3-4/8-9/10-11 with controls
+  13/5/6/12, LM358 summers, bias, 100R line out, pot header, 10k/1k pads,
+  LM386 gain-20 pin-outs, Zobels, 250 uF, jack T/R + TN/RN speaker sum);
+  AUDIO chip inputs/outputs and test pads; both RS-232 channels pin by
+  pin, the 75189 DCD/RI path, DB-25 straps, FTDI headers with the 1k
+  series, the six 10k pull-ups; RTC wiring, FET drive, pull-ups; PS/2
+  DIN-5 and mini-DIN-6 unions; game ports (switch pins 1/2/3/4/6/5/9, 100R
+  + clamp pairs, bussed 10k, 1M + 10 nF + 2N7000 on port-1 pins 5/9,
+  polyfused pin 7).  CF chip selects are crossed in the schematic exactly
+  as in rev 1 (~CF_CS0 -> pin 32 -CE2, ~CF_CS1 -> pin 7 -CE1), which is the
+  crossing glue.v compensates for; left alone.
+  Schematic defects found and fixed (none from the 10-09 generation
+  except the first):
+  - rtc.kicad_sch: the VBAT wire from the PWR_FLAG ran straight through
+    the label point to the battery pin; KiCad connects a label only at a
+    wire end, so BT1 was on its own net and U39 VBAT undriven.  Wire split
+    at the label.  Lesson for place_parts specs: end a wire at every label.
+  - rom.kicad_sch (committed 476390a): SST39SF040 pins 30 (A17) and 1 (A18)
+    carried CPU A19 and A20; CPU A18 reached no ROM pin, so image bytes
+    above 128 KB would have appeared 256 KB-mirrored.  Now A18/A19 (chip
+    A0 = CPU A1 throughout).  Invisible today because rom.bin < 128 KB.
+  - rom.kicad_sch: both flash /OE pins were on ~LDS; rev 1 had ROM HI on
+    ~UDS.  U4 (D[15:8]) /OE -> ~UDS.
+  - io.kicad_sch: DUART RESETN (pin 34) sat on ~SUPERVISOR_RESET; the yml
+    (and the 08-31 reset decision) put it on the system ~RESET net so the
+    68000 RESET instruction reaches it.  Relabelled.
+  After: checker 0 mismatches x6, ERC 17 (the same pre-existing power-sheet
+  items), single-pin nets -12V, -5V, CF S2-S4; board-pcb-rev-2.distilled.txt
+  and board_rev_2_schematic.pdf regenerated.
+  yml-side items for Brad (not changed): (1) "Power entry" says +12/-12/-5
+  pass through to a 4-pin drive connector, but J1 is the 4-pin Molex
+  (+12, GND, GND, +5) and -12V/-5V end at CP1 -- either a different drive
+  connector or drop the -12/-5 claim; (2) "GLUE gates IOWR with AS" is
+  not what glue.v does: CF -IORD is GLUE nR_W (= ~R/W) and -IOWR is the
+  raw CPU R/W, only the two chip selects are AS-qualified; (3) VGA BOM 21x
+  1k vs 15 used (already logged 10-09).  Changed in the yml: the three
+  "OP4..OP7 unconnected / float" comments now say the pins reach PIXEL's
+  reserved pins with no logic behind them, matching the schematic and the
+  issues entry.

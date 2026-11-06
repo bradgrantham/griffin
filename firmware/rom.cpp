@@ -16,6 +16,7 @@
 #include "textport.h"
 #include "vt102.h"
 #include "early_log.h"
+#include "rtc.h"
 #include "splash.h"
 
 using namespace Griffin::reg;
@@ -318,6 +319,15 @@ extern volatile uint32_t tick_counter;
 // VIDEO ISR increments this on every VBLANK (~60 Hz at VGA 640x480@60).
 extern volatile uint32_t video_frame_counter;
 
+// Seconds since the Unix epoch, UTC.  _duart_isr (crt0.s) increments it on
+// every rising edge of the RTC's 1 Hz MFP square wave (DUART IP3
+// change-of-state IRQ) when rtc_from_mfp is nonzero, else once per 100
+// CTR_READY ticks (no RTC: the clock runs from the build time).
+// rtc_load_clock sets it from the chip at boot and sys_settime on a set.
+extern volatile uint32_t rtc_seconds;
+extern volatile uint8_t rtc_from_mfp;
+extern volatile uint8_t rtc_fallback_ticks;
+
 }; // extern "C"
 
 // Milliseconds since boot.
@@ -327,17 +337,87 @@ extern "C" uint32_t get_milliseconds()
    return tick_counter * 10U;
 }
 
-// Wall clock.  There is no wired RTC yet, so the epoch at power-on defaults to
-// the firmware build time (BUILD_EPOCH, stamped by the Makefile).  It is a
-// variable so a monitor command, a syscall, or a future DS3231 driver can set
-// it once at boot without touching anything that reads the clock.
-extern "C" { uint32_t boot_epoch = BUILD_EPOCH; }
+// SR interrupt-mask critical section for the two-word updates the DUART ISR
+// also touches.  Level 7 is masked too; nothing on the board uses it.
+static inline uint16_t irq_save()
+{
+    uint16_t sr;
+    asm volatile("move.w %%sr,%0\n\tori.w #0x0700,%%sr" : "=d"(sr) : : "memory");
+    return sr;
+}
 
-// Seconds since the Unix epoch.
+static inline void irq_restore(uint16_t sr)
+{
+    asm volatile("move.w %0,%%sr" : : "d"(sr) : "memory");
+}
+
+// Seconds since the Unix epoch, UTC: the ISR-driven counter.
 extern "C" uint32_t get_epoch_seconds()
 {
-    return boot_epoch + get_milliseconds() / 1000U;
+    return rtc_seconds;
 }
+
+static void set_epoch_seconds(uint32_t epoch)
+{
+    uint16_t sr = irq_save();
+    rtc_seconds = epoch;
+    irq_restore(sr);
+}
+
+// Boot: take the wall clock from the RTC, aligned to its MFP edge so the
+// ISR-driven counter starts in phase with the chip's own second.  Without a
+// chip the clock starts at the firmware build time (BUILD_EPOCH, stamped by
+// the Makefile) and runs from the MFP-less fallback of the 100 Hz tick.
+static bool rtc_clock_from_chip = false;
+
+static void rtc_load_clock()
+{
+    if (!rtc_present()) {
+        debug_printf("RTC: not present, clock starts at the build time\n");
+        return;
+    }
+
+    // Wait for a rising MFP edge, at most 1.2 s (the ISR counts the same
+    // edge; the chip read below lands after it either way).
+    uint32_t start = get_milliseconds();
+    bool last = rtc_mfp_level();
+    while (get_milliseconds() - start < 1200U) {
+        bool now = rtc_mfp_level();
+        if (now && !last) {
+            break;
+        }
+        last = now;
+    }
+
+    uint32_t epoch;
+    if (!rtc_read_time(&epoch)) {
+        debug_printf("RTC: time registers unreadable or never set; clock starts at the build time\n");
+        return;
+    }
+    set_epoch_seconds(epoch);
+    rtc_clock_from_chip = true;
+
+    rtc_civil_t c;
+    rtc_civil_from_epoch(epoch, &c);
+    debug_printf("RTC: %04u-%02u-%02u %02u:%02u:%02u UTC\n",
+                 c.year, c.month, c.day, c.hour, c.minute, c.second);
+}
+
+// SYS_SETTIME and the monitor's `date` setter.  The counter is always set;
+// the chip is written when there is one.
+extern "C" long sys_settime(uint32_t epoch)
+{
+    set_epoch_seconds(epoch);
+    if (!rtc_present()) {
+        return -ENODEV;
+    }
+    if (!rtc_write_time(epoch)) {
+        return -EIO;
+    }
+    rtc_clock_from_chip = true;
+    return 0;
+}
+
 
 extern "C" void delay_milliseconds(uint32_t millis)
 {
@@ -406,9 +486,19 @@ static void duart_runtime_init()
     DUART_CRA = DUART_CMD_RESET_RX;
     DUART_CRA = DUART_CMD_RESET_ERR;
 
+    // Probe and configure the RTC first: its MFP interrupt enable goes into
+    // ACR, and IP3 floats (and would storm) when no chip is on it.
+    bool rtc = rtc_init();
+    debug_printf("RTC: MCP7940N %s\n", rtc ? "acknowledged" : "did not answer");
+    rtc_seconds = BUILD_EPOCH;
+    rtc_fallback_ticks = 100;
+    rtc_from_mfp = rtc ? 1 : 0;
+
     // ACR: BRG set 0 (bit 7 = 0, baud unchanged), C/T = Timer mode on
-    // X1/CLK direct (bits 6:4 = 110) for the system tick.
-    DUART_ACR = (0x6U << Griffin::DUART_ACR_CT_MODE_SHIFT);
+    // X1/CLK direct (bits 6:4 = 110) for the system tick, IP3
+    // change-of-state IRQ when the RTC is there.
+    DUART_ACR = static_cast<uint8_t>((0x6U << Griffin::DUART_ACR_CT_MODE_SHIFT) |
+                                     (rtc ? Griffin::DUART_ACR_IP3_INT_EN_MASK : 0U));
 
     // C/T preload: Timer mode fires every square-wave half-period
     // = preload input cycles.  TICK_HZ is a firmware convention.
@@ -419,9 +509,10 @@ static void duart_runtime_init()
     DUART_CTUR = (TICK_PRELOAD >> 8) & 0xFF;
     DUART_CTLR =  TICK_PRELOAD       & 0xFF;
 
-    // RXRDYA + CTR_READY share the level-5 autovector; _duart_isr
-    // distinguishes them via the ISR snapshot.
-    DUART_IMR = Griffin::DUART_ISR_RXRDYA_MASK | Griffin::DUART_ISR_CTR_READY_MASK;
+    // RXRDYA + CTR_READY (+ IPC for the RTC) share the level-5 autovector;
+    // _duart_isr distinguishes them via the ISR snapshot.
+    DUART_IMR = static_cast<uint8_t>(Griffin::DUART_ISR_RXRDYA_MASK | Griffin::DUART_ISR_CTR_READY_MASK |
+                                     (rtc ? Griffin::DUART_ISR_IPC_MASK : 0U));
     DUART_IVR = 0x0;
 
     DUART_CRA = DUART_CMD_ENABLE_TXRX;
@@ -1325,6 +1416,7 @@ static void monitor_help()
     printf("write ADDR VAL       (wr)  write byte VAL at ADDR\n");
     printf("ls [PATH]                  list directory (default /)\n");
     printf("time                       print time since boot\n");
+    printf("date [YYYY-MM-DD HH:MM:SS] print the UTC wall clock, or set it and the RTC\n");
     printf("run FILE [ARGS...]         load and run FILE from CF\n");
     printf("help                 (?)   this text\n");
     printf("CMD [ARGS...]              run CMD.bin from CF with those args\n");
@@ -1382,6 +1474,61 @@ static void monitor_cmd_time()
     uint32_t mm = (seconds / 60) % 60;
     uint32_t hh = seconds / 3600;
     printf("%02ld:%02ld:%02ld since boot\n", hh, mm, ss);
+}
+
+// Fixed-width decimal field; false if any character is not a digit.
+static bool parse_fixed(const char *s, unsigned width, unsigned *out)
+{
+    unsigned v = 0;
+    for (unsigned i = 0; i < width; i++) {
+        if (s[i] < '0' || s[i] > '9') {
+            return false;
+        }
+        v = v * 10U + static_cast<unsigned>(s[i] - '0');
+    }
+    *out = v;
+    return true;
+}
+
+// date                       -> 2026-10-09 18:04:33 UTC
+// date 2026-10-09 18:04:33   -> set the clock and the RTC
+static void monitor_cmd_date(int argc, char *argv[])
+{
+    if (argc == 1) {
+        rtc_civil_t c;
+        rtc_civil_from_epoch(get_epoch_seconds(), &c);
+        static const char *const names[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        printf("%s %04u-%02u-%02u %02u:%02u:%02u UTC%s\n", names[c.weekday],
+               c.year, c.month, c.day, c.hour, c.minute, c.second,
+               rtc_clock_from_chip ? "" : " (no RTC: running from the build time)");
+        return;
+    }
+
+    rtc_civil_t c;
+    unsigned y, mo, d, h, mi, s;
+    bool ok = argc == 3 &&
+              strlen(argv[1]) == 10 && argv[1][4] == '-' && argv[1][7] == '-' &&
+              strlen(argv[2]) == 8 && argv[2][2] == ':' && argv[2][5] == ':' &&
+              parse_fixed(argv[1], 4, &y) && parse_fixed(argv[1] + 5, 2, &mo) && parse_fixed(argv[1] + 8, 2, &d) &&
+              parse_fixed(argv[2], 2, &h) && parse_fixed(argv[2] + 3, 2, &mi) && parse_fixed(argv[2] + 6, 2, &s) &&
+              y >= 2000 && y <= 2099 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31 &&
+              h <= 23 && mi <= 59 && s <= 59;
+    if (!ok) {
+        printf("usage: date [YYYY-MM-DD HH:MM:SS]   (UTC, 2000..2099)\n");
+        return;
+    }
+    c.year = static_cast<uint16_t>(y);
+    c.month = static_cast<uint8_t>(mo);
+    c.day = static_cast<uint8_t>(d);
+    c.hour = static_cast<uint8_t>(h);
+    c.minute = static_cast<uint8_t>(mi);
+    c.second = static_cast<uint8_t>(s);
+    long r = sys_settime(rtc_epoch_from_civil(&c));
+    if (r == -ENODEV) {
+        printf("clock set; no RTC to write\n");
+    } else if (r != 0) {
+        printf("RTC write failed\n");
+    }
 }
 
 // Shell fallback: a command word that is no built-in names a binary on the CF
@@ -1454,6 +1601,10 @@ static bool monitor_run_cf_command(int argc, char *argv[])
         {
             monitor_cmd_time();
         }
+        else if (strcmp(cmd, "date") == 0)
+        {
+            monitor_cmd_date(argc, argv);
+        }
         else if (strcmp(cmd, "run") == 0)
         {
             if (argc < 2)
@@ -1495,6 +1646,8 @@ int main()
     }
     duart_console_enable();
     printf("Console on DUART Channel A, 115200 8N1\n");
+
+    rtc_load_clock();
 
     video_framebuffer_init();
 

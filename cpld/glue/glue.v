@@ -107,6 +107,18 @@ module glue (
 
     wire AS = ~nAS;
 
+    // Declared ahead of their first use: iverilog (glue_tb.v) binds names in
+    // file order, yosys does not care.  No logic lives here.
+    reg  [3:0] ws_cnt;                 // DTACK wait-state counter (below)
+    reg        ps2_clk_clean;          // PS/2 engine state (below)
+    reg  [1:0] ps2_data_sync;
+    reg        rx_ready;
+    reg  [7:0] rx_byte;
+    reg        rx_parity_bit;
+    reg        rx_frame_err;
+    reg        tx_done;
+    reg        tx_ack;
+
     // Normal bus cycle — excludes interrupt acknowledge (FC=111) which
     // uses VPA, not address decoding.  All chip selects use this so
     // the all-1s IACK address doesn't spuriously activate peripherals.
@@ -178,7 +190,7 @@ module glue (
     // if no peripheral has responded with DTACK.  Causes the 68000 to take
     // a bus error exception instead of hanging forever on unmapped access.
     // Exclude interrupt acknowledge cycles (FC=111) which use VPA, not DTACK.
-    assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle);
+    // (the nBERR assign is below, after dtack_comb, for the same reason)
 
     // ----------------------------------------------------------------
     // Interrupt priority encoder (active-low nIPL to 68000)
@@ -220,6 +232,13 @@ module glue (
     reg  cf_irq_en;       // CONFIG bit CF_IRQ_EN, reset 0
     wire cf_irq_active        = CF_INTRQ & cf_irq_en;
 
+    wire glue_select = glue_segment & bus_cycle;
+    // VSYNC_CLEAR decode, here because the latch below acks on it (the other
+    // register decodes follow further down with the address-map comment).
+    localparam [23:0] GLUE_VSYNC_STATUS_ADDR = `GLUE_VSYNC_STATUS;
+    wire vsync_clear_write_select = glue_select & lo_byte_selected & write
+                                    & (A_lo[5:1] == GLUE_VSYNC_STATUS_ADDR[5:1]);
+
     reg [1:0] vsync_sync;
     reg       vsync_last;
     reg       vsync_pending;
@@ -253,8 +272,6 @@ module glue (
                   ports_irq_active   ? 3'b101 :  // level 2
                   cf_irq_active      ? 3'b110 :  // level 1
                                        3'b111;   // no interrupt
-
-    wire glue_select = glue_segment & bus_cycle;
 
     assign nDUART_SELECT = ~(duart_segment & bus_cycle);
 
@@ -300,8 +317,8 @@ module glue (
     localparam [23:0] GLUE_PS2_STATUS_ADDR   = `GLUE_PS2_STATUS;
     localparam [23:0] GLUE_PS2_CTRL_ADDR     = `GLUE_PS2_CTRL;
     localparam [23:0] GLUE_PS2_RX_DATA_ADDR  = `GLUE_PS2_RX_DATA;
-    // VSYNC_STATUS and VSYNC_CLEAR share 0xF00017 (R/W sides of the same slot).
-    localparam [23:0] GLUE_VSYNC_STATUS_ADDR = `GLUE_VSYNC_STATUS;
+    // VSYNC_STATUS and VSYNC_CLEAR share 0xF00017 (R/W sides of the same slot);
+    // GLUE_VSYNC_STATUS_ADDR is declared above with the vsync latch.
     localparam [23:0] GLUE_ENGINE_STATUS_ADDR = `GLUE_ENGINE_STATUS;
     localparam [23:0] GLUE_CF_PINS_ADDR       = `GLUE_CF_PINS;
 
@@ -322,8 +339,6 @@ module glue (
     wire ps2_rx_data_read_select = glue_select & lo_byte_selected & read
                                    & (A_lo[5:1] == GLUE_PS2_RX_DATA_ADDR[5:1]);
     wire vsync_status_read_select = glue_select & lo_byte_selected & read
-                                    & (A_lo[5:1] == GLUE_VSYNC_STATUS_ADDR[5:1]);
-    wire vsync_clear_write_select = glue_select & lo_byte_selected & write
                                     & (A_lo[5:1] == GLUE_VSYNC_STATUS_ADDR[5:1]);
     wire engine_status_read_select = glue_select & lo_byte_selected & read
                                      & (A_lo[5:1] == GLUE_ENGINE_STATUS_ADDR[5:1]);
@@ -465,22 +480,13 @@ module glue (
     // ----------------------------------------------------------------
     localparam integer PS2_CLK_DEBOUNCE = 4;       // consecutive samples to flip
     reg [PS2_CLK_DEBOUNCE:0] ps2_clk_sr;           // [0]=raw; [DEBOUNCE:1]=window
-    reg                      ps2_clk_clean;        // debounced clock level
     reg                      ps2_clk_clean_d;      // previous, for edge detect
-    reg [1:0]                ps2_data_sync;
 
     reg        rx_active;
     reg        tx_active;
     reg [3:0]  frame_cnt;
     reg [9:0]  rx_sr;        // shifts in d0..d7, parity, stop (start consumed)
     reg [10:0] tx_sr;        // {stop,parity,d7..d0,start}; bit 0 sent first
-
-    reg        rx_ready;
-    reg [7:0]  rx_byte;
-    reg        rx_parity_bit;
-    reg        rx_frame_err;
-    reg        tx_done;
-    reg        tx_ack;
 
     reg        ps2_ctrl_clk_drive_low;
     reg        ps2_ctrl_data_drive_low;
@@ -592,8 +598,6 @@ module glue (
     //
     // ----------------------------------------------------------------
 
-    reg [3:0] ws_cnt;
-
     always @(posedge SYSCLK or posedge nAS) begin
         if (nAS)
             ws_cnt <= 4'd0;
@@ -629,6 +633,8 @@ module glue (
         (ports_select       & (ws_cnt >= `PORTS_DTACK_THRESHOLD));   // PORTS (0 WS)
 
     assign nDTACK = ~dtack_comb;
+
+    assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle);
 
 
 endmodule

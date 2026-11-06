@@ -3,7 +3,7 @@ M68K_GXX = ./m68k-g++
 M68K_OBJCOPY = ./m68k-objcopy
 
 CPP_SOURCES = rom.cpp ps2.cpp ports.cpp mouse.cpp keymap.cpp textport.cpp vt102.cpp early_log.cpp splash.cpp \
-              syscall_dispatch.cpp loader.cpp \
+              syscall_dispatch.cpp loader.cpp rtc.cpp \
               font_8x16.cpp font_8x8.cpp font_6x10.cpp
 # splash.cpp
 C_SOURCES = syscalls.c ff.c ffunicode.c diskio.c build_info.c
@@ -33,6 +33,8 @@ all: rom.bin
 # wall clock is roughly right with no RTC wired.  Note this makes rom.bin
 # differ from build to build even with no source change.
 rom.o: CXXFLAGS += -DBUILD_EPOCH=$(shell date +%s)u
+# The I2C bit-bang is 20 one-line pin pokes; -O3 unrolls them into 5 KB.
+rtc.o: CXXFLAGS += -Os
 
 # Third-party C sources we don't control: build with relaxed warning flags
 LENIENT_C_SOURCES = ff.c ffunicode.c diskio.c

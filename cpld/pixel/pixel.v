@@ -752,9 +752,13 @@ endmodule
 // pins 2 and 84 (the other two dedicated inputs, GCLK2 among them) stay free
 // for an optional second oscillator or a future input.
 //
-// DUART OP4..OP7, the intended raster mode/rate selector, have NO pins reserved
-// here: they float until the feature is designed, and take whatever free I/O
-// the pinout has then (the chip uses 43 of 64).
+// DUART OP4..OP7, the intended raster mode/rate selector, are RESERVED on pins
+// 67, 68, 69, 70 (four adjacent free I/O; the chip uses 43 of 64).  The
+// schematic routes them there; no logic reads them yet, so they are not ports
+// of this module and do not appear in the //PIN block below -- when the
+// feature lands they become inputs placed on exactly those pins.  No future
+// output may be placed on 67..70.  (Reserved 2026-10-09; the earlier 54..57
+// reservation collided with PIXELS_Q_0 / H_ACTIVE and was dropped.)
 //PIN: CHIP "pixel" ASSIGNED TO AN PLCC84
 //PIN: nRESET             : 1
 //PIN: VGA_HSYNC          : 4

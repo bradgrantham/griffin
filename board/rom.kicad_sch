@@ -1622,7 +1622,7 @@
 		)
 		(uuid "f9caf3ae-326b-4782-b904-0da0341b91bb")
 	)
-	(global_label "A20"
+	(global_label "A19"
 		(shape input)
 		(at 180.34 116.84 180)
 		(fields_autoplaced yes)
@@ -1710,7 +1710,7 @@
 			)
 		)
 	)
-	(global_label "A19"
+	(global_label "A18"
 		(shape input)
 		(at 78.74 111.76 180)
 		(fields_autoplaced yes)
@@ -2106,7 +2106,7 @@
 			)
 		)
 	)
-	(global_label "A19"
+	(global_label "A18"
 		(shape input)
 		(at 180.34 114.3 180)
 		(fields_autoplaced yes)
@@ -2304,7 +2304,7 @@
 			)
 		)
 	)
-	(global_label "A20"
+	(global_label "A19"
 		(shape input)
 		(at 78.74 114.3 180)
 		(fields_autoplaced yes)
@@ -2524,7 +2524,7 @@
 			)
 		)
 	)
-	(global_label "~{LDS}"
+	(global_label "~{UDS}"
 		(shape input)
 		(at 180.34 129.54 180)
 		(fields_autoplaced yes)
@@ -3101,7 +3101,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" ""
+		(property "Footprint" "Package_DIP:DIP-32_W15.24mm"
 			(at 102.87 91.44 0)
 			(effects
 				(font
@@ -3331,7 +3331,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" ""
+		(property "Footprint" "Package_DIP:DIP-32_W15.24mm"
 			(at 204.47 93.98 0)
 			(effects
 				(font

@@ -8,11 +8,20 @@ at the new sheet, references are renamed per --refs, the CPLD's Value is set,
 a (sheet ...) block is appended to the root, and the project file's "sheets"
 list gets an entry.  Then run label_cpld.py on the new file.
 
+--replace rewrites a sheet the root already references, in place: the file is
+regenerated from the template (or emptied with --blank) but keeps its own file
+uuid and its sheet uuid / instance path from the root's (sheet ...) block, so
+its page, name and position on the root stay as they are.  The root and the
+project file are not touched; --sheetname, --at and --page are not needed.
+
 Example:
   new_cpld_sheet.py --template engine_template.kicad_sch --out pixel.kicad_sch \
       --root board.kicad_sch --sheetname PIXEL --value PIXEL \
       --refs U13=U20,C18=C27,#PWR0116=#PWR0145,#PWR0115=#PWR0146,#PWR097=#PWR0147,#PWR0106=#PWR0148 \
       --at 215.9 101.6 --size 40 20 --page 13
+  new_cpld_sheet.py --replace --blank --out pixel.kicad_sch --root board.kicad_sch
+  new_cpld_sheet.py --replace --template engine.kicad_sch --out pixel.kicad_sch \
+      --root board.kicad_sch --value PIXEL --refs U18=U19,C25=C26,...
 """
 
 import argparse
@@ -75,32 +84,57 @@ def sheet_block(sheet_uuid, root_uuid, name, fname, x, y, w, h, page):
 '''
 
 
+def blank_sheet_text(file_uuid=None):
+    """An empty KiCad 9 USLetter sheet."""
+    return (f'(kicad_sch\n\t(version 20250114)\n\t(generator "eeschema")\n\t(generator_version "9.0")\n'
+            f'\t(uuid "{file_uuid or uuid.uuid4()}")\n\t(paper "USLetter")\n\t(lib_symbols)\n)\n')
+
+
+def root_sheet_uuid(root, fname):
+    """uuid of the root's (sheet ...) block whose Sheetfile is fname."""
+    m = re.search(r'\(uuid "([0-9a-f-]+)"\)\n\t\t\(property "Sheetname" "[^"]*"\n(?:\t\t[^\n]*\n)*?\t\t\(property "Sheetfile" "'
+                  + re.escape(fname) + '"', root)
+    return m.group(1) if m else None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--template', help='sheet to clone; omit with --blank')
     ap.add_argument('--blank', action='store_true', help='create an empty sheet instead of cloning a template')
-    ap.add_argument('--out', required=True, help='new sheet file, e.g. pixel.kicad_sch (must not exist)')
+    ap.add_argument('--out', required=True, help='new sheet file, e.g. pixel.kicad_sch (must not exist unless --replace)')
     ap.add_argument('--root', required=True, help='root schematic, e.g. board.kicad_sch')
-    ap.add_argument('--sheetname', required=True)
+    ap.add_argument('--replace', action='store_true',
+                    help='rewrite an existing sheet the root references, keeping its uuid and instance path')
+    ap.add_argument('--sheetname')
     ap.add_argument('--value', help='Value for the template symbol whose Value is --old-value')
     ap.add_argument('--old-value', default=None, help='template Value to replace (default: the first U reference symbol)')
     ap.add_argument('--refs', help='comma list OLD=NEW for every reference in the template')
-    ap.add_argument('--at', nargs=2, type=float, required=True, metavar=('X', 'Y'))
+    ap.add_argument('--at', nargs=2, type=float, metavar=('X', 'Y'))
     ap.add_argument('--size', nargs=2, type=float, default=(40, 20), metavar=('W', 'H'))
-    ap.add_argument('--page', required=True)
+    ap.add_argument('--page')
     args = ap.parse_args()
 
-    if os.path.exists(args.out):
-        sys.exit(f"{args.out} already exists")
     root = open(args.root).read()
     root_uuid = re.search(r'^\t\(uuid "([0-9a-f-]+)"\)', root, re.M).group(1)
-    new_sheet = str(uuid.uuid4())
+    file_uuid = None
+    if args.replace:
+        if not os.path.exists(args.out):
+            sys.exit(f"--replace: {args.out} does not exist")
+        new_sheet = root_sheet_uuid(root, os.path.basename(args.out))
+        if not new_sheet:
+            sys.exit(f"--replace: {args.root} has no sheet block for {os.path.basename(args.out)}")
+        file_uuid = re.search(r'^\t\(uuid "([0-9a-f-]+)"\)', open(args.out).read(), re.M).group(1)
+    else:
+        if os.path.exists(args.out):
+            sys.exit(f"{args.out} already exists")
+        missing = [o for o in ('sheetname', 'at', 'page') if getattr(args, o) is None]
+        if missing:
+            sys.exit(f"--{', --'.join(missing)} required unless --replace")
+        new_sheet = str(uuid.uuid4())
 
     if args.blank:
-        text = (f'(kicad_sch\n\t(version 20250114)\n\t(generator "eeschema")\n\t(generator_version "9.0")\n'
-                f'\t(uuid "{uuid.uuid4()}")\n\t(paper "USLetter")\n\t(lib_symbols)\n)\n')
-        open(args.out, 'w').write(text)
-        register(args, root, root_uuid, new_sheet)
+        open(args.out, 'w').write(blank_sheet_text(file_uuid))
+        finish(args, root, root_uuid, new_sheet)
         return
     if not (args.template and args.value and args.refs):
         sys.exit("--template, --value and --refs are required unless --blank")
@@ -109,6 +143,8 @@ def main():
     refmap = dict(kv.split('=', 1) for kv in args.refs.split(','))
     used = set()
     for f in glob.glob(os.path.join(os.path.dirname(args.root) or '.', '*.kicad_sch')):
+        if args.replace and os.path.samefile(f, args.out):
+            continue            # its references are about to be discarded
         used |= set(re.findall(r'\(reference "([^"]+)"', open(f).read()))
     clash = sorted(set(refmap.values()) & used)
     if clash:
@@ -124,8 +160,10 @@ def main():
         sys.exit(f"expected one instance path in the template, found {paths}")
     text = text.replace(paths.pop(), f'/{root_uuid}/{new_sheet}')
 
-    # Fresh uuid for every element (file uuid included)
+    # Fresh uuid for every element (file uuid included, or kept when replacing)
     text = re.sub(r'\(uuid "[0-9a-f-]+"\)', lambda m: f'(uuid "{uuid.uuid4()}")', text)
+    if file_uuid:
+        text = re.sub(r'^\t\(uuid "[0-9a-f-]+"\)', f'\t(uuid "{file_uuid}")', text, count=1, flags=re.M)
 
     # References
     for old, new in refmap.items():
@@ -146,7 +184,14 @@ def main():
         sys.exit(f"Value {args.old_value!r}: {n} matches")
 
     open(args.out, 'w').write(text)
-    register(args, root, root_uuid, new_sheet)
+    finish(args, root, root_uuid, new_sheet)
+
+
+def finish(args, root, root_uuid, new_sheet):
+    if args.replace:
+        print(f"rewrote {args.out} in place (sheet uuid {new_sheet}, path /{root_uuid}/{new_sheet})")
+    else:
+        register(args, root, root_uuid, new_sheet)
 
 
 def register(args, root, root_uuid, new_sheet):

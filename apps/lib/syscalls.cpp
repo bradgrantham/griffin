@@ -148,6 +148,11 @@ uint32_t griffin_gettime(void)
     return griffin_syscall_raw(Griffin::SYS_GETTIME, 0, 0, 0);
 }
 
+int griffin_settime(uint32_t epoch)
+{
+    return static_cast<int>(griffin_sys_ret(griffin_syscall(Griffin::SYS_SETTIME, static_cast<long>(epoch), 0, 0)));
+}
+
 // ---- POSIX emulation on top of those (so apps can be ordinary POSIX code) ----
 
 // newlib's time()/gmtime()/localtime()/strftime() and std::chrono's
@@ -164,6 +169,18 @@ int gettimeofday(struct timeval *__restrict tv, void *__restrict tz)
         tv->tv_usec = static_cast<suseconds_t>((griffin_getticks() % 1000U) * 1000U);
     }
     return 0;
+}
+
+// The clock is UTC and the firmware keeps whole seconds; tv_usec is dropped.
+int settimeofday(const struct timeval *tv, const struct timezone *tz)
+{
+    (void)tz;
+    if (tv == nullptr)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    return griffin_settime(static_cast<uint32_t>(tv->tv_sec));
 }
 
 // newlib has neither usleep() nor nanosleep().  The only timebase is the

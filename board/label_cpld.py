@@ -5,23 +5,37 @@ For every I/O pin of the chosen symbol instance this adds a 5.08 mm wire stub
 and a global label named after the Verilog port, with the label shape taken
 from the port direction (input / output / inout -> bidirectional).  I/O pins
 the Verilog does not assign get a no-connect flag.  Power pins are left alone.
+The symbol-side work is relabel_pins.py's.
 
 Verilog -> KiCad net name rules (override or extend with --rename):
   nFOO        -> ~{FOO}            leading lowercase n = active low
+  nFOO_k      -> ~{FOO<k+lo>}      active-low vector port nFOO [hi:lo]
   R_nW        -> R{slash}~{W}
   CPUCLK      -> SYSCLK
   BUS_k       -> BUS<k+lo>         vector port [hi:lo]; the PIN block is 0-based
+  A rename of a vector port applies to its base (A_hi -> A gives A18..A23).
+//PIN: names TDI, TMS, TCK and TDO with no matching port are skipped; their
+nets come from --pin (or from cpld_map.py's jtag entry).
 
-Example:
-  label_cpld.py --verilog ../cpld/engine/engine.v --sch expansion.kicad_sch \
-      --ref U13 --pin 14=TIMING_TO_ENGINE_TD:input --pin 71=ENGINE_TO_PIXEL_TD:output \
+With --chip NAME everything comes from cpld_map.py: Verilog, sheet, symbol,
+renames, the JTAG nets (pins 23/62 are always JTAG_TMS/JTAG_TCK), fixed pins
+(global labels), spare pins (local label <CHIP>_SPARE_<pin>) and leave pins
+(untouched).  check_cpld_pins.py checks the result against the netlist.
+
+Examples:
+  label_cpld.py --chip ENGINE --relabel
+  label_cpld.py --verilog ../cpld/engine/engine.v --sch engine.kicad_sch \
+      --ref U18 --pin 14=AUDIO_TO_ENGINE_TD:input --pin 71=ENGINE_TO_PIXEL_TD:output \
       --pin 62=JTAG_TCK:input --pin 23=JTAG_TMS:input
 
-Existing no-connects on the symbol's pins are replaced; an existing wire or
-label on a pin that would be labeled is an error (nothing is written).
+Existing no-connects on the labeled pins are replaced; an existing wire or
+label on a pin that would be labeled is an error (nothing is written) unless
+--relabel, which first strips the stubs, labels and no-connects a previous
+run generated (see relabel_pins.py).
 """
 
 import argparse
+import os
 import re
 import sys
 import uuid
@@ -122,10 +136,13 @@ def net_name(pin_name, ports, renames):
     if pin_name in renames:
         return renames[pin_name]
     if k is not None:
-        base = renames.get(port, port)
         if lo is None:
             sys.exit(f"//PIN: {pin_name} indexes scalar port {port}")
-        return f"{base}{k + lo}"
+        if port in renames:
+            return f"{renames[port]}{k + lo}"
+        if re.fullmatch(r'n[A-Z][A-Za-z0-9_]*', port):
+            return '~{' + port[1:] + str(k + lo) + '}'
+        return f"{port}{k + lo}"
     if re.fullmatch(r'n[A-Z][A-Za-z0-9_]*', port):
         return '~{' + port[1:] + '}'
     return port
@@ -146,15 +163,21 @@ def symbol_instance(root, ref):
     sys.exit(f"no symbol with Reference {ref}")
 
 
-def lib_symbol_pins(root, lib_id):
-    """Return [(number, name, type, x, y, rot, hidden)] for a lib symbol."""
+def lib_symbol_pins(root, lib_id, unit=None):
+    """Return [(number, name, type, x, y, rot, hidden)] for a lib symbol.
+
+    With unit, only the pins of that unit (and of the common unit 0)."""
     libs = find_one(root, 'lib_symbols')
     for sym in find_all(libs, 'symbol'):
         if atom(sym[1]) != lib_id:
             continue
         pins = []
-        for unit in find_all(sym, 'symbol'):
-            for pin in find_all(unit, 'pin'):
+        for sub in find_all(sym, 'symbol'):
+            m = re.search(r'_(\d+)_(\d+)$', atom(sub[1]))
+            if unit is not None and m and int(m.group(1)) not in (0, unit):
+                continue
+            unit_pins = find_all(sub, 'pin')
+            for pin in unit_pins:
                 at = find_one(pin, 'at')
                 name = atom(find_one(pin, 'name')[1])
                 number = atom(find_one(pin, 'number')[1])
@@ -177,9 +200,22 @@ REF_PAD_LEFT = 3.67
 
 
 def label_block(name, shape, x, y, angle):
-    left = angle == 180
+    """Global label whose connection point is (x, y); angle 0 / 90 / 180 / 270
+    points the label body right / up / left / down."""
+    left = angle in (180, 270)
     justify = 'right' if left else 'left'
-    ref_x = x - (REF_PAD_LEFT + CHAR_W * len(name)) if left else x + (REF_PAD_RIGHT + CHAR_W * len(name))
+    width = (REF_PAD_LEFT if left else REF_PAD_RIGHT) + CHAR_W * len(name)
+    ref_x, ref_y, ref_angle = x, y, 0
+    if angle == 0:
+        ref_x = x + width
+    elif angle == 180:
+        ref_x = x - width
+    elif angle == 90:
+        ref_y, ref_angle = y - width, 90
+    elif angle == 270:
+        ref_y, ref_angle = y + width, 90
+    else:
+        raise ValueError(f"label angle {angle}")
     return f'''	(global_label "{name}"
 		(shape {shape})
 		(at {fmt(x)} {fmt(y)} {angle})
@@ -192,7 +228,7 @@ def label_block(name, shape, x, y, angle):
 		)
 		(uuid "{uuid.uuid4()}")
 		(property "Intersheetrefs" "${{INTERSHEET_REFS}}"
-			(at {fmt(ref_x)} {fmt(y)} 0)
+			(at {fmt(ref_x)} {fmt(ref_y)} {ref_angle})
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -201,6 +237,22 @@ def label_block(name, shape, x, y, angle):
 				(hide yes)
 			)
 		)
+	)
+'''
+
+
+def local_label_block(name, x, y, angle):
+    """Local (sheet-scope) label at (x, y); angle as for label_block."""
+    justify = 'right' if angle in (180, 270) else 'left'
+    return f'''	(label "{name}"
+		(at {fmt(x)} {fmt(y)} {angle})
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify {justify} bottom)
+		)
+		(uuid "{uuid.uuid4()}")
 	)
 '''
 
@@ -227,128 +279,148 @@ def nc_block(x, y):
 '''
 
 
+# ----------------------------------------------------------------------------
+# Chip mode: everything derived from cpld_map.py
+# ----------------------------------------------------------------------------
+
+def chip_sheet(chip, board_dir):
+    """Return the existing sheet path for a cpld_map chip, or None."""
+    for name in (chip['sheet'], chip.get('sheet_fallback')):
+        if name and os.path.exists(os.path.join(board_dir, name)):
+            return os.path.join(board_dir, name)
+    return None
+
+
+def verilog_assignment(pins, ports, renames, jtag_pins=()):
+    """{pin number: (net, shape)} from a //PIN: block.  //PIN: names TDI, TMS,
+    TCK and TDO with no matching port are skipped when their pin is in jtag_pins."""
+    from cpld_map import JTAG_PIN_NAMES
+    assign = {}
+    for pin_name, num in pins.items():
+        if pin_name in JTAG_PIN_NAMES and pin_name not in ports:
+            if num != JTAG_PIN_NAMES[pin_name]:
+                sys.exit(f"//PIN: {pin_name} : {num} is not the JTAG {pin_name} pin")
+            if num not in jtag_pins:
+                sys.exit(f"//PIN: {pin_name} : {num} has no port and no JTAG net")
+            continue
+        port, _ = pin_to_port(pin_name, ports)
+        assign[num] = (net_name(pin_name, ports, renames), SHAPES[ports[port][0]])
+    return assign
+
+
+def chip_assignment(name, board_dir=None):
+    """Expected labeling of a cpld_map chip: {pin: (kind, net, shape)} with kind
+    'global' | 'local' | 'nc', covering every I/O pin except the chip's leave pins."""
+    import cpld_map
+    board_dir = board_dir or os.path.dirname(os.path.abspath(__file__))
+    if name not in cpld_map.CHIPS:
+        sys.exit(f"unknown chip {name}; known: {sorted(cpld_map.CHIPS)}")
+    chip = cpld_map.CHIPS[name]
+    renames = dict(DEFAULT_RENAMES)
+    renames.update(chip['renames'])
+    pins, ports = read_verilog(os.path.join(board_dir, chip['verilog']))
+    for pin, net in chip['jtag'].items():
+        if cpld_map.JTAG_SHAPES.get(pin) is None:
+            sys.exit(f"{name}: jtag pin {pin} is not a JTAG pin")
+
+    result = {}
+
+    def put(num, entry, why):
+        if num in result:
+            sys.exit(f"{name}: pin {num} is both {result[num]} and {entry} ({why})")
+        if num not in cpld_map.IO_PINS:
+            sys.exit(f"{name}: pin {num} ({why}) is not an I/O pin")
+        result[num] = entry
+
+    for num, (net, shape) in verilog_assignment(pins, ports, renames, chip['jtag']).items():
+        put(num, ('global', net, shape), 'Verilog')
+    for num, net in chip['jtag'].items():
+        put(num, ('global', net, cpld_map.JTAG_SHAPES[num]), 'jtag')
+    for num, (net, shape) in chip['fixed'].items():
+        put(num, ('global', net, shape), 'fixed')
+    for num in chip['spare']:
+        put(num, ('local', f"{name}_SPARE_{num}", None), 'spare')
+    for num in chip['leave']:
+        put(num, ('leave', None, None), 'leave')
+    for num in cpld_map.IO_PINS:
+        result.setdefault(num, ('nc', None, None))
+    return {n: a for n, a in result.items() if a[0] != 'leave'}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--verilog', required=True)
-    ap.add_argument('--sch', required=True)
-    ap.add_argument('--ref', required=True, help='symbol Reference, e.g. U13')
+    ap.add_argument('--chip', help='chip name from cpld_map.py (GLUE, PORTS, AUDIO, ENGINE, PIXEL, COMPOSITOR); '
+                    'replaces --verilog/--sch/--ref/--pin/--rename')
+    ap.add_argument('--verilog')
+    ap.add_argument('--sch')
+    ap.add_argument('--ref', help='symbol Reference, e.g. U13')
     ap.add_argument('--pin', action='append', default=[],
                     help='extra pin NUM=NET:shape (shape input|output|bidirectional), e.g. JTAG')
     ap.add_argument('--rename', action='append', default=[],
                     help='VERILOG=KICAD net name override (applies to a port or //PIN: name)')
+    ap.add_argument('--relabel', action='store_true',
+                    help='strip what a previous run generated on the pins before labeling (see relabel_pins.py)')
+    ap.add_argument('--board-dir', help='with --chip: directory holding cpld_map sheets (default: this script\'s)')
     ap.add_argument('--dry-run', action='store_true', help='print the generated blocks, write nothing')
     args = ap.parse_args()
 
+    import relabel_pins
+
+    if args.chip:
+        if args.verilog or args.sch or args.ref or args.pin or args.rename:
+            sys.exit("--chip replaces --verilog/--sch/--ref/--pin/--rename")
+        import cpld_map
+        board_dir = args.board_dir or os.path.dirname(os.path.abspath(__file__))
+        chip = cpld_map.CHIPS.get(args.chip)
+        if chip is None:
+            sys.exit(f"unknown chip {args.chip}; known: {sorted(cpld_map.CHIPS)}")
+        sch = chip_sheet(chip, board_dir)
+        if sch is None:
+            sys.exit(f"{args.chip}: sheet {chip['sheet']} missing in {board_dir}")
+        print(f"{args.chip}: using {sch}")
+        assign = chip_assignment(args.chip, board_dir)
+        root = parse_sexp(open(sch).read())[0]
+        _, lib_id, ends = relabel_pins.symbol_pin_ends(root, chip['ref'])
+        io = relabel_pins.io_pin_numbers(ends)
+        if io != cpld_map.IO_PINS:
+            sys.exit(f"{chip['ref']} ({lib_id}) I/O pins differ from cpld_map.IO_PINS: "
+                     f"{sorted(set(io) ^ set(cpld_map.IO_PINS))}")
+        relabel_pins.apply(sch, chip['ref'], assign, relabel=args.relabel, dry_run=args.dry_run)
+        return
+
+    if not (args.verilog and args.sch and args.ref):
+        sys.exit("need --chip, or all of --verilog, --sch and --ref")
     renames = dict(DEFAULT_RENAMES)
     for r in args.rename:
         k, v = r.split('=', 1)
         renames[k] = v
 
-    pins, ports = read_verilog(args.verilog)
-
-    # pin number -> (net, shape)
-    assign = {}
-    for pin_name, num in pins.items():
-        port, _ = pin_to_port(pin_name, ports)
-        assign[num] = (net_name(pin_name, ports, renames), SHAPES[ports[port][0]])
+    extra = {}
     for spec in args.pin:
         num, rest = spec.split('=', 1)
         net, shape = rest.rsplit(':', 1)
         if shape not in SHAPES.values():
             sys.exit(f"--pin {spec}: shape must be one of {sorted(SHAPES.values())}")
-        num = int(num)
+        extra[int(num)] = (net, shape)
+
+    pins, ports = read_verilog(args.verilog)
+    assign = {}
+    for num, (net, shape) in verilog_assignment(pins, ports, renames, extra).items():
+        assign[num] = ('global', net, shape)
+    for num, (net, shape) in extra.items():
         if num in assign:
-            sys.exit(f"--pin {spec}: pin {num} is already {assign[num]} from the Verilog")
-        assign[num] = (net, shape)
+            sys.exit(f"--pin {num}={net}:{shape}: pin {num} is already {assign[num][1]} from the Verilog")
+        assign[num] = ('global', net, shape)
 
-    text = open(args.sch).read()
-    root = parse_sexp(text)[0]
-    inst = symbol_instance(root, args.ref)
-    lib_id = atom(find_one(inst, 'lib_id')[1])
-    at = find_one(inst, 'at')
-    sx, sy, srot = float(atom(at[1])), float(atom(at[2])), int(float(atom(at[3])))
-    if srot != 0 or find_one(inst, 'mirror') is not None:
-        sys.exit(f"{args.ref} is rotated or mirrored; only rotation 0 is supported")
-
-    lib_pins = lib_symbol_pins(root, lib_id)
-    io_pins = [(n, nm, t, x, y, r) for (n, nm, t, x, y, r, hidden) in lib_pins
-               if not hidden and t not in ('power_in', 'power_out', 'passive', 'no_connect')]
-
-    # Schematic positions of every I/O pin end
-    ends = {}
-    for number, name, ptype, lx, ly, rot in io_pins:
-        ends[int(number)] = (sx + lx, sy - ly, rot, name)
-
-    unknown = sorted(set(assign) - set(ends))
+    root = parse_sexp(open(args.sch).read())[0]
+    _, lib_id, ends = relabel_pins.symbol_pin_ends(root, args.ref)
+    io = relabel_pins.io_pin_numbers(ends)
+    unknown = sorted(set(assign) - set(io))
     if unknown:
         sys.exit(f"assigned pins are not I/O pins of {lib_id}: {unknown}")
-
-    # Existing objects touching the pin ends
-    def at_xy(node):
-        a = find_one(node, 'at')
-        return (float(atom(a[1])), float(atom(a[2])))
-
-    end_set = {(fmt(x), fmt(y)) for (x, y, _, _) in ends.values()}
-    stale_nc = []
-    for nc in find_all(root, 'no_connect'):
-        x, y = at_xy(nc)
-        if (fmt(x), fmt(y)) in end_set:
-            stale_nc.append(atom(find_one(nc, 'uuid')[1]))
-    clashes = []
-    for w in find_all(root, 'wire'):
-        for xy in find_all(find_one(w, 'pts'), 'xy'):
-            if (fmt(float(atom(xy[1]))), fmt(float(atom(xy[2])))) in end_set:
-                clashes.append(('wire', xy))
-    for head in ('global_label', 'label', 'hierarchical_label'):
-        for lb in find_all(root, head):
-            x, y = at_xy(lb)
-            if (fmt(x), fmt(y)) in end_set:
-                clashes.append((head, atom(lb[1])))
-    if clashes:
-        sys.exit(f"existing objects on {args.ref} pin ends, refusing: {clashes}")
-
-    out = []
-    nc_pins = []
-    for num in sorted(ends):
-        x, y, rot, pname = ends[num]
-        if num in assign:
-            net, shape = assign[num]
-            if rot == 0:        # pin points right: end is on the left of the body
-                lx, angle = x - STUB, 180
-            elif rot == 180:
-                lx, angle = x + STUB, 0
-            else:
-                sys.exit(f"pin {num} rotation {rot} not supported")
-            out.append(wire_block(x, y, lx, y))
-            out.append(label_block(net, shape, lx, y, angle))
-        else:
-            nc_pins.append((num, pname))
-            out.append(nc_block(x, y))
-    generated = ''.join(out)
-
-    print(f"{args.ref} ({lib_id}): {len(ends)} I/O pins, {len(assign)} labeled, "
-          f"{len(nc_pins)} no-connect, {len(stale_nc)} existing no-connect removed")
-    for num, pname in nc_pins:
-        print(f"  NC pin {num} ({pname})")
-    for num in sorted(assign):
-        print(f"  {num:>3} {assign[num][1]:<13} {assign[num][0]}")
-
-    if args.dry_run:
-        print(generated)
-        return
-
-    # Text surgery: drop stale no-connect blocks, insert before the instance block.
-    for u in stale_nc:
-        text, n = re.subn(r'\t\(no_connect\n\t\t\(at [^\n]*\n\t\t\(uuid "' + re.escape(u) + r'"\)\n\t\)\n', '', text)
-        if n != 1:
-            sys.exit(f"could not remove no_connect {u}")
-    inst_uuid = atom(find_one(inst, 'uuid')[1])
-    m = re.search(r'\t\(symbol\n\t\t\(lib_id "' + re.escape(lib_id) + r'"\)\n(?:[^\n]*\n)*?\t\t\(uuid "' + re.escape(inst_uuid) + r'"\)', text)
-    if not m or '\t(symbol\n' in text[m.start() + 1:m.end()]:
-        sys.exit("could not locate the symbol instance block in the file text")
-    text = text[:m.start()] + generated + text[m.start():]
-    open(args.sch, 'w').write(text)
-    print(f"wrote {args.sch}")
+    for num in io:
+        assign.setdefault(num, ('nc', None, None))
+    relabel_pins.apply(args.sch, args.ref, assign, relabel=args.relabel, dry_run=args.dry_run)
 
 
 if __name__ == '__main__':

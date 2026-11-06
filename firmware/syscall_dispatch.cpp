@@ -35,6 +35,7 @@ extern "C"
     // firmware/rom.cpp
     uint32_t get_milliseconds(void);
     uint32_t get_epoch_seconds(void);
+    long     sys_settime(uint32_t epoch);
     long     sys_video_direct_start(long info_ptr);
     long     sys_video_direct_end(void);
     long     sys_video_vsync_irq(long enable);
@@ -111,6 +112,11 @@ long sys_dispatch(long num, long a1, long a2, long a3)
             break;
         case Griffin::SYS_GETTIME:
             r = static_cast<long>(get_epoch_seconds());
+            break;
+        // d1 is seconds since the epoch (UTC); -ENODEV means the counter was
+        // set but there is no RTC to keep it across a power cycle.
+        case Griffin::SYS_SETTIME:
+            r = sys_settime(static_cast<uint32_t>(a1));
             break;
         // Direct video access.  d1 is a GriffinVideoDirectInfo * the firmware
         // fills in (see griffin_abi.h); the loader calls the END path itself

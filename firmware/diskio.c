@@ -4,6 +4,7 @@
 
 #include "ff.h"
 #include "diskio.h"
+#include "rtc.h"
 #include "cf.h"
 
 
@@ -107,13 +108,20 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
 }
 
 
+/* FatFs timestamps from the firmware wall clock (rtc_seconds, UTC; FAT has no
+ * zone, so files carry UTC).  FAT dates start at 1980; the clock can't be
+ * earlier than the build time, so no clamp is needed. */
+extern uint32_t get_epoch_seconds(void);
+
 DWORD get_fattime(void)
 {
+    rtc_civil_t c;
+    rtc_civil_from_epoch(get_epoch_seconds(), &c);
     return
-        ((FF_NORTC_YEAR - 1980) << 25) |
-        (FF_NORTC_MON << 21) |
-        (FF_NORTC_MDAY << 16) |
-        (0 << 11) |
-        (0 << 5) |
-        (0 << 0);
+        ((DWORD)(c.year - 1980) << 25) |
+        ((DWORD)c.month << 21) |
+        ((DWORD)c.day << 16) |
+        ((DWORD)c.hour << 11) |
+        ((DWORD)c.minute << 5) |
+        ((DWORD)(c.second / 2) << 0);
 }

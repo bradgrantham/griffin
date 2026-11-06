@@ -173,3 +173,41 @@ Why the griffin.yml "USB-C power entry" gate is built the way it is.
   to 3.3 V or a current source and VBUS itself may be sagging.  A TL431
   (TO-92, 1k from VBUS, cathode tied to ref) gives 2.495 V; a 10k/10k
   divider halves it.
+
+## RTC over the DUART (I²C by hand)
+
+The MCP7940N hangs on four DUART general-purpose pins; there is no I²C
+peripheral.  Two inversions stack up and both are easy to get backwards:
+
+* **OPR complement.**  Writing a 1 to an OPR bit (via OPR_SET) drives that
+  OP pin **LOW**; OPR_CLR drives it HIGH.  OPR resets to 0, so all OP pins
+  come up HIGH.
+* **The SDA FET.**  OP3 drives the gate of a 2N7000 whose drain is SDA.  OP3
+  HIGH turns the FET on and pulls SDA LOW; OP3 LOW releases SDA to its
+  pull-up.  So SDA released = OPR bit 3 **set** (pin low), SDA driven low =
+  OPR bit 3 clear.
+* SCL is OP2 directly: SCL high = OPR bit 2 clear.  Push-pull is fine
+  because the MCP7940N never stretches the clock.
+* Consequence: from reset until firmware sets OPR bit 3, SDA is held LOW.
+  Harmless to the chip (it sees a START with no clocks), but `rtc_init`
+  clocks SCL nine times with SDA released and sends a STOP first, in case
+  the reset interrupted a read and the chip was mid-byte with SDA low.
+* IP2 reads SDA back; IP3 reads MFP.  The I²C bit rate is one DUART bus
+  write per SCL edge, which is well inside the chip's 400 kHz fast-mode
+  limits (tLOW ≥ 1.3 µs, tHIGH ≥ 0.6 µs) even with a few NOPs of padding.
+
+Wall time does not come from I²C after boot.  MFP is programmed as a 1 Hz
+square wave; the DUART raises its level-5 interrupt on any IP0–IP3 change
+whose ACR enable bit is set (ACR[3] for IP3), ISR bit 7 (IPC) says so, and
+reading IPCR both reports the delta bits (bits 7:4) with the current levels
+(bits 3:0) and clears the deltas.  The ISR increments `rtc_seconds` only when
+IPCR shows delta-IP3 AND IP3 high, i.e. the rising edge; the falling edge
+costs an interrupt and nothing else.
+
+Chip facts the driver relies on: register 0x00 bit 7 is ST (oscillator
+start), register 0x03 bit 3 is VBATEN (battery switchover enable; off on a
+fresh part), bit 5 is OSCRUN (read-only); register 0x07 is CONTROL (bit 6
+SQWEN, bits 1:0 SQWFS, 00 = 1 Hz); register 0x08 OSCTRIM.  Two-digit year,
+read as 2000–2099.  Crystal must be a 6–9 pF load part, not the common
+12.5 pF one.  The datasheet asks for ST cleared while the time registers are
+written and set again afterwards; `rtc_write_time` does that.

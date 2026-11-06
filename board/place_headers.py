@@ -79,7 +79,7 @@ def main():
     root_file = os.path.join(os.path.dirname(os.path.abspath(args.sch)), 'board.kicad_sch')
     rtext = open(root_file).read()
     root_uuid = re.search(r'^\t\(uuid "([0-9a-f-]+)"\)', rtext, re.M).group(1)
-    m = re.search(r'\(uuid "([0-9a-f-]+)"\)\n\t\t\(property "Sheetname" "[^"]*"\n(?:[^\n]*\n)*?\t\t\(property "Sheetfile" "'
+    m = re.search(r'\(uuid "([0-9a-f-]+)"\)\n\t\t\(property "Sheetname" "[^"]*"\n(?:\t\t[^\n]*\n)*?\t\t\(property "Sheetfile" "'
                   + re.escape(os.path.basename(args.sch)) + '"', rtext)
     if not m:
         sys.exit(f"{root_file} has no sheet block for {os.path.basename(args.sch)}")

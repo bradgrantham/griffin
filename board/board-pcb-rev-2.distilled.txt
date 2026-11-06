@@ -1,0 +1,919 @@
+COMPONENTS
+======================================================================
+
+--- BT ---
+  BT1        CR2032                [BatteryHolder_Keystone_3034_1x20mm]
+
+--- Capacitors ---
+  C1         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C2         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C3         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C4         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C5         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C6         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C7         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C8         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C9         100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C10        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C11        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C12        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C13        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C14        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C17        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C18        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C19        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C20        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C25        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C26        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C27        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C28        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C29        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C30        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C31        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C34        33pF                  [C_Disc_D3.0mm_W1.6mm_P2.50mm]
+  C35        33pF                  [C_Disc_D3.0mm_W1.6mm_P2.50mm]
+  C36        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C37        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C38        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C39        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C40        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C41        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C42        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C43        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C44        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C45        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C46        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C47        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C48        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C50        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C51        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C52        10uF                  [CP_Radial_D5.0mm_P2.00mm]
+  C53        8.2nF                 [C_Rect_L7.2mm_W2.5mm_P5.00mm]
+  C54        8.2nF                 [C_Rect_L7.2mm_W2.5mm_P5.00mm]
+  C55        100uF                 [CP_Radial_D6.3mm_P2.50mm]
+  C56        100uF                 [CP_Radial_D6.3mm_P2.50mm]
+  C57        47nF                  [C_Rect_L7.2mm_W2.5mm_P5.00mm]
+  C58        250uF                 [CP_Radial_D8.0mm_P3.50mm]
+  C59        47nF                  [C_Rect_L7.2mm_W2.5mm_P5.00mm]
+  C60        250uF                 [CP_Radial_D8.0mm_P3.50mm]
+  C61        47nF                  [C_Rect_L7.2mm_W2.5mm_P5.00mm]
+  C62        250uF                 [CP_Radial_D8.0mm_P3.50mm]
+  C63        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C64        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C65        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C66        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C67        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C70        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C71        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C72        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C73        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C74        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C75        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C76        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C77        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C78        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C79        1uF                   [CP_Radial_D5.0mm_P2.00mm]
+  C80        2*(CL-Cs) TBD         [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C81        2*(CL-Cs) TBD         [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C82        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C83        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C90        10nF film             [C_Rect_L7.2mm_W2.5mm_P5.00mm]
+  C91        10nF film             [C_Rect_L7.2mm_W2.5mm_P5.00mm]
+
+--- CP ---
+  CP1        Power Connector       [POWER]
+
+--- Diodes ---
+  D1         GREEN                 [LED_D3.0mm]
+  D2         1N5817                [D_DO-41_SOD81_P10.16mm_Horizontal]
+  D3         RED                   [LED_D3.0mm]
+  D4         1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D5         1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D6         1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D7         1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D8         1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D9         1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D10        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D11        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D12        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D13        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D14        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D15        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D16        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D17        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D18        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D19        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D20        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D21        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D22        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D23        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D24        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D25        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D26        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D27        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D28        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D29        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D30        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+  D31        1N4148                [D_DO-35_SOD27_P7.62mm_Horizontal]
+
+--- Fuses ---
+  F1         0.5A polyfuse         [Fuse_Bourns_MF-RHT050]
+  F2         0.5A polyfuse         [Fuse_Bourns_MF-RHT050]
+
+--- H ---
+  H1         MountingHole          [MountingHole_2.5mm_Pad_Via]
+  H2         MountingHole          [MountingHole_2.5mm_Pad_Via]
+  H3         MountingHole          [MountingHole_2.5mm_Pad_Via]
+  H4         MountingHole          [MountingHole_2.5mm_Pad_Via]
+  H5         MountingHole          [MountingHole_2.5mm_Pad_Via]
+
+--- Connectors ---
+  J1         Conn_01x04          
+  J2         JTAG                  [PinHeader_1x06_P2.54mm_Vertical]
+  J3         FTDI serial A         [PinHeader_1x06_P2.54mm_Vertical]
+  J4         KEYBOARD              [Mini_din6]
+  J5         MOUSE                 [Mini_din6]
+  J6         3.5mm stereo, tip+ring NC switches (part TBD: SJ3-35063B has tip switch only)
+  J7         CF Card               [SAMTEC_CFT-125-01-L-D-RA-01-SL]
+  J8         DEBUG_HEADER          [IDC-Header_2x16_P2.54mm_Vertical]
+  J9         DEBUG_HEADER          [IDC-Header_2x16_P2.54mm_Vertical]
+  J10        DIN-5_180degree     
+  J11        DIN-5_180degree     
+  J12        FTDI serial B         [PinHeader_1x06_P2.54mm_Vertical]
+  J13        PORTS SPARE           [PinHeader_1x03_P2.54mm_Vertical]
+  J14        RCA LINE OUT L        [CUI_RCJ-044]
+  J15        RCA LINE OUT R        [CUI_RCJ-044]
+  J16        VOLUME POT (dual 10kA, panel)  [PinHeader_1x06_P2.54mm_Vertical]
+  J17        SPEAKER 8 ohm (case)  [PinHeader_1x02_P2.54mm_Vertical]
+  J18        CONSOLE DB-25F DCE    [DSUB-25_Socket_Horizontal_P2.77x2.84mm_EdgePinOffset7.70mm_Housed_MountingHolesOffset9.12mm]
+  J19        MODEM DB-25M DTE      [DSUB-25_Pins_Horizontal_P2.77x2.84mm_EdgePinOffset7.70mm_Housed_MountingHolesOffset9.12mm]
+  J20        JOYSTICK 1            [DSUB-9_Pins_Horizontal_P2.77x2.84mm_EdgePinOffset4.94mm_Housed_MountingHolesOffset4.94mm]
+  J21        JOYSTICK 2            [DSUB-9_Pins_Horizontal_P2.77x2.84mm_EdgePinOffset4.94mm_Housed_MountingHolesOffset4.94mm]
+  J22        DE-15 VGA             [AMPHENOL_ICD15S13E4GX00LF]
+  J23        PIXEL_SPARE           [PinHeader_2x10_P2.54mm_Vertical]
+
+--- Transistors ---
+  Q1         PN2222A               [TO-92_Inline]
+  Q2         2N7000                [TO-92_Inline]
+  Q3         2N7000                [TO-92_Inline]
+  Q4         2N7000                [TO-92_Inline]
+
+--- Resistors ---
+  R1         100K                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R2         100                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R3         10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R4         10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R5         10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R6         10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R7         4.7K                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R8         10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R9         10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R10        10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R11        10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R12        10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R13        10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R14        10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R15        10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R16        10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R17        100                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R20        100K                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R21        100K                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R22        4610X-R2R-103LF       [BO_4610X]
+  R28        0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R30        0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R32        100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R33        10K                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R34        1K                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R35        0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R36        0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R37        0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R38        0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R39        0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R50        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R51        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R52        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R53        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R54        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R55        3.9k                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R56        100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R57        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R58        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R59        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R60        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R61        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R62        3.9k                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R63        100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R64        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R65        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R66        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R67        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R68        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R69        3.9k                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R70        100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R71        100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R72        100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R80        4610X-R2R-103LF       [BO_4610X]
+  R81        4610X-R2R-103LF       [BO_4610X]
+  R82        4610X-R2R-103LF       [BO_4610X]
+  R83        10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R84        10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R85        2k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R86        2k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R87        4.7k                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R88        4.7k                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R89        100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R90        100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R91        10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R92        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R93        10R                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R94        10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R95        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R96        10R                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R97        47k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R98        47k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R99        1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R100       1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R101       1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R102       1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R103       1k                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R104       10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R105       10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R106       10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R107       10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R108       10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R109       10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R110       4.7k                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R111       4.7k                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R112       10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R120       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R121       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R122       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R123       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R124       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R125       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R126       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R127       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R128       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R129       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R130       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R131       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R132       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R133       100R                  [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R134       1M                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R135       1M                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R136       10k                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R150       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R151       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R152       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R153       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R154       10R                   [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R155       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R156       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R157       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+
+--- Resistor Networks ---
+  RN1        10k bussed            [R_Array_SIP7]
+  RN2        10k bussed            [R_Array_SIP7]
+
+--- Switches ---
+  SW1        RESET                 [SW_TH_Tactile_Omron_B3F-106x]
+
+--- Test Points ---
+  TP1        Bodge Pad (in only) 
+  TP2        Bodge Pad           
+  TP3        TestPoint             [TestPoint_Pad_D1.5mm]
+  TP4        TestPoint             [TestPoint_Pad_D1.5mm]
+  TP5        TestPoint             [TestPoint_Pad_D1.5mm]
+  TP6        TestPoint             [TestPoint_Pad_D1.5mm]
+  TP7        TestPoint             [TestPoint_Pad_D1.5mm]
+  TP8        AUDIO_TICK            [TestPoint_Pad_D1.5mm]
+
+--- ICs ---
+  U1         DS1233              
+  U2         MC68000               [DIP-64_W22.86mm]
+  U3         ROM LO                [DIP-32_W15.24mm]
+  U4         ROM HI                [DIP-32_W15.24mm]
+  U5         RAM 1 LO              [DIP-32_W15.24mm]
+  U6         RAM 1 HI              [DIP-32_W15.24mm]
+  U7         RAM 2 LO              [DIP-32_W15.24mm]
+  U8         RAM 2 HI              [DIP-32_W15.24mm]
+  U9         RAM 3 LO              [DIP-32_W15.24mm]
+  U10        RAM 3 HI              [DIP-32_W15.24mm]
+  U11        RAM 4 LO              [DIP-32_W15.24mm]
+  U12        RAM 4 HI              [DIP-32_W15.24mm]
+  U13        GLUE                  [PLCC-84_THT-Socket]
+  U14        PORTS                 [PLCC-84_THT-Socket]
+  U17        LM358                 [DIP-8_W7.62mm]
+  U18        ENGINE                [PLCC-84_THT-Socket]
+  U19        PIXEL                 [PLCC-84_THT-Socket]
+  U20        IDT7200L15P           [DIP-28_W7.62mm]
+  U21        IDT7200L15P           [DIP-28_W7.62mm]
+  U22        COMPOSITOR            [PLCC-84_THT-Socket]
+  U23        IDT7200L15P           [DIP-28_W7.62mm]
+  U24        IDT7200L15P           [DIP-28_W7.62mm]
+  U25        IDT7200L15P           [DIP-28_W7.62mm]
+  U26        IDT7200L15P           [DIP-28_W7.62mm]
+  U27        68C681              
+  U28        AUDIO                 [PLCC-84_THT-Socket]
+  U29        IDT7200L15P           [DIP-28_W7.62mm]
+  U30        IDT7200L15P           [DIP-28_W7.62mm]
+  U31        IDT7200L15P           [DIP-28_W7.62mm]
+  U32        74HC4066              [DIP-14_W7.62mm]
+  U33        LM386                 [DIP-8_W7.62mm]
+  U34        LM386                 [DIP-8_W7.62mm]
+  U35        LM386                 [DIP-8_W7.62mm]
+  U36        MAX232                [DIP-16_W7.62mm]
+  U37        MAX232                [DIP-16_W7.62mm]
+  U38        SN75189               [DIP-14_W7.62mm]
+  U39        MCP7940N-I/P          [DIP-8_W7.62mm]
+  U40        74F219 (part TBD)     [DIP-16_W7.62mm]
+  U41        74F219 (part TBD)     [DIP-16_W7.62mm]
+  U42        74F219 (part TBD)     [DIP-16_W7.62mm]
+  U43        74AHCT541             [DIP-20_W7.62mm]
+  U44        74AHCT541             [DIP-20_W7.62mm]
+  U45        74AHCT541             [DIP-20_W7.62mm]
+  U46        74AHCT541             [DIP-20_W7.62mm]
+  U47        74AC541               [DIP-20_W7.62mm]
+  U48        74AC541               [DIP-20_W7.62mm]
+
+--- Crystals / Oscillators ---
+  Y1         SYSCLK                [Oscillator_DIP-8]
+  Y3         25.175MHz             [Oscillator_DIP-8]
+  Y4         OSC2 (optional, DNP)  [Oscillator_DIP-8]
+  Y5         3.6864MHz             [Resonator-2Pin_W10.0mm_H5.0mm]
+  Y6         32.768kHz CL 6-9pF    [Crystal_C26-LF_D2.1mm_L6.5mm_Vertical]
+
+
+POWER NETS
+======================================================================
+  +12V             -> CP1, J1
+  +5V              -> C1, C10, C11, C12, C13, C14, C17, C18, C19, C2, C20, C25, C26, C27, C28, C29, C3, C30, C31, C36, C37, C38, C39, C4, C40, C41, C42, C43, C44, C45, C46, C47, C48, C5, C50, C51, C6, C63, C64, C65, C66, C67, C7, C74, C79, C8, C82, C83, C9, CP1, D1, D10, D12, D14, D16, D18, D20, D22, D24, D26, D28, D3, D30, D4, D6, D8, F1, F2, J1, J10, J11, J2, J4, J5, J7, J8, J9, R1, R10, R104, R105, R106, R107, R108, R109, R11, R110, R111, R112, R12, R13, R134, R135, R136, R14, R20, R21, R3, R34, R4, R5, R6, R7, R8, R83, R9, RN1, RN2, U1, U10, U11, U12, U13, U14, U17, U18, U19, U2, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U3, U30, U31, U32, U33, U34, U35, U36, U37, U38, U39, U4, U40, U41, U42, U43, U44, U45, U46, U47, U48, U5, U6, U7, U8, U9, Y1, Y3, Y4
+  GND              -> BT1, C1, C10, C11, C12, C13, C14, C17, C18, C19, C2, C20, C25, C26, C27, C28, C29, C3, C30, C31, C34, C35, C36, C37, C38, C39, C4, C40, C41, C42, C43, C44, C45, C46, C47, C48, C5, C50, C51, C52, C57, C59, C6, C61, C63, C64, C65, C66, C67, C7, C72, C73, C74, C77, C78, C79, C8, C80, C81, C82, C83, C9, C90, C91, CP1, D11, D13, D15, D17, D19, D21, D23, D25, D27, D29, D31, D5, D7, D9, H1, H2, H3, H4, H5, J1, J10, J11, J12, J13, J14, J15, J16, J17, J18, J19, J2, J20, J21, J22, J23, J3, J4, J5, J6, J7, J8, J9, Q1, Q2, Q3, Q4, R15, R2, R22, R33, R56, R63, R70, R80, R81, R82, R84, R87, R88, R92, R95, R99, SW1, U1, U10, U11, U12, U13, U14, U17, U18, U19, U2, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U3, U30, U31, U32, U33, U34, U35, U36, U37, U38, U39, U4, U40, U41, U42, U43, U44, U45, U46, U47, U48, U5, U6, U7, U8, U9, Y1, Y3, Y4
+
+
+SIGNAL NETS
+======================================================================
+
+--- Buses ---
+
+  /AUDIO_DAC/LADDER[0:3]  (4 bits)
+    /AUDIO_DAC/LADDER_0: R22.1, U32.1
+    /AUDIO_DAC/LADDER_1: R80.1, U32.4
+    /AUDIO_DAC/LADDER_2: R81.1, U32.8
+    /AUDIO_DAC/LADDER_3: R82.1, U32.11
+
+  /PANEL/JS1[1:9]  (8 bits)
+    /PANEL/JS1_1: D4.2(A), D5.1(K), J20.1(1), R120.1
+    /PANEL/JS1_2: D6.2(A), D7.1(K), J20.2(2), R121.1
+    /PANEL/JS1_3: D8.2(A), D9.1(K), J20.3(3), R122.1
+    /PANEL/JS1_4: D10.2(A), D11.1(K), J20.4(4), R123.1
+    /PANEL/JS1_5: D14.2(A), D15.1(K), J20.5(5), R125.1
+    /PANEL/JS1_6: D12.2(A), D13.1(K), J20.6(6), R124.1
+    /PANEL/JS1_7: F1.2, J20.7(7)
+    /PANEL/JS1_9: D16.2(A), D17.1(K), J20.9(9), R126.1
+
+  /PANEL/JS2[1:9]  (8 bits)
+    /PANEL/JS2_1: D18.2(A), D19.1(K), J21.1(1), R127.1
+    /PANEL/JS2_2: D20.2(A), D21.1(K), J21.2(2), R128.1
+    /PANEL/JS2_3: D22.2(A), D23.1(K), J21.3(3), R129.1
+    /PANEL/JS2_4: D24.2(A), D25.1(K), J21.4(4), R130.1
+    /PANEL/JS2_5: D28.2(A), D29.1(K), J21.5(5), R132.1
+    /PANEL/JS2_6: D26.2(A), D27.1(K), J21.6(6), R131.1
+    /PANEL/JS2_7: F2.2, J21.7(7)
+    /PANEL/JS2_9: D30.2(A), D31.1(K), J21.9(9), R133.1
+
+  /PIXEL/PIXEL_SPARE[30:81]  (17 bits)
+    All bits: J23 <-> U19
+
+  /PORTS/PORTS_SPARE[34:41]  (2 bits)
+    All bits: J13 <-> U14
+
+  /RTC/XTAL[1:2]  (2 bits)
+    /RTC/XTAL1: C80.1, U39.1(X1), Y6.1(1)
+    /RTC/XTAL2: C81.1, U39.2(X2), Y6.2(2)
+
+  /VGA_OUT/VB[0:3]  (4 bits)
+    /VGA_OUT/VB0: R69.1, U48.15(Y3)
+    /VGA_OUT/VB1: R67.1, U48.16(Y2)
+    /VGA_OUT/VB2: R66.1, U48.17(Y1)
+    /VGA_OUT/VB3: R64.1, R65.1, U48.18(Y0)
+
+  /VGA_OUT/VG[0:3]  (4 bits)
+    /VGA_OUT/VG0: R62.1, U47.11(Y7)
+    /VGA_OUT/VG1: R60.1, U47.12(Y6)
+    /VGA_OUT/VG2: R59.1, U47.13(Y5)
+    /VGA_OUT/VG3: R57.1, R58.1, U47.14(Y4)
+
+  /VGA_OUT/VR[0:3]  (4 bits)
+    /VGA_OUT/VR0: R55.1, U47.15(Y3)
+    /VGA_OUT/VR1: R53.1, U47.16(Y2)
+    /VGA_OUT/VR2: R52.1, U47.17(Y1)
+    /VGA_OUT/VR3: R50.1, R51.1, U47.18(Y0)
+
+  A[1:23]  (23 bits)
+    A1: J7.20(A0), J9.31(Pin_31), U10.12(A0), U11.12(A0), U12.12(A0), U13.6(I/O), U14.31(I/O), U18.56(I/O), U2.29(A1), U27.1(A1), U3.12(A0), U4.12(A0), U5.12(A0), U6.12(A0), U7.12(A0), U8.12(A0), U9.12(A0)
+    A2: J7.19(A1), J9.29(Pin_29), U10.11(A1), U11.11(A1), U12.11(A1), U13.8(I/O), U14.30(I/O), U18.57(I/O), U2.30(A2), U27.3(A2), U3.11(A1), U4.11(A1), U5.11(A1), U6.11(A1), U7.11(A1), U8.11(A1), U9.11(A1)
+    A3: J7.18(A2), J9.27(Pin_27), U10.10(A2), U11.10(A2), U12.10(A2), U13.9(I/O), U14.21(I/O), U18.58(I/O), U2.31(A3), U27.5(A3), U3.10(A2), U4.10(A2), U5.10(A2), U6.10(A2), U7.10(A2), U8.10(A2), U9.10(A2)
+    A4: J7.17(A3), J9.25(Pin_25), U10.9(A3), U11.9(A3), U12.9(A3), U13.73(I/O), U14.22(I/O), U18.44(I/O), U2.32(A4), U27.6(A4), U3.9(A3), U4.9(A3), U5.9(A3), U6.9(A3), U7.9(A3), U8.9(A3), U9.9(A3)
+    A5: J9.23(Pin_23), U10.8(A4), U11.8(A4), U12.8(A4), U13.10(I/O), U18.60(I/O), U2.33(A5), U3.8(A4), U4.8(A4), U5.8(A4), U6.8(A4), U7.8(A4), U8.8(A4), U9.8(A4)
+    A6: J9.21(Pin_21), U10.7(A5), U11.7(A5), U12.7(A5), U18.61(I/O), U2.34(A6), U3.7(A5), U4.7(A5), U5.7(A5), U6.7(A5), U7.7(A5), U8.7(A5), U9.7(A5)
+    A7: J9.19(Pin_19), U10.6(A6), U11.6(A6), U12.6(A6), U18.45(I/O/PD2), U2.35(A7), U3.6(A6), U4.6(A6), U5.6(A6), U6.6(A6), U7.6(A6), U8.6(A6), U9.6(A6)
+    A8: J9.17(Pin_17), U10.5(A7), U11.5(A7), U12.5(A7), U18.46(I/O), U2.36(A8), U3.5(A7), U4.5(A7), U5.5(A7), U6.5(A7), U7.5(A7), U8.5(A7), U9.5(A7)
+    A9: J9.15(Pin_15), U10.27(A8), U11.27(A8), U12.27(A8), U18.48(I/O), U2.37(A9), U3.27(A8), U4.27(A8), U5.27(A8), U6.27(A8), U7.27(A8), U8.27(A8), U9.27(A8)
+    A10: J9.13(Pin_13), U10.26(A9), U11.26(A9), U12.26(A9), U18.50(I/O), U2.38(A10), U3.26(A9), U4.26(A9), U5.26(A9), U6.26(A9), U7.26(A9), U8.26(A9), U9.26(A9)
+    A11: J9.11(Pin_11), U10.23(A10), U11.23(A10), U12.23(A10), U18.49(I/O), U2.39(A11), U3.23(A10), U4.23(A10), U5.23(A10), U6.23(A10), U7.23(A10), U8.23(A10), U9.23(A10)
+    A12: J9.9(Pin_9), U10.25(A11), U11.25(A11), U12.25(A11), U18.51(I/O), U2.40(A12), U3.25(A11), U4.25(A11), U5.25(A11), U6.25(A11), U7.25(A11), U8.25(A11), U9.25(A11)
+    A13: J9.10(Pin_10), U10.4(A12), U11.4(A12), U12.4(A12), U18.52(I/O), U2.41(A13), U3.4(A12), U4.4(A12), U5.4(A12), U6.4(A12), U7.4(A12), U8.4(A12), U9.4(A12)
+    A14: J9.12(Pin_12), U10.28(A13), U11.28(A13), U12.28(A13), U18.55(I/O), U2.42(A14), U3.28(A13), U4.28(A13), U5.28(A13), U6.28(A13), U7.28(A13), U8.28(A13), U9.28(A13)
+    A15: J9.14(Pin_14), U10.3(A14), U11.3(A14), U12.3(A14), U18.54(I/O), U2.43(A15), U3.29(A14), U4.29(A14), U5.3(A14), U6.3(A14), U7.3(A14), U8.3(A14), U9.3(A14)
+    A16: J9.16(Pin_16), U10.31(A15), U11.31(A15), U12.31(A15), U18.67(I/O), U2.44(A16), U3.3(A15), U4.3(A15), U5.31(A15), U6.31(A15), U7.31(A15), U8.31(A15), U9.31(A15)
+    A17: J9.18(Pin_18), U10.2(A16), U11.2(A16), U12.2(A16), U18.81(I/O/GCLK3), U2.45(A17), U3.2(A16), U4.2(A16), U5.2(A16), U6.2(A16), U7.2(A16), U8.2(A16), U9.2(A16)
+    A18: J9.20(Pin_20), U10.30(A17), U11.30(A17), U12.30(A17), U13.50(I/O), U18.65(I/O), U2.46(A18), U3.30(A17), U4.30(A17), U5.30(A17), U6.30(A17), U7.30(A17), U8.30(A17), U9.30(A17)
+    A19: J9.22(Pin_22), U10.1(A18), U11.1(A18), U12.1(A18), U13.49(I/O), U18.64(I/O), U2.47(A19), U3.1(A18), U4.1(A18), U5.1(A18), U6.1(A18), U7.1(A18), U8.1(A18), U9.1(A18)
+    A20: J9.24(Pin_24), U13.30(I/O), U18.70(I/O), U2.48(A20)
+    A21: J9.26(Pin_26), U13.31(I/O), U18.68(I/O), U2.50(A21)
+    A22: J9.28(Pin_28), U13.5(I/O), U18.69(I/O), U2.51(A22)
+    A23: J9.30(Pin_30), U13.4(I/O), U18.28(I/O), U2.52(A23)
+
+  CONTROL_Q[0:7]  (8 bits)
+    All bits: U28 <-> U29
+
+  D[0:15]  (16 bits)
+    D0: J7.21(D0), J8.31(Pin_31), U11.13(DQ0), U13.81(I/O/GCLK3), U14.18(I/O), U18.17(I/O), U2.5(D0), U27.25(D0), U3.13(D0), U43.2(A0), U45.2(A0), U5.13(DQ0), U7.13(DQ0), U9.13(DQ0)
+    D1: J7.22(D1), J8.29(Pin_29), U11.14(DQ1), U13.33(I/O), U14.16(I/O), U18.75(I/O), U2.4(D1), U27.16(D1), U3.14(D1), U43.3(A1), U45.3(A1), U5.14(DQ1), U7.14(DQ1), U9.14(DQ1)
+    D2: J7.23(D2), J8.27(Pin_27), U11.15(DQ2), U13.34(I/O), U14.15(I/O), U18.22(I/O), U2.3(D2), U27.24(D2), U3.15(D2), U43.4(A2), U45.4(A2), U5.15(DQ2), U7.15(DQ2), U9.15(DQ2)
+    D3: J7.02(D3), J8.25(Pin_25), U11.17(DQ3), U13.36(I/O), U14.28(I/O), U18.6(I/O), U2.2(D3), U27.17(D3), U3.17(D3), U43.5(A3), U45.5(A3), U5.17(DQ3), U7.17(DQ3), U9.17(DQ3)
+    D4: J7.03(D4), J8.23(Pin_23), U11.18(DQ4), U13.39(I/O), U14.24(I/O), U18.15(I/O), U2.1(D4), U27.23(D4), U3.18(D4), U43.6(A4), U45.6(A4), U5.18(DQ4), U7.18(DQ4), U9.18(DQ4)
+    D5: J7.04(D5), J8.21(Pin_21), U11.19(DQ5), U13.37(I/O), U14.27(I/O), U18.5(I/O), U2.64(D5), U27.18(D5), U3.19(D5), U43.7(A5), U45.7(A5), U5.19(DQ5), U7.19(DQ5), U9.19(DQ5)
+    D6: J7.05(D6), J8.19(Pin_19), U11.20(DQ6), U13.35(I/O), U14.20(I/O), U18.4(I/O), U2.63(D6), U27.22(D6), U3.20(D6), U43.8(A6), U45.8(A6), U5.20(DQ6), U7.20(DQ6), U9.20(DQ6)
+    D7: J7.06(D7), J8.17(Pin_17), U11.21(DQ7), U13.40(I/O), U14.29(I/O), U18.16(I/O), U2.62(D7), U27.19(D7), U3.21(D7), U43.9(A7), U45.9(A7), U5.21(DQ7), U7.21(DQ7), U9.21(DQ7)
+    D8: J7.47(D8), J8.15(Pin_15), U10.13(DQ0), U12.13(DQ0), U18.73(I/O), U2.61(D8), U4.13(D0), U44.2(A0), U46.2(A0), U6.13(DQ0), U8.13(DQ0)
+    D9: J7.48(D9), J8.13(Pin_13), U10.14(DQ1), U12.14(DQ1), U18.8(I/O), U2.60(D9), U4.14(D1), U44.3(A1), U46.3(A1), U6.14(DQ1), U8.14(DQ1)
+    D10: J7.49(D10), J8.11(Pin_11), U10.15(DQ2), U12.15(DQ2), U18.9(I/O), U2.59(D10), U4.15(D2), U44.4(A2), U46.4(A2), U6.15(DQ2), U8.15(DQ2)
+    D11: J7.27(D11), J8.9(Pin_9), U10.17(DQ3), U12.17(DQ3), U18.10(I/O), U2.58(D11), U4.17(D3), U44.5(A3), U46.5(A3), U6.17(DQ3), U8.17(DQ3)
+    D12: J7.28(D12), J8.10(Pin_10), U10.18(DQ4), U12.18(DQ4), U18.11(I/O), U2.57(D12), U4.18(D4), U44.6(A4), U46.6(A4), U6.18(DQ4), U8.18(DQ4)
+    D13: J7.29(D13), J8.12(Pin_12), U10.19(DQ5), U12.19(DQ5), U18.12(I/O/PD1), U2.56(D13), U4.19(D5), U44.7(A5), U46.7(A5), U6.19(DQ5), U8.19(DQ5)
+    D14: J7.30(D14), J8.14(Pin_14), U10.20(DQ6), U12.20(DQ6), U18.74(I/O), U2.55(D14), U4.20(D6), U44.8(A6), U46.8(A6), U6.20(DQ6), U8.20(DQ6)
+    D15: J7.31(D15), J8.16(Pin_16), U10.21(DQ7), U12.21(DQ7), U18.20(I/O), U2.54(D15), U4.21(D7), U44.9(A7), U46.9(A7), U6.21(DQ7), U8.21(DQ7)
+
+  DUART_OP[4:7]  (4 bits)
+    All bits: U19 <-> U27
+
+  D_AUDIO_FIFO[0:15]  (16 bits)
+    D_AUDIO_FIFO0: U29.6(D0), U30.6(D0), U31.6(D0), U45.18(Y0)
+    D_AUDIO_FIFO1: U29.5(D1), U30.5(D1), U31.5(D1), U45.17(Y1)
+    D_AUDIO_FIFO2: U29.4(D2), U30.4(D2), U31.4(D2), U45.16(Y2)
+    D_AUDIO_FIFO3: U29.3(D3), U30.3(D3), U31.3(D3), U45.15(Y3)
+    D_AUDIO_FIFO4: U29.27(D4), U30.27(D4), U31.27(D4), U45.14(Y4)
+    D_AUDIO_FIFO5: U29.26(D5), U30.26(D5), U31.26(D5), U45.13(Y5)
+    D_AUDIO_FIFO6: U29.25(D6), U30.25(D6), U31.25(D6), U45.12(Y6)
+    D_AUDIO_FIFO7: U29.24(D7), U30.24(D7), U31.24(D7), U45.11(Y7)
+    D_AUDIO_FIFO8: U25.6(D0), U26.6(D0), U46.18(Y0)
+    D_AUDIO_FIFO9: U25.5(D1), U26.5(D1), U46.17(Y1)
+    D_AUDIO_FIFO10: U25.4(D2), U26.4(D2), U46.16(Y2)
+    D_AUDIO_FIFO11: U25.3(D3), U26.3(D3), U46.15(Y3)
+    D_AUDIO_FIFO12: U25.27(D4), U26.27(D4), U46.14(Y4)
+    D_AUDIO_FIFO13: U25.26(D5), U26.26(D5), U46.13(Y5)
+    D_AUDIO_FIFO14: U25.25(D6), U26.25(D6), U46.12(Y6)
+    D_AUDIO_FIFO15: U25.24(D7), U26.24(D7), U46.11(Y7)
+
+  D_VIDEO_FIFO[0:15]  (16 bits)
+    D_VIDEO_FIFO0: U21.6(D0), U24.6(D0), U43.18(Y0)
+    D_VIDEO_FIFO1: U21.5(D1), U24.5(D1), U43.17(Y1)
+    D_VIDEO_FIFO2: U21.4(D2), U24.4(D2), U43.16(Y2)
+    D_VIDEO_FIFO3: U21.3(D3), U24.3(D3), U43.15(Y3)
+    D_VIDEO_FIFO4: U21.27(D4), U24.27(D4), U43.14(Y4)
+    D_VIDEO_FIFO5: U21.26(D5), U24.26(D5), U43.13(Y5)
+    D_VIDEO_FIFO6: U21.25(D6), U24.25(D6), U43.12(Y6)
+    D_VIDEO_FIFO7: U21.24(D7), U24.24(D7), U43.11(Y7)
+    D_VIDEO_FIFO8: U20.6(D0), U23.6(D0), U44.18(Y0)
+    D_VIDEO_FIFO9: U20.5(D1), U23.5(D1), U44.17(Y1)
+    D_VIDEO_FIFO10: U20.4(D2), U23.4(D2), U44.16(Y2)
+    D_VIDEO_FIFO11: U20.3(D3), U23.3(D3), U44.15(Y3)
+    D_VIDEO_FIFO12: U20.27(D4), U23.27(D4), U44.14(Y4)
+    D_VIDEO_FIFO13: U20.26(D5), U23.26(D5), U44.13(Y5)
+    D_VIDEO_FIFO14: U20.25(D6), U23.25(D6), U44.12(Y6)
+    D_VIDEO_FIFO15: U20.24(D7), U23.24(D7), U44.11(Y7)
+
+  FC[0:2]  (3 bits)
+    FC0: R6.2, U13.44(I/O), U18.77(I/O), U2.28(FC0)
+    FC1: R9.2, U13.28(I/O), U18.76(I/O), U2.27(FC1)
+    FC2: R11.2, U13.45(I/O/PD2), U18.25(I/O), U2.26(FC2)
+
+  GATE[0:3]  (4 bits)
+    All bits: U28 <-> U32
+
+  IDX[0:3]  (4 bits)
+    All bits: U19 <-> U40 <-> U41 <-> U42
+
+  JOYSTICK_1_PIN[5:9]  (2 bits)
+    JOYSTICK_1_PIN5: C91.1, Q4.3(D), R125.2, R135.2, U14.5(I/O)
+    JOYSTICK_1_PIN9: C90.1, Q3.3(D), R126.2, R134.2, U14.39(I/O)
+
+  JOYSTICK_2_PIN[5:9]  (2 bits)
+    JOYSTICK_2_PIN5: R132.2, R136.2, U14.8(I/O)
+    JOYSTICK_2_PIN9: R133.2, RN2.7(R6), U14.37(I/O)
+
+  PIXELS_Q[0:15]  (16 bits)
+    PIXELS_Q0: U19.56(I/O), U21.9(Q0)
+    PIXELS_Q1: U19.36(I/O), U21.10(Q1)
+    PIXELS_Q2: U19.35(I/O), U21.11(Q2)
+    PIXELS_Q3: U19.39(I/O), U21.12(Q3)
+    PIXELS_Q4: U19.18(I/O), U21.16(Q4)
+    PIXELS_Q5: U19.17(I/O), U21.17(Q5)
+    PIXELS_Q6: U19.29(I/O), U21.18(Q6)
+    PIXELS_Q7: U19.10(I/O), U21.19(Q7)
+    PIXELS_Q8: U19.22(I/O), U20.9(Q0)
+    PIXELS_Q9: U19.21(I/O), U20.10(Q1)
+    PIXELS_Q10: U19.31(I/O), U20.11(Q2)
+    PIXELS_Q11: U19.9(I/O), U20.12(Q3)
+    PIXELS_Q12: U19.40(I/O), U20.16(Q4)
+    PIXELS_Q13: U19.41(I/O), U20.17(Q5)
+    PIXELS_Q14: U19.51(I/O), U20.18(Q6)
+    PIXELS_Q15: U19.49(I/O), U20.19(Q7)
+
+  RGB_IN[0:11]  (12 bits)
+    RGB_IN0: U22.22(I/O), U40.5(Q1)
+    RGB_IN1: U22.6(I/O), U40.7(Q2)
+    RGB_IN2: U22.8(I/O), U40.9(Q3)
+    RGB_IN3: U22.21(I/O), U40.11(Q4)
+    RGB_IN4: U22.20(I/O), U41.5(Q1)
+    RGB_IN5: U22.18(I/O), U41.7(Q2)
+    RGB_IN6: U22.29(I/O), U41.9(Q3)
+    RGB_IN7: U22.16(I/O), U41.11(Q4)
+    RGB_IN8: U22.17(I/O), U42.5(Q1)
+    RGB_IN9: U22.15(I/O), U42.7(Q2)
+    RGB_IN10: U22.30(I/O), U42.9(Q3)
+    RGB_IN11: U22.31(I/O), U42.11(Q4)
+
+  RGB_OUT[0:11]  (12 bits)
+    RGB_OUT0: U22.64(I/O), U48.5(A3)
+    RGB_OUT1: U22.65(I/O), U48.4(A2)
+    RGB_OUT2: U22.67(I/O), U48.3(A1)
+    RGB_OUT3: U22.63(I/O), U48.2(A0)
+    RGB_OUT4: U22.48(I/O), U47.9(A7)
+    RGB_OUT5: U22.46(I/O), U47.8(A6)
+    RGB_OUT6: U22.57(I/O), U47.7(A5)
+    RGB_OUT7: U22.44(I/O), U47.6(A4)
+    RGB_OUT8: U22.45(I/O/PD2), U47.5(A3)
+    RGB_OUT9: U22.61(I/O), U47.4(A2)
+    RGB_OUT10: U22.58(I/O), U47.3(A1)
+    RGB_OUT11: U22.60(I/O), U47.2(A0)
+
+  S[2:4]  (3 bits)
+    All bits: J7
+
+  SAMPLE0_Q[0:7]  (8 bits)
+    All bits: R22 <-> U25
+
+  SAMPLE1_Q[0:7]  (8 bits)
+    All bits: R80 <-> U26
+
+  SAMPLE2_Q[0:7]  (8 bits)
+    All bits: R81 <-> U30
+
+  SAMPLE3_Q[0:7]  (8 bits)
+    All bits: R82 <-> U31
+
+  VIDCMD_Q[0:15]  (16 bits)
+    VIDCMD_Q0: U22.68(I/O), U24.9(Q0)
+    VIDCMD_Q1: U22.36(I/O), U24.10(Q1)
+    VIDCMD_Q2: U22.40(I/O), U24.11(Q2)
+    VIDCMD_Q3: U22.39(I/O), U24.12(Q3)
+    VIDCMD_Q4: U22.41(I/O), U24.16(Q4)
+    VIDCMD_Q5: U22.35(I/O), U24.17(Q5)
+    VIDCMD_Q6: U22.37(I/O), U24.18(Q6)
+    VIDCMD_Q7: U22.9(I/O), U24.19(Q7)
+    VIDCMD_Q8: U22.51(I/O), U23.9(Q0)
+    VIDCMD_Q9: U22.10(I/O), U23.10(Q1)
+    VIDCMD_Q10: U22.49(I/O), U23.11(Q2)
+    VIDCMD_Q11: U22.50(I/O), U23.12(Q3)
+    VIDCMD_Q12: U22.33(I/O), U23.16(Q4)
+    VIDCMD_Q13: U22.52(I/O), U23.17(Q5)
+    VIDCMD_Q14: U22.11(I/O), U23.18(Q6)
+    VIDCMD_Q15: U22.12(I/O/PD1), U23.19(Q7)
+
+  set_pix_target[0:2]  (3 bits)
+    All bits: U19 <-> U22
+
+  set_pix_value[0:11]  (12 bits)
+    set_pix_value0: U19.48(I/O), U22.69(I/O), U40.4(D1)
+    set_pix_value1: U19.46(I/O), U22.55(I/O), U40.6(D2)
+    set_pix_value2: U19.12(I/O/PD1), U22.56(I/O), U40.10(D3)
+    set_pix_value3: U19.11(I/O), U22.54(I/O), U40.12(D4)
+    set_pix_value4: U22.79(I/O), U41.4(D1)
+    set_pix_value5: U22.70(I/O), U41.6(D2)
+    set_pix_value6: U22.77(I/O), U41.10(D3)
+    set_pix_value7: U22.27(I/O), U41.12(D4)
+    set_pix_value8: U22.75(I/O), U42.4(D1)
+    set_pix_value9: U22.76(I/O), U42.6(D2)
+    set_pix_value10: U22.74(I/O), U42.10(D3)
+    set_pix_value11: U22.73(I/O), U42.12(D4)
+
+--- Individual signals ---
+  -12V: CP1.5(Pin_5) [passive]
+  -5V: CP1.6(Pin_6) [passive]
+  /AUDIO/~{AUDCTL_FIFO_W_FIFO_SIDE}: R157.2 [passive], U29.1(WR) [input]
+  /AUDIO_AMP/HP_AMP_L: C58.1 [passive], R93.1 [passive], U33.5 [output]
+  /AUDIO_AMP/HP_AMP_R: C60.1 [passive], R96.1 [passive], U34.5 [output]
+  /AUDIO_AMP/HP_IN_L: R91.2 [passive], R92.1 [passive], U33.3(+) [input]
+  /AUDIO_AMP/HP_IN_R: R94.2 [passive], R95.1 [passive], U34.3(+) [input]
+  /AUDIO_AMP/POT_L: J16.2(Pin_2) [passive], R91.1 [passive]
+  /AUDIO_AMP/POT_R: J16.5(Pin_5) [passive], R94.1 [passive]
+  /AUDIO_AMP/SPK_AMP: C62.1 [passive], R154.1 [passive], U35.5 [output]
+  /AUDIO_AMP/SPK_IN_L: J6.TN [passive], R97.1 [passive]
+  /AUDIO_AMP/SPK_IN_R: J6.RN [passive], R98.1 [passive]
+  /AUDIO_AMP/SPK_PLUS: C62.2 [passive], J17.1(Pin_1) [passive]
+  /AUDIO_AMP/SPK_SUM: R97.2 [passive], R98.2 [passive], R99.1 [passive], U35.3(+) [input]
+  /AUDIO_AMP/ZOB_L: C57.1 [passive], R93.2 [passive]
+  /AUDIO_AMP/ZOB_R: C59.1 [passive], R96.2 [passive]
+  /AUDIO_AMP/ZOB_SPK: C61.1 [passive], R154.2 [passive]
+  /AUDIO_DAC/AMP_L: C53.2 [passive], C55.1 [passive], R85.2 [passive], R87.1 [passive], U17.1 [output]
+  /AUDIO_DAC/AMP_R: C54.2 [passive], C56.1 [passive], R86.2 [passive], R88.1 [passive], U17.7 [output]
+  /AUDIO_DAC/RCA_L: J14.1(In) [passive], R89.2 [passive]
+  /AUDIO_DAC/RCA_R: J15.1(In) [passive], R90.2 [passive]
+  /AUDIO_DAC/SUM_L: C53.1 [passive], R85.1 [passive], U17.2(-) [input], U32.2 [passive], U32.3 [passive]
+  /AUDIO_DAC/SUM_R: C54.1 [passive], R86.1 [passive], U17.6(-) [input], U32.10 [passive], U32.9 [passive]
+  /AUDIO_DAC/VBIAS: C52.1 [passive], R83.2 [passive], R84.1 [passive], U17.3(+) [input], U17.5(+) [input]
+  /AUDIO_FIFO/~{SAMPLES0_FIFO_W_FIFO_SIDE}: R150.2 [passive], U25.1(WR) [input]
+  /AUDIO_FIFO/~{SAMPLES1_FIFO_W_FIFO_SIDE}: R151.2 [passive], U26.1(WR) [input]
+  /AUDIO_FIFO/~{SAMPLES2_FIFO_W_FIFO_SIDE}: R152.2 [passive], U30.1(WR) [input]
+  /AUDIO_FIFO/~{SAMPLES3_FIFO_W_FIFO_SIDE}: R153.2 [passive], U31.1(WR) [input]
+  /COMPOSITOR/~{VIDCMD_FIFO_W_FIFO_SIDE}: R156.2 [passive], U23.1(WR) [input], U24.1(WR) [input]
+  /COMPOSITOR/~{VIDCMD_RE_FIFO_SIDE}: R30.2 [passive], U23.15(RD) [input], U24.15(RD) [input]
+  /DEBUG_HEADER/SYSCLK_TAP: J9.32(Pin_32) [passive], R32.1 [passive]
+  /PIXEL/~{PIXELS_FIFO_W_FIFO_SIDE}: R155.2 [passive], U20.1(WR) [input], U21.1(WR) [input]
+  /PIXEL/~{PIXELS_RE_FIFO_SIDE}: R28.2 [passive], U20.15(RD) [input], U21.15(RD) [input]
+  /POWER_CLOCK_RESET/Y3_EN: R20.2 [passive], Y3.1(EN) [input]
+  /POWER_CLOCK_RESET/Y4_EN: R21.2 [passive], Y4.1(EN) [input]
+  /RTC/VBAT: BT1.1(+) [passive], U39.3(VBAT) [power_in]
+  /SERIAL/CONSOLE_DTR: J18.20(P20) [passive], J18.6(6) [passive], J18.8(8) [passive]
+  /SERIAL/MAXA_C1+: C70.1 [passive], U36.1(C1+) [passive]
+  /SERIAL/MAXA_C1-: C70.2 [passive], U36.3(C1-) [passive]
+  /SERIAL/MAXA_C2+: C71.1 [passive], U36.4(C2+) [passive]
+  /SERIAL/MAXA_C2-: C71.2 [passive], U36.5(C2-) [passive]
+  /SERIAL/MAXA_VS+: C72.1 [passive], U36.2(VS+) [power_out]
+  /SERIAL/MAXA_VS-: C73.2 [passive], U36.6(VS-) [power_out]
+  /SERIAL/MAXB_C1+: C75.1 [passive], U37.1(C1+) [passive]
+  /SERIAL/MAXB_C1-: C75.2 [passive], U37.3(C1-) [passive]
+  /SERIAL/MAXB_C2+: C76.1 [passive], U37.4(C2+) [passive]
+  /SERIAL/MAXB_C2-: C76.2 [passive], U37.5(C2-) [passive]
+  /SERIAL/MAXB_VS+: C77.1 [passive], U37.2(VS+) [power_out]
+  /SERIAL/MAXB_VS-: C78.2 [passive], U37.6(VS-) [power_out]
+  /SERIAL/MODEM_DTR: J19.20(P20) [passive], J19.6(6) [passive]
+  /SERIAL/RS232_A_CTS: J18.5(5) [passive], U36.7(T2OUT) [output]
+  /SERIAL/RS232_A_RTS: J18.4(4) [passive], U36.8(R2IN) [input]
+  /SERIAL/RS232_A_RXD: J18.3(3) [passive], U36.14(T1OUT) [output]
+  /SERIAL/RS232_A_TXD: J18.2(2) [passive], U36.13(R1IN) [input]
+  /SERIAL/RS232_B_CTS: J19.5(5) [passive], U37.8(R2IN) [input]
+  /SERIAL/RS232_B_DCD: J19.8(8) [passive], U38.1(1A) [input]
+  /SERIAL/RS232_B_RI: J19.22(P22) [passive], U38.4(2A) [input]
+  /SERIAL/RS232_B_RTS: J19.4(4) [passive], U37.7(T2OUT) [output]
+  /SERIAL/RS232_B_RXD: J19.3(3) [passive], U37.13(R1IN) [input]
+  /SERIAL/RS232_B_TXD: J19.2(2) [passive], U37.14(T1OUT) [output]
+  /VGA_OUT/HS_BUF: R71.1 [passive], U48.14(Y4) [tri_state]
+  /VGA_OUT/HS_OUT: J22.13(13) [passive], R71.2 [passive]
+  /VGA_OUT/VB1_MID: R67.2 [passive], R68.1 [passive]
+  /VGA_OUT/VG1_MID: R60.2 [passive], R61.1 [passive]
+  /VGA_OUT/VGA_B: J22.3(3) [passive], R64.2 [passive], R65.2 [passive], R66.2 [passive], R68.2 [passive], R69.2 [passive], R70.1 [passive]
+  /VGA_OUT/VGA_G: J22.2(2) [passive], R57.2 [passive], R58.2 [passive], R59.2 [passive], R61.2 [passive], R62.2 [passive], R63.1 [passive]
+  /VGA_OUT/VGA_R: J22.1(1) [passive], R50.2 [passive], R51.2 [passive], R52.2 [passive], R54.2 [passive], R55.2 [passive], R56.1 [passive]
+  /VGA_OUT/VR1_MID: R53.2 [passive], R54.1 [passive]
+  /VGA_OUT/VS_BUF: R72.1 [passive], U48.13(Y5) [tri_state]
+  /VGA_OUT/VS_OUT: J22.14(14) [passive], R72.2 [passive]
+  AUDIO_TICK: TP8.1(1) [passive], U19.52(I/O) [bidirectional]
+  AUDIO_TO_ENGINE_TD: U18.14(I/O/TDI) [bidirectional], U28.71(I/O/TDO) [bidirectional]
+  CF_INTRQ: J7.37(INTRQ) [output], R33.1 [passive], U13.46(I/O) [bidirectional]
+  CF_IORDY: J7.42(IORDY) [output], R34.2 [passive], U13.63(I/O) [bidirectional]
+  CLK2: U19.2(INPUT/OE2/GCLK2) [input], Y4.5(OUT) [output]
+  DCD_B: R108.2 [passive], U27.39(IP4) [input], U38.3(1Y) [output]
+  DEBUG_OUT: R16.1 [passive], U13.70(I/O) [bidirectional]
+  ENGINE_ACTIVE: U13.69(I/O) [bidirectional], U18.30(I/O) [bidirectional]
+  ENGINE_TO_PIXEL_TD: U18.71(I/O/TDO) [bidirectional], U19.14(I/O/TDI) [bidirectional]
+  ENGINE_WAITING: U13.52(I/O) [bidirectional], U18.31(I/O) [bidirectional]
+  GLUE_TO_PORTS_TD: U13.71(I/O/TDO) [bidirectional], U14.14(I/O/TDI) [bidirectional]
+  HBLANK: U18.2(INPUT/OE2/GCLK2) [input], U19.61(I/O) [bidirectional], U28.12(I/O/PD1) [bidirectional]
+  HDR_RTS_A: J3.6(Pin_6) [passive], R102.1 [passive]
+  HDR_RTS_B: J12.6(Pin_6) [passive], R103.1 [passive]
+  HDR_TXD_A: J3.4(Pin_4) [passive], R100.1 [passive]
+  HDR_TXD_B: J12.4(Pin_4) [passive], R101.1 [passive]
+  HP_L: C58.2 [passive], J6.T [passive]
+  HP_R: C60.2 [passive], J6.R [passive]
+  H_ACTIVE: U19.57(I/O) [bidirectional], U22.5(I/O) [bidirectional]
+  JOYSTICK_1_DOWN: R121.2 [passive], RN1.3(R2) [passive], U14.12(I/O/PD1) [bidirectional]
+  JOYSTICK_1_FIRE: R124.2 [passive], RN1.6(R5) [passive], U14.40(I/O) [bidirectional]
+  JOYSTICK_1_LEFT: R122.2 [passive], RN1.4(R3) [passive], U14.51(I/O) [bidirectional]
+  JOYSTICK_1_RIGHT: R123.2 [passive], RN1.5(R4) [passive], U14.35(I/O) [bidirectional]
+  JOYSTICK_1_UP: R120.2 [passive], RN1.2(R1) [passive], U14.9(I/O) [bidirectional]
+  JOYSTICK_2_DOWN: R128.2 [passive], RN2.3(R2) [passive], U14.11(I/O) [bidirectional]
+  JOYSTICK_2_FIRE: R131.2 [passive], RN2.6(R5) [passive], U14.4(I/O) [bidirectional]
+  JOYSTICK_2_LEFT: R129.2 [passive], RN2.4(R3) [passive], U14.50(I/O) [bidirectional]
+  JOYSTICK_2_RIGHT: R130.2 [passive], RN2.5(R4) [passive], U14.36(I/O) [bidirectional]
+  JOYSTICK_2_UP: R127.2 [passive], RN2.2(R1) [passive], U14.10(I/O) [bidirectional]
+  JTAG_TCK: J2.1(Pin_1) [passive], U13.62(I/O/TCK) [bidirectional], U14.62(I/O/TCK) [bidirectional], U18.62(I/O/TCK) [bidirectional], U19.62(I/O/TCK) [bidirectional], U22.62(I/O/TCK) [bidirectional], U28.62(I/O/TCK) [bidirectional]
+  JTAG_TDI: J2.3(Pin_3) [passive], U13.14(I/O/TDI) [bidirectional]
+  JTAG_TDO: J2.4(Pin_4) [passive], U22.71(I/O/TDO) [bidirectional]
+  JTAG_TMS: J2.2(Pin_2) [passive], U13.23(I/O/TMS) [bidirectional], U14.23(I/O/TMS) [bidirectional], U18.23(I/O/TMS) [bidirectional], U19.23(I/O/TMS) [bidirectional], U22.23(I/O/TMS) [bidirectional], U28.23(I/O/TMS) [bidirectional]
+  LINE_L: C55.2 [passive], J16.1(Pin_1) [passive], R89.1 [passive]
+  LINE_R: C56.2 [passive], J16.4(Pin_4) [passive], R90.1 [passive]
+  Net-(D1-K): D1.1(K) [passive], R2.1 [passive]
+  Net-(D3-K): D3.1(K) [passive], R17.1 [passive]
+  Net-(Q1-B): Q1.2(B) [input], R16.2 [passive]
+  Net-(Q1-C): Q1.3(C) [passive], R17.2 [passive]
+  Net-(TP2-Pad1): TP2.1(1) [passive], U13.64(I/O) [bidirectional]
+  Net-(U13-INPUT{slash}OE2{slash}GCLK2): R15.1 [passive], TP1.1(1) [passive], U13.2(INPUT/OE2/GCLK2) [input]
+  Net-(U25-RD): R35.1 [passive], U25.15(RD) [input]
+  Net-(U26-RD): R36.1 [passive], U26.15(RD) [input]
+  Net-(U27-X1{slash}CLK): C35.2 [passive], U27.32(X1/CLK) [input], Y5.1(1) [passive]
+  Net-(U27-X2): C34.1 [passive], U27.33(X2) [output], Y5.2(2) [passive]
+  Net-(U29-RD): R39.1 [passive], U29.15(RD) [input]
+  Net-(U30-RD): R37.1 [passive], U30.15(RD) [input]
+  Net-(U31-RD): R38.1 [passive], U31.15(RD) [input]
+  Net-(Y1-EN): R1.2 [passive], Y1.1(EN) [input]
+  PADDLE_DUMP: Q3.2(G) [input], Q4.2(G) [input], U14.33(I/O) [bidirectional]
+  PADDLE_TICK: U14.44(I/O) [bidirectional], U19.60(I/O) [bidirectional]
+  PIXEL_CLK: U19.83(INPUT/GCLK1) [input], U22.83(INPUT/GCLK1) [input], U28.83(INPUT/GCLK1) [input], Y3.5(OUT) [output]
+  PIXEL_TO_COMPOSITOR_TD: U19.71(I/O/TDO) [bidirectional], U22.14(I/O/TDI) [bidirectional]
+  PORTS_TO_AUDIO_TD: U14.71(I/O/TDO) [bidirectional], U28.14(I/O/TDI) [bidirectional]
+  PS2_CLK: J10.1 [passive], J4.5 [passive], U13.24(I/O) [bidirectional]
+  PS2_DATA: J10.2 [passive], J4.1 [passive], U13.79(I/O) [bidirectional]
+  PS2_MOUSE_CLK: J11.1 [passive], J5.5 [passive], U14.81(I/O/GCLK3) [bidirectional]
+  PS2_MOUSE_DATA: J11.2 [passive], J5.1 [passive], U14.80(I/O) [bidirectional]
+  RI_B: R109.2 [passive], U27.38(IP5) [input], U38.6(2Y) [output]
+  RTC_MFP: R112.2 [passive], U27.2(IP3) [input], U39.7(MFP) [open_collector]
+  RTC_SCL: R111.2 [passive], U27.28(OP2) [output], U39.6(SCL) [input]
+  RTC_SDA: Q2.3(D) [passive], R110.2 [passive], U27.36(IP2) [input], U39.5(SDA) [bidirectional]
+  RTC_SDA_DRIVE: Q2.2(G) [input], U27.13(OP3) [output]
+  R{slash}~{W}: J7.35(~{IOWR}) [input], J8.24(Pin_24) [passive], R10.2 [passive], U13.11(I/O) [bidirectional], U14.25(I/O) [bidirectional], U18.27(I/O) [bidirectional], U2.9(R/~{W}) [tri_state], U27.8(RWN) [input]
+  SYSCLK: R32.2 [passive], U13.83(INPUT/GCLK1) [input], U14.83(INPUT/GCLK1) [input], U18.83(INPUT/GCLK1) [input], U2.15(CLK) [input], Y1.5(OUT) [output]
+  UART_RX_A: R100.2 [passive], R104.2 [passive], U27.31(RXDA) [input], U36.12(R1OUT) [output]
+  UART_RX_B: R101.2 [passive], R105.2 [passive], U27.10(RXDB) [input], U37.12(R1OUT) [output]
+  UART_TX_A: J3.5(Pin_5) [passive], U27.30(TXDA) [output], U36.11(T1IN) [input]
+  UART_TX_B: J12.5(Pin_5) [passive], U27.11(TXDB) [output], U37.11(T1IN) [input]
+  VGA_HSYNC: U19.4(I/O) [bidirectional], U48.6(A4) [input]
+  VGA_VSYNC: U19.6(I/O) [bidirectional], U48.7(A5) [input]
+  set_pix_commit: U19.44(I/O) [bidirectional], U22.4(I/O) [bidirectional]
+  set_pix_valid: U19.25(I/O) [bidirectional], U22.24(I/O) [bidirectional]
+  ~{AS}: J8.18(Pin_18) [passive], R8.2 [passive], U13.1(INPUT/GCLR) [input], U18.80(I/O) [bidirectional], U2.6(~{AS}) [tri_state]
+  ~{AUDCTL_FIFO_W}: R157.1 [passive], U18.37(I/O) [bidirectional]
+  ~{BERR}: U13.61(I/O) [bidirectional], U2.22(~{BERR}) [input]
+  ~{BGACK}: R5.2 [passive], U18.29(I/O) [bidirectional], U2.12(~{BGACK}) [input]
+  ~{BG}: U18.21(I/O) [bidirectional], U2.11(~{BG}) [output]
+  ~{BR}: R4.2 [passive], U18.24(I/O) [bidirectional], U2.13(~{BR}) [input]
+  ~{CF_CS0}: J7.32(~{CS1}) [input], U13.18(I/O) [bidirectional]
+  ~{CF_CS1}: J7.07(~{CS0}) [input], U13.20(I/O) [bidirectional]
+  ~{CLUT_WE}: U19.58(I/O) [bidirectional], U40.3(~{WE}) [input], U41.3(~{WE}) [input], U42.3(~{WE}) [input]
+  ~{CONTROL_EF}: TP7.1(1) [passive], U28.11(I/O) [bidirectional], U29.21(EF) [output]
+  ~{CONTROL_R}: R39.2 [passive], U28.81(I/O/GCLK3) [bidirectional]
+  ~{CTS_A}: R102.2 [passive], R106.2 [passive], U27.7(IP0) [input], U36.9(R2OUT) [output]
+  ~{CTS_B}: R103.2 [passive], R107.2 [passive], U27.4(IP1) [input], U37.9(R2OUT) [output]
+  ~{DTACK}: J8.26(Pin_26) [passive], U13.15(I/O) [bidirectional], U2.10(~{DTACK}) [input]
+  ~{DUART_DTACK}: U13.51(I/O) [bidirectional], U27.9(DTACKN) [output]
+  ~{DUART_IRQ}: U13.48(I/O) [bidirectional], U27.21(INTRN) [output]
+  ~{DUART_SELECT}: U13.21(I/O) [bidirectional], U27.35(CSN) [input]
+  ~{ENGINE_IRQ}: U13.29(I/O) [bidirectional], U18.33(I/O) [bidirectional]
+  ~{ENGINE_SELECT}: U13.60(I/O) [bidirectional], U18.18(I/O) [bidirectional]
+  ~{HALT}: J8.30(Pin_30) [passive], R7.2 [passive], U13.41(I/O) [bidirectional], U2.17(~{HALT}) [bidirectional]
+  ~{IPL0}: U13.80(I/O) [bidirectional], U2.25(~{IPL0}) [input]
+  ~{IPL1}: U13.57(I/O) [bidirectional], U2.24(~{IPL1}) [input]
+  ~{IPL2}: U13.56(I/O) [bidirectional], U2.23(~{IPL2}) [input]
+  ~{LDS}: J8.22(Pin_22) [passive], R13.2 [passive], U13.12(I/O/PD1) [bidirectional], U14.2(INPUT/OE2/GCLK2) [input], U18.63(I/O) [bidirectional], U2.8(~{LDS}) [tri_state], U3.24(OE) [input]
+  ~{PIXELS_FIFO_W}: R155.1 [passive], U18.34(I/O) [bidirectional]
+  ~{PIXELS_RE}: R28.1 [passive], U19.15(I/O) [bidirectional]
+  ~{PORTS_IRQ}: U13.65(I/O) [bidirectional], U14.17(I/O) [bidirectional]
+  ~{PORTS_SELECT}: U13.16(I/O) [bidirectional], U14.49(I/O) [bidirectional]
+  ~{RAM_SELECT_1}: U13.22(I/O) [bidirectional], U5.22(CE#) [input], U6.22(CE#) [input]
+  ~{RAM_SELECT_2}: U13.58(I/O) [bidirectional], U7.22(CE#) [input], U8.22(CE#) [input]
+  ~{RAM_SELECT_3}: U10.22(CE#) [input], U13.76(I/O) [bidirectional], U9.22(CE#) [input]
+  ~{RAM_SELECT_4}: U11.22(CE#) [input], U12.22(CE#) [input], U13.75(I/O) [bidirectional]
+  ~{RESET}: D2.2(A) [passive], J7.41(~{RESET}) [input], J8.28(Pin_28) [passive], R3.2 [passive], U13.54(I/O) [bidirectional], U14.6(I/O) [bidirectional], U18.1(INPUT/GCLR) [input], U19.1(INPUT/GCLR) [input], U2.18(~{RESET}) [bidirectional], U25.22(CLR) [input], U26.22(CLR) [input], U27.34(RESETN) [input], U28.22(I/O) [bidirectional], U29.22(CLR) [input], U30.22(CLR) [input], U31.22(CLR) [input]
+  ~{ROM_SELECT}: U13.17(I/O) [bidirectional], U3.22(CE) [input], U4.22(CE) [input]
+  ~{ROM_WE}: U13.77(I/O) [bidirectional], U3.31(PGM) [input], U4.31(PGM) [input]
+  ~{RS}: U19.5(I/O) [bidirectional], U20.22(CLR) [input], U21.22(CLR) [input], U22.1(INPUT/GCLR) [input], U23.22(CLR) [input], U24.22(CLR) [input]
+  ~{RTS_A}: J3.2(Pin_2) [passive], U27.29(OP0) [output], U36.10(T2IN) [input]
+  ~{RTS_B}: J12.2(Pin_2) [passive], U27.12(OP1) [output], U37.10(T2IN) [input]
+  ~{R}{slash}W: J7.34(~{IORD}) [input], U13.27(I/O) [bidirectional]
+  ~{SAMPLES0_FIFO_W}: R150.1 [passive], U18.35(I/O) [bidirectional]
+  ~{SAMPLES1_FIFO_W}: R151.1 [passive], U18.40(I/O) [bidirectional]
+  ~{SAMPLES2_FIFO_W}: R152.1 [passive], U18.41(I/O) [bidirectional]
+  ~{SAMPLES3_FIFO_W}: R153.1 [passive], U18.39(I/O) [bidirectional]
+  ~{SAMPLE_EF0}: TP3.1(1) [passive], U25.21(EF) [output], U28.9(I/O) [bidirectional]
+  ~{SAMPLE_EF1}: TP4.1(1) [passive], U26.21(EF) [output], U28.8(I/O) [bidirectional]
+  ~{SAMPLE_EF2}: TP5.1(1) [passive], U28.6(I/O) [bidirectional], U30.21(EF) [output]
+  ~{SAMPLE_EF3}: TP6.1(1) [passive], U28.10(I/O) [bidirectional], U31.21(EF) [output]
+  ~{SAMPLE_R0}: R35.2 [passive], U28.16(I/O) [bidirectional]
+  ~{SAMPLE_R1}: R36.2 [passive], U28.27(I/O) [bidirectional]
+  ~{SAMPLE_R2}: R37.2 [passive], U28.34(I/O) [bidirectional]
+  ~{SAMPLE_R3}: R38.2 [passive], U28.5(I/O) [bidirectional]
+  ~{SUPERVISOR_RESET}: D2.1(K) [passive], SW1.2(2) [passive], U1.2(~{RESET}) [output], U13.84(INPUT/OE1) [input]
+  ~{UDS}: J8.20(Pin_20) [passive], R12.2 [passive], U13.67(I/O) [bidirectional], U18.79(I/O) [bidirectional], U2.7(~{UDS}) [tri_state], U4.24(OE) [input]
+  ~{VIDCMD_EF}: U22.34(I/O) [bidirectional], U24.21(EF) [output]
+  ~{VIDCMD_FIFO_W}: R156.1 [passive], U18.36(I/O) [bidirectional]
+  ~{VIDCMD_RE}: R30.1 [passive], U22.28(I/O) [bidirectional]
+  ~{VPA}: R14.2 [passive], U13.55(I/O) [bidirectional], U2.21(~{VPA}) [input]
+  ~{VSYNC_IRQ}: U13.68(I/O) [bidirectional], U19.28(I/O) [bidirectional]
+  ~{WRITE_HI}: U10.29(WE#) [input], U12.29(WE#) [input], U13.74(I/O) [bidirectional], U6.29(WE#) [input], U8.29(WE#) [input]
+  ~{WRITE_LO}: U11.29(WE#) [input], U13.25(I/O) [bidirectional], U5.29(WE#) [input], U7.29(WE#) [input], U9.29(WE#) [input]
+
+
+POTENTIAL ISSUES
+======================================================================
+
+--- Single-pin nets (possibly unfinished wiring) ---
+  -12V: CP1.5(Pin_5)
+  -5V: CP1.6(Pin_6)
+  S2: J7.S2(S2)
+  S3: J7.S3(S3)
+  S4: J7.S4(S4)
+
+--- Nets with no apparent driver (all pins are input/passive) ---
+  /AUDIO/~{AUDCTL_FIFO_W_FIFO_SIDE}: R157.2 [passive], U29.1(WR) [input]
+  /AUDIO_AMP/HP_IN_L: R91.2 [passive], R92.1 [passive], U33.3(+) [input]
+  /AUDIO_AMP/HP_IN_R: R94.2 [passive], R95.1 [passive], U34.3(+) [input]
+  /AUDIO_AMP/POT_L: J16.2(Pin_2) [passive], R91.1 [passive]
+  /AUDIO_AMP/POT_R: J16.5(Pin_5) [passive], R94.1 [passive]
+  /AUDIO_AMP/SPK_IN_L: J6.TN [passive], R97.1 [passive]
+  /AUDIO_AMP/SPK_IN_R: J6.RN [passive], R98.1 [passive]
+  /AUDIO_AMP/SPK_PLUS: C62.2 [passive], J17.1(Pin_1) [passive]
+  /AUDIO_AMP/SPK_SUM: R97.2 [passive], R98.2 [passive], R99.1 [passive], U35.3(+) [input]
+  /AUDIO_AMP/ZOB_L: C57.1 [passive], R93.2 [passive]
+  /AUDIO_AMP/ZOB_R: C59.1 [passive], R96.2 [passive]
+  /AUDIO_AMP/ZOB_SPK: C61.1 [passive], R154.2 [passive]
+  /AUDIO_DAC/RCA_L: J14.1(In) [passive], R89.2 [passive]
+  /AUDIO_DAC/RCA_R: J15.1(In) [passive], R90.2 [passive]
+  /AUDIO_DAC/SUM_L: C53.1 [passive], R85.1 [passive], U17.2(-) [input], U32.2 [passive], U32.3 [passive]
+  /AUDIO_DAC/SUM_R: C54.1 [passive], R86.1 [passive], U17.6(-) [input], U32.10 [passive], U32.9 [passive]
+  /AUDIO_DAC/VBIAS: C52.1 [passive], R83.2 [passive], R84.1 [passive], U17.3(+) [input], U17.5(+) [input]
+  /AUDIO_FIFO/~{SAMPLES0_FIFO_W_FIFO_SIDE}: R150.2 [passive], U25.1(WR) [input]
+  /AUDIO_FIFO/~{SAMPLES1_FIFO_W_FIFO_SIDE}: R151.2 [passive], U26.1(WR) [input]
+  /AUDIO_FIFO/~{SAMPLES2_FIFO_W_FIFO_SIDE}: R152.2 [passive], U30.1(WR) [input]
+  /AUDIO_FIFO/~{SAMPLES3_FIFO_W_FIFO_SIDE}: R153.2 [passive], U31.1(WR) [input]
+  /COMPOSITOR/~{VIDCMD_FIFO_W_FIFO_SIDE}: R156.2 [passive], U23.1(WR) [input], U24.1(WR) [input]
+  /COMPOSITOR/~{VIDCMD_RE_FIFO_SIDE}: R30.2 [passive], U23.15(RD) [input], U24.15(RD) [input]
+  /DEBUG_HEADER/SYSCLK_TAP: J9.32(Pin_32) [passive], R32.1 [passive]
+  /PANEL/JS1_1: D4.2(A) [passive], D5.1(K) [passive], J20.1(1) [passive], R120.1 [passive]
+  /PANEL/JS1_2: D6.2(A) [passive], D7.1(K) [passive], J20.2(2) [passive], R121.1 [passive]
+  /PANEL/JS1_3: D8.2(A) [passive], D9.1(K) [passive], J20.3(3) [passive], R122.1 [passive]
+  /PANEL/JS1_4: D10.2(A) [passive], D11.1(K) [passive], J20.4(4) [passive], R123.1 [passive]
+  /PANEL/JS1_5: D14.2(A) [passive], D15.1(K) [passive], J20.5(5) [passive], R125.1 [passive]
+  /PANEL/JS1_6: D12.2(A) [passive], D13.1(K) [passive], J20.6(6) [passive], R124.1 [passive]
+  /PANEL/JS1_7: F1.2 [passive], J20.7(7) [passive]
+  /PANEL/JS1_9: D16.2(A) [passive], D17.1(K) [passive], J20.9(9) [passive], R126.1 [passive]
+  /PANEL/JS2_1: D18.2(A) [passive], D19.1(K) [passive], J21.1(1) [passive], R127.1 [passive]
+  /PANEL/JS2_2: D20.2(A) [passive], D21.1(K) [passive], J21.2(2) [passive], R128.1 [passive]
+  /PANEL/JS2_3: D22.2(A) [passive], D23.1(K) [passive], J21.3(3) [passive], R129.1 [passive]
+  /PANEL/JS2_4: D24.2(A) [passive], D25.1(K) [passive], J21.4(4) [passive], R130.1 [passive]
+  /PANEL/JS2_5: D28.2(A) [passive], D29.1(K) [passive], J21.5(5) [passive], R132.1 [passive]
+  /PANEL/JS2_6: D26.2(A) [passive], D27.1(K) [passive], J21.6(6) [passive], R131.1 [passive]
+  /PANEL/JS2_7: F2.2 [passive], J21.7(7) [passive]
+  /PANEL/JS2_9: D30.2(A) [passive], D31.1(K) [passive], J21.9(9) [passive], R133.1 [passive]
+  /PIXEL/~{PIXELS_FIFO_W_FIFO_SIDE}: R155.2 [passive], U20.1(WR) [input], U21.1(WR) [input]
+  /PIXEL/~{PIXELS_RE_FIFO_SIDE}: R28.2 [passive], U20.15(RD) [input], U21.15(RD) [input]
+  /POWER_CLOCK_RESET/Y3_EN: R20.2 [passive], Y3.1(EN) [input]
+  /POWER_CLOCK_RESET/Y4_EN: R21.2 [passive], Y4.1(EN) [input]
+  /RTC/VBAT: BT1.1(+) [passive], U39.3(VBAT) [power_in]
+  /RTC/XTAL1: C80.1 [passive], U39.1(X1) [input], Y6.1(1) [passive]
+  /SERIAL/CONSOLE_DTR: J18.20(P20) [passive], J18.6(6) [passive], J18.8(8) [passive]
+  /SERIAL/MAXA_C1+: C70.1 [passive], U36.1(C1+) [passive]
+  /SERIAL/MAXA_C1-: C70.2 [passive], U36.3(C1-) [passive]
+  /SERIAL/MAXA_C2+: C71.1 [passive], U36.4(C2+) [passive]
+  /SERIAL/MAXA_C2-: C71.2 [passive], U36.5(C2-) [passive]
+  /SERIAL/MAXB_C1+: C75.1 [passive], U37.1(C1+) [passive]
+  /SERIAL/MAXB_C1-: C75.2 [passive], U37.3(C1-) [passive]
+  /SERIAL/MAXB_C2+: C76.1 [passive], U37.4(C2+) [passive]
+  /SERIAL/MAXB_C2-: C76.2 [passive], U37.5(C2-) [passive]
+  /SERIAL/MODEM_DTR: J19.20(P20) [passive], J19.6(6) [passive]
+  /SERIAL/RS232_A_RTS: J18.4(4) [passive], U36.8(R2IN) [input]
+  /SERIAL/RS232_A_TXD: J18.2(2) [passive], U36.13(R1IN) [input]
+  /SERIAL/RS232_B_CTS: J19.5(5) [passive], U37.8(R2IN) [input]
+  /SERIAL/RS232_B_DCD: J19.8(8) [passive], U38.1(1A) [input]
+  /SERIAL/RS232_B_RI: J19.22(P22) [passive], U38.4(2A) [input]
+  /SERIAL/RS232_B_RXD: J19.3(3) [passive], U37.13(R1IN) [input]
+  /VGA_OUT/HS_OUT: J22.13(13) [passive], R71.2 [passive]
+  /VGA_OUT/VB1_MID: R67.2 [passive], R68.1 [passive]
+  /VGA_OUT/VG1_MID: R60.2 [passive], R61.1 [passive]
+  /VGA_OUT/VGA_B: J22.3(3) [passive], R64.2 [passive], R65.2 [passive], R66.2 [passive], R68.2 [passive], R69.2 [passive], R70.1 [passive]
+  /VGA_OUT/VGA_G: J22.2(2) [passive], R57.2 [passive], R58.2 [passive], R59.2 [passive], R61.2 [passive], R62.2 [passive], R63.1 [passive]
+  /VGA_OUT/VGA_R: J22.1(1) [passive], R50.2 [passive], R51.2 [passive], R52.2 [passive], R54.2 [passive], R55.2 [passive], R56.1 [passive]
+  /VGA_OUT/VR1_MID: R53.2 [passive], R54.1 [passive]
+  /VGA_OUT/VS_OUT: J22.14(14) [passive], R72.2 [passive]
+  HDR_RTS_A: J3.6(Pin_6) [passive], R102.1 [passive]
+  HDR_RTS_B: J12.6(Pin_6) [passive], R103.1 [passive]
+  HDR_TXD_A: J3.4(Pin_4) [passive], R100.1 [passive]
+  HDR_TXD_B: J12.4(Pin_4) [passive], R101.1 [passive]
+  HP_L: C58.2 [passive], J6.T [passive]
+  HP_R: C60.2 [passive], J6.R [passive]
+  LINE_L: C55.2 [passive], J16.1(Pin_1) [passive], R89.1 [passive]
+  LINE_R: C56.2 [passive], J16.4(Pin_4) [passive], R90.1 [passive]
+  Net-(D1-K): D1.1(K) [passive], R2.1 [passive]
+  Net-(D3-K): D3.1(K) [passive], R17.1 [passive]
+  Net-(Q1-B): Q1.2(B) [input], R16.2 [passive]
+  Net-(Q1-C): Q1.3(C) [passive], R17.2 [passive]
+  Net-(U13-INPUT{slash}OE2{slash}GCLK2): R15.1 [passive], TP1.1(1) [passive], U13.2(INPUT/OE2/GCLK2) [input]
+  Net-(U25-RD): R35.1 [passive], U25.15(RD) [input]
+  Net-(U26-RD): R36.1 [passive], U26.15(RD) [input]
+  Net-(U27-X1{slash}CLK): C35.2 [passive], U27.32(X1/CLK) [input], Y5.1(1) [passive]
+  Net-(U29-RD): R39.1 [passive], U29.15(RD) [input]
+  Net-(U30-RD): R37.1 [passive], U30.15(RD) [input]
+  Net-(U31-RD): R38.1 [passive], U31.15(RD) [input]
+  Net-(Y1-EN): R1.2 [passive], Y1.1(EN) [input]

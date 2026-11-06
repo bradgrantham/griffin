@@ -51,6 +51,11 @@ uint32_t griffin_getticks(void);
 // the trap's d0 register verbatim: bit 31 is data, not an error indication.
 uint32_t griffin_gettime(void);
 
+// Set the wall clock (seconds since the Unix epoch, UTC) and write it to the
+// RTC.  0 on success; -1 with errno ENODEV when the firmware found no RTC at
+// boot (the clock is still set, but will not survive a power cycle).
+int griffin_settime(uint32_t epoch);
+
 #ifdef __cplusplus
 }
 #endif

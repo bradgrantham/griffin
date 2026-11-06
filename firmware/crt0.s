@@ -822,9 +822,24 @@ _duart_isr:
     move.l  %d1, uart_rx_tail           | publish tail once, after the drain loop
 
     btst    #DUART_ISR_CTR_READY_SHIFT, %d3
-    beq.s   .disr_exit
+    beq.s   .disr_ipc
     tst.b   DUART_STOPCC                | ack C/T IRQ (Timer mode: counter keeps running)
     addq.l  #1, tick_counter
+    tst.b   rtc_from_mfp                | RTC present: MFP edges own rtc_seconds
+    bne.s   .disr_ipc
+    subq.b  #1, rtc_fallback_ticks      | else 100 ticks = one second
+    bne.s   .disr_ipc
+    move.b  #100, rtc_fallback_ticks
+    addq.l  #1, rtc_seconds
+
+.disr_ipc:
+    btst    #DUART_ISR_IPC_SHIFT, %d3   | input port change (RTC MFP on IP3)
+    beq.s   .disr_exit
+    move.b  DUART_IPCR, %d0             | the read clears the delta bits
+    and.b   #(DUART_IPCR_DELTA_IP3_MASK + DUART_IPCR_IP3_MASK), %d0
+    cmp.b   #(DUART_IPCR_DELTA_IP3_MASK + DUART_IPCR_IP3_MASK), %d0
+    bne.s   .disr_exit                  | not a rising edge of MFP
+    addq.l  #1, rtc_seconds
 
 .disr_exit:
     movem.l (%sp)+, %d0-%d4/%a0-%a1
@@ -1380,6 +1395,18 @@ uart_rx_overflow:
     .global tick_counter
 tick_counter:
     .skip 4
+
+    | RTC seconds counter and its two ISR controls (rom.cpp sets them up).
+    .global rtc_seconds
+rtc_seconds:
+    .skip 4
+    .global rtc_from_mfp
+rtc_from_mfp:
+    .skip 1
+    .global rtc_fallback_ticks
+rtc_fallback_ticks:
+    .skip 1
+    .align 2
 
     .global video_frame_counter
 video_frame_counter:

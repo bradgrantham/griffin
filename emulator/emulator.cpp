@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <ctime>
 #include <cmath>
 #include <cstdint>
 #include <cinttypes>
@@ -745,6 +746,265 @@ struct StdinConsole
 // Channel B, I/O ports, and BRG details are stubs.
 // ---------------------------------------------------------------------------
 
+
+// MCP7940N real-time clock on the DUART's OP2/OP3/IP2/IP3 pins (griffin.yml
+// "DUART" pin wiring): an I2C slave bit-banged by the firmware (firmware/
+// rtc.cpp), driven here from OPR writes.  Pin levels: SCL = ~OPR[2]; the
+// master releases SDA when OPR[3] = 1 (OP3 low, FET off) and pulls it low when
+// OPR[3] = 0.  SDA as read back on IP2 is the AND of the master's and the
+// slave's pulls.  MFP on IP3 is the 1 Hz square wave once CONTROL.SQWEN is
+// set, else the CONTROL.OUT level (alarms are not modelled).
+//
+// Time runs on the GUEST clock (SYSCLK cycles), so --no-throttle runs the
+// clock fast but MFP and the registers stay consistent with each other.  On
+// start the registers hold the host's wall clock (UTC) with ST and VBATEN set;
+// --rtc-blank starts a factory-fresh part (all zero, oscillator stopped),
+// --rtc-epoch N starts at a fixed time, --no-rtc leaves the address unanswered.
+// The model puts the MFP rising edge at the seconds rollover; whether the chip
+// does is a bench measurement still owed (griffin.log, RTC prove-out).
+struct MCP7940NState
+{
+    static constexpr unsigned REG_COUNT = 0x60;      // 0x00..0x1F control, 0x20..0x5F SRAM
+    static constexpr uint8_t I2C_ADDR = static_cast<uint8_t>(RTC_I2C_ADDR);
+
+    bool present = true;
+    uint8_t regs[REG_COUNT] = {};
+
+    // Time base
+    bool running = false;
+    uint32_t epoch_at_base = 0;
+    uint64_t base_clock = 0;
+
+    // Bus state as last driven by the master, and the slave's own pull.
+    bool scl = true;
+    bool sda_master = false;    // reset: OPR = 0 holds SDA low through the FET
+    bool sda_slave = true;      // true = released
+
+    enum class State { IDLE, ADDR, REG, DATA_W, DATA_R };
+    State state = State::IDLE;
+    uint8_t shift = 0;
+    int bitcount = 0;
+    uint8_t pointer = 0;
+    bool ack_this_byte = false;
+
+    bool mfp = false;
+
+    static uint8_t bcd(unsigned v) { return static_cast<uint8_t>(((v / 10) << 4) | (v % 10)); }
+    static unsigned unbcd(uint8_t v) { return (v >> 4) * 10 + (v & 0x0F); }
+
+    // Howard Hinnant's civil <-> days, as firmware/rtc.cpp uses.
+    static uint32_t epoch_from_civil(unsigned y, unsigned m, unsigned d, unsigned hh, unsigned mm, unsigned ss)
+    {
+        if (m <= 2) { y -= 1; }
+        unsigned era = y / 400;
+        unsigned yoe = y - era * 400;
+        unsigned doy = (153 * ((m > 2) ? m - 3 : m + 9) + 2) / 5 + d - 1;
+        unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        uint32_t days = era * 146097 + doe - 719468;
+        return days * 86400U + hh * 3600U + mm * 60U + ss;
+    }
+
+    static void civil_from_epoch(uint32_t epoch, unsigned &y, unsigned &m, unsigned &d,
+                                 unsigned &hh, unsigned &mm, unsigned &ss, unsigned &wd)
+    {
+        uint32_t days = epoch / 86400U;
+        uint32_t rem = epoch % 86400U;
+        hh = rem / 3600U; mm = (rem / 60U) % 60U; ss = rem % 60U;
+        wd = (days + 4U) % 7U;
+        uint32_t z = days + 719468U;
+        uint32_t era = z / 146097U;
+        uint32_t doe = z - era * 146097U;
+        uint32_t yoe = (doe - doe / 1460U + doe / 36524U - doe / 146096U) / 365U;
+        uint32_t yy = yoe + era * 400U;
+        uint32_t doy = doe - (365U * yoe + yoe / 4U - yoe / 100U);
+        uint32_t mp = (5U * doy + 2U) / 153U;
+        d = doy - (153U * mp + 2U) / 5U + 1U;
+        m = (mp < 10U) ? mp + 3U : mp - 9U;
+        y = yy + ((m <= 2U) ? 1U : 0U);
+    }
+
+    void start_with_epoch(uint32_t epoch)
+    {
+        running = true;
+        epoch_at_base = epoch;
+        base_clock = 0;
+        regs[0x03] = 0x08;                              // VBATEN
+        regs[0x00] = 0x80;                              // ST
+        refresh_time_regs(0);
+    }
+
+    uint32_t current_epoch(uint64_t clock) const
+    {
+        if (!running) { return epoch_at_base; }
+        return epoch_at_base + static_cast<uint32_t>((clock - base_clock) / SYSCLK_HZ);
+    }
+
+    // Encode the running time into 0x00..0x06, keeping the control bits.
+    void refresh_time_regs(uint64_t clock)
+    {
+        unsigned y, m, d, hh, mm, ss, wd;
+        civil_from_epoch(current_epoch(clock), y, m, d, hh, mm, ss, wd);
+        if (y < 2000 || y > 2099) { return; }           // outside the chip's calendar: leave as is
+        regs[0x00] = static_cast<uint8_t>((regs[0x00] & 0x80) | bcd(ss));
+        regs[0x01] = bcd(mm);
+        regs[0x02] = bcd(hh);                           // 24-hour format
+        regs[0x03] = static_cast<uint8_t>((regs[0x03] & 0x18) | (running ? 0x20 : 0) | (wd + 1));
+        regs[0x04] = bcd(d);
+        bool leap = (y % 4 == 0);                       // 2000..2099: every fourth year
+        regs[0x05] = static_cast<uint8_t>((leap ? 0x20 : 0) | bcd(m));
+        regs[0x06] = bcd(y - 2000);
+    }
+
+    // The guest wrote one of 0x00..0x06: rebase the time on the registers.
+    void apply_time_regs(uint64_t clock)
+    {
+        unsigned ss = unbcd(regs[0x00] & 0x7F);
+        unsigned mm = unbcd(regs[0x01] & 0x7F);
+        uint8_t hr = regs[0x02];
+        unsigned hh;
+        if (hr & 0x40) {
+            hh = unbcd(hr & 0x1F) % 12 + ((hr & 0x20) ? 12 : 0);
+        } else {
+            hh = unbcd(hr & 0x3F);
+        }
+        unsigned d = unbcd(regs[0x04] & 0x3F);
+        unsigned m = unbcd(regs[0x05] & 0x1F);
+        unsigned y = 2000 + unbcd(regs[0x06]);
+        bool valid = m >= 1 && m <= 12 && d >= 1 && d <= 31 && hh <= 23 && mm <= 59 && ss <= 59;
+        epoch_at_base = valid ? epoch_from_civil(y, m, d, hh, mm, ss) : 0;
+        base_clock = clock;
+        running = (regs[0x00] & 0x80) != 0;
+    }
+
+    void write_reg(uint8_t reg, uint8_t val, uint64_t clock)
+    {
+        if (reg >= REG_COUNT) { return; }
+        if (reg == 0x03) { val = static_cast<uint8_t>((val & ~0x20) | (regs[0x03] & 0x20)); }   // OSCRUN read-only
+        if (reg == 0x05) { val = static_cast<uint8_t>((val & ~0x20) | (regs[0x05] & 0x20)); }   // LPYR read-only
+        regs[reg] = val;
+        if (reg <= 0x06) {
+            apply_time_regs(clock);
+            refresh_time_regs(clock);
+        }
+    }
+
+    bool sda_bus() const { return sda_master && sda_slave; }
+
+    // MFP level now; also the IP3 the DUART samples.
+    bool mfp_level(uint64_t clock) const
+    {
+        uint8_t control = regs[0x07];
+        if ((control & 0x40) == 0) { return (control & 0x80) != 0; }     // OUT bit
+        if (!running) { return mfp; }
+        uint64_t in_second = (clock - base_clock) % SYSCLK_HZ;
+        unsigned fs = control & 0x03;                   // 0: 1 Hz, 1: 4.096 kHz, 2: 8.192 kHz, 3: 32.768 kHz
+        if (fs == 0) { return in_second < SYSCLK_HZ / 2; }
+        uint64_t f = (fs == 1) ? 4096 : (fs == 2) ? 8192 : 32768;
+        return ((in_second * f * 2) / SYSCLK_HZ) % 2 == 0;
+    }
+
+    void tick(uint64_t clock) { mfp = mfp_level(clock); }
+
+    // The master moved SCL and/or SDA (an OPR write).  Run the slave.
+    void bus_update(bool new_scl, bool new_sda_master, uint64_t clock)
+    {
+        if (!present) { scl = new_scl; sda_master = new_sda_master; return; }
+        bool sda_prev = sda_bus();
+        sda_master = new_sda_master;
+        bool sda_now = sda_bus();
+
+        if (scl && new_scl) {
+            if (sda_prev && !sda_now && sda_slave) {         // START / repeated START
+                state = State::ADDR; shift = 0; bitcount = 0; sda_slave = true;
+                refresh_time_regs(clock);
+            } else if (!sda_prev && sda_now) {               // STOP
+                state = State::IDLE; sda_slave = true; bitcount = 0;
+            }
+            return;
+        }
+
+        bool rising = !scl && new_scl;
+        bool falling = scl && !new_scl;
+        scl = new_scl;
+        if (state == State::IDLE) { return; }
+
+        if (state == State::DATA_R) {
+            // Slave transmits: bits change on falling edges, the master's ACK
+            // is sampled on the ninth rising edge.
+            if (falling) {
+                if (bitcount < 8) {
+                    sda_slave = (shift & 0x80) != 0; shift = static_cast<uint8_t>(shift << 1); bitcount++;
+                } else if (bitcount == 8) {
+                    sda_slave = true;                       // release for the master's ACK
+                    bitcount = 9;
+                } else {
+                    // after the ACK slot
+                    if (ack_this_byte) {
+                        pointer = static_cast<uint8_t>((pointer + 1) % REG_COUNT);
+                        shift = regs[pointer];
+                        sda_slave = (shift & 0x80) != 0; shift = static_cast<uint8_t>(shift << 1); bitcount = 1;
+                    } else {
+                        state = State::IDLE; sda_slave = true;
+                    }
+                }
+            } else if (rising && bitcount == 9) {
+                ack_this_byte = !sda_master;
+                bitcount = 10;
+            }
+            return;
+        }
+
+        // Slave receives (ADDR, REG, DATA_W).
+        if (rising) {
+            if (bitcount < 8) {
+                shift = static_cast<uint8_t>((shift << 1) | (sda_now ? 1 : 0));
+                bitcount++;
+            }
+            return;
+        }
+        if (!falling) { return; }
+        if (bitcount == 8) {
+            // Eighth bit clocked in: decide and drive the ACK.
+            switch (state) {
+                case State::ADDR:
+                    ack_this_byte = (shift >> 1) == I2C_ADDR;
+                    break;
+                case State::REG:
+                    pointer = static_cast<uint8_t>(shift % REG_COUNT);
+                    ack_this_byte = true;
+                    break;
+                case State::DATA_W:
+                    write_reg(pointer, shift, clock);
+                    pointer = static_cast<uint8_t>((pointer + 1) % REG_COUNT);
+                    ack_this_byte = true;
+                    break;
+                default: break;
+            }
+            sda_slave = !ack_this_byte;
+            bitcount = 9;
+        } else if (bitcount == 9) {
+            // ACK slot over: release, move on.
+            sda_slave = true;
+            if (!ack_this_byte) { state = State::IDLE; bitcount = 0; return; }
+            switch (state) {
+                case State::ADDR:
+                    if (shift & 1) {
+                        state = State::DATA_R;
+                        shift = regs[pointer];
+                        sda_slave = (shift & 0x80) != 0; shift = static_cast<uint8_t>(shift << 1); bitcount = 1;
+                        return;
+                    }
+                    state = State::REG;
+                    break;
+                case State::REG:    state = State::DATA_W; break;
+                case State::DATA_W: break;
+                default: break;
+            }
+            shift = 0; bitcount = 0;
+        }
+    }
+};
+
 struct DUARTState
 {
     // Channel A
@@ -778,6 +1038,44 @@ struct DUARTState
     // Output port
     uint8_t opcr = 0;
     uint8_t opr = 0;
+
+    // Input port: IP0/IP1 (~CTS) read 0, IP2 = RTC SDA, IP3 = RTC MFP, IP4/IP5
+    // (DCD/RI) read 0.  ipcr_delta accumulates IP0..IP3 changes until IPCR is
+    // read; ISR.IPC is the delta masked by ACR[3:0].
+    MCP7940NState rtc;
+    uint8_t ip_last = 0;
+    uint8_t ipcr_delta = 0;
+
+    uint8_t ip_now() const
+    {
+        return static_cast<uint8_t>((rtc.sda_bus() ? DUART_IP_RTC_SDA : 0) |
+                                    (rtc.mfp ? DUART_IP_RTC_MFP : 0));
+    }
+
+    void update_ip()
+    {
+        uint8_t now = ip_now();
+        ipcr_delta = static_cast<uint8_t>(ipcr_delta | ((now ^ ip_last) & 0x0F));
+        ip_last = now;
+    }
+
+    DUARTState()
+    {
+        rtc.tick(0);
+        ip_last = ip_now();
+    }
+
+    // SYSCLK at the current bus write; IO_write8 sets it before write_reg.
+    uint64_t write_clock = 0;
+
+    // OP2 = SCL (pin = ~OPR[2]); OP3 high (OPR[3] = 0) pulls SDA low.
+    void drive_rtc_bus()
+    {
+        bool scl = (opr & DUART_OP_RTC_SCL) == 0;
+        bool sda_released = (opr & DUART_OP_RTC_SDA_DRIVE) != 0;
+        rtc.bus_update(scl, sda_released, write_clock);
+        update_ip();
+    }
 
     uint16_t preload() const
     {
@@ -844,6 +1142,8 @@ struct DUARTState
     // Advance timer state — call periodically from poll_io
     void check_timer(uint64_t clock_now)
     {
+        rtc.tick(clock_now);
+        update_ip();
         if (!ctr_running)
         {
             return;
@@ -878,6 +1178,10 @@ struct DUARTState
         if (ctr_ready)
         {
             val |= DUART_ISR_CTR_READY_MASK;
+        }
+        if ((ipcr_delta & acr & 0x0F) != 0)
+        {
+            val |= DUART_ISR_IPC_MASK;
         }
         return val;
     }
@@ -946,7 +1250,12 @@ struct DUARTState
                 }
                 return ch;
             }
-            case DUART_IPCR:    return 0;
+            case DUART_IPCR:
+            {
+                uint8_t val = static_cast<uint8_t>((ipcr_delta << 4) | ip_now());
+                ipcr_delta = 0;
+                return val;
+            }
             case DUART_ISR:     return isr(pty, pty_b);
             case DUART_CUR:     return 0;
             case DUART_CLR:     return 0;
@@ -982,7 +1291,7 @@ struct DUARTState
                 return ch;
             }
             case DUART_IVR:     return ivr;
-            case DUART_IP:      return 0;
+            case DUART_IP:      return ip_now();
             case DUART_STARTCC:
                 ctr_running = true;
                 // ctr_next_fire == 0 signals "needs initialization" — caller
@@ -1060,8 +1369,8 @@ struct DUARTState
                 break;
             case DUART_IVR:     ivr = val; break;
             case DUART_OPCR:    opcr = val; break;
-            case DUART_OPR_SET: opr |= val; break;
-            case DUART_OPR_CLR: opr &= ~val; break;
+            case DUART_OPR_SET: opr |= val; drive_rtc_bus(); break;
+            case DUART_OPR_CLR: opr &= ~val; drive_rtc_bus(); break;
         }
     }
 };
@@ -3161,6 +3470,7 @@ class GriffinEmulator : public moira::Moira
             {
                 printf("[DUART write %06X ← 0x%02X]\n", addr + IO_BASE, val);
             }
+            duart.write_clock = getClock();
             duart.write_reg(addr + IO_BASE, val, pty_console, pty_console_b);
         } else if(addr == GLUE_DEBUG_OUT - IO_BASE) {
             auto oldbit = debug_out_latch & GLUE_DEBUG_OUT_MASK;
@@ -3239,6 +3549,7 @@ class GriffinEmulator : public moira::Moira
         if (is_duart_addr(addr))
         {
             printf("WARNING: 16-bit write 0x%04X to DUART at %06X (firmware should use 8-bit only)\n", val, addr + IO_BASE);
+            duart.write_clock = getClock();
             duart.write_reg(addr + IO_BASE, val & 0xFF, pty_console, pty_console_b);
             return;
         }
@@ -3613,6 +3924,19 @@ public:
     // --keys-to-joystick: send the host arrow/fire keys to joystick port 1
     // instead of to the PS/2 keyboard.  Interactive only (headless runs get no
     // SDL key events; they use --joystick-in).
+    // --no-rtc / --rtc-blank / --rtc-epoch: see MCP7940NState.
+    void set_rtc(bool present, bool start, uint32_t epoch)
+    {
+        duart.rtc.present = present;
+        if (start)
+        {
+            duart.rtc.start_with_epoch(epoch);
+        }
+        duart.rtc.tick(0);
+        duart.ip_last = duart.ip_now();
+        duart.ipcr_delta = 0;
+    }
+
     void set_keys_to_joystick(bool on) { keys_to_joystick = on; }
 
     // Interactive host mouse: SDL motion and buttons over the video window
@@ -4727,6 +5051,10 @@ void usage(const char *progname)
     printf("  --screenshot FILE             write the framebuffer to FILE (BMP) on exit\n");
     printf("  --run-cycles N                stop after N emulated SYSCLK cycles\n");
     printf("  --no-throttle                 run as fast as possible (no real-time pacing)\n");
+    printf("  --no-rtc                      no MCP7940N on the DUART pins (firmware falls back)\n");
+    printf("  --rtc-blank                   factory-fresh RTC: registers zero, oscillator stopped\n");
+    printf("  --rtc-epoch N                 RTC starts at N seconds since the Unix epoch (UTC)\n");
+    printf("                                (default: the host clock; the RTC runs on guest time)\n");
 }
 
 int main(int argc, const char** argv)
@@ -4757,6 +5085,8 @@ int main(int argc, const char** argv)
     bool headless = false;
     bool no_throttle = false;
     uint64_t run_cycles = 0; // 0 = unlimited
+    enum { RTC_HOST, RTC_BLANK, RTC_EPOCH, RTC_NONE } rtc_mode = RTC_HOST;
+    uint32_t rtc_epoch = 0;
 
     while((argc > 0) && (argv[0][0] == '-')) {
 	if(strcmp(argv[0], "--cf") == 0) {
@@ -4887,6 +5217,23 @@ int main(int argc, const char** argv)
             screenshot_path = argv[1];
             argv += 2;
             argc -= 2;
+        } else if(strcmp(argv[0], "--no-rtc") == 0) {
+            rtc_mode = RTC_NONE;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--rtc-blank") == 0) {
+            rtc_mode = RTC_BLANK;
+            argv += 1;
+            argc -= 1;
+        } else if(strcmp(argv[0], "--rtc-epoch") == 0) {
+            if(argc < 2) {
+                fprintf(stderr, "--rtc-epoch option requires seconds since the Unix epoch.\n");
+                exit(EXIT_FAILURE);
+            }
+            rtc_mode = RTC_EPOCH;
+            rtc_epoch = static_cast<uint32_t>(strtoul(argv[1], nullptr, 0));
+            argv += 2;
+            argc -= 2;
         } else if(strcmp(argv[0], "--no-throttle") == 0) {
             no_throttle = true;
             argv += 1;
@@ -4926,6 +5273,12 @@ int main(int argc, const char** argv)
     const char *romname = argv[0];
 
     GriffinEmulator emulator;
+    switch (rtc_mode) {
+        case RTC_NONE:  emulator.set_rtc(false, false, 0); break;
+        case RTC_BLANK: emulator.set_rtc(true, false, 0); break;      // all zero, oscillator stopped
+        case RTC_EPOCH: emulator.set_rtc(true, true, rtc_epoch); break;
+        case RTC_HOST:  emulator.set_rtc(true, true, static_cast<uint32_t>(time(nullptr))); break;
+    }
 
     PS2Script ps2_script;
     if (ps2_in_path && !ps2_script.load(ps2_in_path))

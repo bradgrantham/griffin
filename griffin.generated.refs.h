@@ -62,7 +62,7 @@ inline volatile uint8_t &DUART_CSRA = *reinterpret_cast<volatile uint8_t *>(0xF8
 inline volatile uint8_t &DUART_CRA = *reinterpret_cast<volatile uint8_t *>(0xF80005UL);  // WRITE: Channel A command register
 inline volatile uint8_t &DUART_RBA = *reinterpret_cast<volatile uint8_t *>(0xF80007UL);  // READ: Channel A receiver buffer
 inline volatile uint8_t &DUART_TBA = *reinterpret_cast<volatile uint8_t *>(0xF80007UL);  // WRITE: Channel A transmitter buffer
-inline volatile uint8_t &DUART_IPCR = *reinterpret_cast<volatile uint8_t *>(0xF80009UL);  // READ: Input port change register
+inline volatile uint8_t &DUART_IPCR = *reinterpret_cast<volatile uint8_t *>(0xF80009UL);  // READ: Input port change register (reading it clears the delta bits)
 inline volatile uint8_t &DUART_ACR = *reinterpret_cast<volatile uint8_t *>(0xF80009UL);  // WRITE: Auxiliary control register (timer/counter mode, BRG set select)
 inline volatile uint8_t &DUART_ISR = *reinterpret_cast<volatile uint8_t *>(0xF8000BUL);  // READ: Interrupt status register
 inline volatile uint8_t &DUART_IMR = *reinterpret_cast<volatile uint8_t *>(0xF8000BUL);  // WRITE: Interrupt mask register (same bit layout as ISR; 1=enabled)

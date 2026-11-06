@@ -363,8 +363,9 @@ peripherals:
   #   (PADDLE_TICKS_PER_SECOND, AUDIO_SAMPLES_PER_SECOND).  Separate nets
   #   so the audio rate can change alone.
   # - VGA_HSYNC and VGA_VSYNC drive ONLY the 74AC541 buffers.
-  # - DUART OP4..OP7 are unconnected; a future raster/audio-rate select into
-  #   PIXEL would take them, with the OP reset state 1111 as today's behaviour.
+  # - DUART OP4..OP7 land on four reserved PIXEL pins with no logic behind
+  #   them yet; a future raster/audio-rate select would take them, with the OP
+  #   reset state 1111 as today's behaviour.
   #
   # The decoder is INDEX-ONLY.  Every playfield pixel in every mode is a
   # four-bit palette index on IDX[3:0], which addresses the external 16x12
@@ -678,14 +679,20 @@ peripherals:
     #   OP2: RTC_SCL (MCP7940N I2C clock, push-pull)
     #   OP3: RTC_SDA_DRIVE (N-FET gate: pin high pulls SDA low)
     #                                            IP2: RTC_SDA readback
-    #                                            IP3: RTC_MFP (MCP7940N alarm/square-wave output)
-    #   OP4..OP7: unconnected                    IP4: DCD_B (ch B carrier)
+    #                                            IP3: RTC_MFP (MCP7940N MFP, firmware programs it as the 1 Hz square wave)
+    #   OP4..OP7: PIXEL reserved pins (no logic) IP4: DCD_B (ch B carrier)
     #                                            IP5: RI_B (ch B ring)
     # IP4/IP5 come from the ch B RS-232 receivers; the 68681
     # change-of-state IRQ covers only IP0-IP3, so both are poll-only.
-    # OP4..OP7 float; if PIXEL ever takes them as a static configuration
-    # word, the OP reset state (OPR = 0 -> pins HIGH, 1111) must remain
-    # today's behaviour.
+    # RTC seconds: firmware counts MFP rising edges in the IP3 change-of-state
+    # IRQ (ACR.IP3_INT_EN, ISR.IPC, IPCR read to clear) and reads the
+    # MCP7940N over I2C only at boot and on a set, so wall time never costs an
+    # I2C transaction after boot.  The MCP7940N is the only I2C device; it
+    # does not clock-stretch, so SCL is push-pull.  At reset OPR = 0 holds
+    # SDA LOW through the FET until firmware sets OPR bit 3.
+    # OP4..OP7 reach PIXEL's reserved pins but nothing decodes them; if PIXEL
+    # ever takes them as a static configuration word, the OP reset state
+    # (OPR = 0 -> pins HIGH, 1111) must remain today's behaviour.
     # Bus: ~CS from GLUE (nDUART_SELECT), DTACKN back to GLUE (nDUART_DTACK),
     # ~IACK tied high, RESET (active low) directly on the system ~RESET net.
     address_range:
@@ -731,8 +738,20 @@ peripherals:
           description: "Channel A receiver buffer" }
       - { offset: 0x07, name: TBA,    access: write, width: 8,
           description: "Channel A transmitter buffer" }
-      - { offset: 0x09, name: IPCR,   access: read,  width: 8,
-          description: "Input port change register" }
+      - offset: 0x09
+        name: IPCR
+        access: read
+        width: 8
+        description: "Input port change register (reading it clears the delta bits)."
+        bits:
+          - { bit: "7", name: DELTA_IP3, description: "IP3 changed since the last read" }
+          - { bit: "6", name: DELTA_IP2, description: "IP2 changed since the last read" }
+          - { bit: "5", name: DELTA_IP1, description: "IP1 changed since the last read" }
+          - { bit: "4", name: DELTA_IP0, description: "IP0 changed since the last read" }
+          - { bit: "3", name: IP3, description: "Current IP3 level" }
+          - { bit: "2", name: IP2, description: "Current IP2 level" }
+          - { bit: "1", name: IP1, description: "Current IP1 level" }
+          - { bit: "0", name: IP0, description: "Current IP0 level" }
       - offset: 0x09
         name: ACR
         access: write
@@ -1003,7 +1022,7 @@ syscalls:
       description: "Return milliseconds since boot as an unsigned 32-bit count that wraps."
     - name: GETTIME
       number: 12
-      description: "Return seconds since the Unix epoch derived from the boot epoch plus milliseconds since boot."
+      description: "Return seconds since the Unix epoch, UTC, from the firmware seconds counter that the RTC MFP interrupt advances, or from the build time plus uptime when no RTC answered at boot."
     # Direct video ownership contract and GriffinVideoDirectInfo: griffin_abi.h.
     - name: VIDEO_DIRECT_START
       number: 13
@@ -1021,6 +1040,9 @@ syscalls:
     - name: CONSOLE_RAW
       number: 17
       description: "d1 nonzero makes console reads return raw PS/2 scancodes until zero restores line editing, which the loader also restores when the application exits."
+    - name: SETTIME
+      number: 18
+      description: "d1 is seconds since the Unix epoch, UTC; sets the firmware seconds counter and writes the RTC, returning 0, or -ENODEV when no RTC answered at boot and only the counter was set."
 
 # Rev 1 board reworks (applied to board/board-pcb-rev-1.distilled.txt).
 bodges:
@@ -1030,13 +1052,16 @@ bodges:
 
 # Open items only.
 issues:
+  - "DUART berr_timeout: 256 has no consumer (codegen, emulator, RTL): GLUE's one 4-bit counter BERRs a silent DUART at the same count as every other region (glue_tb.v asserts it).  Delete the field or implement it."
+  - "The DUART OP4..OP7 raster selector into PIXEL has four pins reserved in pixel.v's header but no logic, no video_timing entry and no consumer contract; the OPR reset state 1111 must remain today's raster when it lands."
+  - "The 68010 bus-error handler (crt0.s, decode_buserr.py) has never been exercised on the 68010 that is in the rev-1 socket: the 68010 pushes a format-$8 29-word bus-error frame, not the 68000's 7-word one, and user-mode MOVE from SR is privileged.  Force a BERR from the monitor (read 0xC00000) and check the decoded report."
   - "FIFO desync observability: the display-list ENGINE does not drive the 7200 9th-bit toggle, so there is no FIFO-level desync detector in rev 2.  GLUE ENGINE_STATUS exposes the engine's own state; decide whether that plus frame-bounded /RS recovery is enough."
   - "The palette RAM part is not chosen: 74F219-pinout 16x4 separate-I/O parts differ in address access time and three of them draw the best part of an amp, and the read-path arithmetic (PIXEL tCO + tAA + COMPOSITOR tSU inside one 39.72 ns pixel clock) and the write-path setup/hold/recovery arithmetic are both unsettled."
   - "CLUT_INDEX does not post-increment, so consecutive palette entries cost 3 words each instead of 2."
   - "VIDCMD SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  Swapping the target NUMBERS to match the colour numbers is a wire-contract change, not yet decided."
-  - "Only one raster mode (640x480 in 800x525 @ 60) is specified.  Alternate rasters (the DUART OP4..OP7 selector into PIXEL) have no video_timing entry and no consumer contract."
   - "The PIXELS and VIDCMD stream FIFOs (ENGINE -> PIXEL / COMPOSITOR) are described in comments and constants, not as first-class entries."
-  - "D[7:0] carries seven 7200 data-pin loads in rev 2 (two video, three audio) and D[15:8] six (two video, two audio) against the six the 2026-08 electrical review accepted; re-check the loading or put the audio FIFOs behind a transceiver."
+  - "Bus derivation owed, two parts: (a) the 74AHCT541 FIFO write buffers subtract one propagation delay from data setup at the 7200 /W rising edge during ENGINE deposits, and the margin against the 7200 and ATF1508 datasheet tables is not derived; (b) a per-lane capacitance tally of D[7:0] (13 loads) and D[15:8] (10) from the datasheet input capacitances of the 68010, AS6C4008, SST39SF040, ATF1508 I/O, CF and 74AHCT541 plus trace estimate, against the 68010 AC test-load condition (130 pF, to be verified in its table).  If the tally lands above about 150 pF, the fallback is a 74AHCT245 pair isolating the wait-stated low-byte peripherals (GLUE, PORTS, DUART, CF), not RAM; see griffin.log 2026-10-09."
+  - "The headphone jack part is not chosen: the speaker mute needs normally-closed TIP and RING contacts, but the SJ3-35063B in board.pretty has a tip switch only (SJ3-35063BG adds an isolated normally-open switch, not a ring contact).  The schematic draws the contract with a generic tip+ring-switch jack and no footprint."
   - "The AUDIO analog stage (ladders straight off the 7200 Q pins, 74HC4066 duty-cycle gates into a 2.5 V-biased inverting summer) has not been breadboarded; switch on-resistance and switching time at low volumes are the open risk."
   - "BERR in 0x400000-0x7FFFFF, 0xC00000-0xCFFFFF and 0xE00000-0xEFFFFF is by DTACK timeout (no decode); state whether that is the intended contract."
   - "BERR in unassigned IO spaces is unspecified."
@@ -1066,17 +1091,27 @@ interfaces:
     Layout: ladders + shunts at the DE-15, not at the buffers; 12 DAC traces
     short and roughly matched; solid ground return from shunts to shell.
   - |
-    Stream FIFO parts: no transceivers anywhere on D[15:0] -- the 7200
-    data-pin loads sit directly on the bus alongside CPU, 8 RAM, 2 ROM,
-    3 CPLDs, DUART and CF (seven on D[7:0], six on D[15:8]; see issues).
+    Stream FIFO parts: no 7200 data pin sits on D[15:0].  Each pipeline's
+    FIFOs take their write data from a pair of 74AHCT541 unidirectional
+    buffers (/OE tied low, inputs on the main bus, one chip per byte lane),
+    placed with that pipeline so the main bus never runs to it: the video
+    pair feeds D_VIDEO_FIFO[15:0] to the four PIXELS/VIDCMD parts, the
+    audio pair feeds D_AUDIO_FIFO[15:0] to the five AUDIO parts.  The
+    buffers are in the write-data path only; /W, /RS, /R, /EF and Q are
+    unbuffered.  AHCT, not HCT: the buffer delay comes out of data setup
+    at the 7200's /W rising edge (margin derivation owed; see issues).
+    Main-bus loads per lane after this: D[7:0] = CPU, 4 RAM, ROM, GLUE,
+    PORTS, DUART, CF, ENGINE, 2 buffers (13); D[15:8] = CPU, 4 RAM, ROM,
+    CF, ENGINE, 2 buffers (10).  Without the buffers the 7200s alone added
+    five to D[7:0] and four to D[15:8].
     Video streams use 2x IDT7200 (256x9) each -- PIXELS ganged 16-bit
     (PIXELS_Q[15:0], ONE /RE from PIXEL driving both parts; PIXELS_Q[15:8] is
     the part on D[15:8]), VIDCMD ganged 16-bit (/RE from COMPOSITOR); each
     pair's /W pins are one ENGINE deposit strobe, nPIXELS_FIFO_W or
-    nVIDCMD_FIFO_W, data pins on D[15:0], /RS from PIXEL nRS.
+    nVIDCMD_FIFO_W, data pins on D_VIDEO_FIFO[15:0], /RS from PIXEL nRS.
     AUDIO uses five byte-wide IDT7200: channels 0 and 1 (left) have their
-    data pins on D[15:8], channels 2 and 3 (right) and the control FIFO on
-    D[7:0].  Their /W pins are ENGINE's nSAMPLES0..3_FIFO_W and
+    data pins on D_AUDIO_FIFO[15:8], channels 2 and 3 (right) and the
+    control FIFO on D_AUDIO_FIFO[7:0].  Their /W pins are ENGINE's nSAMPLES0..3_FIFO_W and
     nAUDCTL_FIFO_W; their /R and /EF pins go to the AUDIO CPLD (/R held
     low, pulsed high to advance); /RS from the system ~RESET.  Channel n's
     Q[7:0] drives its R-2R ladder directly (no inverter, no pull resistors:
@@ -1107,10 +1142,11 @@ interfaces:
     PIXEL nVSYNC_IRQ -> GLUE nVSYNC: the level-6 frame IRQ, edge-latched
     in GLUE with W1C ack (VSYNC_STATUS/VSYNC_CLEAR).
   - |
-    JTAG chain, five TAPs in this order: GLUE -> PORTS -> ENGINE -> PIXEL ->
-    COMPOSITOR.  Each link net is named {earlier}_TO_{later}_TD (TDO of the
-    earlier chip to TDI of the later); the programming header drives the
-    first TDI and reads the last TDO.  There is no TIMING TAP.
+    JTAG chain, six TAPs in this order: GLUE -> PORTS -> AUDIO -> ENGINE ->
+    PIXEL -> COMPOSITOR.  Each link net is named {earlier}_TO_{later}_TD (TDO
+    of the earlier chip to TDI of the later); the 1x6 programming header
+    (TCK, TMS, TDI, TDO, +5V, GND) drives the first TDI and reads the last
+    TDO.  There is no TIMING TAP.
   - |
     Power entry: the logic board is +5 V only. Board connector: keyed 6-position AMP MATE-N-LOK in
     the Apple II pinout -- VERIFY before silk.  +5 V and GND feed the
@@ -1168,12 +1204,13 @@ interfaces:
     Spare headers, 0.1 in, for a future daughter board; no logic behind
     them today.  (ENGINE's spare strobe header is gone: its pin became one
     of the seven deposit strobes.)  PORTS spare header: PORTS pins 34 and 41
-    (unassigned I/O) and GND.  GLUE bodge spares: pins 24 and 64,
-    unassigned I/O, routed to pads only.
+    (unassigned I/O) and GND.  GLUE bodge spares: the two pins named in glue.v's pinout header, routed to pads.
   - |
     Clocks: three oscillators, no CPLD re-drives a clock.  SYSCLK (14 MHz
     can) -> CPU CLK and GCLK1 of GLUE, ENGINE and PORTS.  Pixel
-    oscillator (25.175 MHz can) -> GCLK1 of PIXEL and COMPOSITOR.
+    oscillator (25.175 MHz can) -> GCLK1 of PIXEL, COMPOSITOR and AUDIO.
+    An optional second oscillator footprint (unstuffed, net CLK2) feeds
+    PIXEL's free GCLK2 dedicated input.
     The DUART runs its own 3.6864 MHz crystal on X1/X2.
   - |
     Audio output stage, per side (x2, L and R identical; channels 0,1 are

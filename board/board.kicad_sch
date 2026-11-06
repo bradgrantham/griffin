@@ -3,10 +3,52 @@
 	(generator "eeschema")
 	(generator_version "9.0")
 	(uuid "afefa398-9f39-4b22-97f8-dae9b102df0d")
-	(paper "A4")
+	(paper "A3")
 	(lib_symbols)
 	(sheet
-		(at 88.9 63.5)
+		(at 152.4 63.5)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "01e538fe-c872-49e7-8178-468bfadb6e62")
+		(property "Sheetname" "RTC"
+			(at 152.4 62.7884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "rtc.kicad_sch"
+			(at 152.4 86.9446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "10")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 279.4 25.4)
 		(size 40 20)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -22,7 +64,7 @@
 		)
 		(uuid "04c090b1-601c-4801-ba2d-bdadcdd34cff")
 		(property "Sheetname" "GLUE"
-			(at 88.9 62.7884 0)
+			(at 279.4 24.6884 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -31,7 +73,7 @@
 			)
 		)
 		(property "Sheetfile" "glue.kicad_sch"
-			(at 88.9 88.2146 0)
+			(at 279.4 48.8446 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -48,7 +90,7 @@
 		)
 	)
 	(sheet
-		(at 215.9 101.6)
+		(at 88.9 101.6)
 		(size 40 20)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -64,7 +106,7 @@
 		)
 		(uuid "0bee51a0-ed43-4d9d-8301-adc0e1db0cb3")
 		(property "Sheetname" "PIXEL"
-			(at 215.9 100.8884 0)
+			(at 88.9 100.8884 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -73,7 +115,49 @@
 			)
 		)
 		(property "Sheetfile" "pixel.kicad_sch"
-			(at 215.9 125.0446 0)
+			(at 88.9 125.0446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "15")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 342.9 63.5)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "23a2da96-f3cf-4097-8875-3ba1f54f4712")
+		(property "Sheetname" "DEBUG_HEADER"
+			(at 342.9 62.7884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "debug-header.kicad_sch"
+			(at 342.9 86.9446 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -90,90 +174,7 @@
 		)
 	)
 	(sheet
-		(at 88.9 101.6)
-		(size 40 20)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(stroke
-			(width 0.1524)
-			(type solid)
-		)
-		(fill
-			(color 0 0 0 0.0000)
-		)
-		(uuid "189c4050-bf27-4d93-977d-e73def496750")
-		(property "Sheetname" "TIMING"
-			(at 88.9 100.8884 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left bottom)
-			)
-		)
-		(property "Sheetfile" "composite.kicad_sch"
-			(at 88.9 122.682 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left top)
-			)
-		)
-		(instances
-			(project "board"
-				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "8")
-				)
-			)
-		)
-	)
-	(sheet
-		(at 152.4 138.43)
-		(size 40 20)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(stroke
-			(width 0.1524)
-			(type solid)
-		)
-		(fill
-			(color 0 0 0 0.0000)
-		)
-		(uuid "23a2da96-f3cf-4097-8875-3ba1f54f4712")
-		(property "Sheetname" "DEBUG_HEADER"
-			(at 152.4 137.7184 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left bottom)
-			)
-		)
-		(property "Sheetfile" "debug-header.kicad_sch"
-			(at 152.4 161.8746 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left top)
-			)
-		)
-		(instances
-			(project "board"
-				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "16")
-				)
-			)
-		)
-	)
-	(sheet
-		(at 25.4 101.6)
+		(at 152.4 25.4)
 		(size 40 20)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -188,7 +189,7 @@
 		)
 		(uuid "3a4dea8d-1857-4b43-8092-baf1d8c2c547")
 		(property "Sheetname" "ROM"
-			(at 25.4 100.8884 0)
+			(at 152.4 24.6884 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -197,7 +198,7 @@
 			)
 		)
 		(property "Sheetfile" "rom.kicad_sch"
-			(at 25.654 122.936 0)
+			(at 152.4 48.8446 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -214,8 +215,8 @@
 		)
 	)
 	(sheet
-		(at 88.9 138.43)
-		(size 40.64 20.32)
+		(at 342.9 25.4)
+		(size 40 20)
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
@@ -230,7 +231,7 @@
 		)
 		(uuid "4a375e65-a69e-4a1a-b605-646ac9dfc1ea")
 		(property "Sheetname" "COMPACT_FLASH"
-			(at 88.9 137.7184 0)
+			(at 342.9 24.6884 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -239,7 +240,7 @@
 			)
 		)
 		(property "Sheetfile" "compact-flash.kicad_sch"
-			(at 88.9 159.3346 0)
+			(at 342.9 48.8446 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -250,7 +251,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "12")
+					(page "7")
 				)
 			)
 		)
@@ -281,7 +282,7 @@
 			)
 		)
 		(property "Sheetfile" "power-clock.kicad_sch"
-			(at 25.4 46.3046 0)
+			(at 25.4 48.8446 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -293,132 +294,6 @@
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
 					(page "2")
-				)
-			)
-		)
-	)
-	(sheet
-		(at 215.9 138.43)
-		(size 40 20)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(stroke
-			(width 0.1524)
-			(type solid)
-		)
-		(fill
-			(color 0 0 0 0.0000)
-		)
-		(uuid "7d03131b-c256-4c19-849a-f7fee587bca0")
-		(property "Sheetname" "COMPOSITOR"
-			(at 215.9 137.7184 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left bottom)
-			)
-		)
-		(property "Sheetfile" "compositor.kicad_sch"
-			(at 215.9 161.8746 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left top)
-			)
-		)
-		(instances
-			(project "board"
-				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "14")
-				)
-			)
-		)
-	)
-	(sheet
-		(at 152.4 25.4)
-		(size 40 20)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(stroke
-			(width 0.1524)
-			(type solid)
-		)
-		(fill
-			(color 0 0 0 0.0000)
-		)
-		(uuid "8366f086-fe3c-4854-801e-801c37de6558")
-		(property "Sheetname" "IO"
-			(at 152.4 24.6884 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left bottom)
-			)
-		)
-		(property "Sheetfile" "io.kicad_sch"
-			(at 152.4 46.3046 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left top)
-			)
-		)
-		(instances
-			(project "board"
-				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "7")
-				)
-			)
-		)
-	)
-	(sheet
-		(at 25.4 138.43)
-		(size 40.64 20.32)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(stroke
-			(width 0.1524)
-			(type solid)
-		)
-		(fill
-			(color 0 0 0 0.0000)
-		)
-		(uuid "98cc160f-0016-4ffd-8efd-13e0c67036f7")
-		(property "Sheetname" "PANEL"
-			(at 25.4 137.7184 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left bottom)
-			)
-		)
-		(property "Sheetfile" "panel.kicad_sch"
-			(at 25.4 159.3346 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left top)
-			)
-		)
-		(instances
-			(project "board"
-				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "17")
 				)
 			)
 		)
@@ -438,8 +313,8 @@
 		(fill
 			(color 0 0 0 0.0000)
 		)
-		(uuid "a6ee04b7-7d16-47ea-9db5-ea25e69d73a5")
-		(property "Sheetname" "ENGINE"
+		(uuid "7d03131b-c256-4c19-849a-f7fee587bca0")
+		(property "Sheetname" "COMPOSITOR"
 			(at 152.4 100.8884 0)
 			(effects
 				(font
@@ -448,7 +323,7 @@
 				(justify left bottom)
 			)
 		)
-		(property "Sheetfile" "expansion.kicad_sch"
+		(property "Sheetfile" "compositor.kicad_sch"
 			(at 152.4 125.0446 0)
 			(effects
 				(font
@@ -460,13 +335,13 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "10")
+					(page "16")
 				)
 			)
 		)
 	)
 	(sheet
-		(at 88.9 25.4)
+		(at 279.4 101.6)
 		(size 40 20)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -480,9 +355,9 @@
 		(fill
 			(color 0 0 0 0.0000)
 		)
-		(uuid "c302b4cc-a95e-44ac-a1e9-5663bcf0d2b3")
-		(property "Sheetname" "RAM"
-			(at 88.9 24.6884 0)
+		(uuid "8188704b-aa39-4bfc-8560-c29c8bc54684")
+		(property "Sheetname" "AUDIO"
+			(at 279.4 100.8884 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -490,8 +365,8 @@
 				(justify left bottom)
 			)
 		)
-		(property "Sheetfile" "ram.kicad_sch"
-			(at 88.9 45.0346 0)
+		(property "Sheetfile" "audio.kicad_sch"
+			(at 279.4 125.0446 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -502,49 +377,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "5")
-				)
-			)
-		)
-	)
-	(sheet
-		(at 215.9 63.5)
-		(size 40 20)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(stroke
-			(width 0.1524)
-			(type solid)
-		)
-		(fill
-			(color 0 0 0 0.0000)
-		)
-		(uuid "c356e90a-b764-466c-afb0-c4518c1ee9bb")
-		(property "Sheetname" "AUDIO_FIFO"
-			(at 215.9 62.7884 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left bottom)
-			)
-		)
-		(property "Sheetfile" "audio-fifo.kicad_sch"
-			(at 215.9 86.9446 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left top)
-			)
-		)
-		(instances
-			(project "board"
-				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "15")
+					(page "18")
 				)
 			)
 		)
@@ -564,8 +397,8 @@
 		(fill
 			(color 0 0 0 0.0000)
 		)
-		(uuid "e2759770-a9ef-4fa2-921d-b35f031ff7ee")
-		(property "Sheetname" "CPU"
+		(uuid "8366f086-fe3c-4854-801e-801c37de6558")
+		(property "Sheetname" "IO"
 			(at 25.4 62.7884 0)
 			(effects
 				(font
@@ -574,8 +407,8 @@
 				(justify left bottom)
 			)
 		)
-		(property "Sheetfile" "cpu.kicad_sch"
-			(at 25.4 84.4046 0)
+		(property "Sheetfile" "io.kicad_sch"
+			(at 25.4 86.9446 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -586,7 +419,175 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "3")
+					(page "8")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 279.4 63.5)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "98cc160f-0016-4ffd-8efd-13e0c67036f7")
+		(property "Sheetname" "PANEL"
+			(at 279.4 62.7884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "panel.kicad_sch"
+			(at 279.4 86.9446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "12")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 88.9 63.5)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "9d01994c-7c46-4ba5-b3ff-8d591d139db6")
+		(property "Sheetname" "SERIAL"
+			(at 88.9 62.7884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "serial.kicad_sch"
+			(at 88.9 86.9446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "9")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 25.4 101.6)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "a6ee04b7-7d16-47ea-9db5-ea25e69d73a5")
+		(property "Sheetname" "ENGINE"
+			(at 25.4 100.8884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "engine.kicad_sch"
+			(at 25.4 125.0446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "14")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 215.9 101.6)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "b3922290-9464-4bc2-9fad-e507961b2cc9")
+		(property "Sheetname" "VGA_OUT"
+			(at 215.9 100.8884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "vga.kicad_sch"
+			(at 215.9 125.0446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "17")
 				)
 			)
 		)
@@ -606,8 +607,8 @@
 		(fill
 			(color 0 0 0 0.0000)
 		)
-		(uuid "ebcf2f6d-ed04-4a6f-b414-2229e9d7ec5f")
-		(property "Sheetname" "PORTS"
+		(uuid "c302b4cc-a95e-44ac-a1e9-5663bcf0d2b3")
+		(property "Sheetname" "RAM"
 			(at 215.9 24.6884 0)
 			(effects
 				(font
@@ -616,8 +617,8 @@
 				(justify left bottom)
 			)
 		)
-		(property "Sheetfile" "ports.kicad_sch"
-			(at 215.9 50.1146 0)
+		(property "Sheetfile" "ram.kicad_sch"
+			(at 215.9 48.8446 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -628,13 +629,181 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "7")
+					(page "5")
 				)
 			)
 		)
 	)
 	(sheet
-		(at 152.4 63.5)
+		(at 342.9 101.6)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "c356e90a-b764-466c-afb0-c4518c1ee9bb")
+		(property "Sheetname" "AUDIO_FIFO"
+			(at 342.9 100.8884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "audio-fifo.kicad_sch"
+			(at 342.9 125.0446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "19")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 88.9 139.7)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "d8895335-431d-47f3-b743-c5e64a0e6664")
+		(property "Sheetname" "AUDIO_AMP"
+			(at 88.9 138.9884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "audio-amp.kicad_sch"
+			(at 88.9 163.1446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "21")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 88.9 25.4)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "e2759770-a9ef-4fa2-921d-b35f031ff7ee")
+		(property "Sheetname" "CPU"
+			(at 88.9 24.6884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "cpu.kicad_sch"
+			(at 88.9 48.8446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "3")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 215.9 63.5)
+		(size 40 20)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "ebcf2f6d-ed04-4a6f-b414-2229e9d7ec5f")
+		(property "Sheetname" "PORTS"
+			(at 215.9 62.7884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "ports.kicad_sch"
+			(at 215.9 86.9446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "board"
+				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
+					(page "11")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 25.4 139.7)
 		(size 40 20)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -650,7 +819,7 @@
 		)
 		(uuid "ed1ce839-173e-4775-a1bf-0525f06c4186")
 		(property "Sheetname" "AUDIO_DAC"
-			(at 152.4 62.7884 0)
+			(at 25.4 138.9884 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -659,7 +828,7 @@
 			)
 		)
 		(property "Sheetfile" "audio-dac.kicad_sch"
-			(at 152.4 88.2146 0)
+			(at 25.4 163.1446 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -670,7 +839,7 @@
 		(instances
 			(project "board"
 				(path "/afefa398-9f39-4b22-97f8-dae9b102df0d"
-					(page "9")
+					(page "20")
 				)
 			)
 		)
