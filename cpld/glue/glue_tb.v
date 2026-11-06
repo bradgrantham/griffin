@@ -386,7 +386,7 @@ module glue_tb;
     localparam integer E_ZERO_WS = 2;
     localparam integer E_ROM     = (`MUTATE == 1) ? 2 : 4;
     localparam integer E_CF      = 14;
-    localparam integer E_BERR    = (`MUTATE == 5) ? 14 : 15;
+    localparam integer E_BERR    = (`MUTATE == 5) ? `GLUE_BERR_TIMEOUT_CLOCKS - 1 : `GLUE_BERR_TIMEOUT_CLOCKS;
     localparam [2:0]   IPL_NONE   = 3'b111;
     localparam [2:0]   IPL_VSYNC  = 3'b001;
     localparam [2:0]   IPL_DUART  = 3'b010;

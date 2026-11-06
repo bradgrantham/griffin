@@ -296,6 +296,7 @@ void debug_printf(const char *fmt, ...)
 }
 
 extern volatile uint32_t memory_size;
+extern volatile uint8_t cpu_is_68010;   // crt0 boot probe: MOVEC executed
 extern const char *build_date;
 extern const char *build_provenance;
 
@@ -1064,7 +1065,7 @@ static void textport_console_enable()
         printf("[early-log: %lu bytes dropped to overflow]\n",
                static_cast<unsigned long>(dropped));
     }
-    printf("Memory: %ld KB\n", memory_size);
+    printf("CPU: MC%s, Memory: %ld KB\n", cpu_is_68010 ? "68010" : "68000", memory_size);
 }
 
 // The framebuffer is an ordinary heap allocation now: ENGINE descriptors carry

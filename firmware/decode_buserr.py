@@ -1,23 +1,39 @@
 #!/usr/bin/env python3
 """
-Decode a 68000 bus error / address error exception stack frame.
+Decode a 68000 or 68010 bus error / address error exception stack frame as
+the Griffin firmware prints it (crt0.s exc_dump_frame):
 
-Input format (one stack frame per line):
-    AAAAAAAA: W0 W1 W2 W3 W4 W5 W6
+    *** BUS ERROR *** (68010)
+    AAAAAAAA: W0 W1 W2 ... Wn
 
-Where AAAAAAAA is the address of the stack frame (optional, informational)
-and W0..W6 are the seven 16-bit words pushed by the 68000 on a bus or
-address error:
+AAAAAAAA is the SP at handler entry (optional, informational) and W0..Wn
+are the frame words, 7 on a 68000 and 29 on a 68010.  The CPU is taken
+from the word count unless --cpu says otherwise; a "*** ... (680x0)" header
+line, if piped in with the frame, is used as a cross-check and otherwise
+ignored.
 
-    +0  Special Status Word (SSW)
-    +2  Access address (high word)
-    +4  Access address (low word)
+68000 (7 words; MC68000UM section 5.5 "Bus Error" / "Address Error"):
+    +0  Special Status Word (SSW): R/W, I/N, FC
+    +2  Access address (long)
     +6  Instruction register (IR at time of fault)
-    +8  Status register (SR at time of fault)
-    +10 PC (high word) -- approximate, +/- a few words
-    +12 PC (low word)
+    +8  Status register
+    +10 PC (long) -- approximate, +/- a few words
 
-Ref: MC68000UM, Section 5.5 "Bus Error" / "Address Error".
+68010 format $8 (29 words; MC68010UM section 6.3, "Bus Error and Address
+Error" long format):
+    +0  Status register
+    +2  PC (long) -- the faulted instruction, or the next one on a prefetch
+    +6  Format/vector word: 1000 | vector offset (0x8008 bus error,
+        0x800C address error)
+    +8  Special Status Word: RR, IF, DF, RM, HB, BY, RW, FC
+    +10 Fault address (long)
+    +14 unused/reserved
+    +16 Data output buffer
+    +18 unused/reserved
+    +20 Data input buffer
+    +22 unused/reserved
+    +24 Instruction input buffer
+    +26 Internal information, 16 words (shown raw; RTE needs them intact)
 """
 
 import argparse
@@ -74,6 +90,9 @@ def decode_sr(sr):
 
 
 DEFAULT_NM_CANDIDATES = [
+    # The project's container wrapper (firmware/m68k-nm) first: the unpacked
+    # toolchain under firmware/m68k-unknown-elf/ is a Linux binary.
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "m68k-nm"),
     "m68k-unknown-elf-nm",
     "nm",
     "llvm-nm",
@@ -156,36 +175,47 @@ LINE_RE = re.compile(
     r"""
     ^\s*
     (?:(?P<addr>[0-9A-Fa-f]+)\s*:\s*)?
-    (?P<w0>[0-9A-Fa-f]{1,4})\s+
-    (?P<w1>[0-9A-Fa-f]{1,4})\s+
-    (?P<w2>[0-9A-Fa-f]{1,4})\s+
-    (?P<w3>[0-9A-Fa-f]{1,4})\s+
-    (?P<w4>[0-9A-Fa-f]{1,4})\s+
-    (?P<w5>[0-9A-Fa-f]{1,4})\s+
-    (?P<w6>[0-9A-Fa-f]{1,4})
+    (?P<words>[0-9A-Fa-f]{1,4}(?:\s+[0-9A-Fa-f]{1,4})*)
     \s*$
     """,
     re.VERBOSE,
 )
 
+HEADER_RE = re.compile(r"^\s*\*\*\*.*\((?P<cpu>68000|68010)\)")
 
-def decode_frame(line, syms=None):
-    m = LINE_RE.match(line)
-    if not m:
-        raise ValueError(f"Could not parse stack frame line: {line!r}")
-    words = [int(m.group(f"w{i}"), 16) for i in range(7)]
+FRAME_WORDS = {"68000": 7, "68010": 29}
+
+
+def decode_ssw_68010(ssw):
+    bits = [
+        (15, "RR", "rerun (software must rerun the cycle)"),
+        (13, "IF", "instruction fetch to the instruction input buffer"),
+        (12, "DF", "data fetch to the data input buffer"),
+        (11, "RM", "read-modify-write cycle"),
+        (10, "HB", "high byte transfer"),
+        (9,  "BY", "byte transfer"),
+    ]
+    lines = []
+    for bit, name, what in bits:
+        v = (ssw >> bit) & 1
+        lines.append(f"    {name} bit ({bit:2d}) = {v}  ({what})")
+    rw = (ssw >> 8) & 1
+    lines.append(f"    RW bit ( 8) = {rw}  ({'read' if rw else 'write'})")
+    fc = ssw & 0b111
+    lines.append(f"    FC  (2..0)  = {fc:03b}  ({FC_NAMES.get(fc, '?')})")
+    unused = ssw & 0b0100_0000_1111_1000
+    if unused:
+        lines.append(f"    (reserved bits set: 0x{unused:04X})")
+    return lines
+
+
+def decode_frame_68000(words, frame_addr, syms):
     ssw = words[0]
     access_addr = (words[1] << 16) | words[2]
     ir = words[3]
     sr = words[4]
     pc = (words[5] << 16) | words[6]
-    frame_addr = int(m.group("addr"), 16) if m.group("addr") else None
-
-    out = []
-    if frame_addr is not None:
-        out.append(f"Stack frame at 0x{frame_addr:08X}:")
-    else:
-        out.append("Stack frame:")
+    out = ["68000 bus/address error frame" + (f" at 0x{frame_addr:08X}:" if frame_addr is not None else ":")]
     out.append(f"  +0  SSW = 0x{ssw:04X}")
     out.extend(decode_ssw(ssw))
     out.append(f"  +2  Access address = 0x{access_addr:08X}{fmt_sym(syms, access_addr)}")
@@ -193,17 +223,74 @@ def decode_frame(line, syms=None):
     out.append(f"  +8  SR = 0x{sr:04X}")
     out.extend(decode_sr(sr))
     out.append(f"  +10 PC  = 0x{pc:08X}{fmt_sym(syms, pc)}")
-    out.append(f"          (approximate; may be a few words past the faulting instruction)")
+    out.append("          (approximate; may be a few words past the faulting instruction)")
+    return out
+
+
+def decode_frame_68010(words, frame_addr, syms):
+    sr = words[0]
+    pc = (words[1] << 16) | words[2]
+    fmt = words[3]
+    ssw = words[4]
+    fault = (words[5] << 16) | words[6]
+    dout = words[8]
+    din = words[10]
+    iin = words[12]
+    internal = words[13:29]
+    out = ["68010 format $8 frame" + (f" at 0x{frame_addr:08X}:" if frame_addr is not None else ":")]
+    out.append(f"  +0  SR = 0x{sr:04X}")
+    out.extend(decode_sr(sr))
+    out.append(f"  +2  PC  = 0x{pc:08X}{fmt_sym(syms, pc)}")
+    fmt_code = fmt >> 12
+    vec_off = fmt & 0x0FFF
+    kind = {0x008: "bus error (vector 2)", 0x00C: "address error (vector 3)"}.get(vec_off, "?")
+    out.append(f"  +6  Format/vector = 0x{fmt:04X}  (format {fmt_code:X}, vector offset 0x{vec_off:03X}: {kind})")
+    if fmt_code != 8:
+        out.append("      WARNING: not format $8; this is not a 68010 bus/address error frame")
+    out.append(f"  +8  SSW = 0x{ssw:04X}")
+    out.extend(decode_ssw_68010(ssw))
+    out.append(f"  +10 Fault address = 0x{fault:08X}{fmt_sym(syms, fault)}")
+    out.append(f"  +16 Data output buffer       = 0x{dout:04X}")
+    out.append(f"  +20 Data input buffer        = 0x{din:04X}")
+    out.append(f"  +24 Instruction input buffer = 0x{iin:04X}")
+    out.append("  +26 Internal: " + " ".join(f"{w:04X}" for w in internal))
+    return out
+
+
+def decode_frame(line, syms=None, cpu="auto", header_cpu=None):
+    m = LINE_RE.match(line)
+    if not m:
+        raise ValueError(f"Could not parse stack frame line: {line!r}")
+    words = [int(w, 16) for w in m.group("words").split()]
+    frame_addr = int(m.group("addr"), 16) if m.group("addr") else None
+
+    if cpu == "auto":
+        by_count = {v: k for k, v in FRAME_WORDS.items()}.get(len(words))
+        if by_count is None:
+            raise ValueError(f"{len(words)} words: expected 7 (68000) or 29 (68010); pass --cpu to force")
+        cpu = by_count
+        if header_cpu and header_cpu != cpu:
+            raise ValueError(f"header says {header_cpu} but the frame has {len(words)} words ({cpu})")
+    elif len(words) < FRAME_WORDS[cpu]:
+        raise ValueError(f"{cpu} frame needs {FRAME_WORDS[cpu]} words, got {len(words)}")
+
+    if cpu == "68000":
+        out = decode_frame_68000(words, frame_addr, syms)
+    else:
+        out = decode_frame_68010(words, frame_addr, syms)
     return "\n".join(out)
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description="Decode 68000 bus/address error stack frames.")
-    ap.add_argument("--elf", help="ELF file; nearest symbol will be printed for access addr and PC.")
+    ap = argparse.ArgumentParser(description="Decode 68000/68010 bus and address error stack frames.")
+    ap.add_argument("--elf", help="ELF file; nearest symbol will be printed for the fault address and PC.")
     ap.add_argument("--nm", help="Path to nm binary (default: auto-detect m68k-unknown-elf-nm).")
+    ap.add_argument("--cpu", choices=["auto", "68000", "68010"], default="auto",
+                    help="Frame layout (default: from the word count, 7 or 29).")
     ap.add_argument("frame", nargs="*",
                     help='Stack frame text, e.g. "000FFFAA: 1D75 318A EAA1 1D71 2010 00C0 13B6". '
-                         "If omitted, frames are read from stdin, one per line.")
+                         "If omitted, frames are read from stdin, one per line; the firmware's "
+                         '"*** BUS ERROR *** (680x0)" header lines may be included.')
     args = ap.parse_args(argv[1:])
 
     syms = None
@@ -212,7 +299,12 @@ def main(argv):
         if nm is None:
             print("error: could not find nm; pass --nm PATH", file=sys.stderr)
             return 2
-        syms = load_symbols(args.elf, nm)
+        try:
+            syms = load_symbols(args.elf, nm)
+        except RuntimeError as e:
+            # The container wrapper sees paths relative to firmware/.
+            print(f"error: {e}", file=sys.stderr)
+            return 2
 
     if args.frame:
         lines = [" ".join(args.frame)]
@@ -220,15 +312,23 @@ def main(argv):
         lines = [ln for ln in sys.stdin if ln.strip() and not ln.lstrip().startswith("#")]
 
     first = True
+    header_cpu = None
+    status = 0
     for ln in lines:
+        h = HEADER_RE.match(ln)
+        if h:
+            header_cpu = h.group("cpu")
+            continue
         if not first:
             print()
         first = False
         try:
-            print(decode_frame(ln, syms))
+            print(decode_frame(ln, syms, args.cpu, header_cpu))
         except ValueError as e:
             print(f"error: {e}", file=sys.stderr)
-    return 0
+            status = 1
+        header_cpu = None
+    return status
 
 
 if __name__ == "__main__":

@@ -145,12 +145,14 @@ $defs:
       dtack:
         $ref: "#/$defs/dtack"
 
-      berr_timeout:
+      berr_timeout_clocks:
         type: integer
-        minimum: 1
+        minimum: 2
+        maximum: 15
         description: >
-          BERR timeout in CPU clock cycles. If DTACK is not asserted
-          within this many cycles, GLUE asserts BERR.
+          GLUE only: the one bus-error timeout for every region, in SYSCLK
+          rising edges after ~AS asserts with no DTACK (FC != 111 cycles).
+          codegen clamps every fixed DTACK threshold below it.
 
       clock:
         $ref: "#/$defs/clock"

@@ -283,6 +283,22 @@ mark_stack:
     move.l  #0x55555555, (%a0)+
     dbra    %d0, mark_stack
 
+    /* CPU probe: a 68010 executes MOVEC, a 68000 takes the illegal-instruction
+       exception (vector 4) on it.  It needs the RAM vector table and a
+       working stack, both proven above, and runs before anything else can
+       fault, so _exc_bus_error knows which frame layout it is looking at.
+       The MOVEC writes VBR's reset value, 0, so on a 68010 it changes
+       nothing; it is emitted as .word because the toolchain targets the
+       68000.  The stub runs only on a 68000, so it may assume that chip's
+       3-word frame.  Vector 4 is borrowed and restored around the probe. */
+    move.b  #1, cpu_is_68010
+    move.l  0x10, %d1                   | RAM vector 4
+    move.l  #cpu_probe_illegal, 0x10
+    moveq   #0, %d0
+    .word   0x4E7B, 0x0801              | movec %d0,%vbr
+cpu_probe_resume:
+    move.l  %d1, 0x10
+
     /* initialize tick counter */
     lea     tick_counter, %a0
     move.l  #0, (%a0)
@@ -414,149 +430,23 @@ duart_blink_forever:
     .equ EXC_MED_OUTER,  SYSCLK_HZ / 10 / (EXC_INNER * 16) - 1
     .equ EXC_SLOW_OUTER, SYSCLK_HZ / 4  / (EXC_INNER * 16) - 1
 
+| Bus Error and Address Error — dump the frame, then blink.
+|
+| Both print "*** X ERROR *** (68010|68000)" and then one line
+| "SSSSSSSS: W0 W1 ... Wn": the SP at entry and the raw frame words, 7 on a
+| 68000 (SSW, fault address, IR, SR, PC) and 29 on a 68010 (format $8: SR,
+| PC, format/vector word 0x8008 or 0x800C, SSW, fault address, the three
+| buffers, 16 words of internal state).  firmware/decode_buserr.py decodes
+| either.  The CPU was probed at boot (cpu_is_68010, in _start).  The frame
+| push already succeeded, so RAM works, but the printers stay stack-free by
+| convention.
+|
 | Bus Error — ~20 Hz toggle (~25ms half-period)
 _exc_bus_error:
+    move.l  %sp, %a4
     lea     msg_bus_error, %a1
-    lea     .bussp(%pc), %a6
-    jmp     duart_puts
-
-.bussp:
-| print sp first
-    move.l  %sp, %d0
-    lsr.l     #8, %d0
-    lsr.l     #8, %d0
-    lsr.l     #8, %d0
-    lea     .bussp3(%pc), %a6
-    jmp     duart_hex8
-.bussp3:
-    move.l %sp, %d0
-    lsr.l    #8, %d0
-    lsr.l    #8, %d0
-    lea     .bussp2(%pc), %a6
-    jmp     duart_hex8
-.bussp2:
-    move.l %sp, %d0
-    lsr.l    #8, %d0
-    lea     .bussp1(%pc), %a6
-    jmp     duart_hex8
-.bussp1:
-    move.l %sp, %d0
-    lea     .bussp0(%pc), %a6
-    jmp     duart_hex8
-.bussp0:
-    move.b  #':', %d0
-    lea     .busspcolon(%pc), %a5
-    jmp     duart_putchar_raw
-.busspcolon:
-    move.b  #' ', %d0
-    lea     .busspspace(%pc), %a5
-    jmp     duart_putchar_raw
-.busspspace:
-
-.exc_bus_dump:
-    | Stack frame layout (14 bytes):
-    |   0(sp): status word
-    |   2(sp): access address (long)
-    |   6(sp): instruction register
-    |   8(sp): SR
-    |  10(sp): PC (long)
-
-    | Word 0 — status word
-    move.b  0(%sp), %d0
-    lea     .busw0lo(%pc), %a6
-    jmp     duart_hex8
-.busw0lo:
-    move.b  1(%sp), %d0
-    lea     .busw0sp(%pc), %a6
-    jmp     duart_hex8
-.busw0sp:
-    move.b  #' ', %d0
-    lea     .busw1hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 1 — access address high
-.busw1hi:
-    move.b  2(%sp), %d0
-    lea     .busw1lo(%pc), %a6
-    jmp     duart_hex8
-.busw1lo:
-    move.b  3(%sp), %d0
-    lea     .busw1sp(%pc), %a6
-    jmp     duart_hex8
-.busw1sp:
-    move.b  #' ', %d0
-    lea     .busw2hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 2 — access address low
-.busw2hi:
-    move.b  4(%sp), %d0
-    lea     .busw2lo(%pc), %a6
-    jmp     duart_hex8
-.busw2lo:
-    move.b  5(%sp), %d0
-    lea     .busw2sp(%pc), %a6
-    jmp     duart_hex8
-.busw2sp:
-    move.b  #' ', %d0
-    lea     .busw3hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 3 — instruction register
-.busw3hi:
-    move.b  6(%sp), %d0
-    lea     .busw3lo(%pc), %a6
-    jmp     duart_hex8
-.busw3lo:
-    move.b  7(%sp), %d0
-    lea     .busw3sp(%pc), %a6
-    jmp     duart_hex8
-.busw3sp:
-    move.b  #' ', %d0
-    lea     .busw4hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 4 — SR
-.busw4hi:
-    move.b  8(%sp), %d0
-    lea     .busw4lo(%pc), %a6
-    jmp     duart_hex8
-.busw4lo:
-    move.b  9(%sp), %d0
-    lea     .busw4sp(%pc), %a6
-    jmp     duart_hex8
-.busw4sp:
-    move.b  #' ', %d0
-    lea     .busw5hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 5 — PC high
-.busw5hi:
-    move.b  10(%sp), %d0
-    lea     .busw5lo(%pc), %a6
-    jmp     duart_hex8
-.busw5lo:
-    move.b  11(%sp), %d0
-    lea     .busw5sp(%pc), %a6
-    jmp     duart_hex8
-.busw5sp:
-    move.b  #' ', %d0
-    lea     .busw6hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 6 — PC low
-.busw6hi:
-    move.b  12(%sp), %d0
-    lea     .busw6lo(%pc), %a6
-    jmp     duart_hex8
-.busw6lo:
-    move.b  13(%sp), %d0
-    lea     .busw6nl(%pc), %a6
-    jmp     duart_hex8
-.busw6nl:
-    move.b  #'\n', %d0
-    lea     .exc_bus_blink(%pc), %a5
-    jmp     duart_putchar_raw
+    lea     .exc_bus_blink(%pc), %a3
+    bra     exc_dump_frame
 .exc_bus_blink:
     moveq   #0, %d7
 .bus_err_loop:
@@ -570,149 +460,11 @@ _exc_bus_error:
     bra     .bus_err_loop
 
 | Address Error — ~5 Hz toggle (~100ms half-period)
-| Address Error — dump frame, then ~5 Hz toggle (~100ms half-period)
 _exc_address_error:
+    move.l  %sp, %a4
     lea     msg_addr_error, %a1
-    lea     .exc_addr_dump(%pc), %a6
-    jmp     duart_puts
-
-.exc_addr_dump:
-    | Stack frame layout (14 bytes):
-    |   0(sp): status word
-    |   2(sp): access address (long)
-    |   6(sp): instruction register
-    |   8(sp): SR
-    |  10(sp): PC (long)
-
-| print sp first
-    move.l %sp, %d0
-    lsr.l    #8, %d0
-    lsr.l    #8, %d0
-    lsr.l    #8, %d0
-    lea     .addrsp3(%pc), %a6
-    jmp     duart_hex8
-.addrsp3:
-    move.l %sp, %d0
-    lsr.l    #8, %d0
-    lsr.l    #8, %d0
-    lea     .addrsp2(%pc), %a6
-    jmp     duart_hex8
-.addrsp2:
-    move.l %sp, %d0
-    lsr.l    #8, %d0
-    lea     .addrsp1(%pc), %a6
-    jmp     duart_hex8
-.addrsp1:
-    move.l %sp, %d0
-    lea     .addrsp0(%pc), %a6
-    jmp     duart_hex8
-.addrsp0:
-    move.b  #':', %d0
-    lea     .addrspcolon(%pc), %a5
-    jmp     duart_putchar_raw
-.addrspcolon:
-    move.b  #' ', %d0
-    lea     .addrspspace(%pc), %a5
-    jmp     duart_putchar_raw
-.addrspspace:
-
-    | Word 0 — status word
-    move.b  0(%sp), %d0
-    lea     .w0lo(%pc), %a6
-    jmp     duart_hex8
-.w0lo:
-    move.b  1(%sp), %d0
-    lea     .w0sp(%pc), %a6
-    jmp     duart_hex8
-.w0sp:
-    move.b  #' ', %d0
-    lea     .w1hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 1 — access address high
-.w1hi:
-    move.b  2(%sp), %d0
-    lea     .w1lo(%pc), %a6
-    jmp     duart_hex8
-.w1lo:
-    move.b  3(%sp), %d0
-    lea     .w1sp(%pc), %a6
-    jmp     duart_hex8
-.w1sp:
-    move.b  #' ', %d0
-    lea     .w2hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 2 — access address low
-.w2hi:
-    move.b  4(%sp), %d0
-    lea     .w2lo(%pc), %a6
-    jmp     duart_hex8
-.w2lo:
-    move.b  5(%sp), %d0
-    lea     .w2sp(%pc), %a6
-    jmp     duart_hex8
-.w2sp:
-    move.b  #' ', %d0
-    lea     .w3hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 3 — instruction register
-.w3hi:
-    move.b  6(%sp), %d0
-    lea     .w3lo(%pc), %a6
-    jmp     duart_hex8
-.w3lo:
-    move.b  7(%sp), %d0
-    lea     .w3sp(%pc), %a6
-    jmp     duart_hex8
-.w3sp:
-    move.b  #' ', %d0
-    lea     .w4hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 4 — SR
-.w4hi:
-    move.b  8(%sp), %d0
-    lea     .w4lo(%pc), %a6
-    jmp     duart_hex8
-.w4lo:
-    move.b  9(%sp), %d0
-    lea     .w4sp(%pc), %a6
-    jmp     duart_hex8
-.w4sp:
-    move.b  #' ', %d0
-    lea     .w5hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 5 — PC high
-.w5hi:
-    move.b  10(%sp), %d0
-    lea     .w5lo(%pc), %a6
-    jmp     duart_hex8
-.w5lo:
-    move.b  11(%sp), %d0
-    lea     .w5sp(%pc), %a6
-    jmp     duart_hex8
-.w5sp:
-    move.b  #' ', %d0
-    lea     .w6hi(%pc), %a5
-    jmp     duart_putchar_raw
-
-    | Word 6 — PC low
-.w6hi:
-    move.b  12(%sp), %d0
-    lea     .w6lo(%pc), %a6
-    jmp     duart_hex8
-.w6lo:
-    move.b  13(%sp), %d0
-    lea     .w6nl(%pc), %a6
-    jmp     duart_hex8
-.w6nl:
-    move.b  #'\n', %d0
-    lea     .exc_addr_blink(%pc), %a5
-    jmp     duart_putchar_raw
-
+    lea     .exc_addr_blink(%pc), %a3
+    bra     exc_dump_frame
 .exc_addr_blink:
     moveq   #0, %d7
 .addr_err_loop:
@@ -724,6 +476,61 @@ _exc_address_error:
     dbra    %d0, .
     dbra    %d1, .addr_err_delay
     bra     .addr_err_loop
+
+| exc_dump_frame: print (%a1), the CPU tag, then the frame at (%a4) as
+| "SSSSSSSS: W0 ... Wn\n".  Return via jmp (%a3).
+| Clobbers d0-d4, d6, a1, a4, a5, a6.
+exc_dump_frame:
+    lea     .edf_cpu(%pc), %a6
+    jmp     duart_puts
+.edf_cpu:
+    lea     msg_cpu_68010, %a1
+    moveq   #29, %d2                    | format $8 frame: 29 words
+    tst.b   cpu_is_68010
+    bne.s   .edf_cpu_puts
+    lea     msg_cpu_68000, %a1
+    moveq   #7, %d2                     | 68000 bus/address error frame: 7 words
+.edf_cpu_puts:
+    lea     .edf_sp(%pc), %a6
+    jmp     duart_puts
+.edf_sp:
+    move.l  %a4, %d4
+    moveq   #3, %d3
+.edf_sp_loop:
+    rol.l   #8, %d4                     | next byte, most significant first
+    move.b  %d4, %d0
+    lea     .edf_sp_next(%pc), %a6
+    jmp     duart_hex8
+.edf_sp_next:
+    dbra    %d3, .edf_sp_loop
+    move.b  #':', %d0
+    lea     .edf_words(%pc), %a5
+    jmp     duart_putchar_raw
+.edf_words:
+    move.b  #' ', %d0
+    lea     .edf_w_hi(%pc), %a5
+    jmp     duart_putchar_raw
+.edf_w_hi:
+    move.b  (%a4)+, %d0
+    lea     .edf_w_lo(%pc), %a6
+    jmp     duart_hex8
+.edf_w_lo:
+    move.b  (%a4)+, %d0
+    lea     .edf_w_next(%pc), %a6
+    jmp     duart_hex8
+.edf_w_next:
+    subq.w  #1, %d2
+    bne.s   .edf_words
+    move.b  #'\n', %d0
+    move.l  %a3, %a5
+    jmp     duart_putchar_raw
+
+| cpu_probe_illegal: vector 4 during the boot CPU probe (see _start).  Only a
+| 68000 gets here, so the frame is SR at 0(sp), PC at 2(sp).
+cpu_probe_illegal:
+    clr.b   cpu_is_68010
+    move.l  #cpu_probe_resume, 2(%sp)   | resume past the MOVEC
+    rte
 
 | Illegal Instruction — ~2 Hz toggle (~250ms half-period)
 _exc_illegal_insn:
@@ -1340,9 +1147,13 @@ msg_exp:
 msg_got:
     .string " got="
 msg_bus_error:
-    .string "*** BUS ERROR ***\n"
+    .string "*** BUS ERROR ***"
 msg_addr_error:
-    .string "*** ADDRESS ERROR ***\n"
+    .string "*** ADDRESS ERROR ***"
+msg_cpu_68000:
+    .string " (68000)\n"
+msg_cpu_68010:
+    .string " (68010)\n"
 msg_illegal_insn:
     .string "*** ILLEGAL INSN ***\n"
 memory_fixed:
@@ -1358,6 +1169,12 @@ glue_config_shadow:
     .global memory_size
 memory_size:
     .skip 4
+
+    | 1 when the boot probe found a 68010 (MOVEC executed), 0 on a 68000.
+    .global cpu_is_68010
+cpu_is_68010:
+    .skip 1
+    .align 2
 
     .equ EVT_QUEUE_SIZE, 256     | must be power of 2
 

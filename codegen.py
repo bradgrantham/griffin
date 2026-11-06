@@ -73,14 +73,20 @@ def get_dtack_ws(periph, sysclk_hz):
     return None
 
 
-def dtack_threshold(ws):
-    """Convert wait states to Verilog ws_cnt threshold, clamped to 14 (BERR at 15)."""
-    return min(2 + 2 * ws, 14)
+def berr_timeout_clocks(hw):
+    """GLUE's bus-error timeout in SYSCLK edges (griffin.yml GLUE berr_timeout_clocks).
+    One value for the whole bus; it bounds every DTACK threshold."""
+    return parse_int(hw['peripherals']['GLUE']['berr_timeout_clocks'])
 
 
-def dtack_penalty(ws):
+def dtack_threshold(ws, berr):
+    """Convert wait states to Verilog ws_cnt threshold, clamped below the BERR edge."""
+    return min(2 + 2 * ws, berr - 1)
+
+
+def dtack_penalty(ws, berr):
     """Convert wait states to emulator extra-cycle penalty (threshold minus baseline)."""
-    return dtack_threshold(ws) - 2
+    return dtack_threshold(ws, berr) - 2
 
 
 def reg_default(reg):
@@ -160,6 +166,7 @@ def write_c_header(hw: dict, path: Path) -> None:
     proj = hw['project']
     perifs = hw.get('peripherals', {})
     consts = hw.get('constants', {})
+    berr   = berr_timeout_clocks(hw)
 
     lines = []
     w = lines.append
@@ -217,6 +224,10 @@ def write_c_header(hw: dict, path: Path) -> None:
         if intr and isinstance(intr, dict) and 'level' in intr:
             w(f"static constexpr uint32_t {pname}_IRQ_LEVEL = {intr['level']}U;")
 
+        # Bus-error timeout (GLUE)
+        if 'berr_timeout_clocks' in periph:
+            w(f"static constexpr int {pname}_BERR_TIMEOUT_CLOCKS = {parse_int(periph['berr_timeout_clocks'])};  // SYSCLK edges after ~AS with no DTACK")
+
         # Peripheral clock
         clk = periph.get('clock')
         if clk is not None:
@@ -233,8 +244,8 @@ def write_c_header(hw: dict, path: Path) -> None:
         # DTACK wait-state constants (for peripherals with fixed wait states)
         ws = get_dtack_ws(periph, proj['clock_hz'])
         if ws is not None:
-            thresh = dtack_threshold(ws)
-            pen = dtack_penalty(ws)
+            thresh = dtack_threshold(ws, berr)
+            pen = dtack_penalty(ws, berr)
             w(f"static constexpr int {pname}_DTACK_WS = {ws};  // wait states at {proj['clock_hz']} Hz")
             w(f"static constexpr int {pname}_DTACK_THRESHOLD = {thresh};  // ws_cnt threshold for Verilog")
             w(f"static constexpr int {pname}_DTACK_PENALTY = {pen};  // extra SYSCLK cycles for emulator")
@@ -360,6 +371,9 @@ def write_asm_include(hw: dict, path: Path) -> None:
         intr = periph.get('interrupt')
         if intr and isinstance(intr, dict) and 'level' in intr:
             w(f".equ {pname}_IRQ_LEVEL, {intr['level']}")
+
+        if 'berr_timeout_clocks' in periph:
+            w(f".equ {pname}_BERR_TIMEOUT_CLOCKS, {parse_int(periph['berr_timeout_clocks'])}")
 
         # Peripheral clock
         clk = periph.get('clock')
@@ -490,6 +504,7 @@ def write_verilog_include(hw: dict, path: Path) -> None:
     proj   = hw['project']
     perifs = hw.get('peripherals', {})
     consts = hw.get('constants', {})
+    berr   = berr_timeout_clocks(hw)
 
     lines = []
     w = lines.append
@@ -521,6 +536,11 @@ def write_verilog_include(hw: dict, path: Path) -> None:
         if intr and isinstance(intr, dict) and 'level' in intr:
             w(f"`define {pname}_IRQ_LEVEL {intr['level']}")
 
+        # Bus-error timeout, sized to the ws_cnt width
+        if 'berr_timeout_clocks' in periph:
+            v = parse_int(periph['berr_timeout_clocks'])
+            w(f"`define {pname}_BERR_TIMEOUT_CLOCKS {v.bit_length()}'d{v}  // SYSCLK edges after ~AS with no DTACK")
+
         # Peripheral clock
         clk = periph.get('clock')
         if clk is not None:
@@ -536,7 +556,7 @@ def write_verilog_include(hw: dict, path: Path) -> None:
         # DTACK wait-state threshold (for peripherals with fixed wait states)
         ws = get_dtack_ws(periph, proj['clock_hz'])
         if ws is not None:
-            thresh = dtack_threshold(ws)
+            thresh = dtack_threshold(ws, berr)
             w(f"`define {pname}_DTACK_THRESHOLD 4'd{thresh}  // {ws} WS at {proj['clock_hz']} Hz")
 
         for reg in periph.get('registers', []):

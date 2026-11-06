@@ -25,6 +25,7 @@ static constexpr uint32_t GLUE_BASE = 0xF00000UL;
 static constexpr uint32_t GLUE_SIZE = 0x040000UL;
 inline constexpr MemoryRange GLUE(0xF00000UL, 0x040000UL);
 static constexpr uint32_t GLUE_IRQ_LEVEL = 4U;
+static constexpr int GLUE_BERR_TIMEOUT_CLOCKS = 15;  // SYSCLK edges after ~AS with no DTACK
 static constexpr int GLUE_DTACK_WS = 0;  // wait states at 14000000 Hz
 static constexpr int GLUE_DTACK_THRESHOLD = 2;  // ws_cnt threshold for Verilog
 static constexpr int GLUE_DTACK_PENALTY = 0;  // extra SYSCLK cycles for emulator

@@ -3779,6 +3779,56 @@ public:
         fflush(stderr);
     }
 
+    // Nothing DTACKs 0x400000-0x7FFFFF, 0xC00000-0xCFFFFF or 0xE00000-0xEFFFFF
+    // (griffin.yml address map; glue.v header item 3).
+    static bool is_undecoded(uint32_t addr)
+    {
+        const bool ram    = addr < RAM_TOTAL_SIZE;
+        const bool rom    = addr >= ROM_BASE && addr < ROM_BASE + ROM_WINDOW;
+        const bool engine = addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE;
+        const bool io     = addr >= IO_BASE && addr < IO_BASE + IO_SIZE;
+        return !(ram || rom || engine || io);
+    }
+
+    // Bus error by GLUE's one timeout (griffin.yml GLUE berr_timeout_clocks):
+    // an undecoded access gets ~BERR at the GLUE_BERR_TIMEOUT_CLOCKS-th SYSCLK
+    // edge after ~AS and the CPU takes vector 2.  Moira has already charged
+    // the zero-wait-state bus cycle, so the extra follows the DTACK_PENALTY
+    // convention (threshold - 2).  The frame flags set the 68010 SSW: DF
+    // always, RW for a read; IF is never set because the callback cannot tell
+    // a prefetch from a data read.  A bus error while Moira is stacking an
+    // exception frame escapes processException and the run loop treats it as
+    // the chip's double bus fault.
+    [[noreturn]] void bus_error(uint32_t addr, bool write) const
+    {
+        auto *self = const_cast<GriffinEmulator*>(this);
+        if (debug & DEBUG_BUS) { printf("bus error at %06X\n", addr); }
+        self->sync(GLUE_BERR_TIMEOUT_CLOCKS - 2);
+        // What Moira's makeFrame builds (MoiraDataflow_cpp.h), spelled out
+        // because that template's instantiations live inside Moira.cpp.
+        const uint8_t fc = readFC();
+        moira::StackFrame f{};
+        f.code = static_cast<uint16_t>((getIRD() & 0xFFE0) | fc | (write ? 0 : 0x10));
+        f.addr = addr;
+        f.ird  = getIRD();
+        f.sr   = getSR();
+        f.pc   = getPC();
+        f.fc   = fc;
+        f.ssw  = static_cast<uint16_t>(fc | (write ? 0 : (1 << 8)) | (1 << 12));   // 68010 RW, DF
+        throw moira::BusError(f);
+    }
+
+    // The disassembler (dump_cpu_state) must not take a bus error.
+    uint16_t read16Dasm(uint32_t addr) const override
+    {
+        return is_undecoded(addr) ? 0xFFFF : read16(addr);
+    }
+
+    void cpuDidHalt() override
+    {
+        dump_cpu_state("double bus fault: CPU halted");
+    }
+
     uint8_t read8(uint32_t addr) const override
     {
         apply_wait_states(addr);
@@ -3794,8 +3844,7 @@ public:
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read8(addr - IO_BASE);
         } else {
-            fprintf(stderr, "read of uint8_t at unhandled %06X\n", addr);
-            dump_cpu_state("unhandled read8"); abort();
+            bus_error(addr, false);
         }
     }
 
@@ -3816,8 +3865,7 @@ public:
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             return IO_read16(addr - IO_BASE);
         } else {
-            fprintf(stderr, "read of uint16_t at unhandled %06X\n", addr);
-            dump_cpu_state("unhandled read16"); abort();
+            bus_error(addr, false);
         }
     }
 
@@ -3834,8 +3882,7 @@ public:
         } else if (addr >= ENGINE_BASE && addr < ENGINE_BASE + ENGINE_SIZE) {
             const_cast<GriffinEmulator*>(this)->engine_write8(addr, val);
         } else {
-            fprintf(stderr, "write of uint8_t %02X to unhandled %06X\n", val, addr);
-            dump_cpu_state("unhandled write8"); abort();
+            bus_error(addr, true);
         }
     }
 
@@ -3865,8 +3912,7 @@ public:
         } else if (addr >= IO_BASE && addr < (IO_BASE + IO_SIZE)) {
             IO_write16(addr - IO_BASE, val);
         } else {
-            fprintf(stderr, "write of uint16_t %04X to unhandled %06X\n", val, addr);
-            dump_cpu_state("unhandled write16"); abort();
+            bus_error(addr, true);
         }
     }
 
@@ -5482,7 +5528,22 @@ int main(int argc, const char** argv)
         }
         const uint32_t profile_pc = emulator.getPC();
         const uint64_t profile_before = emulator.getClock();
-        emulator.execute();
+        try
+        {
+            emulator.execute();
+        }
+        catch (const std::exception &)
+        {
+            // Moira converts a misaligned SP into DoubleFault and halts; a bus
+            // error raised while it stacks an exception frame escapes instead.
+            // Both are the chip's double bus fault, which stops the CPU.
+            emulator.dump_cpu_state("double bus fault: bus error while stacking an exception frame");
+            running = false;
+        }
+        if (emulator.isHalted())
+        {
+            running = false;
+        }
         emulator.service_video();
         if (!emulator.profile_hist.empty())
         {

@@ -182,7 +182,7 @@ Three oscillators; no CPLD re-drives a clock.
 
 ## CPU
 
-MC68010 at 14 MHz, zero wait states to RAM; a 68000 is a drop-in.  64-pin DIP.
+MC68010 at 14 MHz, zero wait states to RAM; a 68000 is a drop-in.  64-pin DIP.  The firmware does not care which: after the RAM test it executes a MOVEC (VBR <- 0) with vector 4 borrowed, and a 68000 traps on it; `cpu_is_68010` then selects the 7-word or the 29-word (format $8) frame layout in the bus/address error dump, and the banner says which chip booted.
 
 * Redo board to slot in a 68030 at some later date if desired — that is Rev 4
 
@@ -322,7 +322,7 @@ The PS/2 mouse gets its own CPLD, PORTS, together with the joysticks and the pad
 
 ## Audio
 
-Stereo 8-bit, four DMA-fed sample channels The chip is `cpld/audio/audio.v` (ATF1508AS, 120/128); its executable spec is `audio/audio_chip.h`; the 68000-side policy is `audio/scheduler.h`; the SN76489 port recipe is `audio/psg_channels.h`.
+Stereo 8-bit, four DMA-fed sample channels. The chip is `cpld/audio/audio.v` (ATF1508AS, 120/128); its executable spec is `audio/audio_chip.h`; the 68000-side policy is `audio/scheduler.h`; the SN76489 port recipe is `audio/psg_channels.h`.
 
 * **What it is:** five byte-wide 7200 FIFOs and one CPLD.  An ENGINE descriptor names one of them as its destination and deposits one byte per word: channels 0 and 1 (left) read the high byte, channels 2 and 3 (right) and the control FIFO the low byte, so an interleaved stereo buffer (L,R byte pairs, as an 8-bit WAV data chunk) streams to a left and a right channel as two descriptors over the same words, and a mono table carries its sample in both bytes so it can go to any channel.  Each channel FIFO's Q pins drive that channel's own R-2R ladder directly; the CPLD holds /R low and pulses it at the channel's rate, 1,573,437.5 / (PERIOD + 1) Hz (PERIOD 99 = the 15,734 Hz tick; 6.15 to 121 kHz), its by-16 divider re-phased by PIXEL's HBLANK every line so steps sit at fixed raster positions.  The FIFO is the wavetable reader and the display list is the loop hardware: pitch = rate / table length, and the 68000 prepares tables of assorted lengths at load time.
 * **Volume** is duty cycle: a 74HC4066 switch between each ladder and its side's summing node closes for VOLUME/64 of every 512-clock frame (49 kHz), as a binary rate multiplier so a gate is six product terms, not a comparator.  Off while the FIFO is empty (underrun is silence, not a DC step).  Channels 0,1 left, 2,3 right; the speaker sums both sides.

@@ -601,7 +601,7 @@ module glue (
     always @(posedge SYSCLK or posedge nAS) begin
         if (nAS)
             ws_cnt <= 4'd0;
-        else if (ws_cnt != 4'd15)
+        else if (ws_cnt != `GLUE_BERR_TIMEOUT_CLOCKS)
             ws_cnt <= ws_cnt + 4'd1;
     end
 
@@ -634,7 +634,9 @@ module glue (
 
     assign nDTACK = ~dtack_comb;
 
-    assign nBERR = ~(ws_cnt == 4'd15 & ~dtack_comb & ~iack_cycle);
+    // The timeout is griffin.yml's GLUE berr_timeout_clocks, one for every
+    // region; codegen clamps the fixed DTACK thresholds below it.
+    assign nBERR = ~(ws_cnt == `GLUE_BERR_TIMEOUT_CLOCKS & ~dtack_comb & ~iack_cycle);
 
 
 endmodule

@@ -3092,3 +3092,66 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   "OP4..OP7 unconnected / float" comments now say the pins reach PIXEL's
   reserved pins with no logic behind them, matching the schematic and the
   issues entry.
+
+2026-11-06 -- BERR timeout is one GLUE-wide fact: griffin.yml GLUE
+  berr_timeout_clocks: 15 (SYSCLK rising edges after ~AS with no DTACK, FC
+  != 111 cycles only).  The DUART `berr_timeout: 256` is deleted: GLUE's
+  4-bit ws_cnt cannot count to 256 and nothing read the field.  codegen
+  emits GLUE_BERR_TIMEOUT_CLOCKS (C++ int, .inc .equ, .vh 4'd15) and clamps
+  every fixed DTACK threshold to berr-1 from it instead of the hard-coded
+  14; glue.v's two `4'd15` (ws_cnt saturate, nBERR) and glue_tb.v's E_BERR
+  take the define.  Generated thresholds unchanged (diff: one added line
+  per file).  glue-sim 74/74 + 8 negative controls; re-fit 120/128 LC, 72
+  FF, 17 foldback, 334 PT, pinout identical; firmware 127268 and emulator
+  rebuild clean.  Not done: the emulator raises no bus error at all on an
+  unmapped access (Moira is fed open bus), so it has no consumer for the
+  count yet.  Empirical note on the DUART under the 15-edge window: the
+  rev-1 console runs through this same lineage, so the 68681 DTACKN lands
+  inside ~1.07 us at 14 MHz; the datasheet margin in X1 periods is not
+  derived here.
+
+2026-11-06 -- OP4..OP7 reset state stated in the yml (DUART entry, PIXEL
+  pointer): the 68681 RESET pin clears OPR, so the four pins come up HIGH
+  (1111) with no firmware action, firmware never sets OPR bits 4..7, and
+  1111 selects today's video_timing now and after PIXEL decodes them.  The
+  issues entry drops the "must remain" clause and points at the fact.
+
+2026-11-06 -- CPU probe, two-layout bus-error dump, emulator bus errors.
+  crt0.s: after the RAM test and stack mark, vector 4 is borrowed and
+  `movec %d0,%vbr` (d0 = 0, emitted as .word 4E7B 0801 since the toolchain
+  targets the 68000) is executed; a 68000 traps to cpu_probe_illegal, which
+  clears cpu_is_68010 and resumes past the MOVEC.  Any exception needs the
+  frame pushed to RAM, so no probe can run earlier than this and nothing
+  before it can be reported through a handler anyway (a dead DUART in the
+  overlay window ends in the GLUE halt blink after the nested bus errors
+  walk the stack off the bottom of RAM).  _exc_bus_error and
+  _exc_address_error share exc_dump_frame: "*** X ERROR *** (680x0)" then
+  "SP: W0..Wn", 7 words on a 68000, 29 on a 68010; the unrolled printers
+  are gone (rom.bin 127268 -> 126860).  decode_buserr.py decodes both,
+  CPU from the word count or --cpu, with the header line as a cross-check;
+  68010 SSW bits RR/IF/DF/RM/HB/BY/RW/FC, format word 0x8008/0x800C.
+  Banner: "CPU: MC68010, Memory: 4096 KB".
+  Emulator: the four "unhandled access -> abort()" branches now raise
+  moira::BusError with a hand-built StackFrame (makeFrame's template
+  instantiations are private to Moira.cpp) after sync(GLUE_BERR_TIMEOUT
+  _CLOCKS - 2), the DTACK_PENALTY convention; SSW gets DF and RW (never
+  IF: the callback cannot tell a prefetch from a data read).  read16Dasm
+  returns 0xFFFF for undecoded addresses so dump_cpu_state cannot fault.
+  A BusError escaping Moira::execute (fault while stacking a frame) and
+  Moira's own HALTED state are both reported as a double bus fault and stop
+  the run.  Verified headless: `read C00000` at the monitor printed
+  "*** BUS ERROR *** (68010)" and 003EFF6A: 2000 00801E50 8008 1105 00C00000
+  ...; decoded with --elf rom.elf (run from firmware/, the wrapper's
+  container cwd) the PC lands in main (monitor_cmd_read is inlined), SSW =
+  DF, RW=read, FC=5.  Owed on hardware: the same read on the rev-1 68010,
+  and once on a 68000.  firmware/m68k-nm (the podman wrapper) was tracked
+  without the execute bit; fixed, and decode_buserr.py tries it first.
+
+2026-11-06 -- Rev-1 board declared dead (Brad).  At the last boot attempt
+  it double-bus-faulted about half the time (GLUE halt blink) and on the
+  other boots failed to read the CF card.  Not diagnosed further; nothing
+  rev-1 is edited any more and the rev-2 RTL cannot be loaded on it anyway.
+  Consequence: every "owed on hardware" item (RTC prove-out, the CPU-probe
+  and bus-error dump check, the FIFO-buffer margins) now waits for the rev-2
+  board.  The rev-1 observations stay valid as history: the 115200 console,
+  SYSCLK 14 MHz, the DBRA_ROM_CLKS = 16 measurement, the 7200 /RE ringing.
