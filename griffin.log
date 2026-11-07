@@ -3273,3 +3273,73 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   Timing: the isolated paths all have wait states except GLUE (0 WS,
   ~76 ns slack against the '245's 11 ns max at 50 pF).  Owed: the
   write-data hold argument at the peripherals (yml issue).
+
+2026-11-07 -- Headphone jack chosen: Same Sky (CUI) SJ1-3525NG (item 5 closed).
+  The SJ1-352xNG datasheet (09/12/2024) keys the suffix: 3 = no switch,
+  4 = tip switch, 5 = tip and ring switch; pins 1 sleeve, 2 tip, 3 ring,
+  4 tip switch, 5 ring switch; the schematic drawing shows each spring
+  resting on its switch terminal with no plug, i.e. normally closed, which
+  is what the speaker mute needs (the SJ3-35063B had a tip switch only).
+  12 V / 1 A / 5000 cycles.  J6 on audio-amp.kicad_sch: value SJ1-3525NG,
+  footprint Connector_Audio:Jack_3.5mm_CUI_SJ1-3525N_Horizontal (KiCad's N
+  variant: pad names S/R/RN/T/TN match the AudioJack3_SwitchTR symbol,
+  sleeve pad 5 mm behind the 2.5 mm-pitch row, 1.2 mm holes, matching the
+  NG drawing; the NG drawing shows 1.5 x 0.8 mm bushing-leg slots where the
+  footprint has round holes -- check at layout).  DigiKey listed it active
+  with a 13-week lead on 2026-11-07; -GR / -PI are housing colours.
+
+2026-11-07 -- Palette RAM: overlaid THT + SMT footprints (direction, Brad).
+  The three 16x4 parts get a DIP footprint with an SOIC footprint overlaid
+  so the part choice (74F219 pinout; access time and current still to be
+  settled, with the read/write-path arithmetic) does not block layout.
+  Audio analog-stage breadboard test is on Brad's to-do list.
+
+2026-11-07 -- VIDCMD SET targets renumbered: target 0 = cmp_color0, target
+  1 = cmp_color1 (decision, Brad; from 2026-08-24 target 0 wrote cmp_color1).
+  Wire-contract change made in one pass: griffin.yml constants
+  VIDCMD_SET_CMP_COLOR0 = 0 / COLOR1 = 1 (+ comment); compositor.v
+  write_color0/1 decode; compositor_tb.v every vc_set(3'd0/3'd1) push
+  swapped (48 + 30 sites; one late-SET push in LATE_IN_STREAM built with a
+  ?: missed the pattern and failed two checks until fixed by hand);
+  super-engine/descriptor.h SET_CMP_HELD_BG = 0, _FG = 1 (static_asserts
+  against the generated constants hold); vidcmd-spec.md (item 7 CLOSED),
+  griffin-video-datasheet.html, SET-STREAM.md.  Everything else reaches
+  the numbers only through the constants: render.cpp commit(), author.cpp,
+  firmware, apps (dtest, smurf), image-tools fixup_encode.
+  Verified: compositor-sim PASS, five mutants still fail as required;
+  COMPOSITOR re-fit 118/128 LC, 355 PT, pinout unchanged; super-engine
+  `make check` all cases PASS; emulator, firmware (126860) and every app
+  rebuild clean.  Lists authored against the old numbering swap their two
+  held colours; none are stored outside the tree (gcx files carry SETs
+  through fixup_encode at encode time -- re-encode any kept .gcx).
+
+2026-11-07 -- Decode contract stated in griffin.yml (GLUE entry), closing
+  five issues: the three undecoded regions and a silent DUART bus-error by
+  the one timeout; the IO segment is fully assigned, each peripheral
+  repeats through its 256 KB slot and offsets with no register get DTACK,
+  never BERR (so "BERR in unassigned IO" is not what GLUE does -- there is
+  no unassigned IO space at slot level, and inside a slot the fixed wait
+  states answer); boot overlay: bank 1 reads from ROM, bank 1 writes select
+  ROM and are dropped, banks 2-4 unchanged, ROM window mirrors x4 with no
+  BERR -- the least-logic behaviour, now the intended contract.  Also
+  closed by decision: FIFO desync observability (frame-bounded /RS recovery
+  plus ENGINE_STATUS is enough for now); OP4..OP7 raster selector (stays a
+  pin reservation).
+
+2026-11-07 -- Palette RAM: Philips 74F219A chosen (Brad's bin: SO and DIP,
+  lot 7055AB E 8940); it is a 16-pin part (N16 / D16).  Datasheet (Philips
+  1996-01-05, 0-70 C, CL 50 pF): An to Qn 8.0 max; CE to Qn 7.0/7.5; WE
+  to Qn (write recovery) 7.0/8.0; An to WE setup 5.0, hold 0; Dn to WE
+  setup 9.0/8.5, hold 0; WE pulse width 8.0 min; ICC 55 typ / 80 max;
+  Cin 4, Cout 7.  (The Fairchild 74F219 in Downloads is the slow part:
+  tPLH An to Qn 32 max commercial, ICC 55 max -- it would not close.)
+  Read path, pixel clock 39.72 ns: PIXEL IDX tCOP 8 (-15) + flight ~2 +
+  tAA 8 + flight ~2 + COMPOSITOR tSU 11 (-15) = 31, margin +8.7 ns (-10
+  parts: 5 + 2 + 8 + 2 + 7 = 24, +15.7).  Write path (PIXEL holds IDX =
+  clut_index three clocks, nCLUT_WE low the middle one): An-to-WE setup
+  >= 39.7 - 8 skew = 31.7 vs 5; An hold one clock vs 0; Dn setup from
+  COMPOSITOR's registered set_pix_value >= 31.7 vs 9; Dn hold one clock
+  vs 0; WE width 39.7 vs 8; write recovery 8 ns inside the extra stolen
+  clock before the next read.  All close.  Power: 3 x 80 = 240 mA max
+  (165 typ), more than the 74F219's 165 max; accepted.  Footprints:
+  overlaid DIP-16 and SO-16 (Brad).  Issue closed.

@@ -135,7 +135,7 @@ COMPONENTS
   J3         FTDI serial A         [PinHeader_1x06_P2.54mm_Vertical]
   J4         KEYBOARD              [Mini_din6]
   J5         MOUSE                 [Mini_din6]
-  J6         3.5mm stereo, tip+ring NC switches (part TBD: SJ3-35063B has tip switch only)
+  J6         SJ1-3525NG            [Jack_3.5mm_CUI_SJ1-3525N_Horizontal]
   J7         CF Card               [SAMTEC_CFT-125-01-L-D-RA-01-SL]
   J8         DEBUG_HEADER          [IDC-Header_2x16_P2.54mm_Vertical]
   J9         DEBUG_HEADER          [IDC-Header_2x16_P2.54mm_Vertical]

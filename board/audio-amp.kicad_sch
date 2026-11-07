@@ -3361,7 +3361,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "3.5mm stereo, tip+ring NC switches (part TBD: SJ3-35063B has tip switch only)"
+		(property "Value" "SJ1-3525NG"
 			(at 34.29 189.865 0)
 			(effects
 				(font
@@ -3370,7 +3370,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" ""
+		(property "Footprint" "Connector_Audio:Jack_3.5mm_CUI_SJ1-3525N_Horizontal"
 			(at 40.64 177.8 0)
 			(effects
 				(font

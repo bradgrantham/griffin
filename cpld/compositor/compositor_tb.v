@@ -704,7 +704,7 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         push(vc_run(2'd1, 12'd1));                  // color1, 1 slot
-        push(vc_set(3'd0, 12'h0F0));                // cmp_color1 <- C2
+        push(vc_set(3'd1, 12'h0F0));                // cmp_color1 <- C2
         push(vc_run(2'd1, 12'd638));
         blank(40);
         line(SLOTS);
@@ -767,7 +767,7 @@ module CompositorTb;
         // Blank-region eager SET, and a staged RUN waiting for H_ACTIVE
         // ---------------------------------------------------------------
         reset_dut;
-        push(vc_set(3'd0, 12'h0F0));                // eager: nothing is staged
+        push(vc_set(3'd1, 12'h0F0));                // eager: nothing is staged
         push(vc_run(2'd1, 12'd640));
         blank(40);
         chk("EAGER_SET applied during blanking", dut.cmp_color1 === 12'h0F0);
@@ -781,7 +781,7 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         push(vc_run(2'd2, 12'd4));                  // color0, 4 slots
-        push(vc_set(3'd1, 12'h00F));                // cmp_color0 <- 0x00F
+        push(vc_set(3'd0, 12'h00F));                // cmp_color0 <- 0x00F
         push(vc_run(2'd2, 12'd600));
         blank(60);
         chk("POSITIONAL_EAGER SET behind a RUN did not run early",
@@ -809,8 +809,8 @@ module CompositorTb;
         // local SET targets must not raise valid/commit
         reset_dut;
         commit_count = 0;
-        push(vc_set(3'd0, 12'h111));
-        push(vc_set(3'd1, 12'h222));
+        push(vc_set(3'd1, 12'h111));
+        push(vc_set(3'd0, 12'h222));
         push(vc_set(3'd7, 12'h333));                // spare, ignored
         blank(60);
         chk("LOCAL_SET no PIXEL commit for targets 0/1/7", commit_count === 0);
@@ -836,7 +836,7 @@ module CompositorTb;
         watch_cycle       = -1;
         push(vc_run(2'd1, 12'd100));
         push(vc_set(3'd4, 12'h777));                // SET_PIX_HAM_HELD, slot 100
-        push(vc_set(3'd0, 12'h0AB));                // local SET, banked pair -> slot 101
+        push(vc_set(3'd1, 12'h0AB));                // local SET, banked pair -> slot 101
         push(vc_run(2'd1, 12'd537));
         blank(40);
         chk("PIXEL_SET_ACTIVE no early commit", commit_count === 0);
@@ -857,9 +857,9 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         push(vc_run(2'd1, 12'd1));
-        push(vc_set(3'd0, 12'h111));
-        push(vc_set(3'd0, 12'h222));
-        push(vc_set(3'd0, 12'h333));
+        push(vc_set(3'd1, 12'h111));
+        push(vc_set(3'd1, 12'h222));
+        push(vc_set(3'd1, 12'h333));
         push(vc_run(2'd1, 12'd600));
         blank(40);
         line(SLOTS);
@@ -909,8 +909,8 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         push(vc_run(2'd1, 12'd4));                  // color1, slots 0..3
-        push(vc_set(3'd0, 12'h1B2));                // new color1
-        push(vc_set(3'd1, 12'h3C4));                // new color0
+        push(vc_set(3'd1, 12'h1B2));                // new color1
+        push(vc_set(3'd0, 12'h3C4));                // new color0
         push(vc_run(2'd2, 12'd600));                // color0
         blank(60);
         line(SLOTS);
@@ -994,7 +994,7 @@ module CompositorTb;
         chk("SHORT_LINE later fill re-frames cleanly", span_is(0, SLOTS - 1, 12'hFFF));
 
         reset_dut;
-        push(vc_set(3'd0, 12'h4C4));
+        push(vc_set(3'd1, 12'h4C4));
         push(vc_run(2'd1, 12'd8));                  // 8 slots then hold to line end
         blank(60);
         line(SLOTS);
@@ -1054,8 +1054,8 @@ module CompositorTb;
         chk("OVERRUN line N is all passthrough", span_is(0, SLOTS - 1, 12'h0A0));
         chk("OVERRUN leftover record is staged at the H_ACTIVE fall",
             dut.have_staged === 1'b1);
-        push(vc_set(3'd1, 12'h00C));                // line N+1's fill, in HBLANK
-        push(vc_set(3'd0, 12'hC00));
+        push(vc_set(3'd0, 12'h00C));                // line N+1's fill, in HBLANK
+        push(vc_set(3'd1, 12'hC00));
         push(vc_run(2'd2, 12'd1));
         blank(40);
         chk("OVERRUN staged leftover blocked the eager SETs",
@@ -1161,8 +1161,8 @@ module CompositorTb;
         clear_mirror;
         commit_count = 0;
         RGB_IN = 12'h5A5;
-        push(vc_set(3'd1, 12'h00F));                // cmp_color0 <- 0x00F
-        push(vc_set(3'd0, 12'hF0F));                // cmp_color1 <- 0xF0F
+        push(vc_set(3'd0, 12'h00F));                // cmp_color0 <- 0x00F
+        push(vc_set(3'd1, 12'hF0F));                // cmp_color1 <- 0xF0F
         push(vc_run(2'd0, 12'd8));                  // passthrough, slots 0..7
         push(vc_mask_hdr(DIBIT_THRU, DIBIT_RSVD, DIBIT_COLOR0, DIBIT_COLOR1,
                          DIBIT_THRU, DIBIT_RSVD, DIBIT_COLOR0));
@@ -1224,8 +1224,8 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h3C3;
-        push(vc_set(3'd1, 12'h00F));                // cmp_color0 <- 0x00F
-        push(vc_set(3'd0, 12'hF00));                // cmp_color1 <- 0xF00
+        push(vc_set(3'd0, 12'h00F));                // cmp_color0 <- 0x00F
+        push(vc_set(3'd1, 12'hF00));                // cmp_color1 <- 0xF00
         push(vc_run(2'd0, 12'd4));                  // passthrough, slots 0..3
         push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
                          DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
@@ -1288,8 +1288,8 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h666;
-        push(vc_set(3'd1, 12'h00F));                // cmp_color0 <- 0x00F
-        push(vc_set(3'd0, 12'hF00));                // cmp_color1 <- 0xF00
+        push(vc_set(3'd0, 12'h00F));                // cmp_color0 <- 0x00F
+        push(vc_set(3'd1, 12'hF00));                // cmp_color1 <- 0xF00
         push(vc_run(2'd0, 12'd4));                  // passthrough, slots 0..3
         push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
                          DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
@@ -1356,14 +1356,14 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h242;
-        push(vc_set(3'd1, 12'h00F));                // cmp_color0 <- 0x00F
-        push(vc_set(3'd0, 12'hF00));                // cmp_color1 <- 0xF00
+        push(vc_set(3'd0, 12'h00F));                // cmp_color0 <- 0x00F
+        push(vc_set(3'd1, 12'hF00));                // cmp_color1 <- 0xF00
         push(vc_run(2'd0, 12'd4));                  // passthrough, slots 0..3
         push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
                          DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
         push(vc_mask_data(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
                           DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
-        push(vc_set(3'd0, 12'h0F0));                // recolour: cmp_color1
+        push(vc_set(3'd1, 12'h0F0));                // recolour: cmp_color1
         push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
                          DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
         push(vc_mask_data(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
@@ -1411,8 +1411,8 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h777;
-        push(vc_set(3'd1, 12'h00F));                // cmp_color0 <- 0x00F
-        push(vc_set(3'd0, 12'h321));                // cmp_color1 <- 0x321
+        push(vc_set(3'd0, 12'h00F));                // cmp_color0 <- 0x00F
+        push(vc_set(3'd1, 12'h321));                // cmp_color1 <- 0x321
         push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR0, DIBIT_COLOR0,
                          DIBIT_THRU,   DIBIT_THRU,   DIBIT_COLOR1));
         push(vc_mask_data(DIBIT_COLOR0, DIBIT_THRU,   DIBIT_COLOR1, DIBIT_COLOR0,
@@ -1462,8 +1462,8 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h246;
-        push(vc_set(3'd1, 12'h0C0));                // cmp_color0 <- 0x0C0
-        push(vc_set(3'd0, 12'hF0F));                // cmp_color1 <- 0xF0F
+        push(vc_set(3'd0, 12'h0C0));                // cmp_color0 <- 0x0C0
+        push(vc_set(3'd1, 12'hF0F));                // cmp_color1 <- 0xF0F
         push(vc_run(2'd0, 12'd4));                  // passthrough, slots 0..3
         push(vc_mask_hdr(DIBIT_THRU,   DIBIT_COLOR0, DIBIT_COLOR1, DIBIT_THRU,
                          DIBIT_COLOR0, DIBIT_THRU,   DIBIT_COLOR1));
@@ -1528,8 +1528,8 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h888;
-        push(vc_set(3'd1, 12'h00F));                // cmp_color0 <- 0x00F
-        push(vc_set(3'd0, 12'h321));                // cmp_color1 <- 0x321
+        push(vc_set(3'd0, 12'h00F));                // cmp_color0 <- 0x00F
+        push(vc_set(3'd1, 12'h321));                // cmp_color1 <- 0x321
         push(vc_run(2'd0, 12'd4));                  // passthrough, slots 0..3
         push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR0, DIBIT_COLOR1, DIBIT_COLOR0,
                          DIBIT_COLOR1, DIBIT_COLOR0, DIBIT_COLOR1));
@@ -1568,8 +1568,8 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         RGB_IN = 12'h999;
-        push(vc_set(3'd1, 12'h00F));                // cmp_color0 <- 0x00F
-        push(vc_set(3'd0, 12'h321));                // cmp_color1 <- 0x321
+        push(vc_set(3'd0, 12'h00F));                // cmp_color0 <- 0x00F
+        push(vc_set(3'd1, 12'h321));                // cmp_color1 <- 0x321
         push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR0, DIBIT_COLOR1, DIBIT_COLOR0,
                          DIBIT_COLOR1, DIBIT_COLOR0, DIBIT_COLOR1));
         push(vc_mask_data(DIBIT_COLOR1, DIBIT_COLOR0, DIBIT_COLOR1, DIBIT_COLOR0,
@@ -1605,8 +1605,8 @@ module CompositorTb;
         // nRS recovery
         // ---------------------------------------------------------------
         reset_dut;
-        push(vc_set(3'd0, 12'h321));
-        push(vc_set(3'd1, 12'h654));
+        push(vc_set(3'd1, 12'h321));
+        push(vc_set(3'd0, 12'h654));
         push(vc_run(2'd1, 12'd640));
         blank(60);
         line(SLOTS);
@@ -1647,7 +1647,7 @@ module CompositorTb;
         reset_dut;
         RGB_IN = 12'h9A3;
         push(vc_run(2'd0, 12'd4));
-        push(vc_set(3'd1, 12'h00C));
+        push(vc_set(3'd0, 12'h00C));
         push(vc_lit(12'h5E7));
         push(vc_run(2'd0, 12'd600));
         blank(40);
@@ -1696,8 +1696,8 @@ module CompositorTb;
             watch_value  = 12'h5E7;
             watch_cycle  = -1;
             RGB_IN       = 12'h9A3;
-            push(vc_set(3'd0, 12'h0C1));
-            push(vc_set(3'd1, 12'h0C0));
+            push(vc_set(3'd1, 12'h0C1));
+            push(vc_set(3'd0, 12'h0C0));
             push(vc_run(2'd0, 12'd4));
             push(vc_lit(12'h5E7));
             case (k)
@@ -1712,8 +1712,8 @@ module CompositorTb;
                         push(vc_mask_data(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
                                           DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_THRU));
                     end
-                6:  begin push(vc_set(3'd0, 12'h777)); push(vc_run(2'd1, 12'd600)); end
-                7:  begin push(vc_set(3'd1, 12'h777)); push(vc_run(2'd2, 12'd600)); end
+                6:  begin push(vc_set(3'd1, 12'h777)); push(vc_run(2'd1, 12'd600)); end
+                7:  begin push(vc_set(3'd0, 12'h777)); push(vc_run(2'd2, 12'd600)); end
                 8, 9, 10, 11, 12:
                     begin push(vc_set(k - 6, 12'h777)); push(vc_run(2'd0, 12'd600)); end
                 13: begin push(vc_set(3'd7, 12'h777)); push(vc_run(2'd0, 12'd600)); end
@@ -1830,8 +1830,8 @@ module CompositorTb;
         // captured E21 and executes at the terminal E24.
         // ---------------------------------------------------------------
         reset_dut;
-        push(vc_set(3'd0, 12'h0C1));
-        push(vc_set(3'd1, 12'h0C0));
+        push(vc_set(3'd1, 12'h0C1));
+        push(vc_set(3'd0, 12'h0C0));
         push(vc_run(2'd0, 12'd4));
         push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
                          DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
@@ -1884,11 +1884,11 @@ module CompositorTb;
         //   after the run (the pair), then every two: no other irregularity.
         // ---------------------------------------------------------------
         reset_dut;
-        push(vc_set(3'd1, 12'h00F));
+        push(vc_set(3'd0, 12'h00F));
         push(vc_stream(2'd1, 12'd20));
-        push(vc_set(3'd0, 12'hA11));
-        push(vc_set(3'd0, 12'hB22));
-        push(vc_set(3'd0, 12'hC33));
+        push(vc_set(3'd1, 12'hA11));
+        push(vc_set(3'd1, 12'hB22));
+        push(vc_set(3'd1, 12'hC33));
         push(vc_run(2'd2, 12'd600));
         blank(40);
         line(SLOTS);
@@ -1906,11 +1906,11 @@ module CompositorTb;
         // for the terminal (positional law), A 20 and B 21 (pair), HOLD 22, C
         // 23, HOLD 24, RUN(c0) 25.
         reset_dut;
-        push(vc_set(3'd1, 12'h00F));
+        push(vc_set(3'd0, 12'h00F));
         push(vc_run(2'd1, 12'd20));
-        push(vc_set(3'd0, 12'hA11));
-        push(vc_set(3'd0, 12'hB22));
-        push(vc_set(3'd0, 12'hC33));
+        push(vc_set(3'd1, 12'hA11));
+        push(vc_set(3'd1, 12'hB22));
+        push(vc_set(3'd1, 12'hC33));
         push(vc_run(2'd2, 12'd600));
         blank(40);
         line(SLOTS);
@@ -1928,13 +1928,13 @@ module CompositorTb;
         //   => FFF 0, A 1-2, B 3-4, C 5-6, D 7-8, E 9-10, c0 11..
         // ---------------------------------------------------------------
         reset_dut;
-        push(vc_set(3'd1, 12'h00F));
+        push(vc_set(3'd0, 12'h00F));
         push(vc_stream(2'd1, 12'd6));
-        push(vc_set(3'd0, 12'hA11));
-        push(vc_set(3'd0, 12'hB22));
-        push(vc_set(3'd0, 12'hC33));
-        push(vc_set(3'd0, 12'hD44));
-        push(vc_set(3'd0, 12'hE55));
+        push(vc_set(3'd1, 12'hA11));
+        push(vc_set(3'd1, 12'hB22));
+        push(vc_set(3'd1, 12'hC33));
+        push(vc_set(3'd1, 12'hD44));
+        push(vc_set(3'd1, 12'hE55));
         push(vc_run(2'd2, 12'd629));
         blank(60);
         line(SLOTS);
@@ -1951,16 +1951,16 @@ module CompositorTb;
         // E14, executes E15; RUN(pt) captured E16, waits for E21.
         //   => ... E 9-10, c0 00F 11-12, F 13-14, G 15-20, pt 21..
         reset_dut;
-        push(vc_set(3'd1, 12'h00F));
+        push(vc_set(3'd0, 12'h00F));
         push(vc_stream(2'd1, 12'd6));
-        push(vc_set(3'd0, 12'hA11));
-        push(vc_set(3'd0, 12'hB22));
-        push(vc_set(3'd0, 12'hC33));
-        push(vc_set(3'd0, 12'hD44));
-        push(vc_set(3'd0, 12'hE55));
+        push(vc_set(3'd1, 12'hA11));
+        push(vc_set(3'd1, 12'hB22));
+        push(vc_set(3'd1, 12'hC33));
+        push(vc_set(3'd1, 12'hD44));
+        push(vc_set(3'd1, 12'hE55));
         push(vc_stream(2'd2, 12'd10));
-        push(vc_set(3'd1, 12'hF66));
-        push(vc_set(3'd1, 12'h677));
+        push(vc_set(3'd0, 12'hF66));
+        push(vc_set(3'd0, 12'h677));
         push(vc_run(2'd0, 12'd600));
         blank(60);
         line(SLOTS);
@@ -1978,11 +1978,11 @@ module CompositorTb;
         //   => FFF 0, A 1-5, 00F 6-15, V 16, pt 17..
         // ---------------------------------------------------------------
         reset_dut;
-        push(vc_set(3'd1, 12'h00F));
+        push(vc_set(3'd0, 12'h00F));
         push(vc_stream(2'd1, 12'd6));
-        push(vc_set(3'd0, 12'hA11));
+        push(vc_set(3'd1, 12'hA11));
         push(vc_run(2'd2, 12'd10));
-        push(vc_set(3'd1, 12'h0D0));
+        push(vc_set(3'd0, 12'h0D0));
         push(vc_run(2'd0, 12'd600));
         blank(60);
         line(SLOTS);
@@ -2010,7 +2010,7 @@ module CompositorTb;
         cdata_hold = -1;
         cdata_live = 1'b0;
         push(vc_stream(2'd1, 12'd40));
-        push(vc_set(3'd1, 12'h0AB));                // cmp_color0
+        push(vc_set(3'd0, 12'h0AB));                // cmp_color0
         push(vc_set(3'd4, 12'h123));                // pix_base
         push(vc_set(3'd5, 12'h001));                // pix_mode
         push(vc_set(3'd2, 12'h00B));                // clut_index
@@ -2048,13 +2048,13 @@ module CompositorTb;
             reset_dut;
             if (k == 0)
             begin
-                push(vc_set(3'd1, 12'h00F));
+                push(vc_set(3'd0, 12'h00F));
                 push(vc_stream(2'd1, 12'd40));
-                push(vc_set(3'd0, 12'hA11));
+                push(vc_set(3'd1, 12'hA11));
             end
             else
             begin
-                push(vc_set(3'd1, 12'h00F));
+                push(vc_set(3'd0, 12'h00F));
                 push(vc_run(2'd0, 12'd4));
                 push(vc_lit(12'hA11));
             end
@@ -2063,7 +2063,7 @@ module CompositorTb;
             #1 pix_idx = 0;
             H_ACTIVE = 1'b1;
             repeat (10) @(posedge clk);
-            push(k == 0 ? vc_set(3'd0, 12'hB22) : vc_lit(12'hB22));
+            push(k == 0 ? vc_set(3'd1, 12'hB22) : vc_lit(12'hB22));   // late SET to cmp_color1
             push(vc_run(2'd2, 12'd600));
             repeat (SLOTS - 10) @(posedge clk);
             #1 H_ACTIVE = 1'b0;
@@ -2092,7 +2092,7 @@ module CompositorTb;
         // ---------------------------------------------------------------
         reset_dut;
         push(vc_lit(12'h5E7));
-        push(vc_set(3'd0, 12'h0D1));
+        push(vc_set(3'd1, 12'h0D1));
         push(vc_run(2'd1, 12'd600));
         blank(60);
         chk("BLANK_LIT the SET behind a staged literal was not eager", dut.cmp_color1 === 12'hFFF);
@@ -2101,7 +2101,7 @@ module CompositorTb;
             span_is(0, 3, 12'h5E7) && span_is(4, SLOTS - 1, 12'h0D1));
         reset_dut;
         push(vc_stream(2'd1, 12'd10));
-        push(vc_set(3'd0, 12'h0D1));
+        push(vc_set(3'd1, 12'h0D1));
         blank(60);
         chk("BLANK_STREAM the SET behind a staged stream run was not eager",
             dut.cmp_color1 === 12'hFFF);
@@ -2121,8 +2121,8 @@ module CompositorTb;
         push(vc_lit(12'h5E7));
         push(vc_hold(12'd98));
         push(vc_stream(2'd1, 12'd300));
-        push(vc_set(3'd0, 12'hA11));
-        push(vc_set(3'd0, 12'hB22));
+        push(vc_set(3'd1, 12'hA11));
+        push(vc_set(3'd1, 12'hB22));
         push(vc_run(2'd2, 12'd140));
         push(vc_run(2'd1, 12'd640));                // next line, cushioned
         blank(60);
@@ -2173,7 +2173,7 @@ module CompositorTb;
         fifo_wr = 0;
         fifo_rd = 0;
         push(vc_run(2'd1, 12'd10));
-        push(vc_set(3'd0, 12'h0D1));
+        push(vc_set(3'd1, 12'h0D1));
         push(vc_run(2'd1, 12'd600));
         blank(40);
         line(SLOTS);
@@ -2203,8 +2203,8 @@ module CompositorTb;
         // 4..19, X 20-21, RUN captured E21, pt from 22.
         // ---------------------------------------------------------------
         reset_dut;
-        push(vc_set(3'd0, 12'h0C1));
-        push(vc_set(3'd1, 12'h0C0));
+        push(vc_set(3'd1, 12'h0C1));
+        push(vc_set(3'd0, 12'h0C0));
         push(vc_run(2'd0, 12'd4));
         push(vc_mask_hdr(DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1,
                          DIBIT_COLOR1, DIBIT_COLOR1, DIBIT_COLOR1));
@@ -2323,9 +2323,9 @@ module CompositorTb;
         reset_dut;
         clear_mirror;
         push(vc_run(2'd1, 12'd1));
-        push(vc_set(3'd0, 12'h666));                // cmp_color1
+        push(vc_set(3'd1, 12'h666));                // cmp_color1
         push(vc_set(3'd2, 12'h777));                // PIXEL
-        push(vc_set(3'd1, 12'h888));                // cmp_color0
+        push(vc_set(3'd0, 12'h888));                // cmp_color0
         push(vc_set(3'd3, 12'h999));                // PIXEL
         push(vc_run(2'd2, 12'd600));
         blank(40);

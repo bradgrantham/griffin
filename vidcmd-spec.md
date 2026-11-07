@@ -44,7 +44,8 @@ here).
 >   wire encoding did not move**, which means the standing oddity moved with
 >   it: **SET target 0 writes colour 1 and target 1 writes colour 0.**
 >   Renumbering the targets is a wire-contract change and is deliberately
->   still open (`griffin.yml` `issues:`).
+>   still open (`griffin.yml` `issues:`).  **Renumbered 2026-11-07:** target
+>   0 = `cmp_color0`, target 1 = `cmp_color1`; the number is the colour.
 > * **Unchanged:** every K constant, the 2-slot fetch cadence, the banked-pair
 >   law, RUN / RUN_COLOR / SET.  MASK spends no new pins and no new counters
 >   — it reuses `staged_word` as its shifter and the shared playback counter.
@@ -266,8 +267,8 @@ MASK  { 2'b01, d1, d2, d3, d4, d5, d6, d7 }                  2 words
       Sixteen pixels of per-pixel overlay.  §3.1.
 
 SET   { 1'b1, target[2:0], value[11:0] }                     1 word
-      target 0 = cmp_color1      4 = pix_base[3:0]
-             1 = cmp_color0      5 = pix_mode[2:0] (+ reserved bit 3)
+      target 0 = cmp_color0      4 = pix_base[3:0]
+             1 = cmp_color1      5 = pix_mode[2:0] (+ reserved bit 3)
              2 = pix_clut_index[3:0]
              3 = pix_clut_data[11:0]  -- written to the palette (§3.2)
              6 = pix_pixel_skip[3:0]
@@ -285,11 +286,11 @@ passthrough (never KEEP) and clears all machine state.  `/RS` also clears PIXEL'
 full rate out of palette entries 0 and 1.  **The palette RAM is never reset by
 anything** (§3.2).
 
-**Target 0 is colour 1 and target 1 is colour 0.**  Not a typo: the
-numbers and the colour names disagree, the wire encoding is frozen by
-`compositor.v`, `super-engine/descriptor.h`, the emulator, `apps/` and the
-firmware, and renumbering them is a separate contract change that is still
-open.  Nothing may quietly "fix" it in passing.
+**Target 0 is colour 0 and target 1 is colour 1** since 2026-11-07, when the
+targets were renumbered across `compositor.v`, `compositor_tb.v`,
+`super-engine/descriptor.h`, the emulator, `apps/` and the firmware in one
+change.  Before that date target 0 wrote colour 1; lists authored against the
+old numbering swap their two held colours.
 
 **TILE is still dropped (user decision); MASK reuses its prefix.**  The
 two 16-bit TILE mask shifters were the biggest flip-flop lever available
@@ -926,12 +927,11 @@ Kept with their original numbering; status stamped rather than deleted.
    CLOSED AGAIN 2026-08-24**: the `01` prefix now carries MASK (§3.1,
    §4.4), a two-word sixteen-pixel overlay with no inline colour and no
    new shifters.  Absolute-X stayed dead with TILE.
-7. **NEW, OPEN.** SET target 0 writes `cmp_color1` and target 1 writes
-   `cmp_color0`.  The 2026-08-24 rename fixed the NAMES; whether to swap
-   the target NUMBERS so they match the colour numbers is a wire-contract
-   change across `compositor.v`, `super-engine/descriptor.h`, the
-   emulator, `apps/` and the firmware, and is deliberately not bundled
-   with the rename.
+7. **CLOSED 2026-11-07.** SET targets renumbered so the target number is the
+   colour number (0 = `cmp_color0`, 1 = `cmp_color1`), across `compositor.v`,
+   `compositor_tb.v`, `super-engine/descriptor.h`, the emulator, `apps/` and
+   the firmware in one change.  From 2026-08-24 to then, target 0 wrote
+   `cmp_color1`.
 8. **NEW, OPEN, and it gates a whole authoring technique.** §4.5's third
    colour — passthrough resolving to one palette entry when the PIXELS FIFO is
    never written — is MODEL behaviour only.  Confirm against `pixel.v`

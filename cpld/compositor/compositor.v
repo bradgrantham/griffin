@@ -479,12 +479,12 @@ module Compositor
     // blanking.  SET is now the only eager record.
     wire load_mask = consume_active & w_is_mask;
 
-    // SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  The
-    // number/name mismatch is deliberate and deferred: the wire encoding is
-    // frozen by super-engine/descriptor.h and the firmware, and renaming the
-    // targets is a contract change to be made on its own, not smuggled in here.
-    wire write_color1 = apply_set & (w_target == 3'd0);
-    wire write_color0 = apply_set & (w_target == 3'd1);
+    // SET target 0 writes cmp_color0 and target 1 writes cmp_color1: the target
+    // number is the colour number (renumbered 2026-11-07 together with
+    // compositor_tb.v, super-engine/descriptor.h and griffin.yml; before that
+    // target 0 wrote cmp_color1).
+    wire write_color0 = apply_set & (w_target == 3'd0);
+    wire write_color1 = apply_set & (w_target == 3'd1);
 
     // One shared incrementer: load a new count (+1 for the slot the record is
     // consumed in), load the mask's sixteen slots, step through a running

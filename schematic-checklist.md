@@ -58,7 +58,7 @@ deliberately not listed.
 - [x] R4G4B4 binary-weighted ladder + shunt (3 channels; values in griffin.yml VGA interfaces entry)
 - [x] HSYNC/VSYNC series resistors
 - [x] DE-15 VGA connector
-- [x] Palette RAM: three 16x4 separate-I/O parts (74F219 pinout), IDX[3:0] + nCLUT_WE from PIXEL, data in from COMPOSITOR set_pix_value[11:0], outputs to COMPOSITOR RGB_IN, /CS tied low — drawn with a placeholder 74x219 symbol, **part not chosen** (griffin.yml `issues:`)
+- [x] Palette RAM: three Philips 74F219A (16x4, 8 ns tAA; DIP-16 / SO-16 overlaid footprints), IDX[3:0] + nCLUT_WE from PIXEL, data in from COMPOSITOR set_pix_value[11:0], outputs to COMPOSITOR RGB_IN, /CS tied low — drawn with a placeholder 74x219 symbol, **part not chosen** (griffin.yml `issues:`)
 
 ## Audio output (griffin.md "Audio"; BOM in griffin.yml audio interfaces entries)
 
@@ -67,7 +67,7 @@ deliberately not listed.
 - [x] 1x LM358: two inverting summers (L, R) biased at 2.5 V, 2k feedback || 8.2 nF, 4.7k class-A pull-down, 100 uF to the LINE node
 - [x] Line out: LINE -> 100R -> 2x RCA jacks (retainer feet)
 - [x] Dual-gang 10k audio-taper volume pot across LINE (panel part; bring to a header)
-- [x] Headphones: wiper -> 10k / 1k pad -> 2x LM386 (gain 20) -> 10R + 47 nF Zobel -> 250 uF -> switched 3.5 mm stereo jack
+- [x] Headphones: wiper -> 10k / 1k pad -> 2x LM386 (gain 20) -> 10R + 47 nF Zobel -> 250 uF -> switched 3.5 mm stereo jack (J6 = Same Sky SJ1-3525NG, tip + ring NC switches, KiCad SJ1-3525N footprint; verify the bushing-leg slots at layout)
 - [x] Internal speaker: the jack's NC tip/ring contacts -> 2x 47k sum + 1k -> LM386 -> 10R + 47 nF Zobel -> 250 uF -> 8 ohm speaker (panel part; header); plug insertion mutes  **Jack part open:** SJ3-35063B has a tip switch only (griffin.yml issues); drawn with a generic tip+ring-switch symbol
 - [ ] (Analog stage not yet breadboarded — griffin.yml `issues:`)
 

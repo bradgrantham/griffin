@@ -788,8 +788,8 @@ inline constexpr uint32_t VIDCMD_LIT_HOLD_MIN_SLOTS = 4;
 // SET targets.  0..1 are COMPOSITOR's own registers, 2..6 are forwarded to
 // PIXEL, and 7 is decoded NOWHERE — which is what makes it the palette-write
 // filler (see "THE PALETTE" above and vidcmd-spec.md §3.2).
-inline constexpr uint32_t SET_CMP_HELD_FG    = 0;
-inline constexpr uint32_t SET_CMP_HELD_BG    = 1;
+inline constexpr uint32_t SET_CMP_HELD_BG    = 0;   // cmp_color0
+inline constexpr uint32_t SET_CMP_HELD_FG    = 1;   // cmp_color1
 inline constexpr uint32_t SET_PIX_CLUT_INDEX = 2;
 inline constexpr uint32_t SET_PIX_CLUT_DATA  = 3;
 inline constexpr uint32_t SET_PIX_BASE       = 4;
@@ -807,17 +807,13 @@ static_assert(SET_PIX_PIXEL_SKIP == Griffin::VIDCMD_SET_PIX_PIXEL_SKIP);
 static_assert(SET_FILLER         == Griffin::VIDCMD_SET_FILLER);
 
 // The color-numbered spelling of targets 0 and 1, matching compositor.v's
-// cmp_color1 / cmp_color0 and griffin.yml's VIDCMD_SET_CMP_COLOR1 /
-// VIDCMD_SET_CMP_COLOR0 (renamed 2026-08-24, numbering unchanged).
-//
-// THE NUMBER/COLOUR SWAP IS DELIBERATE AND STILL OPEN: target 0 writes
-// cmp_color1 and target 1 writes cmp_color0.  Renaming the two constants was a
-// contract change made on its own; renumbering the two TARGETS would be a wire
-// change and is a separate open question (griffin.yml issues).  Nothing here
-// may quietly "fix" it — the encoding is frozen by the RTL, the emulator, the
-// firmware and apps/.
-inline constexpr uint32_t SET_CMP_COLOR1 = SET_CMP_HELD_FG;   // target 0
-inline constexpr uint32_t SET_CMP_COLOR0 = SET_CMP_HELD_BG;   // target 1
+// cmp_color0 / cmp_color1 and griffin.yml's VIDCMD_SET_CMP_COLOR0 /
+// VIDCMD_SET_CMP_COLOR1.  Renamed 2026-08-24; RENUMBERED 2026-11-07 so the
+// target number IS the colour number (before that, target 0 wrote cmp_color1).
+// A wire-contract change: compositor.v, compositor_tb.v, this header, the
+// emulator (through render.cpp), the firmware and apps/ all moved together.
+inline constexpr uint32_t SET_CMP_COLOR0 = SET_CMP_HELD_BG;   // target 0
+inline constexpr uint32_t SET_CMP_COLOR1 = SET_CMP_HELD_FG;   // target 1
 
 constexpr bool vidcmd_set_targets_pixel(uint32_t target)
 {

@@ -44,8 +44,8 @@ PARTS += headphone('L', 38.1, 'R91', 'R92', 'U33', 'R93', 'C57', 'C58')
 PARTS += headphone('R', 91.44, 'R94', 'R95', 'U34', 'R96', 'C59', 'C60')
 PARTS += [
     dict(ref='J6', lib='Connector_Audio', name='AudioJack3_SwitchTR',
-         value='3.5mm stereo, tip+ring NC switches (part TBD: SJ3-35063B has tip switch only)',
-         footprint='', at=(40.64, 177.8),
+         value='SJ1-3525NG',   # Same Sky 3.5 mm stereo, tip and ring NC switches (pins 4, 5)
+         footprint='Connector_Audio:Jack_3.5mm_CUI_SJ1-3525N_Horizontal', at=(40.64, 177.8),
          pins={'S': G, 'T': ('global', 'HP_L', 'passive'), 'R': ('global', 'HP_R', 'passive'),
                'TN': ('local', 'SPK_IN_L'), 'RN': ('local', 'SPK_IN_R')}),
     res('R97', '47k', (76.2, 144.78), ('local', 'SPK_IN_L'), ('local', 'SPK_SUM')),

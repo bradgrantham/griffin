@@ -142,7 +142,7 @@ Rules:
   * the pair slot behind any hole or same-colour run of ≥ 2 pixels.
 
   Each preload serves one re-entry.  After re-entering on `cmp_color0` the
-  stream continues on target 1, and `cmp_color1` becomes the off-screen register.
+  stream continues on target 0 (`cmp_color0`), and `cmp_color1` becomes the off-screen register.
 * **Words per pixel.**  It is always 1 word per source pixel, plus 1 per sprite
   for the lead-in, plus the exit/gap RUN.  A run of ≥ 3 same-colour pixels or
   holes costs 3 words whatever its length.  There is no worst case that costs
@@ -195,7 +195,7 @@ Two gotchas:
 
 ## (f) The registers
 
-* The stream writes target 0 only, so **`cmp_color0` is untouched** unless the
+* The stream writes target 1 (`cmp_color1`) only, so **`cmp_color0` is untouched** unless the
   author uses it for preloads or hole re-entries.  Trace: a preset
   `RUN(c0,10)` after the stream still shows its colour.
 * **`cmp_color1` is left holding the stream's last colour.**  A later
