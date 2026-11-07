@@ -79,6 +79,8 @@ COMPONENTS
   C83        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
   C90        10nF film             [C_Rect_L7.2mm_W2.5mm_P5.00mm]
   C91        10nF film             [C_Rect_L7.2mm_W2.5mm_P5.00mm]
+  C92        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
+  C93        100nF                 [C_Disc_D5.0mm_W2.5mm_P5.00mm]
 
 --- CP ---
   CP1        Power Connector       [POWER]
@@ -270,6 +272,8 @@ COMPONENTS
   R155       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
   R156       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
   R157       0R                    [R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal]
+  R158       10k                   [R_Array_SIP9]
+  R159       10k                   [R_Array_SIP9]
 
 --- Resistor Networks ---
   RN1        10k bussed            [R_Array_SIP7]
@@ -280,7 +284,6 @@ COMPONENTS
 
 --- Test Points ---
   TP1        Bodge Pad (in only) 
-  TP2        Bodge Pad           
   TP3        TestPoint             [TestPoint_Pad_D1.5mm]
   TP4        TestPoint             [TestPoint_Pad_D1.5mm]
   TP5        TestPoint             [TestPoint_Pad_D1.5mm]
@@ -335,6 +338,8 @@ COMPONENTS
   U46        74AHCT541             [DIP-20_W7.62mm]
   U47        74AC541               [DIP-20_W7.62mm]
   U48        74AC541               [DIP-20_W7.62mm]
+  U49        74AHCT245             [DIP-20_W7.62mm]
+  U50        74AHCT245             [DIP-20_W7.62mm]
 
 --- Crystals / Oscillators ---
   Y1         SYSCLK                [Oscillator_DIP-8]
@@ -347,8 +352,8 @@ COMPONENTS
 POWER NETS
 ======================================================================
   +12V             -> CP1, J1
-  +5V              -> C1, C10, C11, C12, C13, C14, C17, C18, C19, C2, C20, C25, C26, C27, C28, C29, C3, C30, C31, C36, C37, C38, C39, C4, C40, C41, C42, C43, C44, C45, C46, C47, C48, C5, C50, C51, C6, C63, C64, C65, C66, C67, C7, C74, C79, C8, C82, C83, C9, CP1, D1, D10, D12, D14, D16, D18, D20, D22, D24, D26, D28, D3, D30, D4, D6, D8, F1, F2, J1, J10, J11, J2, J4, J5, J7, J8, J9, R1, R10, R104, R105, R106, R107, R108, R109, R11, R110, R111, R112, R12, R13, R134, R135, R136, R14, R20, R21, R3, R34, R4, R5, R6, R7, R8, R83, R9, RN1, RN2, U1, U10, U11, U12, U13, U14, U17, U18, U19, U2, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U3, U30, U31, U32, U33, U34, U35, U36, U37, U38, U39, U4, U40, U41, U42, U43, U44, U45, U46, U47, U48, U5, U6, U7, U8, U9, Y1, Y3, Y4
-  GND              -> BT1, C1, C10, C11, C12, C13, C14, C17, C18, C19, C2, C20, C25, C26, C27, C28, C29, C3, C30, C31, C34, C35, C36, C37, C38, C39, C4, C40, C41, C42, C43, C44, C45, C46, C47, C48, C5, C50, C51, C52, C57, C59, C6, C61, C63, C64, C65, C66, C67, C7, C72, C73, C74, C77, C78, C79, C8, C80, C81, C82, C83, C9, C90, C91, CP1, D11, D13, D15, D17, D19, D21, D23, D25, D27, D29, D31, D5, D7, D9, H1, H2, H3, H4, H5, J1, J10, J11, J12, J13, J14, J15, J16, J17, J18, J19, J2, J20, J21, J22, J23, J3, J4, J5, J6, J7, J8, J9, Q1, Q2, Q3, Q4, R15, R2, R22, R33, R56, R63, R70, R80, R81, R82, R84, R87, R88, R92, R95, R99, SW1, U1, U10, U11, U12, U13, U14, U17, U18, U19, U2, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U3, U30, U31, U32, U33, U34, U35, U36, U37, U38, U39, U4, U40, U41, U42, U43, U44, U45, U46, U47, U48, U5, U6, U7, U8, U9, Y1, Y3, Y4
+  +5V              -> C1, C10, C11, C12, C13, C14, C17, C18, C19, C2, C20, C25, C26, C27, C28, C29, C3, C30, C31, C36, C37, C38, C39, C4, C40, C41, C42, C43, C44, C45, C46, C47, C48, C5, C50, C51, C6, C63, C64, C65, C66, C67, C7, C74, C79, C8, C82, C83, C9, C92, C93, CP1, D1, D10, D12, D14, D16, D18, D20, D22, D24, D26, D28, D3, D30, D4, D6, D8, F1, F2, J1, J10, J11, J2, J4, J5, J7, J8, J9, R1, R10, R104, R105, R106, R107, R108, R109, R11, R110, R111, R112, R12, R13, R134, R135, R136, R14, R158, R159, R20, R21, R3, R34, R4, R5, R6, R7, R8, R83, R9, RN1, RN2, U1, U10, U11, U12, U13, U14, U17, U18, U19, U2, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U3, U30, U31, U32, U33, U34, U35, U36, U37, U38, U39, U4, U40, U41, U42, U43, U44, U45, U46, U47, U48, U49, U5, U50, U6, U7, U8, U9, Y1, Y3, Y4
+  GND              -> BT1, C1, C10, C11, C12, C13, C14, C17, C18, C19, C2, C20, C25, C26, C27, C28, C29, C3, C30, C31, C34, C35, C36, C37, C38, C39, C4, C40, C41, C42, C43, C44, C45, C46, C47, C48, C5, C50, C51, C52, C57, C59, C6, C61, C63, C64, C65, C66, C67, C7, C72, C73, C74, C77, C78, C79, C8, C80, C81, C82, C83, C9, C90, C91, C92, C93, CP1, D11, D13, D15, D17, D19, D21, D23, D25, D27, D29, D31, D5, D7, D9, H1, H2, H3, H4, H5, J1, J10, J11, J12, J13, J14, J15, J16, J17, J18, J19, J2, J20, J21, J22, J23, J3, J4, J5, J6, J7, J8, J9, Q1, Q2, Q3, Q4, R15, R2, R22, R33, R56, R63, R70, R80, R81, R82, R84, R87, R88, R92, R95, R99, SW1, U1, U10, U11, U12, U13, U14, U17, U18, U19, U2, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U3, U30, U31, U32, U33, U34, U35, U36, U37, U38, U39, U4, U40, U41, U42, U43, U44, U45, U46, U47, U48, U49, U5, U50, U6, U7, U8, U9, Y1, Y3, Y4
 
 
 SIGNAL NETS
@@ -439,22 +444,22 @@ SIGNAL NETS
     All bits: U28 <-> U29
 
   D[0:15]  (16 bits)
-    D0: J7.21(D0), J8.31(Pin_31), U11.13(DQ0), U13.81(I/O/GCLK3), U14.18(I/O), U18.17(I/O), U2.5(D0), U27.25(D0), U3.13(D0), U43.2(A0), U45.2(A0), U5.13(DQ0), U7.13(DQ0), U9.13(DQ0)
-    D1: J7.22(D1), J8.29(Pin_29), U11.14(DQ1), U13.33(I/O), U14.16(I/O), U18.75(I/O), U2.4(D1), U27.16(D1), U3.14(D1), U43.3(A1), U45.3(A1), U5.14(DQ1), U7.14(DQ1), U9.14(DQ1)
-    D2: J7.23(D2), J8.27(Pin_27), U11.15(DQ2), U13.34(I/O), U14.15(I/O), U18.22(I/O), U2.3(D2), U27.24(D2), U3.15(D2), U43.4(A2), U45.4(A2), U5.15(DQ2), U7.15(DQ2), U9.15(DQ2)
-    D3: J7.02(D3), J8.25(Pin_25), U11.17(DQ3), U13.36(I/O), U14.28(I/O), U18.6(I/O), U2.2(D3), U27.17(D3), U3.17(D3), U43.5(A3), U45.5(A3), U5.17(DQ3), U7.17(DQ3), U9.17(DQ3)
-    D4: J7.03(D4), J8.23(Pin_23), U11.18(DQ4), U13.39(I/O), U14.24(I/O), U18.15(I/O), U2.1(D4), U27.23(D4), U3.18(D4), U43.6(A4), U45.6(A4), U5.18(DQ4), U7.18(DQ4), U9.18(DQ4)
-    D5: J7.04(D5), J8.21(Pin_21), U11.19(DQ5), U13.37(I/O), U14.27(I/O), U18.5(I/O), U2.64(D5), U27.18(D5), U3.19(D5), U43.7(A5), U45.7(A5), U5.19(DQ5), U7.19(DQ5), U9.19(DQ5)
-    D6: J7.05(D6), J8.19(Pin_19), U11.20(DQ6), U13.35(I/O), U14.20(I/O), U18.4(I/O), U2.63(D6), U27.22(D6), U3.20(D6), U43.8(A6), U45.8(A6), U5.20(DQ6), U7.20(DQ6), U9.20(DQ6)
-    D7: J7.06(D7), J8.17(Pin_17), U11.21(DQ7), U13.40(I/O), U14.29(I/O), U18.16(I/O), U2.62(D7), U27.19(D7), U3.21(D7), U43.9(A7), U45.9(A7), U5.21(DQ7), U7.21(DQ7), U9.21(DQ7)
-    D8: J7.47(D8), J8.15(Pin_15), U10.13(DQ0), U12.13(DQ0), U18.73(I/O), U2.61(D8), U4.13(D0), U44.2(A0), U46.2(A0), U6.13(DQ0), U8.13(DQ0)
-    D9: J7.48(D9), J8.13(Pin_13), U10.14(DQ1), U12.14(DQ1), U18.8(I/O), U2.60(D9), U4.14(D1), U44.3(A1), U46.3(A1), U6.14(DQ1), U8.14(DQ1)
-    D10: J7.49(D10), J8.11(Pin_11), U10.15(DQ2), U12.15(DQ2), U18.9(I/O), U2.59(D10), U4.15(D2), U44.4(A2), U46.4(A2), U6.15(DQ2), U8.15(DQ2)
-    D11: J7.27(D11), J8.9(Pin_9), U10.17(DQ3), U12.17(DQ3), U18.10(I/O), U2.58(D11), U4.17(D3), U44.5(A3), U46.5(A3), U6.17(DQ3), U8.17(DQ3)
-    D12: J7.28(D12), J8.10(Pin_10), U10.18(DQ4), U12.18(DQ4), U18.11(I/O), U2.57(D12), U4.18(D4), U44.6(A4), U46.6(A4), U6.18(DQ4), U8.18(DQ4)
-    D13: J7.29(D13), J8.12(Pin_12), U10.19(DQ5), U12.19(DQ5), U18.12(I/O/PD1), U2.56(D13), U4.19(D5), U44.7(A5), U46.7(A5), U6.19(DQ5), U8.19(DQ5)
-    D14: J7.30(D14), J8.14(Pin_14), U10.20(DQ6), U12.20(DQ6), U18.74(I/O), U2.55(D14), U4.20(D6), U44.8(A6), U46.8(A6), U6.20(DQ6), U8.20(DQ6)
-    D15: J7.31(D15), J8.16(Pin_16), U10.21(DQ7), U12.21(DQ7), U18.20(I/O), U2.54(D15), U4.21(D7), U44.9(A7), U46.9(A7), U6.21(DQ7), U8.21(DQ7)
+    D0: J8.31(Pin_31), U11.13(DQ0), U18.17(I/O), U2.5(D0), U3.13(D0), U43.2(A0), U45.2(A0), U49.18(B0), U5.13(DQ0), U7.13(DQ0), U9.13(DQ0)
+    D1: J8.29(Pin_29), U11.14(DQ1), U18.75(I/O), U2.4(D1), U3.14(D1), U43.3(A1), U45.3(A1), U49.17(B1), U5.14(DQ1), U7.14(DQ1), U9.14(DQ1)
+    D2: J8.27(Pin_27), U11.15(DQ2), U18.22(I/O), U2.3(D2), U3.15(D2), U43.4(A2), U45.4(A2), U49.16(B2), U5.15(DQ2), U7.15(DQ2), U9.15(DQ2)
+    D3: J8.25(Pin_25), U11.17(DQ3), U18.6(I/O), U2.2(D3), U3.17(D3), U43.5(A3), U45.5(A3), U49.15(B3), U5.17(DQ3), U7.17(DQ3), U9.17(DQ3)
+    D4: J8.23(Pin_23), U11.18(DQ4), U18.15(I/O), U2.1(D4), U3.18(D4), U43.6(A4), U45.6(A4), U49.14(B4), U5.18(DQ4), U7.18(DQ4), U9.18(DQ4)
+    D5: J8.21(Pin_21), U11.19(DQ5), U18.5(I/O), U2.64(D5), U3.19(D5), U43.7(A5), U45.7(A5), U49.13(B5), U5.19(DQ5), U7.19(DQ5), U9.19(DQ5)
+    D6: J8.19(Pin_19), U11.20(DQ6), U18.4(I/O), U2.63(D6), U3.20(D6), U43.8(A6), U45.8(A6), U49.12(B6), U5.20(DQ6), U7.20(DQ6), U9.20(DQ6)
+    D7: J8.17(Pin_17), U11.21(DQ7), U18.16(I/O), U2.62(D7), U3.21(D7), U43.9(A7), U45.9(A7), U49.11(B7), U5.21(DQ7), U7.21(DQ7), U9.21(DQ7)
+    D8: J8.15(Pin_15), U10.13(DQ0), U12.13(DQ0), U18.73(I/O), U2.61(D8), U4.13(D0), U44.2(A0), U46.2(A0), U50.18(B0), U6.13(DQ0), U8.13(DQ0)
+    D9: J8.13(Pin_13), U10.14(DQ1), U12.14(DQ1), U18.8(I/O), U2.60(D9), U4.14(D1), U44.3(A1), U46.3(A1), U50.17(B1), U6.14(DQ1), U8.14(DQ1)
+    D10: J8.11(Pin_11), U10.15(DQ2), U12.15(DQ2), U18.9(I/O), U2.59(D10), U4.15(D2), U44.4(A2), U46.4(A2), U50.16(B2), U6.15(DQ2), U8.15(DQ2)
+    D11: J8.9(Pin_9), U10.17(DQ3), U12.17(DQ3), U18.10(I/O), U2.58(D11), U4.17(D3), U44.5(A3), U46.5(A3), U50.15(B3), U6.17(DQ3), U8.17(DQ3)
+    D12: J8.10(Pin_10), U10.18(DQ4), U12.18(DQ4), U18.11(I/O), U2.57(D12), U4.18(D4), U44.6(A4), U46.6(A4), U50.14(B4), U6.18(DQ4), U8.18(DQ4)
+    D13: J8.12(Pin_12), U10.19(DQ5), U12.19(DQ5), U18.12(I/O/PD1), U2.56(D13), U4.19(D5), U44.7(A5), U46.7(A5), U50.13(B5), U6.19(DQ5), U8.19(DQ5)
+    D14: J8.14(Pin_14), U10.20(DQ6), U12.20(DQ6), U18.74(I/O), U2.55(D14), U4.20(D6), U44.8(A6), U46.8(A6), U50.12(B6), U6.20(DQ6), U8.20(DQ6)
+    D15: J8.16(Pin_16), U10.21(DQ7), U12.21(DQ7), U18.20(I/O), U2.54(D15), U4.21(D7), U44.9(A7), U46.9(A7), U50.11(B7), U6.21(DQ7), U8.21(DQ7)
 
   DUART_OP[4:7]  (4 bits)
     All bits: U19 <-> U27
@@ -476,6 +481,24 @@ SIGNAL NETS
     D_AUDIO_FIFO13: U25.26(D5), U26.26(D5), U46.13(Y5)
     D_AUDIO_FIFO14: U25.25(D6), U26.25(D6), U46.12(Y6)
     D_AUDIO_FIFO15: U25.24(D7), U26.24(D7), U46.11(Y7)
+
+  D_IO[0:15]  (16 bits)
+    D_IO0: J7.21(D0), R158.2(R1), U13.81(I/O/GCLK3), U14.18(I/O), U27.25(D0), U49.2(A0)
+    D_IO1: J7.22(D1), R158.3(R2), U13.33(I/O), U14.16(I/O), U27.16(D1), U49.3(A1)
+    D_IO2: J7.23(D2), R158.4(R3), U13.34(I/O), U14.15(I/O), U27.24(D2), U49.4(A2)
+    D_IO3: J7.02(D3), R158.5(R4), U13.36(I/O), U14.28(I/O), U27.17(D3), U49.5(A3)
+    D_IO4: J7.03(D4), R158.6(R5), U13.39(I/O), U14.24(I/O), U27.23(D4), U49.6(A4)
+    D_IO5: J7.04(D5), R158.7(R6), U13.37(I/O), U14.27(I/O), U27.18(D5), U49.7(A5)
+    D_IO6: J7.05(D6), R158.8(R7), U13.35(I/O), U14.20(I/O), U27.22(D6), U49.8(A6)
+    D_IO7: J7.06(D7), R158.9(R8), U13.40(I/O), U14.29(I/O), U27.19(D7), U49.9(A7)
+    D_IO8: J7.47(D8), R159.2(R1), U50.2(A0)
+    D_IO9: J7.48(D9), R159.3(R2), U50.3(A1)
+    D_IO10: J7.49(D10), R159.4(R3), U50.4(A2)
+    D_IO11: J7.27(D11), R159.5(R4), U50.5(A3)
+    D_IO12: J7.28(D12), R159.6(R5), U50.6(A4)
+    D_IO13: J7.29(D13), R159.7(R6), U50.7(A5)
+    D_IO14: J7.30(D14), R159.8(R7), U50.8(A6)
+    D_IO15: J7.31(D15), R159.9(R8), U50.9(A7)
 
   D_VIDEO_FIFO[0:15]  (16 bits)
     D_VIDEO_FIFO0: U21.6(D0), U24.6(D0), U43.18(Y0)
@@ -646,7 +669,7 @@ SIGNAL NETS
   /PIXEL/~{PIXELS_RE_FIFO_SIDE}: R28.2 [passive], U20.15(RD) [input], U21.15(RD) [input]
   /POWER_CLOCK_RESET/Y3_EN: R20.2 [passive], Y3.1(EN) [input]
   /POWER_CLOCK_RESET/Y4_EN: R21.2 [passive], Y4.1(EN) [input]
-  /RTC/VBAT: BT1.1(+) [passive], U39.3(VBAT) [power_in]
+  /RTC/VBAT: U39.3(VBAT) [power_in]
   /SERIAL/CONSOLE_DTR: J18.20(P20) [passive], J18.6(6) [passive], J18.8(8) [passive]
   /SERIAL/MAXA_C1+: C70.1 [passive], U36.1(C1+) [passive]
   /SERIAL/MAXA_C1-: C70.2 [passive], U36.3(C1-) [passive]
@@ -716,11 +739,11 @@ SIGNAL NETS
   JTAG_TMS: J2.2(Pin_2) [passive], U13.23(I/O/TMS) [bidirectional], U14.23(I/O/TMS) [bidirectional], U18.23(I/O/TMS) [bidirectional], U19.23(I/O/TMS) [bidirectional], U22.23(I/O/TMS) [bidirectional], U28.23(I/O/TMS) [bidirectional]
   LINE_L: C55.2 [passive], J16.1(Pin_1) [passive], R89.1 [passive]
   LINE_R: C56.2 [passive], J16.4(Pin_4) [passive], R90.1 [passive]
+  Net-(BT1-+): BT1.1(+) [passive]
   Net-(D1-K): D1.1(K) [passive], R2.1 [passive]
   Net-(D3-K): D3.1(K) [passive], R17.1 [passive]
   Net-(Q1-B): Q1.2(B) [input], R16.2 [passive]
   Net-(Q1-C): Q1.3(C) [passive], R17.2 [passive]
-  Net-(TP2-Pad1): TP2.1(1) [passive], U13.64(I/O) [bidirectional]
   Net-(U13-INPUT{slash}OE2{slash}GCLK2): R15.1 [passive], TP1.1(1) [passive], U13.2(INPUT/OE2/GCLK2) [input]
   Net-(U25-RD): R35.1 [passive], U25.15(RD) [input]
   Net-(U26-RD): R36.1 [passive], U26.15(RD) [input]
@@ -744,7 +767,7 @@ SIGNAL NETS
   RTC_SCL: R111.2 [passive], U27.28(OP2) [output], U39.6(SCL) [input]
   RTC_SDA: Q2.3(D) [passive], R110.2 [passive], U27.36(IP2) [input], U39.5(SDA) [bidirectional]
   RTC_SDA_DRIVE: Q2.2(G) [input], U27.13(OP3) [output]
-  R{slash}~{W}: J7.35(~{IOWR}) [input], J8.24(Pin_24) [passive], R10.2 [passive], U13.11(I/O) [bidirectional], U14.25(I/O) [bidirectional], U18.27(I/O) [bidirectional], U2.9(R/~{W}) [tri_state], U27.8(RWN) [input]
+  R{slash}~{W}: J7.35(~{IOWR}) [input], J8.24(Pin_24) [passive], R10.2 [passive], U13.11(I/O) [bidirectional], U14.25(I/O) [bidirectional], U18.27(I/O) [bidirectional], U2.9(R/~{W}) [tri_state], U27.8(RWN) [input], U49.1(A->B) [input], U50.1(A->B) [input]
   SYSCLK: R32.2 [passive], U13.83(INPUT/GCLK1) [input], U14.83(INPUT/GCLK1) [input], U18.83(INPUT/GCLK1) [input], U2.15(CLK) [input], Y1.5(OUT) [output]
   UART_RX_A: R100.2 [passive], R104.2 [passive], U27.31(RXDA) [input], U36.12(R1OUT) [output]
   UART_RX_B: R101.2 [passive], R105.2 [passive], U27.10(RXDB) [input], U37.12(R1OUT) [output]
@@ -774,6 +797,7 @@ SIGNAL NETS
   ~{ENGINE_IRQ}: U13.29(I/O) [bidirectional], U18.33(I/O) [bidirectional]
   ~{ENGINE_SELECT}: U13.60(I/O) [bidirectional], U18.18(I/O) [bidirectional]
   ~{HALT}: J8.30(Pin_30) [passive], R7.2 [passive], U13.41(I/O) [bidirectional], U2.17(~{HALT}) [bidirectional]
+  ~{IO_BUFFER_OE}: U13.64(I/O) [bidirectional], U49.19(CE) [input], U50.19(CE) [input]
   ~{IPL0}: U13.80(I/O) [bidirectional], U2.25(~{IPL0}) [input]
   ~{IPL1}: U13.57(I/O) [bidirectional], U2.24(~{IPL1}) [input]
   ~{IPL2}: U13.56(I/O) [bidirectional], U2.23(~{IPL2}) [input]
@@ -822,6 +846,8 @@ POTENTIAL ISSUES
 --- Single-pin nets (possibly unfinished wiring) ---
   -12V: CP1.5(Pin_5)
   -5V: CP1.6(Pin_6)
+  /RTC/VBAT: U39.3(VBAT)
+  Net-(BT1-+): BT1.1(+)
   S2: J7.S2(S2)
   S3: J7.S3(S3)
   S4: J7.S4(S4)
@@ -871,7 +897,6 @@ POTENTIAL ISSUES
   /PIXEL/~{PIXELS_RE_FIFO_SIDE}: R28.2 [passive], U20.15(RD) [input], U21.15(RD) [input]
   /POWER_CLOCK_RESET/Y3_EN: R20.2 [passive], Y3.1(EN) [input]
   /POWER_CLOCK_RESET/Y4_EN: R21.2 [passive], Y4.1(EN) [input]
-  /RTC/VBAT: BT1.1(+) [passive], U39.3(VBAT) [power_in]
   /RTC/XTAL1: C80.1 [passive], U39.1(X1) [input], Y6.1(1) [passive]
   /SERIAL/CONSOLE_DTR: J18.20(P20) [passive], J18.6(6) [passive], J18.8(8) [passive]
   /SERIAL/MAXA_C1+: C70.1 [passive], U36.1(C1+) [passive]

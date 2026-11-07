@@ -77,7 +77,7 @@ glue/glue.svf: glue/glue.jed
 # expectation (list in glue_tb.v) and requires every one of those runs to FAIL.
 # vvp exits 0 even on $fatal in this oss-cad-suite, so the verdict is the
 # printed "TESTBENCH RESULT" line.
-GLUE_MUTATIONS := 1 2 3 4 5 6 7 8
+GLUE_MUTATIONS := 1 2 3 4 5 6 7 8 9
 glue-sim: glue/glue_tb.v glue/glue.v ../griffin.generated.vh
 	cd glue && iverilog -g2012 -o glue_tb.vvp glue_tb.v glue.v 2>&1 | grep -v "Extra digits" ; \
 	    vvp glue_tb.vvp | grep -v WARNING | tee glue_tb.log

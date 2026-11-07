@@ -1707,7 +1707,7 @@
 		)
 		(uuid "fd2d96a3-1135-4ad6-9300-b98d8108e03b")
 	)
-	(global_label "D14"
+	(global_label "D_IO14"
 		(shape bidirectional)
 		(at 156.21 73.66 0)
 		(fields_autoplaced yes)
@@ -1729,7 +1729,7 @@
 			)
 		)
 	)
-	(global_label "D13"
+	(global_label "D_IO13"
 		(shape bidirectional)
 		(at 156.21 71.12 0)
 		(fields_autoplaced yes)
@@ -1751,7 +1751,7 @@
 			)
 		)
 	)
-	(global_label "D12"
+	(global_label "D_IO12"
 		(shape bidirectional)
 		(at 156.21 68.58 0)
 		(fields_autoplaced yes)
@@ -1817,7 +1817,7 @@
 			)
 		)
 	)
-	(global_label "D7"
+	(global_label "D_IO7"
 		(shape tri_state)
 		(at 130.81 76.2 180)
 		(fields_autoplaced yes)
@@ -1861,7 +1861,7 @@
 			)
 		)
 	)
-	(global_label "D1"
+	(global_label "D_IO1"
 		(shape tri_state)
 		(at 130.81 116.84 180)
 		(fields_autoplaced yes)
@@ -1927,7 +1927,7 @@
 			)
 		)
 	)
-	(global_label "D6"
+	(global_label "D_IO6"
 		(shape tri_state)
 		(at 130.81 73.66 180)
 		(fields_autoplaced yes)
@@ -2015,7 +2015,7 @@
 			)
 		)
 	)
-	(global_label "D3"
+	(global_label "D_IO3"
 		(shape tri_state)
 		(at 130.81 66.04 180)
 		(fields_autoplaced yes)
@@ -2037,7 +2037,7 @@
 			)
 		)
 	)
-	(global_label "D11"
+	(global_label "D_IO11"
 		(shape bidirectional)
 		(at 156.21 66.04 0)
 		(fields_autoplaced yes)
@@ -2059,7 +2059,7 @@
 			)
 		)
 	)
-	(global_label "D0"
+	(global_label "D_IO0"
 		(shape tri_state)
 		(at 130.81 114.3 180)
 		(fields_autoplaced yes)
@@ -2081,7 +2081,7 @@
 			)
 		)
 	)
-	(global_label "D2"
+	(global_label "D_IO2"
 		(shape tri_state)
 		(at 130.81 119.38 180)
 		(fields_autoplaced yes)
@@ -2125,7 +2125,7 @@
 			)
 		)
 	)
-	(global_label "D10"
+	(global_label "D_IO10"
 		(shape bidirectional)
 		(at 156.21 121.92 0)
 		(fields_autoplaced yes)
@@ -2169,7 +2169,7 @@
 			)
 		)
 	)
-	(global_label "D15"
+	(global_label "D_IO15"
 		(shape bidirectional)
 		(at 156.21 76.2 0)
 		(fields_autoplaced yes)
@@ -2191,7 +2191,7 @@
 			)
 		)
 	)
-	(global_label "D5"
+	(global_label "D_IO5"
 		(shape tri_state)
 		(at 130.81 71.12 180)
 		(fields_autoplaced yes)
@@ -2213,7 +2213,7 @@
 			)
 		)
 	)
-	(global_label "D8"
+	(global_label "D_IO8"
 		(shape bidirectional)
 		(at 156.21 116.84 0)
 		(fields_autoplaced yes)
@@ -2235,7 +2235,7 @@
 			)
 		)
 	)
-	(global_label "D9"
+	(global_label "D_IO9"
 		(shape bidirectional)
 		(at 156.21 119.38 0)
 		(fields_autoplaced yes)
@@ -2257,7 +2257,7 @@
 			)
 		)
 	)
-	(global_label "D4"
+	(global_label "D_IO4"
 		(shape tri_state)
 		(at 130.81 68.58 180)
 		(fields_autoplaced yes)

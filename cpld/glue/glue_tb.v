@@ -70,6 +70,8 @@
 //                      (glue.v comment, not yml)
 //   0xF80000-0xFBFFFF  DUART   (10)
 //   0xFC0000-0xFFFFFF  PORTS   (11)
+// ~IO_BUFFER_OE (74AHCT245 pair, D <-> D_IO) is low for every bus cycle in
+// 0xF00000-0xFFFFFF and high for RAM, ROM, ENGINE and undecoded cycles.
 //   0x400000-0x7FFFFF, 0xC00000-0xCFFFFF, 0xE00000-0xEFFFFF: nothing selects,
 //                      BERR by timeout.
 //
@@ -116,6 +118,7 @@
 //   MUTATE 6  ~HALT expected low while only ~RESET is low
 //   MUTATE 7  CF cycle with IORDY held low expected to DTACK, not BERR
 //   MUTATE 8  VSYNC_PENDING expected to clear on a VSYNC_CLEAR write of 0
+//   MUTATE 9  ~IO_BUFFER_OE expected HIGH on a PORTS cycle
 
 `timescale 1ns / 100ps
 
@@ -167,7 +170,7 @@ module glue_tb;
     wire n_ram_1_sel, n_ram_2_sel, n_ram_3_sel, n_ram_4_sel;
     wire n_engine_select, n_write_lo, n_write_hi, debug_out;
     wire n_cf_cs0, n_cf_cs1, n_ports_select;
-    wire n_dtack, n_berr, n_vpa, n_r_w, n_duart_select;
+    wire n_dtack, n_berr, n_vpa, n_r_w, n_duart_select, n_io_buffer_oe;
     wire [2:0] n_ipl;
 
     glue dut (
@@ -211,6 +214,7 @@ module glue_tb;
         .nVPA(n_vpa),
         .nR_W(n_r_w),
         .nDUART_SELECT(n_duart_select),
+        .nIO_BUFFER_OE(n_io_buffer_oe),
         .PS2_CLK(ps2_clk),
         .PS2_DATA(ps2_data)
     );
@@ -258,6 +262,7 @@ module glue_tb;
     integer    dtack_at;      // E(N): posedges with ~AS low before ~DTACK seen; -1 = never
     integer    berr_at;       // same for ~BERR
     reg [9:0]  sel_seen;      // selects sampled at the first falling edge after ~AS
+    reg        io_buffer_seen; // ~IO_BUFFER_OE low, sampled with the selects
     reg [7:0]  read_data;     // D latched at the end of S6
     reg        rom_we_seen;   // nROM_WE sampled at the falling edge after the strobes
     reg        write_lo_seen; // nWRITE_LO, nWRITE_HI, nR_W sampled at the same point
@@ -278,6 +283,7 @@ module glue_tb;
             dtack_at = -1;
             berr_at  = -1;
             sel_seen = 10'bx;
+            io_buffer_seen = 1'bx;
             read_data = 8'bx;
             rom_we_seen = 1'bx;
             write_lo_seen = 1'bx;
@@ -309,6 +315,7 @@ module glue_tb;
                 cpu_d = wdata;
             end
             sel_seen = selects_now;
+            io_buffer_seen = ~n_io_buffer_oe;
             vpa_seen = n_vpa;
             dtack_before_strobes = ~n_dtack;
             if (!n_dtack) begin dtack_at = 0; done = 1; end
@@ -437,6 +444,7 @@ module glue_tb;
         check(sel_seen == SEL_ROM, "overlay: covers the whole of bank 1");
         read_cycle(24'h100000, WORD);
         check(sel_seen == SEL_RAM2 && dtack_at == E_ZERO_WS, "RAM bank 2 (0x100000) at E(2)");
+        check(!io_buffer_seen, "RAM cycle: ~IO_BUFFER_OE high");
         read_cycle(24'h200000, WORD);
         check(sel_seen == SEL_RAM3 && dtack_at == E_ZERO_WS, "RAM bank 3 (0x200000) at E(2)");
         read_cycle(24'h3FFFFE, WORD);
@@ -444,6 +452,7 @@ module glue_tb;
 
         read_cycle(24'h800000, WORD);
         check(sel_seen == SEL_ROM && dtack_at == E_ROM, "ROM window 0x800000 at E(4)");
+        check(!io_buffer_seen, "ROM cycle: ~IO_BUFFER_OE high");
         read_cycle(24'h900000, WORD);
         check(sel_seen == SEL_ROM && dtack_at == E_ROM, "ROM mirror 0x900000");
         read_cycle(24'hA00000, WORD);
@@ -453,15 +462,18 @@ module glue_tb;
 
         read_cycle(24'hD00000, WORD);
         check(sel_seen == SEL_ENGINE && dtack_at == E_ZERO_WS, "ENGINE 0xD00000 at E(2)");
+        check(!io_buffer_seen, "ENGINE cycle: ~IO_BUFFER_OE high");
         read_cycle(24'hDFFFFE, WORD);
         check(sel_seen == SEL_ENGINE, "ENGINE mirrors through 0xDFFFFF");
 
         glue_read(`GLUE_CF_PINS);
         check(sel_seen == SEL_NONE && dtack_at == E_ZERO_WS && berr_at < 0,
               "GLUE 0xF0001B: no external select, DTACK at E(2)");
+        check(io_buffer_seen, "GLUE cycle: ~IO_BUFFER_OE low");
 
         read_cycle(24'hF40000, WORD);
         check(sel_seen == SEL_CF_CS1 && dtack_at == E_CF, "CF 0xF40000 (A4=0): nCF_CS1 low, DTACK at E(14)");
+        check(io_buffer_seen, "CF cycle: ~IO_BUFFER_OE low");
         read_cycle(24'hF40010, WORD);
         check(sel_seen == SEL_CF_CS0 && dtack_at == E_CF, "CF 0xF40010 (A4=1): nCF_CS0 low, DTACK at E(14)");
 
@@ -469,10 +481,12 @@ module glue_tb;
         read_cycle(24'hF80001, LOW);
         check(sel_seen == SEL_DUART && dtack_at == 0 && dtack_before_strobes,
               "DUART 0xF80001: select, DTACK follows ~DUART_DTACK with no count");
+        check(io_buffer_seen, "DUART cycle: ~IO_BUFFER_OE low");
         n_duart_dtack = 1'b1;
 
         read_cycle(24'hFC0001, LOW);
         check(sel_seen == SEL_PORTS && dtack_at == E_ZERO_WS, "PORTS 0xFC0001 at E(2)");
+        check(io_buffer_seen == ((`MUTATE == 9) ? 1'b0 : 1'b1), "PORTS cycle: ~IO_BUFFER_OE low");
 
         // ---------------- undecoded regions: BERR by timeout ----------------
         read_cycle(24'h400000, WORD);
@@ -482,6 +496,7 @@ module glue_tb;
         check(sel_seen == SEL_NONE && dtack_at < 0 && berr_at == E_BERR, "0x7FFFFE: BERR");
         read_cycle(24'hC00000, WORD);
         check(sel_seen == SEL_NONE && dtack_at < 0 && berr_at == E_BERR, "0xC00000: BERR");
+        check(!io_buffer_seen, "undecoded 0xC00000: ~IO_BUFFER_OE high");
         read_cycle(24'hE00000, WORD);
         check(sel_seen == SEL_NONE && dtack_at < 0 && berr_at == E_BERR, "0xE00000: BERR");
         read_cycle(24'hF80001, LOW);      // DUART never answers

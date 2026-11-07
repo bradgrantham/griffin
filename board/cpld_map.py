@@ -39,6 +39,7 @@ CHIPS = {
         renames={
             'A_hi': 'A',
             'A_lo': 'A',
+            'D': 'D_IO',                 # behind the 74AHCT245 pair (glue sheet)
             'nRAM_1_SEL': '~{RAM_SELECT_1}',
             'nRAM_2_SEL': '~{RAM_SELECT_2}',
             'nRAM_3_SEL': '~{RAM_SELECT_3}',
@@ -49,13 +50,13 @@ CHIPS = {
         jtag={14: 'JTAG_TDI', 23: 'JTAG_TMS', 62: 'JTAG_TCK', 71: 'GLUE_TO_PORTS_TD'},
         fixed={},
         spare=[],
-        leave=[2, 64],
+        leave=[2],
     ),
     'PORTS': dict(
         ref='U14',
         sheet='ports.kicad_sch',
         verilog='../cpld/ports/ports.v',
-        renames={},
+        renames={'D': 'D_IO'},        # behind the 74AHCT245 pair (glue sheet)
         jtag={14: 'GLUE_TO_PORTS_TD', 23: 'JTAG_TMS', 62: 'JTAG_TCK', 71: 'PORTS_TO_AUDIO_TD'},
         fixed={},
         spare=[34, 41],

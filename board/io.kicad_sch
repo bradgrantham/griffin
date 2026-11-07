@@ -2296,7 +2296,7 @@
 			)
 		)
 	)
-	(global_label "D0"
+	(global_label "D_IO0"
 		(shape tri_state)
 		(at 165.1 105.41 180)
 		(fields_autoplaced yes)
@@ -2424,7 +2424,7 @@
 			)
 		)
 	)
-	(global_label "D2"
+	(global_label "D_IO2"
 		(shape tri_state)
 		(at 165.1 110.49 180)
 		(fields_autoplaced yes)
@@ -2510,7 +2510,7 @@
 			)
 		)
 	)
-	(global_label "D5"
+	(global_label "D_IO5"
 		(shape tri_state)
 		(at 165.1 118.11 180)
 		(fields_autoplaced yes)
@@ -2614,7 +2614,7 @@
 			)
 		)
 	)
-	(global_label "D6"
+	(global_label "D_IO6"
 		(shape tri_state)
 		(at 165.1 120.65 180)
 		(fields_autoplaced yes)
@@ -2720,7 +2720,7 @@
 			)
 		)
 	)
-	(global_label "D1"
+	(global_label "D_IO1"
 		(shape tri_state)
 		(at 165.1 107.95 180)
 		(fields_autoplaced yes)
@@ -2852,7 +2852,7 @@
 			)
 		)
 	)
-	(global_label "D3"
+	(global_label "D_IO3"
 		(shape tri_state)
 		(at 165.1 113.03 180)
 		(fields_autoplaced yes)
@@ -2984,7 +2984,7 @@
 			)
 		)
 	)
-	(global_label "D4"
+	(global_label "D_IO4"
 		(shape tri_state)
 		(at 165.1 115.57 180)
 		(fields_autoplaced yes)
@@ -3072,7 +3072,7 @@
 			)
 		)
 	)
-	(global_label "D7"
+	(global_label "D_IO7"
 		(shape tri_state)
 		(at 165.1 123.19 180)
 		(fields_autoplaced yes)

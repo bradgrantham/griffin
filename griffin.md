@@ -238,7 +238,7 @@ See [griffin.yml](griffin.yml) for the complete peripheral address map.
 Dedicated ATF1508 CPLD for:
 
 * Address decode: nRAM_[1-4]_SEL, nROM_SELECT, CF incl CS0/CS1 + AS-gated IORD/IOWR, ~DUART_SELECT, ~PORTS_SELECT, ~ENGINE_SELECT (a real net, GLUE nENGINE_SELECT → ENGINE pin 84)
-* DTACK / wait-state generation for everything including PORTS and CF (CF IORDY low extends the cycle); BERR by timeout for the undecoded regions
+* DTACK / wait-state generation for everything including PORTS and CF (CF IORDY low extends the cycle); BERR by timeout for the undecoded regions; ~IO_BUFFER_OE, the enable of the 74AHCT245 pair that isolates the IO segment's data pins (D_IO) from the main bus
 * WRITE_LO / WRITE_HI byte write strobes from ~UDS, ~LDS and R/~W
 * ~ROM_WE for in-circuit flash programming (word writes only, gated by CONFIG.FLASH_WE_EN)
 * Boot ROM overlay + the CONFIG register
@@ -407,6 +407,7 @@ Stereo 8-bit, four DMA-fed sample channels. The chip is `cpld/audio/audio.v` (AT
 - [ ] SYSCLK into a GCLK on every CPLD (especially GLUE)
 - [ ] series axial footprint at the driver output on every 7200 /RE and /W line, all three streams, stuffed 0R (33–47 Ω if a strobe rings on the bench; Rev 1's ringing came from breadboard jumpers with no return plane, see griffin.log 2026-09-12); no q8_toggle in Rev 2
 - [x] FIFO write buffers: two pairs of 74AHCT541 (one per byte lane per pipeline, /OE low), placed with their pipeline, inputs tapping the main bus where it already runs; no 7200 data pin on D[15:0] (decided 2026-10-09, replacing the 2026-08 "no transceivers" conclusion once the audio FIFOs took the count past what that review accepted)
+- [x] IO data buffers: a 74AHCT245 pair between D[15:0] and D_IO[15:0] (GLUE, CF, DUART, PORTS data pins), DIR = R/~W, /OE = GLUE ~IO_BUFFER_OE; on the glue sheet with 10k pull-ups on D_IO; main bus now 10 loads per lane (griffin.log 2026-11-07)
 - [x] redesign the VGA analog to be robust — done: binary-weighted ladder + shunt, values/BOM/layout in the griffin.yml VGA interfaces entry
 - [ ] audio output analog stage — redesigned 2026-09-27 for the AUDIO chip: four ladders straight off the 7200 Q pins, 74HC4066 duty-cycle gates into 2.5 V-biased LM358 inverting summers (2k || 8.2 nF), class-A pull-down + coupling → LINE; needs a breadboard; RCA line out; pot; pad + LM386 headphone drivers; NC-contact sum + LM386 speaker amp (three LM386s); full chain and BOM in the griffin.yml audio interfaces entry; DAC/buffer at the RCAs, headphone amps at the jack
 

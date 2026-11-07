@@ -30,7 +30,7 @@ deliberately not listed.
 
 ## CPLDs (six ATF1508AS PLCC84, one JTAG chain)
 
-- [x] GLUE (spares: one I/O and one input-only pin to bodge pads — glue.v header)
+- [x] GLUE (spare: the input-only pin 2 to a bodge pad — glue.v header; pin 64 is ~IO_BUFFER_OE since 2026-11-07)
 - [x] PORTS (new chip)
 - [x] ENGINE (released pins unconnected — engine.v header)
 - [x] ENGINE -> GLUE status wires ENGINE_ACTIVE / ENGINE_WAITING, ENGINE -> GLUE ~ENGINE_IRQ, GLUE -> ENGINE ~ENGINE_SELECT
@@ -49,6 +49,7 @@ deliberately not listed.
 - [x] AUDIO FIFOs: 5x IDT7200 (channels 0,1 on D[15:8]; channels 2,3 and control on D[7:0]), each ~W from its own ENGINE strobe, ~RS from ~RESET, ~HF unconnected
 - [x] Video FIFO write buffers: 2x 74AHCT541 (/OE low) with the PIXELS/VIDCMD parts, inputs on D[15:0], outputs D_VIDEO_FIFO[15:0]
 - [x] Audio FIFO write buffers: 2x 74AHCT541 (/OE low) with the five audio parts and the AUDIO CPLD, inputs on D[15:0], outputs D_AUDIO_FIFO[15:0]; the main bus does not run to the audio section
+- [x] IO data buffers: 2x 74AHCT245 (U49/U50 on the glue sheet; A = D_IO, B = D, DIR = R/~W, /OE = ~IO_BUFFER_OE from GLUE pin 64), 2x 10k SIP-9 pull-up networks on D_IO[15:0], bypass; GLUE, PORTS, DUART and CF data pins relabelled D_IO0..15 (griffin.yml "IO data buffers")
 - [x] Series axial footprint (stuffed 0R) at the driver on every 7200 /RE and /W line
 
 ## Video output

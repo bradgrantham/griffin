@@ -3155,3 +3155,121 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   and bus-error dump check, the FIFO-buffer margins) now waits for the rev-2
   board.  The rev-1 observations stay valid as history: the 115200 console,
   SYSCLK 14 MHz, the DBRA_ROM_CLKS = 16 measurement, the 7200 /RE ringing.
+
+2026-11-06 -- Item 4 derivations: (a) ENGINE deposit setup at the 7200 /W
+  through the 74AHCT541; (b) per-lane bus capacitance tally.  Sources, all
+  read today: AS6C4008.pdf (Alliance), SST39SF040 DS20005022, ATF1508AS
+  DS20006682A (-7/-10/-25) with the -15 column from the 2026-07 entry
+  above, IDT_7200-7202_DST_20171127, SN74AHCT541 and SN74AHCT245 (TI, fetched
+  2026-11-06), MC68000UM (10.6 DC, 10.10 AC), XR68C681.pdf, Wintec W7CF-H2
+  (the only CF document found; the CF Association spec is not on hand).
+  Datasheet values are maxima at the sheet's own test load; every ATF1508
+  minimum is taken as 0 (none is published), the project's standing rule.
+
+  (a) Deposit path, per word: STATE_PAYLOAD_SETTLE then STATE_PAYLOAD_STROBE,
+  2 SYSCLK = 142.86 ns at 14 MHz.  E0 = edge that advances src_addr (end
+  of the previous STROBE), E2 = edge that ends this STROBE: /W rises and
+  src_addr advances on E2.  AS is held asserted for the whole payload, so
+  only the address moves.
+    Address pin:   register -> feedback -> mux -> pin, bounded tCOP + tPD2
+                   = 8 + 12 = 20 ns (-15; 14 ns for -10)         [ATF]
+    RAM select:    GLUE A[21:20] decode, tPD1 15 (-15; 10 for -10) [ATF]
+    RAM data:      tACE 55 (CE path, the later one; tAA 55 from address)
+                   at CL = 30 pF + 1 TTL                          [AS6C4008]
+    Buffer:        74AHCT541 tPLH/tPHL 9.5 max at CL = 50 pF, full temp
+                   (8.5 at 25 C); buffered net is 2..4 FIFO inputs at
+                   8 pF + trace, under 50 pF                      [TI]
+    FIFO:          IDT7200L15 tDS 11 min, tDH 0, tWPW 15 min, tWR 10 min,
+                   tWC 25 min                                     [IDT]
+    Load derating, NOT from any table (estimates, flagged): the ATF
+    address outputs and the RAM data outputs are specified at 35 / 30 pF
+    and drive ~150-200 pF here; the only published rate in the stack is
+    the 68000's note 1 (5 ns per 80 pF below its 130 pF load, ~0.06
+    ns/pF); applied as +5 ns address, +8 ns RAM data.
+    Setup:  20 + 5 + 15 + 55 + 8 + 9.5 = 112.5 ns data valid after E0;
+            must be <= 142.86 + /W-min (0) - tDS 11 = 131.9.
+            MARGIN +19 ns (-15 parts, with both derating estimates);
+            +32 ns without them; +30 ns with -10 parts and estimates.
+            At 16 MHz (125 ns): +1 ns (-15) / +12 (-10).  20 MHz fails.
+    Pulse:  /W low one clock, 71.4 ns >= tWPW 15; high one clock >= tWR 10;
+            tWC 25 <= 142.9.  All fine.
+    Hold:   tDH 0.  Data at the FIFO holds until E2 + addr-min + tOH 10
+            + '541 min 1 = E2 + 11 ns (same bank); /W rises at E2 + 0..20.
+            Bound: -9 ns if the address path is 0 and the strobe path is
+            its full 20; both are register -> array -> pin in one chip, so
+            the real skew is a few ns and the RTL's "SRAM output hold
+            covers the consumer's data hold" stands on tOH 10, not on a
+            published minimum.  Caveat: a payload that straddles a 1 MB
+            bank boundary swaps CE between chips on E2; the old chip's
+            tCHZ has no minimum, so hold then rests on the bus
+            capacitance holding the level (microseconds at ~150 pF, µA
+            leakage), not on a table.  Keep source buffers inside a bank
+            or accept that argument.
+    Verdict (a): setup is safe at 14 MHz with -15 or -10 parts.  Owed
+    question closed; the yml issue drops part (a).
+
+  (b) Capacitance tally, per lane, datasheet MAXIMA (pins only):
+    D[7:0]:  68010 Cin 20 (UM 10.6, all pins) + 4 AS6C4008 CI/O 8 = 32
+             + SST39SF040 CI/O 12 + ATF1508 CI/O 10 x3 (GLUE, PORTS,
+             ENGINE) = 30 + XR68C681 Cin 15 + CF card Cin 35 (Wintec
+             Table 34) + 2 x 74AHCT541 Ci 10 = 20            = 164 pF
+    D[15:8]: 20 + 32 + 12 + 10 (ENGINE) + 35 (CF) + 20       = 129 pF
+    Typical-ish basis (ATF typ 8, '541 typ 2; the rest list only maxima):
+             D[7:0] 142, D[15:8] 111.
+    Trace + sockets, ASSUMPTION (board unrouted): ~25 cm of 2-layer THT
+    bus per lane with stubs at ~0.8 pF/cm = ~20 pF, plus ~1 pF per
+    socketed pin x 9 socketed parts = ~10 pF; call it +30 (20..40).
+    Totals: D[7:0] ~194 (max) / ~172 (typ); D[15:8] ~159 / ~141.
+    Against the 68010's AC test load, 130 pF for every pin but HALT
+    (UM 10.6, verified; the 2026-08 "[verify]" is cleared): both lanes
+    are over it on the max basis, D[7:0] on every basis, and D[7:0] is
+    over the ~150 pF reopening threshold from 2026-10-09 on every basis.
+    What exceeding it costs: the UM publishes no derating above 130 pF;
+    extrapolating note 1 (~0.06 ns/pF) gives ~+3-4 ns on address and
+    data-out valid for +60 pF.  CPU zero-wait RAM read at 14 MHz, 12.5
+    MHz column: data must be valid tDICL 10 before S7 clock low (3.5 T =
+    250 ns); S1 clock low 35.7 + tCLAV 50 + GLUE 15 + tACE 55 + ~8
+    derate = 164 -> ~76 ns of slack.  So the excess is not a timing
+    problem on the CPU side; it is edge quality and the weakest driver,
+    the CF card (rated 50 pF LSTTL, 7 wait states of slack), which is
+    what rev 1 would have shown on a scope and never did.
+    The fallback as sized 2026-10-09 (a 74AHCT245 pair on D[15:0]
+    isolating GLUE, PORTS, DUART, CF): removes 70 pF of pins from D[7:0]
+    and 35 from D[15:8], adds Cio 10 max (4 typ) per lane, and takes the
+    four peripherals' trace off the main bus: D[7:0] ~104 + ~25 = ~130,
+    D[15:8] ~104 + ~25 = ~130, i.e. at the test load.  Cost: two chips,
+    DIR from R/~W, 11 ns max ('245 at 50 pF) in each isolated path, all
+    of which have wait states except GLUE (0 WS, ~76 ns slack; fine).
+    ENGINE's deposit path is untouched (RAM stays on the main bus).
+    Decision: Brad's.  Open input: the CF Association spec's Cin, and
+    the SanDisk Extreme III's, in place of the one Wintec sheet.
+
+2026-11-07 -- IO data buffers: 74AHCT245 pair isolating GLUE, CF, DUART and
+  PORTS from the main bus (decision, Brad: "electrically conservative")
+  Follows the 2026-11-06 tally (D[7:0] ~164 pF of pins, over the 130 pF
+  68010 test load and the ~150 pF threshold).  Wiring: A = D_IO[15:0]
+  (peripheral branch), B = D[15:0]; DIR = R/~W (read = A->B); /OE =
+  GLUE nIO_BUFFER_OE = ~(io_region & bus_cycle), new output on pin 64, the
+  former I/O bodge spare (its pad TP2 removed; pin 2 is the last spare).
+  10k SIP-9 pull-up networks on D_IO (R158/R159): the branch floats
+  whenever the pair is disabled, which is most of the time, and AHCT inputs
+  must not float.  Main-bus loads per lane are now 10 and 10 (netlist: D0 =
+  U2, U5/7/9/11, U3, U18, U43, U45, U49 + debug header J8).
+  GLUE: 120 -> 121/128 LC, 334 -> 352 PT, 64/64 I/O, every other pin
+  unchanged (glue.pin diff = the one added line); glue_tb.v samples
+  ~IO_BUFFER_OE with the selects and checks it on RAM, ROM, ENGINE, GLUE,
+  CF, DUART, PORTS and undecoded cycles (82 checks, 9 negative controls;
+  MUTATE 9 = wrong polarity on the PORTS cycle).
+  Schematic: board/sheets/io_buffers_spec.py placed U49/U50/R158/R159/
+  C92/C93 on glue.kicad_sch (x 190..230, #PWR0700..0709); cpld_map.py
+  renames D -> D_IO for GLUE and PORTS; the GLUE and PORTS D pins and
+  GLUE pin 64 relabelled with relabel_pins.py (label_cpld.py --relabel
+  refuses U13 pins 46/63 and U14 34/41, which carry hand-drawn wires, so a
+  whole-chip relabel of those two needs `leave` entries or a hand pass);
+  io.kicad_sch (DUART) and compact-flash.kicad_sch D0..15 labels renamed
+  textually.  check_cpld_pins: 0 mismatches on all six chips.  ERC 21,
+  all on root / POWER_CLOCK_RESET / RTC (the 17 of 2026-10-09 plus the
+  VBAT label regression of 2026-10-19), none on the touched sheets.
+  Timing: the isolated paths all have wait states except GLUE (0 WS,
+  ~76 ns slack against the '245's 11 ns max at 50 pF).  Owed: the
+  write-data hold argument at the peripherals (yml issue).

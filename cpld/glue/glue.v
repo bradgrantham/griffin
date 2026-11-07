@@ -30,8 +30,8 @@
 // The PS/2 engine, DUART, CF at 0xF40000, BERR, VPA and HALT are
 // otherwise unchanged from Rev 1.  Rev-1 leftovers DEBUG_IN (bit-bang UART
 // RX readback) and nDUART_RESET (the DUART's RESET is active low and sits
-// directly on the system ~RESET net) are gone; pins 64 and 24 are the
-// bodge spares.
+// directly on the system ~RESET net) are gone.  Pin 64 became nIO_BUFFER_OE
+// (2026-11-07); pin 2 is the remaining bodge spare.
 
 `include "../../griffin.generated.vh"
 
@@ -89,6 +89,13 @@ module glue (
 
     output wire        nR_W,
     output wire        nDUART_SELECT,
+
+    // Enable (active low) for the 74AHCT245 pair that isolates the IO
+    // segment's data pins (GLUE, CF, DUART, PORTS: 0xF00000-0xFFFFFF, D_IO
+    // on the schematic) from the main bus.  Low for every bus cycle in the
+    // segment, high otherwise, so the buffers never drive the main bus while
+    // RAM, ROM or the CPU owns it.  Direction comes from R/~W on the board.
+    output wire        nIO_BUFFER_OE,
 
     // PS/2 keyboard (open-drain with external pull-ups).
     // CPLD drives 0 when pin is asserted; tri-states otherwise.
@@ -274,6 +281,7 @@ module glue (
                                        3'b111;   // no interrupt
 
     assign nDUART_SELECT = ~(duart_segment & bus_cycle);
+    assign nIO_BUFFER_OE = ~(io_region & bus_cycle);
 
     // PORTS is a byte peripheral on the LDS lane; it decodes A[4:1] itself,
     // so GLUE only has to hand it a cycle-qualified region select.
@@ -662,8 +670,9 @@ endmodule
 //   - Nothing after the pin number - the cut includes all trailing text
 //   - JTAG pins (TDI:14, TMS:23, TCK:62, TDO:71) are dedicated; no PIN entry needed
 //
-// Spares: pin 64 (I/O) and pin 2 (dedicated input OE1/IN, input-only) —
-// unassigned bodge spares (pin keeper, no pulls); route to pads only.
+// Spare: pin 2 (dedicated input OE1/IN, input-only) — unassigned bodge spare
+// (pin keeper, no pulls); route to a pad only.  Pin 64 was the I/O spare
+// until nIO_BUFFER_OE took it (2026-11-07).
 //
 //PIN: CHIP "glue" ASSIGNED TO AN PLCC84
 //
@@ -715,6 +724,7 @@ endmodule
 //PIN: nVPA              : 55
 //PIN: nPORTS_SELECT     : 16
 //PIN: nDUART_SELECT     : 21
+//PIN: nIO_BUFFER_OE     : 64
 //PIN: nCF_CS0           : 18
 //PIN: nCF_CS1           : 20
 //PIN: nR_W              : 27

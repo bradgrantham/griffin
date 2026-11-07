@@ -1064,7 +1064,7 @@ issues:
   - "CLUT_INDEX does not post-increment, so consecutive palette entries cost 3 words each instead of 2."
   - "VIDCMD SET target 0 writes cmp_color1 and target 1 writes cmp_color0.  Swapping the target NUMBERS to match the colour numbers is a wire-contract change, not yet decided."
   - "The PIXELS and VIDCMD stream FIFOs (ENGINE -> PIXEL / COMPOSITOR) are described in comments and constants, not as first-class entries."
-  - "Bus derivation owed, two parts: (a) the 74AHCT541 FIFO write buffers subtract one propagation delay from data setup at the 7200 /W rising edge during ENGINE deposits, and the margin against the 7200 and ATF1508 datasheet tables is not derived; (b) a per-lane capacitance tally of D[7:0] (13 loads) and D[15:8] (10) from the datasheet input capacitances of the 68010, AS6C4008, SST39SF040, ATF1508 I/O, CF and 74AHCT541 plus trace estimate, against the 68010 AC test-load condition (130 pF, to be verified in its table).  If the tally lands above about 150 pF, the fallback is a 74AHCT245 pair isolating the wait-stated low-byte peripherals (GLUE, PORTS, DUART, CF), not RAM; see griffin.log 2026-10-09."
+  - "IO data buffers, bring-up check: write-data hold at the DUART, PORTS, CF and GLUE after their strobe negates rests on the D_IO branch holding its level after ~IO_BUFFER_OE disables the pair (ATF1508 minimums unpublished), not on a table; scope a DUART write on the rev-2 board."
   - "The headphone jack part is not chosen: the speaker mute needs normally-closed TIP and RING contacts, but the SJ3-35063B in board.pretty has a tip switch only (SJ3-35063BG adds an isolated normally-open switch, not a ring contact).  The schematic draws the contract with a generic tip+ring-switch jack and no footprint."
   - "The AUDIO analog stage (ladders straight off the 7200 Q pins, 74HC4066 duty-cycle gates into a 2.5 V-biased inverting summer) has not been breadboarded; switch on-resistance and switching time at low volumes are the open risk."
   - "BERR in 0x400000-0x7FFFFF, 0xC00000-0xCFFFFF and 0xE00000-0xEFFFFF is by DTACK timeout (no decode; GLUE berr_timeout_clocks); state whether that is the intended contract."
@@ -1103,11 +1103,8 @@ interfaces:
     audio pair feeds D_AUDIO_FIFO[15:0] to the five AUDIO parts.  The
     buffers are in the write-data path only; /W, /RS, /R, /EF and Q are
     unbuffered.  AHCT, not HCT: the buffer delay comes out of data setup
-    at the 7200's /W rising edge (margin derivation owed; see issues).
-    Main-bus loads per lane after this: D[7:0] = CPU, 4 RAM, ROM, GLUE,
-    PORTS, DUART, CF, ENGINE, 2 buffers (13); D[15:8] = CPU, 4 RAM, ROM,
-    CF, ENGINE, 2 buffers (10).  Without the buffers the 7200s alone added
-    five to D[7:0] and four to D[15:8].
+    at the 7200's /W rising edge (derived safe, griffin.log 2026-11-06).
+    Main-bus loads per lane: see the IO data buffers entry.
     Video streams use 2x IDT7200 (256x9) each -- PIXELS ganged 16-bit
     (PIXELS_Q[15:0], ONE /RE from PIXEL driving both parts; PIXELS_Q[15:8] is
     the part on D[15:8]), VIDCMD ganged 16-bit (/RE from COMPOSITOR); each
@@ -1124,6 +1121,18 @@ interfaces:
     unconnected.
     XI/XO cascade is an unpopulated-footprint option if depth is ever
     needed.
+  - |
+    IO data buffers: a 74AHCT245 pair, one per byte lane, between the main
+    bus D[15:0] and D_IO[15:0], the data pins of the four IO-segment
+    peripherals (GLUE, CF, DUART, PORTS; 0xF00000-0xFFFFFF).  A side =
+    D_IO, B side = D; DIR = R/~W, so a read drives peripheral to bus; /OE =
+    GLUE nIO_BUFFER_OE, low for every bus cycle in the segment and high
+    otherwise, so the pair never drives the main bus while RAM, ROM, the
+    CPU or ENGINE owns it.  The segment's selects, strobes, DTACK and IRQ
+    lines are unbuffered.  Main-bus loads per lane: D[7:0] = CPU, 4 RAM,
+    ROM, ENGINE, 2 FIFO write buffers, 1 IO buffer (10); D[15:8] the same
+    (10).  Decided on the datasheet capacitance tally, griffin.log
+    2026-11-06 and 2026-11-07.
   - |
     FIFO control strobes: every 7200 /RE and /W line (PIXELS, VIDCMD,
     AUDIO) has a series axial footprint at its driver, stuffed 0R; 33-47R
@@ -1208,7 +1217,7 @@ interfaces:
     Spare headers, 0.1 in, for a future daughter board; no logic behind
     them today.  (ENGINE's spare strobe header is gone: its pin became one
     of the seven deposit strobes.)  PORTS spare header: PORTS pins 34 and 41
-    (unassigned I/O) and GND.  GLUE bodge spares: the two pins named in glue.v's pinout header, routed to pads.
+    (unassigned I/O) and GND.  GLUE bodge spare: the one input-only pin named in glue.v's pinout header, routed to a pad.
   - |
     Clocks: three oscillators, no CPLD re-drives a clock.  SYSCLK (14 MHz
     can) -> CPU CLK and GCLK1 of GLUE, ENGINE and PORTS.  Pixel
