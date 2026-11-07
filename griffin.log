@@ -3343,3 +3343,69 @@ Rev 1 bring-up (undated) -- 7200 /RE bodge wires rang
   clock before the next read.  All close.  Power: 3 x 80 = 240 mA max
   (165 typ), more than the 74F219's 165 max; accepted.  Footprints:
   overlaid DIP-16 and SO-16 (Brad).  Issue closed.
+
+2026-11-07 -- CLUT_INDEX post-increment fit test (PIXEL).  Rung: in the
+  register block, `else if (wr2) clut_index <= clut_index + 1` -- the
+  increment lands on the edge that ends the three-clock write window
+  (clock 3, IDX still the old index), so address hold is untouched and the
+  next CLUT_DATA SET writes the next entry.  Production 123/128 LC, 94 FF,
+  13 foldback, 384 PT -> with the increment 125/128 LC, 94 FF, 14
+  foldback, 400 PT, pinout identical (-preassign keep, production flags).
+  FITS with 3 LC to spare.  RTL reverted after the test: the change is a
+  semantic one and needs the whole package (pixel_tb.v law + negative
+  control, render.cpp PixelUnit, suite case, emulator, vidcmd-spec /
+  video datasheet, VIDCMD_WORDS_PER_CLUT_ENTRY becomes 2 for consecutive
+  entries after the first, author.cpp / fixup_encode palette loaders).
+  Not done yet; Brad to say go.
+
+2026-11-07 -- CLUT_INDEX post-increment: PACKAGE LANDED through all five
+  layers (Brad: "CLUT_INDEX SET should set the index to the value", go).
+  Law (pixel.v header): on the edge that ends clock 2 -- the pulse clock,
+  wr2 high -- clut_index <= clut_index + 1 (F wraps to 0); IDX is
+  registered on that same edge from the OLD value, so the hold clock 3
+  still carries the written address; the next clut_data SET can commit no
+  earlier than clock 4 (commits two apart, the filler owns clock 2) and
+  lands in the next entry.  A clut_index SET sets (never adds) and
+  outranks the increment when they coincide, which only an illegal filler
+  can arrange.  Run-on entry = (SET clut_data, filler), two words; a table
+  of n consecutive entries = 2n + 1 words (VIDCMD_WORDS_PER_CLUT_NEXT_ENTRY
+  = 2 beside VIDCMD_WORDS_PER_CLUT_ENTRY = 3; se::palette_table_words()).
+  Fit: 125/128 LC, 94 FF, 14 foldback, 400 PT, pinout identical to
+  production (-preassign keep, production flags), as the fit test said.
+  (1) pixel.v: the rung, wr1/wr2 declared with the SET registers.
+  (2) pixel_tb.v case clut-autoinc: after case G wrote entry A, four
+  writes with no index SET measured with G's window check (IDX = predicted
+  index on clocks 1..3 INCLUDING the hold clock; pulse on clock 2 alone):
+  B, C, then SET F -> F, then the wrap.  Bench bug found and fixed before
+  the RTL was blamed: the window counter cannot tell entry 0 from the
+  blanking index (also 0), so the wrap write is issued unmeasured and the
+  write after it is measured at entry 1, which only F -> 0 -> 1 gives.
+  Negative controls mut10 (no increment) and mut11 (increment on wr1, one
+  clock early: IDX moves on the hold clock) both fail the bench; mut1..9
+  and old_pulse unchanged (old_pulse anchors updated for the moved
+  declaration).  clut_pair_tb.v: derivation D6, task entry_next(ix, v)
+  with ix the PREDICTED landing, case S2r: entry 8 + run-on 9, A; SET F +
+  run-on F, 0 (wrap): 5 writes, 0 address/setup/hold violations, cells
+  read back right.  pixel-sim, pixel-mutants, clut-pair-sim, timing-sim
+  all PASS.  (3) render.cpp PixelUnit: increment when seq == 3 at the top
+  of the clock (that is the edge ending clock 2 in the model's phase
+  numbering), after idx_ is formed from the old value; cidx_set_at_pulse_
+  carries the SET-outranks-increment precedence (a clut_index SET seen
+  with write_phase() == 2).  (4) suite: S2r in check_palette_traces
+  (12 words: entries 3,4,5 then SET F, F and 0; pixel-exact, 5 writes, no
+  filler flags); palette_load_identity now one indexed entry + fifteen
+  run-on, so every identity-palette case exercises the increment; all
+  cases PASS.  (5) emulator rebuilt clean, boots rom.bin: "8 VIDCMD
+  words", console renders.  Consumers converted: author.cpp frame palette
+  loader (16 entries 48 -> 33 words), static-pieces palette (author.h
+  SP_PALETTE_WORDS 12 -> 9, descriptor count follows), firmware console
+  preamble (9 -> 8 words, static_assert that CONSOLE_PIX_BASE is even so
+  the run-on entry is base | 1).  Deliberately NOT converted: the .gcx and
+  .gc4 file formats and clut_roundtrip (which mirrors what the .gc4 reader
+  deposits) -- indexed three-word entries stay legal and the per-line
+  fix-ups are scattered indices anyway; apps dmabench / smurf / mandelbrot
+  palette loops (3 x 16 -> 33 words a frame is not worth touching running
+  demos for).  Docs: vidcmd-spec.md section 3.2 (run-on entry, cost: 8
+  scattered or 11 consecutive entries in a 26-word HBLANK packet, 16 in
+  33 words), video datasheet 3.6 / PN8 / tables, griffin.yml PIXEL
+  comment.  Issue closed.

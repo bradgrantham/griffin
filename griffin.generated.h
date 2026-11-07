@@ -439,6 +439,7 @@ static constexpr uint32_t VIDCMD_SET_PIX_MODE = 0x05U;
 static constexpr uint32_t VIDCMD_SET_PIX_PIXEL_SKIP = 0x06U;
 static constexpr uint32_t VIDCMD_SET_FILLER = 0x07U;
 static constexpr uint32_t VIDCMD_WORDS_PER_CLUT_ENTRY = 0x03U;
+static constexpr uint32_t VIDCMD_WORDS_PER_CLUT_NEXT_ENTRY = 0x02U;
 static constexpr uint32_t VIDCMD_RUN_COUNT_MAX = 0x3FFU;
 static constexpr uint32_t VIDCMD_PIX_MODE_1BPP = 0x00U;
 static constexpr uint32_t VIDCMD_PIX_MODE_2BPP = 0x01U;

@@ -496,6 +496,17 @@ struct RecordWriter
         }
     }
 
+    // The run-on form, two records: SET clut_data and its filler, landing in
+    // the entry after the previous write (descriptor.h).  Same legality.
+    void palette_next(Rgb444 colour)
+    {
+        const PaletteNextWords e = vidcmd_palette_next(colour);
+        for (uint16_t v : e)
+        {
+            record(v);
+        }
+    }
+
     // A flat span of any colour: LITERAL + HOLD(n - 2), n + 2 slots behind a
     // long record when n >= 4 (max(n + 2, 4) in general, compositor_tb
     // LIT_HOLD_n), or the LITERAL alone for n == 2.  n == 1 and n == 3 cannot
@@ -1429,18 +1440,24 @@ AuthorResult author_frame(const FrameParams &p, Memory ram,
 
     // --- the frame's PALETTE, in vertical blanking ---------------------------
     //
-    // Sixteen three-word entries is 48 words, well past what one HBLANK can
-    // deliver, and vertical blanking is where it belongs anyway: there are no
-    // pixel slots for a write to disturb.  Nothing in hardware clears the RAM,
-    // so this load is also the assertion that the entries survive 480 lines and
-    // the /RS at the next vsync.
+    // Sixteen entries as one indexed entry and fifteen run-on pairs is 33
+    // words (palette_table_words), past what one HBLANK can deliver, and
+    // vertical blanking is where it belongs anyway: there are no pixel slots
+    // for a write to disturb.  Nothing in hardware clears the RAM, so this load
+    // is also the assertion that the entries survive 480 lines and the /RS at
+    // the next vsync.
     if (p.palette_entries > 0)
     {
         const uint32_t addr = p.vidcmd_base + VIDCMD_PREAMBLE_SLOT * VIDCMD_LINE_STRIDE_BYTES;
         uint32_t n = 0;
-        for (uint32_t i = 0; i < p.palette_entries; i++)
+        for (uint16_t v : vidcmd_palette_entry(0, p.palette[0]))
         {
-            for (uint16_t v : vidcmd_palette_entry(i, p.palette[i]))
+            ram[addr + n * 2] = v;
+            n++;
+        }
+        for (uint32_t i = 1; i < p.palette_entries; i++)
+        {
+            for (uint16_t v : vidcmd_palette_next(p.palette[i]))
             {
                 ram[addr + n * 2] = v;
                 n++;
@@ -1648,18 +1665,30 @@ void write_static_pieces_data(const StaticPiecesParams &p, Memory ram,
         }
     }
 
-    // The frame's palette, as three-word entries, deposited in vertical
-    // blanking where a write disturbs no pixel slot.
+    // The frame's palette — entry 0 indexed, the rest run-on, SP_PALETTE_WORDS
+    // in all — deposited in vertical blanking where a write disturbs no pixel
+    // slot.
     {
         uint32_t       n    = 0;
         const uint32_t addr = sp_palette_addr(p.data_base);
         for (uint32_t e = 0; e < SP_PALETTE_ENTRIES; e++)
         {
             const Rgb444 c = (e < palette.size()) ? palette[e] : RGB444_BLACK;
-            for (uint16_t v : vidcmd_palette_entry(e, c))
+            if (e == 0)
             {
-                ram[addr + n * 2] = v;
-                n++;
+                for (uint16_t v : vidcmd_palette_entry(0, c))
+                {
+                    ram[addr + n * 2] = v;
+                    n++;
+                }
+            }
+            else
+            {
+                for (uint16_t v : vidcmd_palette_next(c))
+                {
+                    ram[addr + n * 2] = v;
+                    n++;
+                }
             }
         }
     }

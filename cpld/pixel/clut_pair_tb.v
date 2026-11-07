@@ -20,7 +20,8 @@
 // WHAT IT IS FOR: pinning section 4 of indexed-pixel-spec-draft.md — where a
 // palette write is legal, what must be on set_pix_value while /WE is low, and
 // therefore whether the three-word table entry (SET clut_index, SET clut_data,
-// same-value SET target 7) is necessary and sufficient.
+// same-value SET target 7) is necessary and sufficient — and, since 2026-11-07,
+// that the two-word run-on entry lands where the post-increment says (D6).
 //
 // ===========================================================================
 // DERIVATIONS.  All of this was worked out from compositor.v and pixel.v
@@ -114,6 +115,19 @@
 // DOES NOT clear the palette RAM: nothing resets the RAM cells, and there is
 // no path that could.  A cell never written reads X, which is how this bench
 // sees an unloaded palette reach the DAC (case S0).
+//
+// D6.  THE INDEX ADVANCES (2026-11-07).  pixel.v increments clut_index on the
+// edge that ends clock 2 (wr2 high), registering IDX from the OLD value on that
+// same edge, so the hold clock 3 still carries the written address and the new
+// index is in force from clock 3.  By D1 the earliest the NEXT clut_data SET
+// can commit is clock 4 — the filler owns clock 2 — so a run-on entry (SET
+// clut_data, filler: two words, no index SET) lands in entry + 1, F wrapping to
+// 0, and its own window is D2/D3 unchanged.  Predictions: a stream of one
+// three-word entry at 8 followed by two run-on pairs writes 8, 9, A with zero
+// address/setup/hold violations (the address never moves inside a window,
+// because the increment edge is the one IDX reads the old value on); an
+// explicit SET clut_index F then a run-on pair writes F and the pair after it
+// writes 0.  Case S2r.
 //
 // ===========================================================================
 // WHAT THE BENCH ASSERTS CONTINUOUSLY (the RAM model's timing assertions, in
@@ -642,6 +656,20 @@ module ClutPairTb;
         end
     endtask
 
+    // A RUN-ON entry, two words: SET clut_data, same-value SET target 7, no
+    // index SET.  `ix` is where D6 PREDICTS it lands (the previous entry + 1);
+    // check_cells reads the RAMs back against that prediction.
+    task entry_next;
+        input [3:0]  ix;
+        input [11:0] v;
+        begin
+            vpush(vc_set(T_CLUT_DATA,  v));
+            vpush(vc_set(T_SPARE,      v));
+            pal[ix]       = v;
+            pal_known[ix] = 1'b1;
+        end
+    endtask
+
     task check;
         input          cond;
         input [8*92:1] name;
@@ -990,6 +1018,33 @@ module ClutPairTb;
         check_int("S2 data hold violations", we_data_hold_bad, 0);
         check_int("S2 address violations", we_addr_bad, 0);
         check_cells("S2");
+
+        // ================================================================
+        // S2r  D6: RUN-ON ENTRIES.  One three-word entry at 8, then two
+        // two-word pairs with no index SET, predicted to land at 9 and A;
+        // then SET clut_index F explicitly and two more pairs, predicted at F
+        // and (wrapping) 0.  Eleven words, five writes.  The address check is
+        // the sharp one: the increment edge is the edge IDX reads the OLD
+        // value on, so IDX must not move inside any of the five windows.
+        // ================================================================
+        $display("");
+        $display("CASE S2r — run-on entries (post-increment)");
+        we_reset();
+        pal_forget();
+        wait_blank();
+        entry(4'h8, 12'h811);
+        entry_next(4'h9, 12'h922);
+        entry_next(4'hA, 12'hA33);
+        vpush(vc_set(T_CLUT_INDEX, 12'h00F));
+        entry_next(4'hF, 12'hF44);
+        entry_next(4'h0, 12'h055);
+        repeat (50) @(posedge clk);
+        check_int("S2r writes", we_writes, 5);
+        check_int("S2r data setup violations", we_data_setup_bad, 0);
+        check_int("S2r wrong payload written", we_data_wrong, 0);
+        check_int("S2r data hold violations", we_data_hold_bad, 0);
+        check_int("S2r address violations", we_addr_bad, 0);
+        check_cells("S2r");
 
         // ================================================================
         // S3  ITEM (5): A PER-LINE RELOAD OF EIGHT ENTRIES INSIDE ONE HBLANK

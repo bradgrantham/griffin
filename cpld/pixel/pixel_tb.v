@@ -89,6 +89,13 @@
 // clocks 1..3 — the reason a table entry costs three words, and why the pulse
 // sits at 2 rather than at 3 — is clut_pair_tb.v's subject, not this bench's.
 //
+// THE INDEX ADVANCES: on the edge that ends clock 2 clut_index becomes
+// clut_index + 1 (F wraps to 0), while IDX — registered on that same edge from
+// the old value — still carries the written address on the hold clock 3.  A
+// clut_index SET sets the index to its value.  Case clut-autoinc measures four
+// writes back to back, each with the window check above, so a clock-3 IDX that
+// moved with the index would read as a two-clock window and fail.
+//
 // RESET (/RS): pix_mode, pix_base, pixel_skip and clut_index all zero, IDX 0,
 // nCLUT_WE high, nPIXELS_RE high.  Case R re-asserts reset after the other
 // cases have written every register, so it also proves /RS clears them: an
@@ -314,6 +321,9 @@
 //   mut6 attr pattern read from shift_reg[15] (the colour half of the word)
 //   mut7 the depth clamp on skip dropped
 //   mut8 the write pulse one clock wide -> two clocks wide
+//   mut9 the write sequence one clock late (the pre-2026-09-20 draft)
+//   mut10 the index does not advance after a write
+//   mut11 the index advances one clock early (on wr1), moving IDX on the hold clock
 // ===========================================================================
 
 `timescale 1ns / 1ps
@@ -1421,6 +1431,54 @@ module PixelTb;
         end
     end
 
+    // One clut_data write, measured against the W2 window with `ix` as the
+    // index the write is predicted to land on: IDX = ix on clocks 1, 2 and 3
+    // (the hold clock included), the pulse on clock 2 alone, IDX back to the
+    // blanking index afterwards.  No clut_index SET is issued here — that is
+    // the point when the task is called twice in a row.
+    task clut_write_watch;
+        input [3:0]  ix;
+        input [11:0] v;
+        begin
+            seq_index      = ix;
+            seq_idx_clocks = 0;
+            seq_we_clocks  = 0;
+            seq_first_idx  = -1;
+            seq_first_we   = -1;
+            seq_clk        = 0;
+
+            @(posedge clk)
+            begin
+                set_value  <= v;
+                set_target <= T_CLUT_DATA;
+                set_valid  <= 1'b1;
+                set_commit <= 1'b1;
+                seq_watch  <= 1'b1;
+            end
+
+            @(posedge clk)
+            begin
+                set_valid  <= 1'b0;
+                set_commit <= 1'b0;
+            end
+
+            repeat (10) @(posedge clk);
+            seq_watch = 1'b0;
+
+            $display("  write predicted at entry %1h:", ix);
+            check_int("  IDX=index clocks (hold clock included)", seq_idx_clocks, 3);
+            check_int("  first at cycle",    seq_first_idx,  1);
+            check_int("  /CLUT_WE clocks",   seq_we_clocks,  1);
+            check_int("  /CLUT_WE at cycle", seq_first_we,   2);
+
+            if (IDX !== 4'd0)
+            begin
+                $display("  FAIL  IDX did not return to the blanking index: %1h", IDX);
+                errors = errors + 1;
+            end
+        end
+    endtask
+
     // ----------------------------------------------------------------
     // Cases
     // ----------------------------------------------------------------
@@ -1726,6 +1784,24 @@ module PixelTb;
         begin
             $display("  pass  IDX back to the blanking index after the write");
         end
+
+        // ---------------- G2: the index advances after every write ----------------
+        // Derived before simulating: G wrote entry A, so with no SET at all the
+        // next write lands at B, then C.  Each write is measured with G's own
+        // window check — IDX = the predicted index on clocks 1..3, the HOLD
+        // clock included, which is what the increment must not disturb.  Then
+        // F is SET explicitly (a SET always sets, it does not add), the write
+        // after it wraps to 0 — which this counter cannot see, because the
+        // blanking index is 0 too, so that write is issued unmeasured — and the
+        // write after THAT is measured at 1, which only F -> 0 -> 1 can give.
+        $display("CASE clut-autoinc");
+        clut_write_watch(4'hB, 12'h0B0);
+        clut_write_watch(4'hC, 12'h0C0);
+        set_reg(T_CLUT_INDEX, 12'hF);
+        clut_write_watch(4'hF, 12'h0F0);
+        set_reg(T_CLUT_DATA, 12'h000);          // lands at 0: the wrap
+        repeat (8) @(posedge clk);
+        clut_write_watch(4'h1, 12'h010);
 
         // ---------------- IDX returns to the PIXEL index ----------------
         $display("CASE clut-midline");

@@ -259,6 +259,11 @@ private:
     uint32_t pixel_skip_ = 0;
     uint32_t clut_index_ = 0;
 
+    // A clut_index SET committed on the pulse clock outranks that write's
+    // post-increment (pixel.v: `if (set_cidx) ... else if (wr2)`).  Only an
+    // illegal filler can put a SET there, but the precedence is the RTL's.
+    bool cidx_set_at_pulse_ = false;
+
     // The word engine (pixel.v: shift_reg, bit_pos, align_cnt, half_phase,
     // fifo_loading, line_skipped, extra_fetch_done).
     uint32_t shift_reg_        = 0;

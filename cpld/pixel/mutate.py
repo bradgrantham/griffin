@@ -77,6 +77,23 @@ MUTANTS = [
     ("mut9", "the write sequence one clock late (the pre-2026-09-20 draft)",
      "    wire clut_seq = set_cdata | wr1 | wr2;",
      "    wire clut_seq = wr1 | wr2;"),
+
+    ("mut10", "the index does not advance after a write",
+     "            else if (wr2)\n"
+     "            begin\n"
+     "                // The post-increment: the edge that ends the pulse clock.  IDX\n"
+     "                // is registered from the old value on this same edge, so the\n"
+     "                // hold clock keeps the written address (header).\n"
+     "                clut_index <= clut_index + 4'd1;\n"
+     "            end\n",
+     ""),
+
+    # The increment one clock EARLY: clut_index moves at the end of clock 1, so
+    # IDX — registered from it at the end of clock 2 — shows the NEXT entry on
+    # the hold clock.  The RAM's address would move while it is still holding.
+    ("mut11", "the index advances on wr1, one clock early, moving IDX on the hold clock",
+     "            else if (wr2)\n",
+     "            else if (wr1)\n"),
 ]
 
 # The same mistake again, but as a WHOLE-FILE mutant, because clut_pair_tb.v
@@ -84,8 +101,10 @@ MUTANTS = [
 # back one clock late exactly as the first draft had it: a third flip-flop, the
 # address window on wr1|wr2|wr3 and the pulse on ~wr2.
 OLD_PULSE = [
-    ("    reg wr1, wr2;\n\n    wire clut_seq = set_cdata | wr1 | wr2;",
-     "    reg wr1, wr2, wr3;\n\n    wire clut_seq = wr1 | wr2 | wr3;"),
+    ("    reg wr1, wr2;\n",
+     "    reg wr1, wr2, wr3;\n"),
+    ("    wire clut_seq = set_cdata | wr1 | wr2;",
+     "    wire clut_seq = wr1 | wr2 | wr3;"),
     ("            wr1 <= 1'b0;\n            wr2 <= 1'b0;\n            nCLUT_WE <= 1'b1;",
      "            wr1 <= 1'b0;\n            wr2 <= 1'b0;\n            wr3 <= 1'b0;\n            nCLUT_WE <= 1'b1;"),
     ("            wr1 <= set_cdata;\n            wr2 <= wr1;\n\n            nCLUT_WE <= ~wr1;",

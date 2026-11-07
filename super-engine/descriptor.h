@@ -595,7 +595,8 @@ static_assert(pixels_words_per_line(pixel_mode(PIXEL_DEPTH_2BPP, false), 1) ==
               "the depth clamp turns 2bpp skip 1 into 0, so no extra word");
 
 // ---------------------------------------------------------------------------
-// THE PALETTE — 16 x 12 of external RAM, and a THREE-WORD table entry
+// THE PALETTE — 16 x 12 of external RAM, a THREE-WORD table entry and the
+// TWO-WORD run-on entry
 // ---------------------------------------------------------------------------
 //
 // The RAM's data inputs are COMPOSITOR's set_pix_value[11:0]; PIXEL supplies
@@ -608,6 +609,11 @@ static_assert(pixels_words_per_line(pixel_mode(PIXEL_DEPTH_2BPP, false), 1) ==
 //      SET pix_clut_data,  V
 //      SET 7 (the filler), V      <- the SAME twelve bits, or the RAM stores
 //                                    the next word's payload instead
+//
+// After the pulse clut_index ADVANCES by one (F wraps to 0; a clut_index SET
+// sets it and outranks the increment), so a table of CONSECUTIVE entries is one
+// entry as above and then (SET pix_clut_data, SET 7) pairs — two words each,
+// the same write window, landing in the next entry.
 //
 // and the four pixel clocks after the data SET's commit (its own slot + 3) are
 // DISTURBED: one shows the entry being written, two are undefined while /WE is
@@ -622,6 +628,15 @@ static_assert(pixels_words_per_line(pixel_mode(PIXEL_DEPTH_2BPP, false), 1) ==
 inline constexpr uint32_t PALETTE_ENTRIES = 16;
 inline constexpr uint32_t PALETTE_WORDS_PER_ENTRY = Griffin::VIDCMD_WORDS_PER_CLUT_ENTRY;
 static_assert(PALETTE_WORDS_PER_ENTRY == 3);
+inline constexpr uint32_t PALETTE_WORDS_PER_NEXT_ENTRY = Griffin::VIDCMD_WORDS_PER_CLUT_NEXT_ENTRY;
+static_assert(PALETTE_WORDS_PER_NEXT_ENTRY == 2);
+
+// Words a table of n CONSECUTIVE entries costs: one indexed entry, then n - 1
+// run-on entries — 2n + 1.
+constexpr uint32_t palette_table_words(uint32_t n)
+{
+    return (n == 0) ? 0u : PALETTE_WORDS_PER_ENTRY + (n - 1u) * PALETTE_WORDS_PER_NEXT_ENTRY;
+}
 
 // The pixel slots a clut_data SET disturbs, counted from the SET's OWN slot:
 // slots +1..+3 are the measured disturbance and +4 is the recovery guard, so
@@ -1141,6 +1156,27 @@ constexpr PaletteEntryWords vidcmd_palette_entry(uint32_t index, Rgb444 colour)
 {
     return PaletteEntryWords{{
         vidcmd_set(SET_PIX_CLUT_INDEX, index & 0xFu),
+        vidcmd_set(SET_PIX_CLUT_DATA, colour),
+        vidcmd_set(SET_FILLER, colour),
+    }};
+}
+
+// The RUN-ON entry: SET clut_data and its filler, no index SET.  It lands in
+// the entry after the previous write (clut_index advances after every pulse,
+// F wrapping to 0), so a consecutive table is one vidcmd_palette_entry() and
+// then one of these per further entry.  Same filler rule, same window.
+struct PaletteNextWords
+{
+    uint16_t w[2];
+
+    constexpr const uint16_t *begin() const { return w; }
+    constexpr const uint16_t *end() const { return w + 2; }
+    static constexpr uint32_t size() { return PALETTE_WORDS_PER_NEXT_ENTRY; }
+};
+
+constexpr PaletteNextWords vidcmd_palette_next(Rgb444 colour)
+{
+    return PaletteNextWords{{
         vidcmd_set(SET_PIX_CLUT_DATA, colour),
         vidcmd_set(SET_FILLER, colour),
     }};

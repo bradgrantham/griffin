@@ -269,7 +269,7 @@ MASK  { 2'b01, d1, d2, d3, d4, d5, d6, d7 }                  2 words
 SET   { 1'b1, target[2:0], value[11:0] }                     1 word
       target 0 = cmp_color0      4 = pix_base[3:0]
              1 = cmp_color1      5 = pix_mode[2:0] (+ reserved bit 3)
-             2 = pix_clut_index[3:0]
+             2 = pix_clut_index[3:0]  -- advances after every write (§3.2)
              3 = pix_clut_data[11:0]  -- written to the palette (§3.2)
              6 = pix_pixel_skip[3:0]
              7 = ignored by both chips: THE PALETTE WRITE FILLER (§3.2)
@@ -333,7 +333,7 @@ forwarding bus.  A stray `01` therefore paints sixteen junk pixels and
 eats the word behind it as dibits — frame-bounded, cleared by `/RS`, and
 the price of a two-word record in a stream with no framing.
 
-### 3.2 The palette — a 16 x 12 RAM and a THREE-WORD table entry
+### 3.2 The palette — a 16 x 12 RAM, a THREE-WORD table entry and the TWO-WORD run-on entry
 
 The palette is sixteen 12-bit entries in an external separate-I/O RAM (three
 16x4 parts, 74F219 function table, `/CS` tied low).  **Its data inputs are
@@ -399,9 +399,32 @@ Two rules for the list author, and both are measured, not advisory:
    otherwise be anything at all, including a differently-valued SET — the write
    is over.
 
-**Cost.**  Three words per entry, so a 26-word HBLANK packet reloads **eight
-entries per line** with room for the mode / base / skip SETs, and a vertical
-blank reloads all sixteen.  Photographic material wants two to five per line.
+**The index advances (2026-11-07).**  On the edge that ends clock 2 — the pulse
+clock — `clut_index` becomes `clut_index + 1` (F wraps to 0).  `IDX` is
+registered on that same edge from the *old* value, so the hold clock 3 still
+carries the address that was written, and the next `clut_data` SET, which can
+commit no earlier than clock 4 (commits are two clocks apart and the filler owns
+clock 2), lands in the next entry.  So a **run-on entry** is two words:
+
+```
+SET pix_clut_data,  V        lands in the entry after the previous write
+SET 7 (filler),     V        the same filler, for the same reason
+```
+
+and a table of N *consecutive* entries is one three-word entry and N − 1 run-on
+entries, **2N + 1 words**.  A `SET pix_clut_index` always *sets* the index to
+its value (it does not add) and outranks the increment if the two coincide,
+which only an illegal filler can arrange.  Rules 1 and 2 apply to a run-on
+entry unchanged: its window is the same window.  Measured by `pixel_tb.v`
+(clut-autoinc, with mutants 10 and 11 — no increment, increment one clock
+early — as negative controls) and `clut_pair_tb.v` S2r; authored through
+`se::vidcmd_palette_next()` / `palette_table_words()`.
+
+**Cost.**  Three words for an entry with an explicit index and two for every
+consecutive entry after it, so a 26-word HBLANK packet reloads **eight
+scattered or eleven consecutive entries per line** with room for the mode /
+base / skip SETs, and a vertical blank reloads all sixteen in 33 words.
+Photographic material wants two to five per line.
 
 ### 3.3 LITERAL, KEEP, HOLD and STREAM RUN (2026-10-03)
 

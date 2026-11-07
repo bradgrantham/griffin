@@ -897,10 +897,11 @@ static void dl_emit_pixel_line(unsigned line, bool wait_first)
 // ---------------------------------------------------------------------------
 static constexpr unsigned VBLANK_WALK_LINES = 34;   // lines 491..524
 
-// The console's entire VIDCMD budget: NINE words, once per frame —
+// The console's entire VIDCMD budget: EIGHT words, once per frame —
 // {palette entry 0, palette entry 1, SET pix_base, SET pix_mode,
-// RUN(passthrough,1)}, where each palette entry is the three words of
-// vidcmd-spec.md §3.2 (SET clut_index, SET clut_data, the same-value filler).
+// RUN(passthrough,1)}, where entry 0 is the three words of vidcmd-spec.md §3.2
+// (SET clut_index, SET clut_data, the same-value filler) and entry 1 the
+// two-word run-on entry the post-increment allows (SET clut_data, filler).
 // COMPOSITOR holds the last source to the end of a line and a line that receives
 // no records at all keeps holding, so one 1-slot passthrough RUN paints all 480
 // lines.  Everything here is consumed during vertical blanking and costs no slot
@@ -910,7 +911,7 @@ static constexpr unsigned VBLANK_WALK_LINES = 34;   // lines 491..524
 // Descriptor and payload budgets, checked here where VBLANK_WALK_LINES is in
 // scope.  The console's is the one that matters for correctness: it is what
 // keeps the console list below GRIFFIN_APP_DESC_BASE.
-static constexpr unsigned CONSOLE_PREAMBLE_WORDS = 2 * se::PALETTE_WORDS_PER_ENTRY + 3;
+static constexpr unsigned CONSOLE_PREAMBLE_WORDS = se::palette_table_words(2) + 3;
 static constexpr unsigned CONSOLE_DESCRIPTORS = 1 + VBLANK_WALK_LINES + 2 * FB_LINES + 1;
 
 static_assert(CONSOLE_DESCRIPTORS * se::DESC_BYTES <= DL_CONSOLE_TABLE_BYTES,
@@ -926,13 +927,14 @@ static void dl_build_console_list()
     // palette RAM is NEVER reset — not by /RS, not at power-up — so these two
     // entries are what makes the console a picture rather than noise; /RS does
     // clear pix_base and pix_mode, which is why they are re-sent every frame.
+    static_assert((CONSOLE_PIX_BASE & 1u) == 0,
+                  "the run-on entry lands at base | 1 only if base is even");
     const se::PaletteEntryWords bg = se::vidcmd_palette_entry(CONSOLE_PIX_BASE | 0u,
                                                              CONSOLE_BG);
-    const se::PaletteEntryWords fg = se::vidcmd_palette_entry(CONSOLE_PIX_BASE | 1u,
-                                                             CONSOLE_FG);
+    const se::PaletteNextWords  fg = se::vidcmd_palette_next(CONSOLE_FG);   // base | 1
     const uint16_t preamble[CONSOLE_PREAMBLE_WORDS] = {
         bg.w[0], bg.w[1], bg.w[2],
-        fg.w[0], fg.w[1], fg.w[2],
+        fg.w[0], fg.w[1],
         se::vidcmd_set(se::SET_PIX_BASE, CONSOLE_PIX_BASE),
         se::vidcmd_set(se::SET_PIX_MODE,
                        se::pixel_mode(se::PIXEL_DEPTH_1BPP, false)),

@@ -421,7 +421,11 @@ peripherals:
   #   is COMPOSITOR's set_pix_value bus, which is re-registered from every
   #   staged word, so the CLUT_DATA SET must be followed by a SAME-VALUE SET
   #   to target 7 (the filler) or the RAM stores the next word's payload
-  #   instead: one entry costs VIDCMD_WORDS_PER_CLUT_ENTRY words.  IDX is
+  #   instead: one entry costs VIDCMD_WORDS_PER_CLUT_ENTRY words.  After the
+  #   pulse CLUT_INDEX advances by one (F wraps to 0; a CLUT_INDEX SET sets it
+  #   and outranks the increment), so each further CONSECUTIVE entry is the
+  #   (CLUT_DATA, filler) pair alone, VIDCMD_WORDS_PER_CLUT_NEXT_ENTRY words,
+  #   with the same write window.  IDX is
   #   stolen for the three pixel clocks after the commit and one more is a
   #   write-recovery guard, so those four pixel slots must be in blanking or
   #   covered by a non-passthrough source (a cmp_color RUN or STREAM RUN, a
@@ -942,9 +946,12 @@ constants:
   VIDCMD_SET_PIX_PIXEL_SKIP: 6
   VIDCMD_SET_FILLER:         7
 
-  # A palette entry is three VIDCMD words: SET CLUT_INDEX, SET CLUT_DATA and
-  # the same-value filler.
+  # A palette entry with an explicit index is three VIDCMD words: SET
+  # CLUT_INDEX, SET CLUT_DATA and the same-value filler.  CLUT_INDEX advances
+  # after every write (see PIXEL), so each further consecutive entry is the
+  # last two words only: a table of n consecutive entries is 2n + 1 words.
   VIDCMD_WORDS_PER_CLUT_ENTRY: 3
+  VIDCMD_WORDS_PER_CLUT_NEXT_ENTRY: 2
 
   # RUN, STREAM RUN and HOLD counts are ten bits (bits 11:10 are the record
   # kind); a count of 0 plays 1024 slots.
@@ -1070,7 +1077,6 @@ bodges:
 # Open items only.
 issues:
   - "The boot CPU probe and the two-layout bus-error dump (crt0.s) have run only in the emulator (Moira as a 68010); on the rev-2 board (rev 1 is dead) force a BERR from the monitor (read C00000) and decode the frame with decode_buserr.py, and run the same on a 68000 once one is in the socket."
-  - "CLUT_INDEX does not post-increment, so consecutive palette entries cost 3 words each instead of 2."
   - "The PIXELS and VIDCMD stream FIFOs (ENGINE -> PIXEL / COMPOSITOR) are described in comments and constants, not as first-class entries."
   - "IO data buffers, bring-up check: write-data hold at the DUART, PORTS, CF and GLUE after their strobe negates rests on the D_IO branch holding its level after ~IO_BUFFER_OE disables the pair (ATF1508 minimums unpublished), not on a table; scope a DUART write on the rev-2 board."
   - "The AUDIO analog stage (ladders straight off the 7200 Q pins, 74HC4066 duty-cycle gates into a 2.5 V-biased inverting summer) has not been breadboarded; switch on-resistance and switching time at low volumes are the open risk."

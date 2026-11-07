@@ -195,8 +195,9 @@
 // SET TARGETS (COMPOSITOR forwards targets 2..6; 0/1 are its own colours)
 // ---------------------------------------------------------------------------
 //
-//   2  clut_index[3:0]
-//   3  clut_data[11:0]     written to the palette at clut_index (see below)
+//   2  clut_index[3:0]     the entry the next clut_data write lands in
+//   3  clut_data[11:0]     written to the palette at clut_index, which then
+//                          ADVANCES by one (see below)
 //   4  pix_base[3:0]
 //   5  pix_mode[2:0]       (+ reserved bit 3, write 0)
 //   6  pixel_skip[3:0]
@@ -234,6 +235,18 @@
 // zero hold, met only by whatever skew there happened to be between PIXEL's
 // /WE output and COMPOSITOR's data outputs, in different packages.  That is not
 // a timing argument, so the sequence moved one clock earlier; wr3 went with it.)
+//
+// THE INDEX ADVANCES.  On the edge that ends clock 2 — the pulse clock, wr2
+// high — clut_index becomes clut_index + 1 (F wraps to 0).  IDX is registered
+// on that same edge from the OLD value, so the hold clock 3 still carries the
+// address that was written; the new index is in force from clock 3, and the
+// next clut_data SET, which can commit no earlier than clock 4 (commits are two
+// clocks apart and the filler owns clock 2), lands in the next entry.  So a
+// table of N CONSECUTIVE entries is SET clut_index once and then N (SET
+// clut_data, filler) pairs — 2N + 1 words, not 3N — and an entry with an
+// explicit index is still the three words above.  A clut_index SET always sets
+// the index to its value and outranks the increment if the two coincide (which
+// only an illegal filler can make happen).
 //
 // THE FILLER MUST BE TARGET 7.  Any other target either writes a PIXEL
 // register with the colour payload (2, 4, 5, 6), writes a COMPOSITOR colour
@@ -405,6 +418,10 @@ module Pixel
     reg [3:0] clut_index;
     reg [2:0] mode;
 
+    // The palette write sequencer's two flip-flops (driven below, with the
+    // pulse); declared here because clut_index advances on wr2.
+    reg wr1, wr2;
+
     wire d_1bpp = ~mode[1] & ~mode[0];
     wire d_2bpp = ~mode[1] &  mode[0];
     wire d_4bpp =  mode[1] & ~mode[0];
@@ -450,6 +467,13 @@ module Pixel
             if (set_cidx)
             begin
                 clut_index <= set_pix_value[3:0];
+            end
+            else if (wr2)
+            begin
+                // The post-increment: the edge that ends the pulse clock.  IDX
+                // is registered from the old value on this same edge, so the
+                // hold clock keeps the written address (header).
+                clut_index <= clut_index + 4'd1;
             end
 
             if (set_base)
@@ -651,11 +675,10 @@ module Pixel
     // Clock numbers and the display-list rule are in the header.
     // ----------------------------------------------------------------
 
-    // Two flip-flops and the live set_cdata: the address window is
-    // set_cdata | wr1 | wr2 (clocks 1, 2, 3) and the pulse is ~wr1 (clock 2
-    // alone), so the pulse is centred in the window and gets a whole clock of
-    // setup and hold on both the address and the data.
-    reg wr1, wr2;
+    // Two flip-flops (declared with the SET registers) and the live set_cdata:
+    // the address window is set_cdata | wr1 | wr2 (clocks 1, 2, 3) and the
+    // pulse is ~wr1 (clock 2 alone), so the pulse is centred in the window and
+    // gets a whole clock of setup and hold on both the address and the data.
 
     wire clut_seq = set_cdata | wr1 | wr2;
 

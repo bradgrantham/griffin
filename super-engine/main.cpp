@@ -845,11 +845,27 @@ void palette_load_direct(PixelUnit &pix, uint32_t index, Rgb444 colour)
     pix.blank_clock();                            // clock 4: the guard
 }
 
+// The direct form of a RUN-ON entry: no index SET, so the write lands where the
+// previous write's post-increment left clut_index (pixel.v, clut_pair_tb S2r).
+void palette_load_next_direct(PixelUnit &pix, Rgb444 colour)
+{
+    pix.set_register(SET_PIX_CLUT_DATA, colour);   // clock 0: the commit
+    pix.set_value_bus(colour);
+    pix.blank_clock();                            // clock 1: setup
+    pix.set_value_bus(colour);                    // the filler holds the bus
+    pix.blank_clock();                            // clock 2: the pulse
+    pix.blank_clock();                            // clock 3: hold / recovery
+    pix.blank_clock();                            // clock 4: the guard
+}
+
 void palette_load_identity(PixelUnit &pix)
 {
-    for (uint32_t i = 0; i < PALETTE_ENTRIES; i++)
+    // One indexed entry and fifteen run-on entries, so every case that loads
+    // the identity palette through here also exercises the post-increment.
+    palette_load_direct(pix, 0, static_cast<Rgb444>(0));
+    for (uint32_t i = 1; i < PALETTE_ENTRIES; i++)
     {
-        palette_load_direct(pix, i, static_cast<Rgb444>(i));
+        palette_load_next_direct(pix, static_cast<Rgb444>(i));
     }
 }
 
@@ -1742,6 +1758,60 @@ void check_palette_traces()
               t.px[0]);
         CHECK(t.stats.palette_disturbed_visible == 0,
               "S3: %u disturbed pixels reached the DAC from an HBLANK packet",
+              t.stats.palette_disturbed_visible);
+    }
+
+    // --- S2r: RUN-ON ENTRIES — the post-increment (pixel.v; clut_pair_tb S2r) --
+    //
+    // Derived from the RTL law before running: one three-word entry at 3, then
+    // two two-word run-on entries with no index SET, which the increment lands
+    // at 4 and 5; SET clut_index F (a SET sets, it does not add), then two more
+    // run-on entries at F and, wrapping, 0.  Twelve words for five entries
+    // where five indexed entries would be fifteen.  The line reads entry 3.
+    {
+        constexpr Rgb444 A = 0x0A11, B = 0x0B22, C = 0x0C33, D = 0x0D44, E = 0x0E55;
+        std::vector<uint16_t> w;
+        auto put = [&](const auto &words)
+        {
+            for (uint16_t v : words)
+            {
+                w.push_back(v);
+            }
+        };
+        put(vidcmd_palette_entry(3, A));
+        put(vidcmd_palette_next(B));
+        put(vidcmd_palette_next(C));
+        w.push_back(vidcmd_set(SET_PIX_CLUT_INDEX, 0xF));
+        put(vidcmd_palette_next(D));
+        put(vidcmd_palette_next(E));
+        const uint32_t table = static_cast<uint32_t>(w.size());
+        w.push_back(vidcmd_set(SET_PIX_BASE, 2));       // index 2 | 1 = 3
+        w.push_back(vidcmd_run(RUN_SRC_PASSTHROUGH, H_ACTIVE));
+        const PaletteTrace t = palette_trace(w, 32, static_cast<uint32_t>(w.size()));
+        uint32_t bad = 0;
+        for (Rgb444 c : t.px)
+        {
+            bad += (c == A) ? 0u : 1u;
+        }
+        printf("  S2r RUN-ON          %u words: entries 3,4,5 = %03X %03X %03X, F = %03X, "
+               "0 = %03X; %u pixels wrong, %u bad fillers\n", table, t.entry_after[3],
+               t.entry_after[4], t.entry_after[5], t.entry_after[0xF], t.entry_after[0],
+               bad, t.stats.palette_bad_filler);
+        CHECK(table == palette_table_words(3) + 1 + 2 * PALETTE_WORDS_PER_NEXT_ENTRY,
+              "S2r: the table is %u words, expected %u", table,
+              palette_table_words(3) + 1 + 2 * PALETTE_WORDS_PER_NEXT_ENTRY);
+        CHECK(t.entry_after[3] == A && t.entry_after[4] == B && t.entry_after[5] == C,
+              "S2r: entries 3,4,5 hold %03X %03X %03X, expected %03X %03X %03X",
+              t.entry_after[3], t.entry_after[4], t.entry_after[5], A, B, C);
+        CHECK(t.entry_after[0xF] == D && t.entry_after[0] == E,
+              "S2r: after SET clut_index F the run-on entries should land at F and 0, "
+              "got F = %03X, 0 = %03X", t.entry_after[0xF], t.entry_after[0]);
+        CHECK(bad == 0, "S2r: %u pixels do not show entry 3", bad);
+        CHECK(t.stats.palette_bad_filler == 0, "S2r: a run-on entry must not flag a filler");
+        CHECK(t.stats.palette_writes == 5, "S2r: %u writes, expected 5",
+              t.stats.palette_writes);
+        CHECK(t.stats.palette_disturbed_visible == 0,
+              "S2r: %u disturbed pixels reached the DAC from an HBLANK packet",
               t.stats.palette_disturbed_visible);
     }
 

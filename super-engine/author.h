@@ -789,7 +789,7 @@ inline constexpr uint32_t SP_PROGRAM_STRIDE_BYTES = 64;
 inline constexpr uint32_t SP_GAP_TABLE_ENTRIES    = H_ACTIVE;   // RUN(passthrough, 1..640)
 inline constexpr uint32_t SP_PALETTE_ENTRIES      = 4;          // two 1bpp pairs
 inline constexpr uint32_t SP_PALETTE_WORDS        =
-    SP_PALETTE_ENTRIES * PALETTE_WORDS_PER_ENTRY;               // 12
+    palette_table_words(SP_PALETTE_ENTRIES);                    // 9: one entry + 3 run-on
 inline constexpr uint32_t SP_PLAIN_LINE_WORDS     = 1;          // RUN(passthrough, 640)
 inline constexpr uint32_t SP_PIXELS_CHUNK         = 20;         // two descriptors a line
 

@@ -170,6 +170,7 @@ void PixelUnit::reset()
     pix_base_   = 0;
     pixel_skip_ = 0;
     clut_index_ = 0;
+    cidx_set_at_pulse_ = false;
 
     shift_reg_        = 0;
     bit_pos_          = 0;
@@ -401,6 +402,22 @@ uint32_t PixelUnit::clock(bool pix_consume, bool preload, bool pix_last)
            (!old_consume_d)       ? 0u
                                   : idx_value();
 
+    // pixel.v: clut_index <= clut_index + 1 on the edge that ends the pulse
+    // clock (wr2 high), unless a clut_index SET coincides — the SET wins.  IDX
+    // is registered from the OLD value on that same edge, so the hold clock
+    // still carries the written address.  seq == 3 at the top of this call IS
+    // that edge (seq counts the clock the RTL's clut_seq term belongs to), so
+    // the increment follows idx_ above and the next clut_data SET — clock 4 at
+    // the earliest — begins its write at the new index.
+    if (seq == 3)
+    {
+        if (!cidx_set_at_pulse_)
+        {
+            clut_index_ = (clut_index_ + 1u) & 0xFu;
+        }
+        cidx_set_at_pulse_ = false;
+    }
+
     // --- the palette's own clock, on COMPOSITOR's bus as it stands now ------
     palette_.clock(value_bus_);
 
@@ -488,7 +505,10 @@ void PixelUnit::set_register(uint32_t target, uint32_t value)
 {
     switch (target)
     {
-        case SET_PIX_CLUT_INDEX: clut_index_ = value & 0xF; break;
+        case SET_PIX_CLUT_INDEX:
+            clut_index_        = value & 0xF;
+            cidx_set_at_pulse_ = (palette_.write_phase() == 2);   // the pulse clock
+            break;
         case SET_PIX_BASE:       pix_base_   = value & 0xF; break;
         case SET_PIX_MODE:       mode_       = value & PIXEL_MODE_BITS; break;
         case SET_PIX_PIXEL_SKIP: pixel_skip_ = value & 0xF; break;
